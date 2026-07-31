@@ -1363,9 +1363,9 @@ async fn service_run_state_tool_obligations(
                 config,
                 &mut task_state,
                 shared_state,
-                &shared_state.mcp_registry,
                 session_id,
                 &event,
+                turn_token,
             )
             .await
             {
@@ -2115,9 +2115,9 @@ async fn handle_bearwire_event(
                 config,
                 adapter_state,
                 shared_state,
-                &shared_state.mcp_registry,
                 session_id,
                 event,
+                turn_token,
             )
             .await?;
         }

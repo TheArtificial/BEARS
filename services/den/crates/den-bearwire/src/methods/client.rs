@@ -12,7 +12,7 @@ use bearwire_protocol::{
         deserialize_optional_string, deserialize_required_string, deserialize_string,
         ClientPermissionResultRequest,
     },
-    wire::{BearWireEvent, ToolCallFinishWire},
+    wire::{BearWireEvent, ExecutionTargetWire, ToolCallFinishWire, ToolCallRequestedWire},
 };
 use den_core::{
     client_tools::{client_tool_policy_json_for_provider, ClientToolName},
@@ -36,7 +36,7 @@ use den_runtime::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
     },
     native_runtime::continue_native_client_turn_event_stream,
-    runtime::bearwire_projection::wire::tool_call_finish_wire,
+    runtime::bearwire_projection::wire::{tool_call_finish_wire, tool_call_wire},
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
     turn_obligations::{self, ExpectedResponderAction},
     turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},
@@ -1504,24 +1504,55 @@ pub(crate) async fn client_permission_result_result(
                 event,
             )
             .await?;
+            let policy = ClientToolName::from_provider_alias(&tool_name)
+                .map(|_| client_tool_policy_json_for_provider(&tool_name));
+            let mut dispatch_event = BearWireEvent::tool_call_requested(ToolCallRequestedWire {
+                expected_responder_action: Some("tool_result".to_string()),
+                obligation_id: Some(tool_obligation.id.to_string()),
+                tool_call: tool_call_wire(
+                    &tool_call_id,
+                    &tool_name,
+                    None,
+                    "function",
+                    &args,
+                ),
+                approval_required: false,
+                execution_target: ExecutionTargetWire::ArmatureLocal,
+                policy: policy.clone(),
+                approval_request_id: Some(permission_id.clone()),
+                reason: None,
+            });
+            dispatch_event.bear_id = Some(bear.id.to_string());
+            dispatch_event.human_id = Some(user_id.to_string());
+            dispatch_event.session_id = Some(session_id.clone());
+            dispatch_event.run_id = Some(run_id.clone());
+            dispatch_event.subject = Some(format!("resource/tool_call/{tool_call_id}"));
+            let dispatch_persisted = bearwire_events::append_bearwire_event(
+                &state.sqlx_pool,
+                &session_id,
+                Some(bear.id),
+                Some(user_id),
+                dispatch_event,
+            )
+            .await?;
             Ok(json!({
                 "ok": true,
                 "duplicate": false,
                 "result_id": result.id,
                 "event_sequence": persisted.sequence_no,
+                "local_tool_event_sequence": dispatch_persisted.sequence_no,
                 "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
                 "continuation": "waiting_for_tool_result",
                 "obligation_state": tool_obligation.state,
                 "local_tool_request": {
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-                "result_tool_name": tool_name,
-                "args": args,
-                "permission_id": permission_id,
-                "obligation_id": obligation.id.to_string(),
-                "policy": ClientToolName::from_provider_alias(&tool_name)
-                    .map(|_| client_tool_policy_json_for_provider(&tool_name))
-            }
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "result_tool_name": tool_name,
+                    "args": args,
+                    "permission_id": permission_id,
+                    "obligation_id": tool_obligation.id.to_string(),
+                    "policy": policy,
+                }
             }))
         }
         PermissionResultCoordinatorOutcome::ContinueModel { run: transitioned, result } => {

@@ -89,6 +89,9 @@ pub async fn expire_client_obligations_once(
             "timeout_ms": obligation.timeout_ms(),
             "created_at": obligation.created_at,
             "expires_at": obligation.expires_at(),
+            "claimed": obligation.is_claimed(),
+            "claimed_at": obligation.claimed_at,
+            "lease_expires_at": obligation.lease_expires_at,
             "process_epoch_id": obligation.process_epoch_id(),
         }));
         entry.1 |= command_outcome_unknown;

@@ -9466,13 +9466,62 @@ pub(crate) async fn handle_conversation_resolved_projection(
     Ok(())
 }
 
+fn approved_local_tool_request_event(
+    permission_event: &Value,
+    local_tool: &Value,
+) -> Result<Value> {
+    let run_id = permission_event
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("approved local tool request missing run_id"))?;
+    let obligation_id = local_tool
+        .get("obligation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("approved local tool request missing obligation_id"))?;
+    let tool_call_id = local_tool
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("approved local tool request missing tool_call_id"))?;
+    let tool_name = local_tool
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("approved local tool request missing tool_name"))?;
+
+    Ok(json!({
+        "type": "tool_call.requested",
+        "run_id": run_id,
+        "data": {
+            "expected_responder_action": "tool_result",
+            "obligation_id": obligation_id,
+            "tool_call": {
+                "id": tool_call_id,
+                "name": tool_name,
+                "kind": "function",
+                "arguments": local_tool.get("args").cloned().unwrap_or_else(|| json!({})),
+            },
+            "approval_required": false,
+            "approval_request_id": local_tool.get("permission_id").cloned().unwrap_or(Value::Null),
+            "execution_target": "armature_local",
+            "policy": local_tool.get("policy").cloned().unwrap_or(Value::Null),
+        }
+    }))
+}
+
 pub(crate) async fn handle_permission_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
-    mcp_registry: &McpRegistry,
     session_id: &str,
     event: &Value,
+    turn_token: Uuid,
 ) -> Result<()> {
     let canonical = BearWireClientWaitingData::parse(event)?;
     let permission_id = canonical.permission.id.trim();
@@ -9926,157 +9975,14 @@ pub(crate) async fn handle_permission_request_event(
         }
     }
     if let Some(local_tool) = response.get("local_tool_request") {
-        let tool_call_id = local_tool
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            .unwrap_or(tool_call_id);
-        let tool_name = local_tool
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .unwrap_or("local_web_fetch");
-        let result_tool_name = local_tool
-            .get("result_tool_name")
-            .and_then(Value::as_str)
-            .unwrap_or(tool_name);
-        let args = local_tool.get("args").cloned().unwrap_or_else(|| json!({}));
-        if !shared_state
-            .tool_tasks
-            .try_register(session_id, tool_call_id, tool_name, None)
-            .await
-        {
-            tracing::debug!(
-                target: "bear_armature::lifecycle",
-                session_id,
-                tool_call_id,
-                tool_name,
-                "duplicate permission-local tool task ignored"
-            );
-            return Ok(());
-        }
-        shared_state
-            .tool_tasks
-            .remember_input(session_id, tool_call_id, tool_name, args.clone())
-            .await;
-        let policy = policy_from_event(local_tool);
-        let result = execute_local_tool(
-            adapter_state,
-            mcp_registry,
-            session_id,
-            tool_name,
-            args.clone(),
-            &policy,
-        )
-        .await;
-        let started = std::time::Instant::now();
-        match result {
-            Ok(value) => {
-                if matches!(tool_name, "update_task_list" | "update_plan") {
-                    let entries = value
-                        .get("plan")
-                        .map(plan_entries_from_work_plan_args)
-                        .unwrap_or_default();
-                    send_plan_update(session_id, entries).await?;
-                }
-                if let Some(mode) = value.get("mode_update").and_then(Value::as_str) {
-                    if matches!(mode, MODE_ASK | MODE_PLAN | MODE_WRITE) {
-                        notify_mode_state(session_id, mode).await?;
-                    }
-                }
-                let preview = tool_completion_preview(tool_name, &value);
-                let local_event = json!({
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "data": {
-                        "tool_call": {
-                            "id": tool_call_id,
-                            "name": tool_name,
-                            "arguments": args,
-                        }
-                    }
-                });
-                let payload = json!({
-                    "tool_call_id": tool_call_id,
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "tool_name": result_tool_name,
-                    "status": "ok",
-                    "content": "",
-                    "structured_content": value.clone(),
-                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_completed", "duration_ms": started.elapsed().as_millis() }
-                });
-                post_tool_result(config, session_id, tool_call_id, payload).await?;
-                if let Err(err) = send_tool_call_update(
-                    session_id,
-                    tool_call_id,
-                    tool_name,
-                    ToolCallUpdatePayload {
-                        status: "completed",
-                        text: &preview,
-                        event: Some(&local_event),
-                        raw_output: Some(value.clone()),
-                        extra_content: Vec::new(),
-                    },
-                )
-                .await
-                {
-                    eprintln!(
-                        "bear-armature: ACP tool-card update failed after Den accepted permission-local result session_id={} tool_call_id={} tool_name={} error={:#}",
-                        session_id,
-                        tool_call_id,
-                        tool_name,
-                        err
-                    );
-                }
-            }
-            Err(err) => {
-                let message = format!("{err:#}");
-                let local_event = json!({
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "data": {
-                        "tool_call": {
-                            "id": tool_call_id,
-                            "name": tool_name,
-                            "arguments": args,
-                        }
-                    }
-                });
-                let payload = json!({
-                    "tool_call_id": tool_call_id,
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "tool_name": result_tool_name,
-                    "status": "error",
-                    "content": message,
-                    "structured_content": {},
-                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_failed", "duration_ms": started.elapsed().as_millis() }
-                });
-                post_tool_result(config, session_id, tool_call_id, payload).await?;
-                if let Err(err) = send_tool_call_update(
-                    session_id,
-                    tool_call_id,
-                    tool_name,
-                    ToolCallUpdatePayload {
-                        status: "failed",
-                        text: &message,
-                        event: Some(&local_event),
-                        raw_output: Some(json!({
-                            "component": "bear-armature",
-                            "phase": "permission_local_tool_failed",
-                            "error": message,
-                            "duration_ms": started.elapsed().as_millis(),
-                        })),
-                        extra_content: Vec::new(),
-                    },
-                )
-                .await
-                {
-                    eprintln!(
-                        "bear-armature: ACP tool-card failure update failed after Den accepted permission-local result session_id={} tool_call_id={} tool_name={} error={:#}",
-                        session_id,
-                        tool_call_id,
-                        tool_name,
-                        err
-                    );
-                }
-            }
-        }
+        let request_event = approved_local_tool_request_event(event, local_tool)?;
+        spawn_tool_request_task(
+            config.clone(),
+            shared_state.clone(),
+            session_id.to_string(),
+            request_event,
+            turn_token,
+        );
     }
     Ok(())
 }
@@ -13507,6 +13413,41 @@ mod tests {
             parsed.permission.target.unwrap()["url"],
             "https://example.com/"
         );
+    }
+
+    #[test]
+    fn approved_local_tool_response_becomes_claimable_tool_request() {
+        let permission_event = json!({
+            "type": "client.waiting",
+            "run_id": "run-git-1",
+        });
+        let local_tool = json!({
+            "tool_call_id": "call-git-1",
+            "tool_name": "git_status",
+            "result_tool_name": "git_status",
+            "args": { "path": "." },
+            "permission_id": "perm-git-1",
+            "obligation_id": "obl-git-1",
+            "policy": {
+                "execution_target": "armature_local",
+                "total_timeout_ms": 150000,
+            },
+        });
+
+        let event = approved_local_tool_request_event(&permission_event, &local_tool)
+            .expect("canonical approved tool request");
+        let parsed = BearWireToolCallRequestData::parse(&event).expect("parse tool request");
+
+        assert_eq!(event["type"], "tool_call.requested");
+        assert_eq!(event["run_id"], "run-git-1");
+        assert_eq!(event["data"]["expected_responder_action"], "tool_result");
+        assert_eq!(event["data"]["approval_required"], false);
+        assert_eq!(event["data"]["approval_request_id"], "perm-git-1");
+        assert_eq!(event["data"]["policy"]["total_timeout_ms"], 150000);
+        assert_eq!(parsed.obligation_id, "obl-git-1");
+        assert_eq!(parsed.tool_call.id, "call-git-1");
+        assert_eq!(parsed.tool_call.name, "git_status");
+        assert_eq!(parsed.tool_call.arguments["path"], ".");
     }
 
     #[test]
