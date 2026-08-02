@@ -78,13 +78,15 @@ async fn index(
             None,
             Vec::new(),
         ),
-        Some(client) => match client.list_images().await {
-            Ok(store) => {
-                let operations = client.list_operations().await.unwrap_or_default();
-                (None, Some(store), operations)
+        Some(client) => {
+            // These are independent provider reads. Keep them concurrent so a
+            // slow engine inventory does not also delay operation history.
+            let (store, operations) = tokio::join!(client.list_images(), client.list_operations());
+            match store {
+                Ok(store) => (None, Some(store), operations.unwrap_or_default()),
+                Err(err) => (Some(err.to_string()), None, Vec::new()),
             }
-            Err(err) => (Some(err.to_string()), None, Vec::new()),
-        },
+        }
     };
 
     // Which catalog references exist in the engine store right now.
