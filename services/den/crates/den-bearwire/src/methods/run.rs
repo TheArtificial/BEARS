@@ -1147,6 +1147,9 @@ pub(crate) async fn fail_run_lifecycle(
     let projection = run_failure_projection(reason.as_str(), &message, run_id, &bear_name, context);
     let user_message = projection.user_message.as_deref();
     let context = projection.diagnostic_context.clone();
+    let diagnostic_context = context
+        .as_ref()
+        .map(|context| log_sample(context.to_string()));
     tracing::warn!(
         session_id,
         run_id,
@@ -1155,6 +1158,7 @@ pub(crate) async fn fail_run_lifecycle(
         reason = %reason,
         user_message = user_message,
         error_message = %log_sample(&message),
+        diagnostic_context = diagnostic_context.as_deref(),
         "BearWire run failed"
     );
     let mut event = BearWireEvent::ephemeral(

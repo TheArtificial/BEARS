@@ -90,9 +90,9 @@ use tower_service::Service;
 use tools::adapter_env::{collect_bear_environment, fetch_den_runtime_state};
 use tools::fs::{
     handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
-    handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
-    handle_read_text_file, handle_replace_text, handle_search_files, handle_stat, ReplaceTextArgs,
-    ReplaceTextPlan,
+    handle_delete_path, handle_find_paths_blocking, handle_list_directory_blocking,
+    handle_move_path, handle_read_text_file, handle_replace_text, handle_search_files_blocking,
+    handle_stat, ReplaceTextArgs, ReplaceTextPlan,
 };
 use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
@@ -3044,6 +3044,13 @@ async fn handle_request(
                                 message.push_str("\n\n");
                                 message.push_str(&server_version.summary());
                             }
+                            message.push_str("\n\n");
+                            message.push_str(&format!(
+                                "Bear armature version: version={}, git_sha={}, built_at_utc={}",
+                                adapter_version(),
+                                env!("DEN_ACP_ADAPTER_GIT_SHA"),
+                                env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
+                            ));
                             if let Some(response_id) = response.claim() {
                                 let _ = write_response(
                                     response_id,
@@ -3887,8 +3894,15 @@ async fn handle_direct_list_directory(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let context = session_context(adapter_state, session_id)?;
-    handle_list_directory(context, session_id, args, policy).await
+    let context = session_context(adapter_state, session_id)?.clone();
+    let session_id = session_id.to_string();
+    let args = args.clone();
+    let policy = policy.clone();
+    tokio::task::spawn_blocking(move || {
+        handle_list_directory_blocking(&context, &session_id, &args, &policy)
+    })
+    .await
+    .context("fs_list_directory blocking task failed")?
 }
 
 async fn handle_direct_find_paths(
@@ -3897,8 +3911,15 @@ async fn handle_direct_find_paths(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let context = session_context(adapter_state, session_id)?;
-    handle_find_paths(context, session_id, args, policy).await
+    let context = session_context(adapter_state, session_id)?.clone();
+    let session_id = session_id.to_string();
+    let args = args.clone();
+    let policy = policy.clone();
+    tokio::task::spawn_blocking(move || {
+        handle_find_paths_blocking(&context, &session_id, &args, &policy)
+    })
+    .await
+    .context("fs_find_paths blocking task failed")?
 }
 
 async fn handle_direct_search_files(
@@ -3907,8 +3928,15 @@ async fn handle_direct_search_files(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let context = session_context(adapter_state, session_id)?;
-    handle_search_files(context, session_id, args, policy).await
+    let context = session_context(adapter_state, session_id)?.clone();
+    let session_id = session_id.to_string();
+    let args = args.clone();
+    let policy = policy.clone();
+    tokio::task::spawn_blocking(move || {
+        handle_search_files_blocking(&context, &session_id, &args, &policy)
+    })
+    .await
+    .context("fs_search_files blocking task failed")?
 }
 
 async fn handle_direct_stat(

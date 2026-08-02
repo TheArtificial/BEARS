@@ -185,7 +185,7 @@ pub(crate) async fn handle_read_text_file(
     }))
 }
 
-pub(crate) async fn handle_list_directory(
+pub(crate) fn handle_list_directory_blocking(
     context: &SessionContext,
     session_id: &str,
     args: &Value,
@@ -298,7 +298,7 @@ pub(crate) async fn handle_list_directory(
     }))
 }
 
-pub(crate) async fn handle_find_paths(
+pub(crate) fn handle_find_paths_blocking(
     context: &SessionContext,
     session_id: &str,
     args: &Value,
@@ -379,7 +379,7 @@ pub(crate) async fn handle_find_paths(
     }))
 }
 
-pub(crate) async fn handle_search_files(
+pub(crate) fn handle_search_files_blocking(
     context: &SessionContext,
     session_id: &str,
     args: &Value,

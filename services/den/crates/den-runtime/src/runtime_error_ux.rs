@@ -229,9 +229,14 @@ pub fn run_failed_user_message(
         ));
     }
     if reason == "client_obligation_timeout" {
-        let permission_ids = context
-            .and_then(|context| context.get("expired_obligations"))
-            .and_then(Value::as_array)
+        let obligations = context
+            .and_then(|context| {
+                context
+                    .get("affected_obligations")
+                    .or_else(|| context.get("expired_obligations"))
+            })
+            .and_then(Value::as_array);
+        let permission_ids = obligations
             .into_iter()
             .flatten()
             .filter(|obligation| {
@@ -242,16 +247,40 @@ pub fn run_failed_user_message(
             })
             .filter_map(|obligation| obligation.get("permission_id").and_then(Value::as_str))
             .collect::<Vec<_>>();
-        let detail = match permission_ids.as_slice() {
-            [permission_id] => format!("Permission request {permission_id} timed out."),
-            [] => "The connection was interrupted, or the required work-surface response did not arrive in time.".to_string(),
-            permission_ids => format!(
-                "Permission requests {} timed out.",
-                permission_ids.join(", ")
-            ),
-        };
+        if !permission_ids.is_empty() {
+            let detail = match permission_ids.as_slice() {
+                [permission_id] => format!("Permission request {permission_id} timed out."),
+                permission_ids => format!(
+                    "Permission requests {} timed out.",
+                    permission_ids.join(", ")
+                ),
+            };
+            return Some(format!(
+                "{} stopped because {detail} Reconnect the work surface and send another message to retry.",
+                display_bear_name(bear_name),
+            ));
+        }
+
+        if let Some(obligation) = obligations.and_then(|obligations| obligations.first()) {
+            let tool_name = obligation
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .unwrap_or("local tool");
+            if obligation.get("claimed").and_then(Value::as_bool) == Some(true) {
+                return Some(format!(
+                    "{} stopped because the work surface claimed `{tool_name}`, but Den did not receive its result before the execution lease expired. The local step may have completed; inspect the workspace before retrying.",
+                    display_bear_name(bear_name),
+                ));
+            }
+            return Some(format!(
+                "{} stopped because the work surface did not claim `{tool_name}` before the local-step wait expired. Send another message to retry.",
+                display_bear_name(bear_name),
+            ));
+        }
+
         return Some(format!(
-            "{} stopped because {detail} Reconnect the work surface and send another message to retry.",
+            "{} stopped while waiting for the work surface to complete a local step. Send another message to retry.",
             display_bear_name(bear_name),
         ));
     }
@@ -665,9 +694,52 @@ mod tests {
         );
 
         let user_message = projection.user_message.expect("user message");
-        assert!(user_message.contains("connection was interrupted"));
-        assert!(user_message.contains("work-surface response"));
+        assert!(user_message.contains("waiting for the work surface"));
+        assert!(!user_message.contains("connection was interrupted"));
         assert!(!user_message.contains("client did not respond"));
+    }
+
+    #[test]
+    fn client_obligation_timeout_reports_unclaimed_tool() {
+        let projection = run_failure_projection(
+            "client_obligation_timeout",
+            "required step timed out",
+            "run-1",
+            "Builder Bear",
+            Some(json!({
+                "affected_obligations": [{
+                    "expected_responder_action": "tool_result",
+                    "tool_name": "git_status",
+                    "claimed": false,
+                }],
+            })),
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("did not claim `git_status`"));
+        assert!(!user_message.contains("connection"));
+    }
+
+    #[test]
+    fn client_obligation_timeout_reports_claimed_tool_lease_expiry() {
+        let projection = run_failure_projection(
+            "client_obligation_timeout",
+            "required step timed out",
+            "run-1",
+            "Builder Bear",
+            Some(json!({
+                "affected_obligations": [{
+                    "expected_responder_action": "tool_result",
+                    "tool_name": "git_status",
+                    "claimed": true,
+                }],
+            })),
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("claimed `git_status`"));
+        assert!(user_message.contains("execution lease expired"));
+        assert!(user_message.contains("may have completed"));
     }
 
     #[test]
