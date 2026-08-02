@@ -23,6 +23,7 @@ use crate::{
 };
 use agent_client_protocol::schema::RequestPermissionRequest;
 use anyhow::{anyhow, Context, Result};
+use bearwire_protocol::compatibility::CompatibilityManifest;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -231,6 +232,7 @@ async fn checkout_work_order(
             "session_id": session_id,
             "work_order_id": env.work_order_id,
             "cwd": env.workspace,
+            "compatibility": CompatibilityManifest::armature(),
         }),
     )
     .await

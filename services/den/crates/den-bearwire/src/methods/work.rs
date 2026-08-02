@@ -9,6 +9,9 @@
 //! outcome is the run-completion hook plus Docket task state.
 
 use axum::http::HeaderMap;
+use bearwire_protocol::compatibility::{
+    CompatibilityManifest, REQUIRED_WORK_CAPABILITIES,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -24,6 +27,7 @@ use crate::methods::parse_params;
 struct WorkCheckoutRequest {
     session_id: String,
     work_order_id: Uuid,
+    compatibility: CompatibilityManifest,
 }
 
 pub(crate) async fn work_checkout_result(
@@ -34,6 +38,19 @@ pub(crate) async fn work_checkout_result(
     let (_user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: WorkCheckoutRequest = parse_params(params)?;
 
+    let missing = request
+        .compatibility
+        .missing(REQUIRED_WORK_CAPABILITIES)
+        .collect::<Vec<_>>();
+    if request.compatibility.protocol != 1 || !missing.is_empty() {
+        return Err(CustomError::ValidationError(format!(
+            "incompatible sandbox armature: protocol={}, required_protocol=1, missing_capabilities={missing:?}",
+            request.compatibility.protocol
+        )));
+    }
+
+    // Compatibility must be checked before checkout: checkout binds the
+    // session and mutates durable run/task state.
     let checkout = work_runs::checkout_work_run_for_session(
         &state.sqlx_pool,
         request.work_order_id,
