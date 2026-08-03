@@ -45,7 +45,7 @@ BEARS adopts a two-level durable work-management model — **jobs** and **tasks*
 2. **The `review` agent role is not a required gate.** Quality gating of a job (acceptance-criteria satisfaction, pre-allocation review for decisions) is managed by the job system itself. The Reflection/`review` conductor may log a completed job to Cabinet, but the `review` *agent* need not be invoked to run a job.
 3. **One canonical Docket concept of "task."** Durable Docket tasks are persisted whether or not they belong to a job. Per [ADR-0045](adr-0045-session-task-lists-and-docket-checkout.md), session task-list items are a working projection: they may be local-only or Docket-backed, and only Docket-backed items are canonical Docket tasks.
 4. **Tasks are bead-like.** Each task carries a self-contained `body` (its prompt/goal) executable in roughly one turn. More complex work is expressed as child tasks. Hierarchy is a simple tree; there are no n:n dependency edges.
-5. **Tasks are definitions; runs hold execution state.** A task's identity is stable and owned by the job. Status, results, and per-run telemetry live against a run, not on the task row.
+5. **Tasks and runs hold execution state; jobs project it.** A task's identity is stable and owned by the job. Status, results, and per-run telemetry live against a run, not on the task row. The operational job status is a derived projection of run, task, criterion, and explicit lifecycle evidence; it is not an independently authoritative persisted attribute.
 6. **Decomposition is live and audited.** Tasks added during execution are reflected in the report immediately and recorded with who added them, when, and in which run.
 7. **Storage is Den control-plane.** Jobs/tasks orchestration records live in Den Postgres, not per-Bear SQLite. The Bear *uses* Den's job-management platform to organize its work, the way a person uses a project tracker; the platform is infrastructure the Bear plugs into, not part of the Bear's cognition. This narrows [ADR-0031](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), which keeps SQLite canonical for Bear *memory*. See the **execution invariant** below.
 
@@ -89,9 +89,11 @@ bear_jobs
 - goal                text NOT NULL            -- workplan: intent
 - work_surface_ref    text nullable            -- slug; FK once ADR-0006 lands
 - commit_policy       commit_policy nullable   -- none | per_task | per_job
-- status              job_status               -- activity: draft | ready | running | blocked | completed | cancelled
+- cancellation_requested_at timestamptz nullable -- explicit user lifecycle intent
+- paused_at           timestamptz nullable     -- explicit user lifecycle intent
+- archived_at         timestamptz nullable     -- explicit user lifecycle intent
 - visibility          work_plan_visibility     -- reuse existing enum
-- current_run_id      uuid nullable FK         -- pointer to the active/latest run
+- current_run_id      uuid nullable FK         -- convenience pointer; non-authoritative
 - created_at, updated_at
 ```
 
@@ -144,12 +146,14 @@ bear_job_runs
 - job_id        uuid FK
 - trigger       run_trigger   -- manual | scheduled | event
 - schedule_ref  text nullable -- the schedule that spawned it, when recurring
-- state         run_state     -- dispatched | running | paused | completed | failed | cancelled
+- state         run_state     -- dispatched | running | paused | stalled | completed | failed | cancelled
 - started_at, finished_at
 - outcome       jsonb nullable
 ```
 
 Every job has **at least one** run. A oneshot job has exactly one. Recurrence (deferred) means the scheduler creates additional runs against the *same* job; no schema change is required.
+
+A run becomes **`stalled`** when Den can no longer confirm continuation health or tool progress, without evidence that the requested work reached a terminal outcome. For example, a continuation that stops responding while waiting on a legitimately long-running tool call is stalled, not failed. Preserve its last progress/evidence and diagnostic. A stalled run is non-terminal for job intent: an operator may wait or resume it when supported, cancel it, or resolve it as failed. It must not be silently converted to `failed` merely to release an active-run slot.
 
 #### `bear_task_run_state` — per-run task execution state (execution domain)
 
@@ -214,7 +218,17 @@ bear_job_events
 - created_at
 ```
 
-The user-facing **status report** is a projection of `bear_job_events`, not a separate mutable text field. This keeps the report auditable and consistent with the event history.
+The user-facing **status report** and operational **job status** are projections, not separately mutable job fields. The status projection derives from persisted lifecycle intent, task/criterion state, and work-run evidence using one shared normalization path for APIs, conversation, operator UI, and logs:
+
+1. `completed` when all required criteria are met or waived for the resolved run and no explicit cancellation intent applies.
+2. `cancelled` when an operator has explicitly requested cancellation; a failed or stalled run alone never cancels a job.
+3. `running` when a relevant run is dispatched, running, or paused with an active continuation.
+4. `stalled` when an unresolved relevant run is stalled and no later run has resolved its task/criterion obligations.
+5. `blocked` when required work is explicitly blocked (including a handoff) and no active or stalled run takes precedence.
+6. `ready` when runnable work remains without an active, stalled, or blocked condition.
+7. `draft` when the job has no runnable task tree or is otherwise incomplete for dispatch.
+
+A terminal failed run is evidence, not a separate job status: it leaves the job `ready` when remediation remains runnable, otherwise `blocked` with its failure evidence. Implementations may materialize this projection for query performance, but it is a rebuildable cache and never an authority. The report remains an auditable rendering of `bear_job_events` plus the same normalized run/task/criterion evidence; it must not semantically disagree with the status projection.
 
 Runtime checkpoints from ADR-0050 are not `bear_task_events` or `bear_job_events`. They may reference Docket run/task ids for loop-control continuity, but durable task progress, blockers, completion, criteria evaluation, and report-visible history still require explicit task/job events produced through the task-management path.
 
@@ -228,9 +242,9 @@ This promotion/pruning loop is the explicit mechanism for learning job structure
 
 Evolves the `den.work_plan.*` tools.
 
-- **Job management (`pair` / `chat` / UI):** `den.job.create` (goal, criteria, initial task tree, work_surface_ref, commit_policy), `den.job.get` (job + task tree + rendered report), `den.job.list`.
+- **Job management (`pair` / `chat` / UI):** `den.job.create` (goal, criteria, initial task tree, work_surface_ref, commit_policy), `den.job.get` (job + task tree + derived operational status + rendered report), `den.job.list`. Lifecycle mutations record explicit pause, cancellation, archive, or supersession intent; they do not write a job status.
 - **Task tree (all roles):** `den.task.create` (body, kind, parent_task_id, job_id or session_anchor_id), `den.task.update` (status/result via run context), `den.task.list`.
-- **Execution (`work`):** receives one Job dispatch from Den. The Job Run retains one sandbox/workspace/session while `work` advances the task tree (one `in_progress` task at a time), with Job goal and acceptance criteria injected; it may call `den.task.create` to add run-scoped children.
+- **Execution (`work`):** receives one Job dispatch from Den. The Job Run retains one sandbox/workspace/session while `work` advances the task tree (one `in_progress` task at a time), with Job goal and acceptance criteria injected; it may call `den.task.create` to add run-scoped children. Dispatch/watchdog paths record run progress and mark an unconfirmed continuation `stalled`, preserving evidence for an operator decision rather than fabricating a terminal outcome.
 
 The `den.work_plan.request_handoff` tool is retired — job creation *is* the handoff from planning to durable work.
 
@@ -263,7 +277,8 @@ These behaviors are **not** modeled as task-type enums. They belong to work-surf
 ### Negative / costs
 
 - A task has no intrinsic status; every status read requires a run context (`current_run_id` resolves the common case).
-- `current_run_id` is denormalized state that must be kept correct under run lifecycle transitions.
+- Operational job status is a derived query across lifecycle intent, runs, tasks, and criteria. It needs a single tested normalization path; any stored projection is disposable cache.
+- `current_run_id` is denormalized convenience state that must be kept correct under run lifecycle transitions; it is not status authority.
 - More tables than the JSONB `items` approach; more join surface for reads.
 
 ### Migration and supersession

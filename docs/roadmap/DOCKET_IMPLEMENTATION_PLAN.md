@@ -112,9 +112,12 @@ Phases 0–4 are complete/retired in the current runtime. They remain below as t
 | Project active task context | Runtime orientation projects the active top-level task/subtree from the conversation objective instead of owning separate session task state. |
 | Implement `TaskDispatcher` integration | Docket can dispatch ready durable tasks to `work` runtime through the runtime-owned dispatch trait. |
 | Sync task-list changes through Docket | Authorized completion, edits, new subtasks, blockers, and evidence update the conversation objective's Docket task tree. |
+| Derive operational job status | `job.status` is computed from explicit lifecycle intent plus canonical run, task, and criterion evidence through one shared normalizer. APIs, conversation status, operator UI, and logs show that same projection; no independently authoritative persisted job-status field remains. |
+| Support stalled work runs | Continuation loss or missing tool-progress confirmation records the run as `stalled`, retains last evidence and diagnostic, and does not manufacture `failed`/`cancelled`. Operators can wait/resume when supported, cancel/end, or resolve as failed; the job projection reports unresolved stalled work. |
+| Test projection recovery | Tests cover status precedence, stalled-run resolution, and rebuilding the projection from persisted evidence so partial writes or restarts cannot leave job status inconsistent with run outcomes. |
 | Operator UI reflects projection vs ownership | Operators can see the conversation task list, top-level task/subtree focus, durable Docket jobs, and run state without confusing projection with ownership. |
 
-**Exit gate:** A Bear can evolve a conversation-linked Docket objective across turns, work the active task/subtree in-session, and have runtime/UI projections recover from Docket rather than session-owned task state.
+**Exit gate:** A Bear can evolve a conversation-linked Docket objective across turns, work the active task/subtree in-session, and have runtime/UI projections recover from Docket rather than session-owned task state. Job operational status is recomputed from lifecycle intent and run/task/criterion evidence, and an unresolved continuation loss is visible as a stalled run rather than an invented terminal outcome.
 
 ### Conversation-linked task-list objectives
 
