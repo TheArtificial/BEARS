@@ -532,6 +532,20 @@ fn work_run_succeeded(
     }
 }
 
+fn work_run_final_state(
+    task_succeeded: bool,
+    publication_required: bool,
+    publication_succeeded: bool,
+) -> WorkRunState {
+    if !task_succeeded {
+        WorkRunState::Blocked
+    } else if publication_required && !publication_succeeded {
+        WorkRunState::Failed
+    } else {
+        WorkRunState::Succeeded
+    }
+}
+
 fn work_run_outcome_summary(
     succeeded: bool,
     armature_summary: Option<String>,
@@ -619,49 +633,60 @@ async fn harvest_run(
         .map(|diff| diff.changed_files.len())
         .unwrap_or(0);
 
-    // Publish before teardown: push the run's commits to the job's upstream
-    // work branch when the commit policy allows. A publish failure never
-    // un-dones the task (the work happened) — it is recorded loudly instead.
+    // A pushable job has an explicit delivery obligation. Record its outcome
+    // on every path so `published: null` never masquerades as success.
+    let publication_required = context
+        .as_ref()
+        .is_some_and(WorkRunDispatchContext::publishes);
     let mut published: Option<Value> = None;
     let mut publish_failed: Option<String> = None;
-    if succeeded {
-        if let Some(context) = context.filter(WorkRunDispatchContext::publishes) {
-            match (sandbox_id, context.work_branch.as_deref()) {
-                (Some(id), Some(branch)) => {
-                    let request = PublishRequest {
-                        branch: branch.to_string(),
-                        auto_commit_leftovers: true,
-                        allow_default_ref: context.allow_default_ref,
-                        author_name: Some(context.bear_name.clone()),
-                        run_label: Some(run.id.to_string()),
-                    };
-                    match client.publish(id, &request).await {
-                        Ok(outcome) => {
-                            tracing::info!(
-                                work_run_id = %run.id,
-                                branch = %outcome.branch,
-                                commits = outcome.commits_pushed,
-                                pushed = outcome.pushed,
-                                "work_dispatch: run published to upstream"
-                            );
-                            published = Some(serde_json::to_value(&outcome).unwrap_or(Value::Null));
-                        }
-                        Err(err) => publish_failed = Some(err.to_string()),
+    let mut publication_status = if publication_required {
+        "not_attempted"
+    } else {
+        "not_required"
+    };
+    if publication_required && succeeded {
+        let context = context.as_ref().expect("publication requirement has context");
+        match (sandbox_id, context.work_branch.as_deref()) {
+            (Some(id), Some(branch)) => {
+                let request = PublishRequest {
+                    branch: branch.to_string(),
+                    auto_commit_leftovers: true,
+                    allow_default_ref: context.allow_default_ref,
+                    author_name: Some(context.bear_name.clone()),
+                    run_label: Some(run.id.to_string()),
+                };
+                match client.publish(id, &request).await {
+                    Ok(outcome) => {
+                        tracing::info!(
+                            work_run_id = %run.id,
+                            branch = %outcome.branch,
+                            commits = outcome.commits_pushed,
+                            pushed = outcome.pushed,
+                            "work_dispatch: run published to upstream"
+                        );
+                        published = Some(serde_json::to_value(&outcome).unwrap_or(Value::Null));
+                        publication_status = "succeeded";
+                    }
+                    Err(err) => {
+                        publish_failed = Some(err.to_string());
+                        publication_status = "failed";
                     }
                 }
-                (None, _) => publish_failed = Some("run has no sandbox to publish from".into()),
-                (_, None) => {
-                    publish_failed = Some("job has no work branch recorded".into());
-                }
+            }
+            (None, _) => {
+                publish_failed = Some("run has no sandbox to publish from".into());
+                publication_status = "failed";
+            }
+            (_, None) => {
+                publish_failed = Some("job has no work branch recorded".into());
+                publication_status = "failed";
             }
         }
     }
 
-    let final_state = if succeeded {
-        WorkRunState::Succeeded
-    } else {
-        WorkRunState::Blocked
-    };
+    let publication_succeeded = publication_status == "succeeded";
+    let final_state = work_run_final_state(succeeded, publication_required, publication_succeeded);
     let summary = work_run_outcome_summary(
         succeeded,
         turn_summary,
@@ -681,6 +706,10 @@ async fn harvest_run(
         "log_tail": log_tail,
         "published": published,
         "publish_failed": publish_failed,
+        "publication": {
+            "required": publication_required,
+            "status": publication_status,
+        },
     });
 
     if let Some(session_id) = run.bearwire_session_id.as_deref() {
@@ -708,7 +737,14 @@ async fn harvest_run(
         }
     }
 
-    teardown_sandbox(pool, config, client, run, !succeeded).await;
+    teardown_sandbox(
+        pool,
+        config,
+        client,
+        run,
+        final_state != WorkRunState::Succeeded,
+    )
+    .await;
 }
 
 async fn cancel_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient, run: &WorkRunRow) {
@@ -939,8 +975,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        sandbox_exit_failure, should_block_failed_work_task, work_run_outcome_summary,
-        work_run_succeeded,
+        sandbox_exit_failure, should_block_failed_work_task, work_run_final_state,
+        work_run_outcome_summary, work_run_succeeded,
     };
 
     #[test]
@@ -958,6 +994,22 @@ mod tests {
         assert!(!work_run_succeeded(Some("per_task"), None, &statuses));
         assert!(!work_run_succeeded(Some("per_job"), Some(done), &statuses));
         assert!(!work_run_succeeded(None, Some(done), &statuses));
+    }
+
+    #[test]
+    fn required_publication_prevents_success_when_not_published() {
+        assert_eq!(
+            work_run_final_state(true, true, false),
+            den_docket::work_runs::WorkRunState::Failed
+        );
+        assert_eq!(
+            work_run_final_state(true, true, true),
+            den_docket::work_runs::WorkRunState::Succeeded
+        );
+        assert_eq!(
+            work_run_final_state(true, false, false),
+            den_docket::work_runs::WorkRunState::Succeeded
+        );
     }
 
     #[test]
