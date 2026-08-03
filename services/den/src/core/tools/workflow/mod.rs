@@ -2413,6 +2413,7 @@ pub(crate) async fn dispatch_work(
         den_docket::work_runs::WorkJobEnqueue {
             bear_id: context.bear_id,
             job_id: args.job_id,
+            durable_result: den_docket::DurableResultKind::RepositoryChanges,
             git_ref: args.git_ref.as_deref().and_then(clean_optional),
             image_name: args.image.as_deref().and_then(clean_optional),
             requested_by_user_id: Some(context.user_id),
