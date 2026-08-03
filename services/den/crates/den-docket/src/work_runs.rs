@@ -194,6 +194,14 @@ pub struct WorkRunCancelRequest {
     pub reason: String,
 }
 
+/// Acknowledges a terminal stalled run without changing its execution outcome.
+/// Retrying remains a new work-run attempt; waiting needs no write.
+#[derive(Clone, Debug)]
+pub struct StalledWorkRunResolution {
+    pub resolved_by: String,
+    pub reason: String,
+}
+
 /// Legacy test fixture input. Production dispatch is job-scoped; tests use a
 /// task only to locate its owning job.
 #[cfg(test)]
@@ -1304,6 +1312,37 @@ pub async fn request_work_run_cancel_with_provenance(
     .bind(bear_id)
     .bind(&request.requested_by)
     .bind(&request.reason)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Record a human/operator resolution of a stalled run while preserving its
+/// `stalled` outcome and original diagnostic. This is deliberately not a
+/// cancellation: the worker already stopped, and retry creates a new attempt.
+pub async fn resolve_stalled_work_run(
+    pool: &PgPool,
+    run_id: Uuid,
+    bear_id: Uuid,
+    resolution: &StalledWorkRunResolution,
+) -> Result<bool, DenError> {
+    let result = sqlx::query(
+        "UPDATE bear_work_runs
+         SET result_refs = COALESCE(result_refs, '{}'::jsonb) || jsonb_build_object(
+                 'stalled_resolution', jsonb_build_object(
+                     'resolved_by', $3,
+                     'reason', $4,
+                     'resolved_at', now()
+                 )
+             ),
+             updated_at = now()
+         WHERE id = $1 AND bear_id = $2 AND state = 'stalled'
+           AND NOT (COALESCE(result_refs, '{}'::jsonb) ? 'stalled_resolution')",
+    )
+    .bind(run_id)
+    .bind(bear_id)
+    .bind(&resolution.resolved_by)
+    .bind(&resolution.reason)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
