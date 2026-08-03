@@ -634,6 +634,12 @@ impl DocketCommitPolicy {
             Self::PerJob => "per_job",
         }
     }
+
+    /// Source-changing jobs publish one coherent result unless the caller
+    /// explicitly chooses another policy.
+    pub fn for_new_job(policy: Option<Self>) -> Self {
+        policy.unwrap_or(Self::PerJob)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2192,6 +2198,18 @@ mod tests {
         .expect("completed session projection");
 
         assert_eq!(completed.status, "completed");
+    }
+
+    #[test]
+    fn new_jobs_default_to_one_coherent_publish() {
+        assert_eq!(
+            DocketCommitPolicy::for_new_job(None),
+            DocketCommitPolicy::PerJob
+        );
+        assert_eq!(
+            DocketCommitPolicy::for_new_job(Some(DocketCommitPolicy::None)),
+            DocketCommitPolicy::None
+        );
     }
 
     #[test]

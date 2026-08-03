@@ -15,15 +15,15 @@ use den_core::{BearProfile, DenError};
 use super::model::{
     docket_parent_task_ref, docket_task_status_from_task_list_item_status,
     normalize_completion_criteria, task_list_projection_from_docket_job,
-    validate_docket_job_create, validate_docket_task_create, DocketCriterionStateRow,
-    DocketCriterionStateUpdate, DocketExecutionLookup, DocketExecutionSessionRow,
-    DocketExecutionSessionUpsert, DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome,
-    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
-    DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch,
-    DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection,
-    DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError,
-    TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncOutcome,
-    TaskListSyncRequest, TaskListSyncState,
+    validate_docket_job_create, validate_docket_task_create, DocketCommitPolicy,
+    DocketCriterionStateRow, DocketCriterionStateUpdate, DocketExecutionLookup,
+    DocketExecutionSessionRow, DocketExecutionSessionUpsert, DocketJobCreate,
+    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
+    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
+    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
+    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
+    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -107,7 +107,7 @@ pub(super) async fn create_job(
     .bind(create.created_by_role.trim())
     .bind(create.goal.trim())
     .bind(create.work_surface_id)
-    .bind(create.commit_policy.map(|policy| policy.as_str()))
+    .bind(DocketCommitPolicy::for_new_job(create.commit_policy).as_str())
     .bind(
         create
             .work_branch
