@@ -65,6 +65,7 @@ use crate::tools::{
         DEN_WORK_PREPARE_RUST_DEPENDENCIES_PROVIDER, DEN_WORK_RUN_CANCEL,
         DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_FIND, DEN_WORK_RUN_FIND_PROVIDER,
         DEN_WORK_RUN_GET, DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST, DEN_WORK_RUN_LIST_PROVIDER,
+        DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_RUN_RESOLVE_STALLED_PROVIDER,
         DEN_WORK_SURFACE_CONFIRM, DEN_WORK_SURFACE_CONFIRM_PROVIDER,
     },
     display::ToolDisplayDescriptor,
@@ -159,6 +160,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_WORK_RUN_GET => return DEN_WORK_RUN_GET_PROVIDER.to_string(),
         DEN_WORK_RUN_FIND => return DEN_WORK_RUN_FIND_PROVIDER.to_string(),
         DEN_WORK_RUN_CANCEL => return DEN_WORK_RUN_CANCEL_PROVIDER.to_string(),
+        DEN_WORK_RUN_RESOLVE_STALLED => return DEN_WORK_RUN_RESOLVE_STALLED_PROVIDER.to_string(),
         DEN_WORK_CATALOG => return DEN_WORK_CATALOG_PROVIDER.to_string(),
         DEN_WORK_SURFACE_CONFIRM => return DEN_WORK_SURFACE_CONFIRM_PROVIDER.to_string(),
         DEN_WORK_PREPARE_RUST_DEPENDENCIES => {
@@ -756,6 +758,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
             json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"}},"required":["work_run_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_WORK_RUN_RESOLVE_STALLED,
+            "Resolve stalled work run",
+            "Record the operator's resolution of a stalled work run without changing its terminal outcome or diagnostic evidence. Use only after inspecting the stalled run and deciding how it was handled; retrying work creates a new attempt. A repeated request does not overwrite the original resolution.",
+            "bear.docket",
+            &["docket.job.execute"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"},"reason":{"type":"string","minLength":1,"maxLength":2000}},"required":["work_run_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_WORK_CATALOG,
@@ -1479,6 +1490,15 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &[],
             approval_summary: "Request cancellation of this work run.",
         },
+        DEN_WORK_RUN_RESOLVE_STALLED => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Recording stalled work-run resolution",
+            complete_verb: "Recorded stalled work-run resolution",
+            target_arg_keys: &["work_run_id"],
+            sensitive_arg_keys: &["reason"],
+            approval_summary: "Record how this stalled work run was resolved.",
+        },
         DEN_WORK_CATALOG => ToolDisplayDescriptor {
             label,
             category: "work",
@@ -1803,6 +1823,19 @@ mod tests {
         assert!(descriptor.description.contains("enabled commit policy"));
         assert!(descriptor.description.contains("not a shared filesystem checkout"));
         assert!(descriptor.description.contains("preflight rejects"));
+    }
+
+    #[test]
+    fn resolve_stalled_work_run_descriptor_is_operator_facing() {
+        let descriptor = builtin_den_tool_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.name == DEN_WORK_RUN_RESOLVE_STALLED)
+            .expect("descriptor");
+
+        assert_eq!(descriptor.provider_name, "resolve_stalled_work_run");
+        assert_eq!(descriptor.allowed_roles, CHAT_AND_PAIR_PROFILES);
+        assert_eq!(descriptor.input_schema["required"], json!(["work_run_id"]));
+        assert_eq!(descriptor.input_schema["additionalProperties"], false);
     }
 
     #[test]

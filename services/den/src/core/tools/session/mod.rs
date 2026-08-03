@@ -15,7 +15,8 @@ use den_core::tools::{
         DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
         DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
         DEN_WORK_PREPARE_RUST_DEPENDENCIES, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND,
-        DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST, DEN_WORK_SURFACE_CONFIRM,
+        DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST, DEN_WORK_RUN_RESOLVE_STALLED,
+        DEN_WORK_SURFACE_CONFIRM,
     },
 };
 use den_memory::MemoryStoreManager;
@@ -283,6 +284,9 @@ async fn invoke_workflow_tool(
         DEN_WORK_RUN_GET => workflow::get_work_run(pool, context, arguments).await?,
         DEN_WORK_RUN_FIND => workflow::find_work_run(pool, config, context, arguments).await?,
         DEN_WORK_RUN_CANCEL => workflow::cancel_work_run(pool, context, role, arguments).await?,
+        DEN_WORK_RUN_RESOLVE_STALLED => {
+            workflow::resolve_stalled_work_run(pool, context, role, arguments).await?
+        }
         DEN_WORK_CATALOG => workflow::get_work_catalog(pool, config, context, arguments).await?,
         DEN_WORK_SURFACE_CONFIRM => {
             workflow::confirm_work_surface(pool, context, role, arguments).await?

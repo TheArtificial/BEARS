@@ -9,7 +9,7 @@ use den_core::tools::constants::{
     DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
     DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
     DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
-    DEN_WORK_SURFACE_CONFIRM,
+    DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
@@ -139,6 +139,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_WORK_RUN_GET
             | DEN_WORK_RUN_FIND
             | DEN_WORK_RUN_CANCEL
+            | DEN_WORK_RUN_RESOLVE_STALLED
             | DEN_WORK_CATALOG
             | DEN_WORK_SURFACE_CONFIRM
     )
@@ -2674,7 +2675,51 @@ pub(crate) async fn cancel_work_run(
     }))
 }
 
-/// Read the sandbox provider's roots + image catalog so the model can choose
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkRunResolveStalledArguments {
+    work_run_id: Uuid,
+    #[serde(default = "default_stalled_resolution_reason")]
+    reason: String,
+}
+
+fn default_stalled_resolution_reason() -> String {
+    "resolved through the Docket control tool".into()
+}
+
+pub(crate) async fn resolve_stalled_work_run(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
+        return Err(CustomError::ValidationError(format!(
+            "resolve_stalled_work_run is available to chat and pair stances, not {}",
+            role.as_str()
+        )));
+    }
+    let args: WorkRunResolveStalledArguments = serde_json::from_value(arguments)?;
+    let resolved = den_docket::work_runs::resolve_stalled_work_run(
+        pool,
+        args.work_run_id,
+        context.bear_id,
+        &den_docket::work_runs::StalledWorkRunResolution {
+            resolved_by: format!("tool:{}", role.as_str()),
+            reason: args.reason,
+        },
+    )
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "resolved": resolved,
+        "note": if resolved {
+            "recorded the stalled-run resolution without changing its terminal outcome"
+        } else {
+            "run is not stalled, is unknown, or already has a recorded resolution; nothing changed"
+        },
+    }))
+}
+
 /// a root and toolchain image before dispatching.
 pub(crate) async fn get_work_catalog(
     pool: &PgPool,
