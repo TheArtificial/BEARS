@@ -715,7 +715,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_DISPATCH,
             "Dispatch work job",
-            "Queue a ready Docket job for background execution. The default target is a sandbox. attached_armature requires an explicit workspace attached to the current client session, preserves dirty worktrees, and keeps local permissions authoritative. A dispatched work run is a separate execution surface unless target is attached_armature: Pair cannot inspect, resume, verify, or commit its worktree without explicit transferred evidence or access. Keep full UUIDs for calls/evidence; report the result in prose as a typed unambiguous short handle such as `work run e4e4797b`.",
+            "Queue a ready Docket job for background execution. Sandbox dispatch uses an ephemeral isolated checkout, never the attached/local checkout. Repository changes are deliverable only through the job's enabled commit policy and work branch; dispatch preflight rejects source-changing sandbox work without that publication route. A Docket work surface supplies managed source context and execution authorization, not a shared filesystem checkout. attached_armature requires an explicit workspace attached to the current client session, preserves dirty worktrees, and keeps local permissions authoritative. A dispatched work run is a separate execution surface unless target is attached_armature: Pair cannot inspect, resume, verify, or commit its worktree without explicit transferred evidence or access. Keep full UUIDs for calls/evidence; report the result in prose as a typed unambiguous short handle such as `work run e4e4797b`.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
@@ -1790,6 +1790,19 @@ mod tests {
             descriptor.input_schema["properties"]["preparation"]["enum"],
             json!(["check", "test_no_run"])
         );
+    }
+
+    #[test]
+    fn work_dispatch_descriptor_explains_isolation_and_publication() {
+        let descriptor = builtin_den_tool_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.name == DEN_WORK_DISPATCH)
+            .expect("descriptor");
+
+        assert!(descriptor.description.contains("ephemeral isolated checkout"));
+        assert!(descriptor.description.contains("enabled commit policy"));
+        assert!(descriptor.description.contains("not a shared filesystem checkout"));
+        assert!(descriptor.description.contains("preflight rejects"));
     }
 
     #[test]
