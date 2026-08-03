@@ -581,6 +581,7 @@ pub enum DocketJobStatus {
     Draft,
     Ready,
     Running,
+    Stalled,
     Blocked,
     Completed,
     Cancelled,
@@ -593,6 +594,7 @@ impl DocketJobStatus {
             Self::Draft => "draft",
             Self::Ready => "ready",
             Self::Running => "running",
+            Self::Stalled => "stalled",
             Self::Blocked => "blocked",
             Self::Completed => "completed",
             Self::Cancelled => "cancelled",
@@ -864,7 +866,10 @@ pub struct DocketJobRow {
     /// Upstream branch this job's work runs publish to (set on first
     /// pushable dispatch when absent; default `den/job-<short-id>`).
     pub work_branch: Option<String>,
+    /// Derived operational status; never persisted in `bear_jobs`.
     pub status: String,
+    /// Explicit user lifecycle intent.
+    pub lifecycle_intent: Option<String>,
     pub visibility: String,
     pub source_conversation_id: Option<String>,
     pub objective_kind: Option<String>,
@@ -1334,7 +1339,61 @@ impl From<DocketValidationError> for DenError {
     }
 }
 
+pub fn derived_docket_job_status(projection: &DocketJobProjection) -> String {
+    let run_state = projection
+        .current_run
+        .as_ref()
+        .map(|run| run.state.as_str());
+    if let Some(intent) = projection.job.lifecycle_intent.as_deref() {
+        return intent.to_string();
+    }
+    if run_state == Some("stalled") {
+        return "stalled".to_string();
+    }
+    if run_state == Some("running")
+        || projection
+            .task_states
+            .iter()
+            .any(|state| state.status == "in_progress")
+    {
+        return "running".to_string();
+    }
+    if run_state == Some("blocked")
+        || projection
+            .task_states
+            .iter()
+            .any(|state| state.status == "blocked")
+    {
+        return "blocked".to_string();
+    }
+    let tasks_complete = projection.tasks.iter().all(|task| {
+        projection
+            .task_states
+            .iter()
+            .find(|state| state.task_id == task.id)
+            .is_some_and(|state| matches!(state.status.as_str(), "done" | "cancelled"))
+    });
+    let criteria_complete = projection.criteria.iter().all(|criterion| {
+        projection
+            .criteria_states
+            .iter()
+            .find(|state| state.criterion_id == criterion.id)
+            .is_some_and(|state| matches!(state.status.as_str(), "met" | "waived"))
+    });
+    if tasks_complete
+        && criteria_complete
+        && (!projection.tasks.is_empty() || !projection.criteria.is_empty())
+    {
+        "completed".to_string()
+    } else if projection.tasks.is_empty() {
+        "draft".to_string()
+    } else {
+        "ready".to_string()
+    }
+}
+
 pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobStatusReport {
+    let job_status = derived_docket_job_status(projection);
     let mut task_counts = DocketCountByStatus {
         pending: 0,
         in_progress: 0,
@@ -1395,7 +1454,9 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
     let criteria_complete = projection.criteria.is_empty()
         || criteria_counts.unmet == 0
             && criteria_counts.met + criteria_counts.waived == projection.criteria.len();
-    let next_action = if task_counts.blocked > 0 || projection.job.status == "blocked" {
+    let next_action = if job_status == "stalled" {
+        "resolve_stalled_work_run".to_string()
+    } else if task_counts.blocked > 0 || job_status == "blocked" {
         "resolve_blocked_task_or_criterion".to_string()
     } else if task_counts.in_progress > 0 {
         "continue_current_task".to_string()
@@ -1403,7 +1464,7 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
         "execute_job_to_select_next_task".to_string()
     } else if !criteria_complete {
         "evaluate_remaining_criteria".to_string()
-    } else if projection.job.status != "completed" {
+    } else if job_status != "completed" {
         "execute_job_to_complete".to_string()
     } else {
         "done".to_string()
@@ -1412,7 +1473,7 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
     DocketJobStatusReport {
         job_id: projection.job.id,
         run_id: projection.current_run.as_ref().map(|run| run.id),
-        job_status: projection.job.status.clone(),
+        job_status: job_status.to_string(),
         run_state: projection.current_run.as_ref().map(|run| run.state.clone()),
         current_task_id: current_task.map(|task| task.id),
         current_task_title: current_task.map(|task| task.title.clone()),
@@ -1468,7 +1529,7 @@ pub fn task_list_projection_from_docket_job(
         summary: "Docket work job checkout".to_string(),
         owner_profile: projection.job.created_by_role.clone(),
         visibility: projection.job.visibility.clone(),
-        status: projection.job.status.clone(),
+        status: derived_docket_job_status(projection),
         version: 1,
         source_ref: TaskListSourceRef::docket_job(
             projection.job.id.to_string(),
@@ -2373,6 +2434,7 @@ mod tests {
                 commit_policy: Some("none".to_string()),
                 work_branch: None,
                 status: "running".to_string(),
+                lifecycle_intent: None,
                 visibility: "bear_visible".to_string(),
                 source_conversation_id: Some("conversation-1".to_string()),
                 objective_kind: Some("conversation_task_list".to_string()),
@@ -2458,6 +2520,20 @@ mod tests {
     }
 
     #[test]
+    fn derived_status_prefers_stalled_run_over_stale_job_status() {
+        let mut projection = docket_projection_fixture();
+        projection.job.status = "ready".to_string();
+        projection.current_run.as_mut().unwrap().state = "stalled".to_string();
+
+        let report = docket_job_status_report(&projection);
+        let task_list = task_list_projection_from_docket_job(&projection, None);
+
+        assert_eq!(report.job_status, "stalled");
+        assert_eq!(report.next_action, "resolve_stalled_work_run");
+        assert_eq!(task_list.status, "stalled");
+    }
+
+    #[test]
     fn task_list_projection_from_docket_job_projects_conversation_objective_level() {
         let job_id = Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap();
         let root_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000888").unwrap();
@@ -2475,6 +2551,7 @@ mod tests {
                 commit_policy: Some("none".to_string()),
                 work_branch: None,
                 status: "running".to_string(),
+                lifecycle_intent: None,
                 visibility: "bear_visible".to_string(),
                 source_conversation_id: Some("conversation-1".to_string()),
                 objective_kind: Some("conversation_task_list".to_string()),

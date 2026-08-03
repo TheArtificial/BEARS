@@ -55,6 +55,7 @@ pub enum WorkRunState {
     Running,
     Paused,
     Reporting,
+    Stalled,
     Succeeded,
     Blocked,
     Failed,
@@ -71,6 +72,7 @@ impl WorkRunState {
             Self::Running => "running",
             Self::Paused => "paused",
             Self::Reporting => "reporting",
+            Self::Stalled => "stalled",
             Self::Succeeded => "succeeded",
             Self::Blocked => "blocked",
             Self::Failed => "failed",
@@ -87,6 +89,7 @@ impl WorkRunState {
             "running" => Self::Running,
             "paused" => Self::Paused,
             "reporting" => Self::Reporting,
+            "stalled" => Self::Stalled,
             "succeeded" => Self::Succeeded,
             "blocked" => Self::Blocked,
             "failed" => Self::Failed,
@@ -99,7 +102,12 @@ impl WorkRunState {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::Succeeded | Self::Blocked | Self::Failed | Self::Cancelled | Self::TimedOut
+            Self::Stalled
+                | Self::Succeeded
+                | Self::Blocked
+                | Self::Failed
+                | Self::Cancelled
+                | Self::TimedOut
         )
     }
 }
@@ -246,7 +254,7 @@ pub async fn enqueue_work_job(
         bool,
     );
     let job: Option<JobEnqueueRow> = sqlx::query_as(
-        "SELECT j.work_surface_id, s.name, j.current_run_id, j.status,
+        "SELECT j.work_surface_id, s.name, j.current_run_id, j.lifecycle_intent,
                     j.commit_policy, j.work_branch,
                     EXISTS (
                         SELECT 1 FROM work_surface_bears wsb
@@ -450,7 +458,7 @@ async fn claim_next_work_run_once(
                      AND r.execution_target = 'sandbox'
                      AND EXISTS (
                          SELECT 1 FROM bear_jobs j
-                         WHERE j.id = r.job_id AND j.status IN ('ready', 'running')
+                         WHERE j.id = r.job_id AND COALESCE(j.lifecycle_intent, '') NOT IN ('cancelled', 'archived')
                      )
                      AND NOT EXISTS (
                          SELECT 1 FROM bear_work_runs sibling
@@ -598,7 +606,7 @@ pub async fn attention_work_runs(
              ORDER BY job_id, queued_at DESC, id DESC
          ) latest
          JOIN bear_jobs j ON j.id = latest.job_id
-         WHERE latest.state IN ('blocked', 'failed', 'timed_out')
+         WHERE latest.state IN ('stalled', 'blocked', 'failed', 'timed_out')
          ORDER BY latest.finished_at DESC NULLS LAST
          LIMIT $3",
     )
@@ -623,7 +631,7 @@ pub async fn jobs_awaiting_completion(
                 created_at, updated_at
          FROM bear_jobs j
          WHERE j.bear_id = $1
-           AND j.status IN ('ready', 'running')
+           AND j.lifecycle_intent IS NULL
            AND EXISTS (SELECT 1 FROM bear_tasks t WHERE t.job_id = j.id)
            AND NOT EXISTS (
                SELECT 1 FROM bear_tasks t
@@ -897,6 +905,11 @@ pub fn canonical_work_run_outcome(
     let (status, code, summary) = match state {
         WorkRunState::Succeeded => ("completed", "completed", "Work completed."),
         WorkRunState::Blocked => ("blocked", "work_blocked", "Work is blocked."),
+        WorkRunState::Stalled => (
+            "stalled",
+            "work_stalled",
+            "Work stalled awaiting operator action.",
+        ),
         WorkRunState::Failed => ("failed", "work_failed", "Work failed."),
         WorkRunState::TimedOut => ("timed_out", "work_timed_out", "Work timed out."),
         WorkRunState::Cancelled => ("cancelled", "work_cancelled", "Work was cancelled."),
@@ -936,7 +949,7 @@ pub async fn finalize_work_run(
              lease_expires_at = NULL,
              finished_at = COALESCE(finished_at, now()),
              updated_at = now()
-         WHERE id = $1 AND state NOT IN ('succeeded', 'blocked', 'failed', 'cancelled', 'timed_out')
+         WHERE id = $1 AND state NOT IN ('succeeded', 'stalled', 'blocked', 'failed', 'cancelled', 'timed_out')
          RETURNING {WORK_RUN_COLUMNS}"
     ))
     .bind(run_id)
@@ -962,7 +975,14 @@ pub async fn finalize_work_run(
     .await?;
     let task_statuses: Vec<String> = task_statuses.into_iter().map(|(status,)| status).collect();
     let result_refs = row.result_refs.as_ref().unwrap_or(&Value::Null);
-    let canonical_state = canonical_work_run_state(state, result_refs, &task_statuses);
+    let mut canonical_state = canonical_work_run_state(state, result_refs, &task_statuses);
+    if result_refs
+        .pointer("/turn_outcome/detail/category")
+        .and_then(Value::as_str)
+        == Some("continuation_watchdog_timeout")
+    {
+        canonical_state = WorkRunState::Stalled;
+    }
     let mut canonical_outcome =
         canonical_work_run_outcome(canonical_state, result_refs, &task_statuses);
     if !matches!(canonical_state, WorkRunState::Succeeded) {
@@ -989,10 +1009,10 @@ pub async fn finalize_work_run(
         .await?;
         let detail = result_refs.pointer("/turn_outcome/detail");
         canonical_outcome = json!({
-            "status": "failed",
+            "status": "stalled",
             "code": "continuation_watchdog_timeout",
             "summary": "The model continuation stopped responding before this work run could finish.",
-            "next_action": "Retry the work run. If it happens again, inspect the safe watchdog evidence below.",
+            "next_action": "Wait for evidence, retry the work run, cancel it, or resolve it as failed.",
             "affected_task": affected_task.map(|(id, title, status)| json!({
                 "id": id,
                 "title": title,
@@ -1067,12 +1087,18 @@ async fn settle_failed_work_as_blocked(
         return Ok(());
     }
 
+    let job_run_state = if work_run.state == "stalled" {
+        "stalled"
+    } else {
+        "blocked"
+    };
     sqlx::query(
-        "UPDATE bear_job_runs SET state = 'blocked', outcome = $2::jsonb,
+        "UPDATE bear_job_runs SET state = $2, outcome = $3::jsonb,
              finished_at = COALESCE(finished_at, NOW()), updated_at = NOW()
          WHERE id = $1",
     )
     .bind(work_run.job_run_id)
+    .bind(job_run_state)
     .bind(outcome)
     .execute(&mut **tx)
     .await?;
@@ -1905,11 +1931,10 @@ pub async fn close_work_execution_session(
 /// Bears that have jobs with unfinished tasks, for the optional auto-enqueue
 /// sweep (`WORK_DISPATCH_AUTO`).
 pub async fn list_bears_with_work_tasks(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
-    let rows: Vec<(Uuid,)> = sqlx::query_as(
-        "SELECT DISTINCT bear_id FROM bear_jobs WHERE status IN ('ready', 'running', 'blocked')",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(Uuid,)> =
+        sqlx::query_as("SELECT DISTINCT bear_id FROM bear_jobs WHERE lifecycle_intent IS NULL")
+            .fetch_all(pool)
+            .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 

@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::db::get_job;
 use crate::execution_profiles::{ProfileProvenance, ResolvedExecutionProfile};
 use crate::recovery::{
     parent_rollup_context, persist_result_rollup, start_turn_attempt, terminalize_turn_attempt,
@@ -755,12 +756,8 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .unwrap();
     assert_eq!(events, 0);
 
-    // Explicitly recover the blocked job before retrying it.
-    sqlx::query("UPDATE bear_jobs SET status = 'ready' WHERE id = $1")
-        .bind(run.job_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    // A recovered job run can enqueue a new work-run attempt; job state is
+    // derived from its current run and never reset on bear_jobs.
     sqlx::query("UPDATE bear_job_runs SET state = 'running', finished_at = NULL WHERE id = $1")
         .bind(run.job_run_id)
         .execute(&pool)
@@ -828,18 +825,17 @@ async fn successful_work_run_settles_completed_docket_job() {
     .await
     .unwrap();
 
-    let (job_status,): (String,) = sqlx::query_as("SELECT status FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
-        .fetch_one(&pool)
+    let projection = get_job(&pool, bear_id, job_id)
         .await
-        .unwrap();
+        .unwrap()
+        .expect("job exists");
     let (run_state, finished_at): (String, Option<OffsetDateTime>) =
         sqlx::query_as("SELECT state, finished_at FROM bear_job_runs WHERE id = $1")
             .bind(run.job_run_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(job_status, "completed");
+    assert_eq!(projection.job.status, "completed");
     assert_eq!(run_state, "completed");
     assert!(finished_at.is_some());
 }
@@ -1089,12 +1085,8 @@ async fn attention_and_completion_visibility() {
         Some("missing credentials for the deploy step")
     );
 
-    // Explicitly recover the job before a queued retry supersedes the failure.
-    sqlx::query("UPDATE bear_jobs SET status = 'ready' WHERE id = $1")
-        .bind(job_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    // A running retry supersedes the failed attempt for attention purposes;
+    // job status is derived from its run evidence.
     sqlx::query("UPDATE bear_job_runs SET state = 'running', finished_at = NULL WHERE id = $1")
         .bind(run.job_run_id)
         .execute(&pool)

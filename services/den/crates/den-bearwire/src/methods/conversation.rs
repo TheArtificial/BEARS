@@ -91,7 +91,6 @@ struct DocketDiagnosticEventRow {
     payload: Value,
     job_id: Option<Uuid>,
     job_goal: Option<String>,
-    job_status: Option<String>,
     task_id: Option<Uuid>,
     task_title: Option<String>,
 }
@@ -112,7 +111,7 @@ async fn list_docket_diagnostic_events(
             ORDER BY job_id, updated_at DESC
         ), docket_events AS (
             SELECT events.id, events.created_at, events.event_type, events.payload,
-                   events.job_id, jobs.goal AS job_goal, jobs.status AS job_status,
+                   events.job_id, jobs.goal AS job_goal,
                    focused_jobs.task_id AS task_id,
                    focus_tasks.title AS task_title
             FROM bear_job_events events
@@ -123,7 +122,7 @@ async fn list_docket_diagnostic_events(
               AND events.event_type = 'focus_selected'
             UNION ALL
             SELECT events.id, events.created_at, events.event_type, events.payload,
-                   tasks.job_id, jobs.goal AS job_goal, jobs.status AS job_status,
+                   tasks.job_id, jobs.goal AS job_goal,
                    events.task_id,
                    tasks.title AS task_title
             FROM bear_task_events events
@@ -133,7 +132,7 @@ async fn list_docket_diagnostic_events(
               AND events.event_type IN ('created', 'updated')
               AND events.payload ? 'definition'
         )
-        SELECT id, created_at, event_type, payload, job_id, job_goal, job_status, task_id, task_title
+        SELECT id, created_at, event_type, payload, job_id, job_goal, task_id, task_title
         FROM docket_events
         ORDER BY created_at ASC
         LIMIT $3
@@ -153,10 +152,9 @@ fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Valu
             id: Some(DocketSurfaceEventId::new(row.id).to_string()),
             role: "system".to_string(),
             text: format!(
-                "Docket focus selected: job={} goal={} status={} task={} state={}",
+                "Docket focus selected: job={} goal={} task={} state={}",
                 row.job_id?,
                 row.job_goal.as_deref().unwrap_or("unknown"),
-                row.job_status.as_deref().unwrap_or("unknown"),
                 row.task_title.as_deref().unwrap_or("unknown task"),
                 row.payload
                     .get("state")

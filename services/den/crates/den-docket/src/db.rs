@@ -13,10 +13,10 @@ use uuid::Uuid;
 use den_core::{BearProfile, DenError};
 
 use super::model::{
-    docket_parent_task_ref, docket_task_status_from_task_list_item_status,
-    normalize_completion_criteria, task_list_projection_from_docket_job,
-    validate_docket_job_create, validate_docket_task_create, DocketCommitPolicy,
-    DocketCriterionStateRow, DocketCriterionStateUpdate, DocketExecutionLookup,
+    derived_docket_job_status, docket_parent_task_ref,
+    docket_task_status_from_task_list_item_status, normalize_completion_criteria,
+    task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
+    DocketCommitPolicy, DocketCriterionStateRow, DocketCriterionStateUpdate, DocketExecutionLookup,
     DocketExecutionSessionRow, DocketExecutionSessionUpsert, DocketJobCreate,
     DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
@@ -45,7 +45,7 @@ pub(super) async fn create_job(
         SELECT id
         FROM bear_jobs
         WHERE bear_id = $1
-          AND status IN ('draft', 'ready', 'running', 'blocked')
+          AND lifecycle_intent IS NULL
           AND lower(btrim(goal)) = lower(btrim($2))
           AND work_surface_id IS NOT DISTINCT FROM $3
           AND ($4::uuid IS NULL OR id = $4)
@@ -69,7 +69,7 @@ pub(super) async fn create_job(
             if create.supersedes_job_id == Some(job_id) =>
         {
             sqlx::query(
-                "UPDATE bear_jobs SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+                "UPDATE bear_jobs SET lifecycle_intent = 'cancelled', updated_at = NOW() WHERE id = $1",
             )
             .bind(job_id)
             .execute(&mut *tx)
@@ -93,12 +93,12 @@ pub(super) async fn create_job(
         r"
         INSERT INTO bear_jobs (
             bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-            commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind,
+            commit_policy, work_branch, lifecycle_intent, visibility, source_conversation_id, objective_kind,
             supersedes_job_id
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-                  commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind,
+                  commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind,
                   supersedes_job_id, current_run_id, created_at, updated_at
         ",
     )
@@ -115,7 +115,11 @@ pub(super) async fn create_job(
             .map(str::trim)
             .filter(|branch| !branch.is_empty()),
     )
-    .bind(create.status.as_str())
+    .bind(match create.status {
+        DocketJobStatus::Cancelled => Some("cancelled"),
+        DocketJobStatus::Archived => Some("archived"),
+        _ => None,
+    })
     .bind(create.visibility.as_str())
     .bind(create.source_conversation_id.as_deref())
     .bind(create.objective_kind.as_deref())
@@ -141,7 +145,7 @@ pub(super) async fn create_job(
         SET current_run_id = $2, updated_at = NOW()
         WHERE id = $1
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-                  commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
+                  commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         ",
     )
     .bind(job.id)
@@ -220,7 +224,7 @@ pub(super) async fn create_job(
     .bind(json!({
         "criteria_count": criteria.len(),
         "task_count": tasks.len(),
-        "status": job.status,
+        "lifecycle_intent": job.lifecycle_intent,
         "visibility": job.visibility,
     }))
     .execute(&mut *tx)
@@ -554,36 +558,47 @@ pub(super) async fn list_jobs(
     } else {
         filter.limit.min(200)
     };
-    let rows = sqlx::query_as!(
-        DocketJobRow,
+    let rows = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
+               commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1
           AND ($2::text IS NULL OR source_conversation_id = $2)
         ORDER BY updated_at DESC
         LIMIT $3
         ",
-        bear_id,
-        filter.source_conversation_id.as_deref(),
-        limit,
     )
+    .bind(bear_id)
+    .bind(filter.source_conversation_id.as_deref())
+    .bind(limit)
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .filter(|job| filter.include_cancelled || job.status != "cancelled")
-        .filter(|job| filter.include_archived || job.status != "archived")
-        .filter(|job| {
-            filter
-                .statuses
-                .as_ref()
-                .map(|statuses| statuses.iter().any(|status| job.status == status.as_str()))
-                .unwrap_or(true)
-        })
-        .collect())
+    // ponytail: list queries derive each row through the canonical projection, an O(n)
+    // read pattern. Batch projection loading if list sizes make this material in production.
+    let mut jobs = Vec::with_capacity(rows.len());
+    for mut job in rows {
+        if !filter.include_cancelled && job.lifecycle_intent.as_deref() == Some("cancelled") {
+            continue;
+        }
+        if !filter.include_archived && job.lifecycle_intent.as_deref() == Some("archived") {
+            continue;
+        }
+        let projection = get_job(pool, bear_id, job.id)
+            .await?
+            .expect("job selected from bear_jobs must remain present");
+        job.status = derived_docket_job_status(&projection);
+        if filter
+            .statuses
+            .as_ref()
+            .is_some_and(|statuses| !statuses.iter().any(|status| job.status == status.as_str()))
+        {
+            continue;
+        }
+        jobs.push(job);
+    }
+    Ok(jobs)
 }
 
 pub(super) async fn get_job(
@@ -591,17 +606,16 @@ pub(super) async fn get_job(
     bear_id: Uuid,
     job_id: Uuid,
 ) -> Result<Option<DocketJobProjection>, DenError> {
-    let Some(job) = sqlx::query_as!(
-        DocketJobRow,
+    let Some(job) = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
+               commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
         ",
-        bear_id,
-        job_id,
     )
+    .bind(bear_id)
+    .bind(job_id)
     .fetch_optional(pool)
     .await?
     else {
@@ -662,14 +676,16 @@ pub(super) async fn get_job(
         (Vec::new(), Vec::new())
     };
 
-    Ok(Some(DocketJobProjection {
+    let mut projection = DocketJobProjection {
         job,
         current_run,
         criteria,
         criteria_states,
         tasks,
         task_states,
-    }))
+    };
+    projection.job.status = derived_docket_job_status(&projection);
+    Ok(Some(projection))
 }
 
 pub(super) async fn update_job(
@@ -704,7 +720,7 @@ pub(super) async fn update_job(
     let Some(current) = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
+               commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
         ",
@@ -719,6 +735,11 @@ pub(super) async fn update_job(
             update.job_id
         )));
     };
+    let lifecycle_intent = update.status.and_then(|status| match status {
+        DocketJobStatus::Cancelled => Some("cancelled"),
+        DocketJobStatus::Archived => Some("archived"),
+        _ => None,
+    });
     let job = sqlx::query_as::<_, DocketJobRow>(
         r"
         UPDATE bear_jobs
@@ -726,12 +747,12 @@ pub(super) async fn update_job(
             work_surface_id = $4,
             commit_policy = $5,
             work_branch = $6,
-            status = $7,
+            lifecycle_intent = COALESCE($7, lifecycle_intent),
             visibility = $8,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-                  commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
+                  commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         ",
     )
     .bind(update.bear_id)
@@ -760,12 +781,7 @@ pub(super) async fn update_job(
             .clone()
             .unwrap_or_else(|| current.work_branch.clone()),
     )
-    .bind(
-        update
-            .status
-            .map(|status| status.as_str())
-            .unwrap_or(&current.status),
-    )
+    .bind(lifecycle_intent)
     .bind(
         update
             .visibility
@@ -788,7 +804,7 @@ pub(super) async fn update_job(
     .bind(update.actor_agent_id.as_deref())
     .bind(update.actor_user_id)
     .bind(json!({
-        "status": job.status,
+        "lifecycle_intent": job.lifecycle_intent,
         "goal": job.goal,
         "visibility": job.visibility,
     }))
@@ -855,14 +871,13 @@ async fn reconcile_job_status(
     job_id: Uuid,
     run_id: Uuid,
 ) -> Result<(), DenError> {
-    let (current_status, current_run_id): (String, Option<Uuid>) =
-        sqlx::query_as("SELECT status, current_run_id FROM bear_jobs WHERE id = $1 FOR UPDATE")
-            .bind(job_id)
-            .fetch_one(&mut **tx)
-            .await?;
-    if current_run_id != Some(run_id)
-        || matches!(current_status.as_str(), "draft" | "cancelled" | "archived")
-    {
+    let (_, current_run_id): (Option<String>, Option<Uuid>) = sqlx::query_as(
+        "SELECT lifecycle_intent, current_run_id FROM bear_jobs WHERE id = $1 FOR UPDATE",
+    )
+    .bind(job_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if current_run_id != Some(run_id) {
         return Ok(());
     }
 
@@ -897,14 +912,7 @@ async fn reconcile_job_status(
     .fetch_one(&mut **tx)
     .await?;
 
-    let derived = derived_job_status(in_progress, blocked, unfinished, unmet_criteria);
-    if current_status != derived {
-        sqlx::query("UPDATE bear_jobs SET status = $2, updated_at = NOW() WHERE id = $1")
-            .bind(job_id)
-            .bind(derived)
-            .execute(&mut **tx)
-            .await?;
-    }
+    let _derived = derived_job_status(in_progress, blocked, unfinished, unmet_criteria);
     Ok(())
 }
 

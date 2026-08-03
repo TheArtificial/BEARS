@@ -104,7 +104,7 @@ struct AttemptEventRow {
 pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnostics, DenError> {
     // sqlx-dynamic: transitional static query; this module is included in the checked-query ratchet and will migrate when workspace SQLx metadata is refreshed.
     let (job_id, job_status, run_state): (Uuid, String, String) = sqlx::query_as(
-        "SELECT j.id, j.status, r.state FROM bear_job_runs r JOIN bear_jobs j ON j.id=r.job_id WHERE r.id=$1",
+        "SELECT j.id, COALESCE(j.lifecycle_intent, 'derived'), r.state FROM bear_job_runs r JOIN bear_jobs j ON j.id=r.job_id WHERE r.id=$1",
     ).bind(run_id).fetch_optional(pool).await?
         .ok_or_else(|| DenError::NotFound(format!("Docket run not found: {run_id}")))?;
 
