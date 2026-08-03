@@ -1969,6 +1969,7 @@ async fn dispatch_job(
         work_runs::WorkJobEnqueue {
             bear_id,
             job_id,
+            durable_result: den_docket::DurableResultKind::RepositoryChanges,
             git_ref: clean_form_field(&form.git_ref),
             image_name: clean_form_field(&form.image),
             requested_by_user_id: Some(user_id),
@@ -2085,6 +2086,7 @@ async fn retry_run(
             work_runs::WorkJobEnqueue {
                 bear_id: run.bear_id,
                 job_id: run.job_id,
+                durable_result: den_docket::DurableResultKind::RepositoryChanges,
                 git_ref: run.git_ref.clone(),
                 image_name: run.image_name.clone(),
                 requested_by_user_id: Some(user_id),

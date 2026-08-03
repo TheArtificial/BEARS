@@ -136,6 +136,7 @@ async fn auto_enqueue(pool: &PgPool) {
                 work_runs::WorkJobEnqueue {
                     bear_id,
                     job_id,
+                    durable_result: den_docket::DurableResultKind::RepositoryChanges,
                     git_ref: None,
                     image_name: None,
                     requested_by_user_id,
@@ -649,7 +650,9 @@ async fn harvest_run(
         "not_required"
     };
     if publication_required && succeeded {
-        let context = context.as_ref().expect("publication requirement has context");
+        let context = context
+            .as_ref()
+            .expect("publication requirement has context");
         match (sandbox_id, context.work_branch.as_deref()) {
             (Some(id), Some(branch)) => {
                 let request = PublishRequest {
@@ -878,6 +881,7 @@ async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
         work_runs::WorkJobEnqueue {
             bear_id: run.bear_id,
             job_id: run.job_id,
+            durable_result: den_docket::DurableResultKind::RepositoryChanges,
             git_ref: run.git_ref.clone(),
             image_name: run.image_name.clone(),
             requested_by_user_id: Some(context.created_by_user_id),

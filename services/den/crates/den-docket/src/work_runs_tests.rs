@@ -178,6 +178,51 @@ fn enqueue_for(bear_id: Uuid, task_id: Uuid, user_id: i32) -> WorkRunEnqueue {
 }
 
 #[tokio::test]
+async fn sandbox_repository_changes_without_publication_creates_no_run() {
+    let _guard = DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "sandbox-no-publication").await;
+    let (job_id, _) = seed_work_job(&pool, user_id, bear_id).await;
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM bear_work_runs WHERE job_id = $1")
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count runs before rejected dispatch");
+
+    let error = enqueue_work_job(
+        &pool,
+        WorkJobEnqueue {
+            bear_id,
+            job_id,
+            durable_result: crate::DurableResultKind::RepositoryChanges,
+            git_ref: None,
+            image_name: None,
+            requested_by_user_id: Some(user_id),
+            execution_target: WorkExecutionTarget::Sandbox,
+            attachment_warning: None,
+        },
+    )
+    .await
+    .expect_err("sandbox source changes without publication must be rejected");
+
+    assert!(error
+        .to_string()
+        .contains("repository_changes_without_publication"));
+    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM bear_work_runs WHERE job_id = $1")
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count runs after rejected dispatch");
+    assert_eq!(
+        after, before,
+        "rejected dispatch must not create a work run"
+    );
+}
+
+#[tokio::test]
 async fn attached_disconnect_reconnect_and_timeout_are_idempotent() {
     let _guard = DB_LOCK.lock().await;
     let Some(pool) = test_pool().await else {
@@ -192,7 +237,7 @@ async fn attached_disconnect_reconnect_and_timeout_are_idempotent() {
         WorkJobEnqueue {
             bear_id,
             job_id,
-            root_name: Some("/workspace".into()),
+            durable_result: crate::DurableResultKind::RepositoryChanges,
             git_ref: None,
             image_name: None,
             requested_by_user_id: Some(user_id),

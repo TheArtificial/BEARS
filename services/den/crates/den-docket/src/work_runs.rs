@@ -171,6 +171,7 @@ pub fn effective_work_run_surface(managed_surface_name: Option<&str>) -> Option<
 pub struct WorkJobEnqueue {
     pub bear_id: Uuid,
     pub job_id: Uuid,
+    pub durable_result: crate::DurableResultKind,
     pub git_ref: Option<String>,
     pub image_name: Option<String>,
     pub requested_by_user_id: Option<i32>,
@@ -216,6 +217,7 @@ pub async fn enqueue_work_run(
         WorkJobEnqueue {
             bear_id: enqueue.bear_id,
             job_id,
+            durable_result: crate::DurableResultKind::RepositoryChanges,
             git_ref: enqueue.git_ref,
             image_name: enqueue.image_name,
             requested_by_user_id: enqueue.requested_by_user_id,
@@ -239,10 +241,13 @@ pub async fn enqueue_work_job(
         Option<String>,
         Option<Uuid>,
         Option<String>,
+        Option<String>,
+        Option<String>,
         bool,
     );
     let job: Option<JobEnqueueRow> = sqlx::query_as(
         "SELECT j.work_surface_id, s.name, j.current_run_id, j.status,
+                    j.commit_policy, j.work_branch,
                     EXISTS (
                         SELECT 1 FROM work_surface_bears wsb
                         WHERE wsb.surface_id = j.work_surface_id AND wsb.bear_id = j.bear_id
@@ -255,7 +260,16 @@ pub async fn enqueue_work_job(
     .bind(enqueue.bear_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((surface_id, surface_name, current_run_id, status, surface_assigned)) = job else {
+    let Some((
+        surface_id,
+        surface_name,
+        current_run_id,
+        status,
+        commit_policy,
+        work_branch,
+        surface_assigned,
+    )) = job
+    else {
         return Err(DenError::NotFound(format!(
             "Docket job not found: {}",
             enqueue.job_id
@@ -282,10 +296,30 @@ pub async fn enqueue_work_job(
         ));
     }
 
+    let commit_policy = match commit_policy.as_deref() {
+        Some("none") => Some(crate::DocketCommitPolicy::None),
+        Some("per_task") => Some(crate::DocketCommitPolicy::PerTask),
+        Some("per_job") => Some(crate::DocketCommitPolicy::PerJob),
+        _ => None,
+    };
+    let preflight = crate::preflight_dispatch(
+        &enqueue.execution_target,
+        enqueue.durable_result,
+        commit_policy,
+        work_branch.as_deref(),
+    );
+    if !preflight.dispatchable {
+        return Err(DenError::ValidationError(
+            "repository_changes_without_publication: sandbox runs use isolated ephemeral checkouts; set commit_policy to per_task or per_job, or use the attached worktree"
+                .into(),
+        ));
+    }
+
     let provider_surface = effective_work_run_surface(surface_name.as_deref());
     if provider_surface.is_none() {
         return Err(DenError::ValidationError(
-            "work_surface_required: this work job lacks a usable managed work-surface binding".into(),
+            "work_surface_required: this work job lacks a usable managed work-surface binding"
+                .into(),
         ));
     }
     let runnable: bool = sqlx::query_scalar(
@@ -340,15 +374,24 @@ pub async fn enqueue_work_job(
                                      attachment_warning)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING {WORK_RUN_COLUMNS}"
     ))
-    .bind(enqueue.bear_id).bind(enqueue.job_id).bind(job_run_id).bind(attempt)
-    .bind(enqueue.git_ref).bind(enqueue.image_name)
-    .bind(execution_target).bind(attached_client_session_id).bind(attachment_state)
+    .bind(enqueue.bear_id)
+    .bind(enqueue.job_id)
+    .bind(job_run_id)
+    .bind(attempt)
+    .bind(enqueue.git_ref)
+    .bind(enqueue.image_name)
+    .bind(execution_target)
+    .bind(attached_client_session_id)
+    .bind(attachment_state)
     .bind(enqueue.attachment_warning)
     .fetch_one(&mut *tx)
     .await
     .map_err(|err| match err {
-        sqlx::Error::Database(db) if db.constraint() == Some("idx_bear_work_runs_one_active_per_job") =>
-            DenError::ValidationError("job already has an active work run".into()),
+        sqlx::Error::Database(db)
+            if db.constraint() == Some("idx_bear_work_runs_one_active_per_job") =>
+        {
+            DenError::ValidationError("job already has an active work run".into())
+        }
         other => other.into(),
     })?;
     tx.commit().await?;
@@ -1951,7 +1994,7 @@ pub async fn ensure_job_work_branch(pool: &PgPool, job_id: Uuid) -> Result<Strin
 mod tests {
     use serde_json::json;
 
-    use super::{effective_work_run_root, is_attached_recovery_source};
+    use super::{effective_work_run_surface, is_attached_recovery_source};
 
     #[test]
     fn attached_recovery_requires_the_canonical_timeout_outcome() {
@@ -1979,15 +2022,12 @@ mod tests {
     }
 
     #[test]
-    fn effective_work_run_root_prefers_trimmed_request_then_job_default() {
+    fn effective_work_run_surface_trims_the_managed_surface_name() {
         assert_eq!(
-            effective_work_run_root(Some(" requested "), Some("job-default")),
-            Some("requested".to_string())
+            effective_work_run_surface(Some(" managed-surface ")),
+            Some("managed-surface".to_string())
         );
-        assert_eq!(
-            effective_work_run_root(Some("   "), Some(" job-default ")),
-            Some("job-default".to_string())
-        );
-        assert_eq!(effective_work_run_root(None, Some("   ")), None);
+        assert_eq!(effective_work_run_surface(Some("   ")), None);
+        assert_eq!(effective_work_run_surface(None), None);
     }
 }
