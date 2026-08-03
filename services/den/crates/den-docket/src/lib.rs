@@ -12,6 +12,7 @@
 pub mod cursors;
 mod db;
 pub mod diagnostics;
+pub mod dispatch_preflight;
 mod dispatcher;
 pub mod execution_profiles;
 #[cfg(test)]
@@ -29,6 +30,10 @@ pub use cursors::{clear_cursor, get_cursor, set_cursor, DocketCursor};
 pub use diagnostics::{
     run_diagnostics, DiagnosticAttachment, DiagnosticAttention, DiagnosticEvent, DiagnosticOutcome,
     DiagnosticRollup, DiagnosticTask, RunDiagnostics,
+};
+pub use dispatch_preflight::{
+    preflight_dispatch, CheckoutRelationship, DispatchBlocker, DispatchPreflight,
+    DurableResultKind, PublicationRoute,
 };
 pub use dispatcher::TaskDispatcher;
 pub use execution_profiles::{
@@ -49,14 +54,13 @@ pub use model::{
     DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobStatusReport, DocketJobUpdate,
     DocketRunState, DocketRunTrigger, DocketTaskCreate, DocketTaskDefinitionPatch,
     DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
-    DocketTaskPlacement,
-    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskRunStateUpdate,
-    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, DocketValidationError, ResultRollupPolicy,
-    RoutingStrategy, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
-    TaskListHandoffRequest, TaskListItem, TaskListItemStatus, TaskListLocalProjection,
-    TaskListProjection, TaskListSourceRef, TaskListStatus, TaskListSyncOutcome,
-    TaskListSyncRequest, TaskListSyncState, TaskListUpdate, TaskListUpdateItem,
-    TaskListValidationError, TaskListVisibility,
+    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
+    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus, DocketTaskUpdate,
+    DocketValidationError, ResultRollupPolicy, RoutingStrategy, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest, TaskListItem,
+    TaskListItemStatus, TaskListLocalProjection, TaskListProjection, TaskListSourceRef,
+    TaskListStatus, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, TaskListUpdate,
+    TaskListUpdateItem, TaskListValidationError, TaskListVisibility,
 };
 pub use recovery::{
     decide_escalation, escalation_for_attempt, parent_rollup_context, persist_result_rollup,
