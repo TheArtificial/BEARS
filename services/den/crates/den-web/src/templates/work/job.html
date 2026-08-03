@@ -76,22 +76,12 @@
 {% if status not in ["completed", "cancelled", "archived"] %}
 <section>
     <h2>Dispatch job</h2>
-    <p>Queues one sandbox run for this job's pending or blocked tasks. The tasks run within that shared job session.</p>
+    <p>Queues one run for this job's pending or blocked tasks using the assigned work surface. The tasks run within that shared job session.</p>
     {% if has_active_work_run %}
     <p><button type="button" disabled>Dispatch job</button> A job work session is already active. <a href="/bear/{{ bear_slug }}/jobs/runs/{{ active_work_run.route_id }}">{{ active_work_run.title }}</a>.</p>
     {% elif has_runnable_work %}
     <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/dispatch">
-        {% if work_surface_ref %}
-        <p>Using job work surface <code>{{ work_surface_ref }}</code>.</p>
-        {% elif catalog and catalog.roots %}
-        <select name="root" required>
-            <option value="">choose root…</option>
-            {% for root in catalog.roots %}<option value="{{ root.name }}">{{ root.name }}</option>{% endfor %}
-        </select>
-        {% else %}
-        <input name="root" placeholder="sandbox root name" required>
-        {% endif %}
-        {% if not work_surface_ref %}<label><input type="checkbox" name="scratch" value="true"> empty Scratch workspace</label>{% endif %}
+        <p>Using assigned work surface <a href="/work/surfaces/{{ work_surface_id }}"><code>{{ work_surface_name }}</code></a>.</p>
         {% if catalog and catalog.images %}
         <select name="image"><option value="">image: surface default</option>{% for image in catalog.images %}<option value="{{ image.name }}">{{ image.name }}</option>{% endfor %}</select>
         {% endif %}

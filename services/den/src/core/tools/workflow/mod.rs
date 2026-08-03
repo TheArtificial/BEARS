@@ -2297,8 +2297,6 @@ enum WorkDispatchTarget {
 pub(crate) struct WorkDispatchArguments {
     job_id: Uuid,
     #[serde(default)]
-    root: Option<String>,
-    #[serde(default)]
     git_ref: Option<String>,
     /// Catalog image name on the sandbox provider (see get_work_catalog).
     #[serde(default)]
@@ -2342,24 +2340,11 @@ fn attached_dispatch_target(
                             .to_string(),
                     )
                 })?;
-            let root = args
-                .root
-                .as_deref()
-                .and_then(clean_optional)
-                .ok_or_else(|| {
-                    CustomError::ValidationError(
-                        "attached_armature dispatch requires an explicit workspace root"
-                            .to_string(),
-                    )
-                })?;
-            if !context
-                .workspace_roots
-                .iter()
-                .any(|allowed| allowed == &root)
-            {
-                return Err(CustomError::ValidationError(format!(
-                    "workspace root {root:?} is not attached to the current client session"
-                )));
+            if context.workspace_roots.len() != 1 {
+                return Err(CustomError::ValidationError(
+                    "attached_armature dispatch requires exactly one attached workspace"
+                        .to_string(),
+                ));
             }
             if args.image.as_deref().and_then(clean_optional).is_some() {
                 return Err(CustomError::ValidationError(
@@ -2428,7 +2413,6 @@ pub(crate) async fn dispatch_work(
         den_docket::work_runs::WorkJobEnqueue {
             bear_id: context.bear_id,
             job_id: args.job_id,
-            root_name: args.root.as_deref().and_then(clean_optional),
             git_ref: args.git_ref.as_deref().and_then(clean_optional),
             image_name: args.image.as_deref().and_then(clean_optional),
             requested_by_user_id: Some(context.user_id),
@@ -2453,7 +2437,6 @@ pub(crate) async fn dispatch_work(
                 json!({
                     "work_order_id": run.id,
                     "job_id": run.job_id,
-                    "root": run.root_name,
                 }),
             )
             .await?;
@@ -2753,7 +2736,7 @@ fn execution_surface_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
     json!({
         "kind": execution_surface_kind(&run.execution_target),
         "access_from_pair": "report_only",
-        "root": run.root_name,
+        "work_surface": run.work_surface,
         "git_ref": run.git_ref,
         "sandbox_id": run.sandbox_id,
         "sandbox_type": run.sandbox_type,
@@ -2833,7 +2816,7 @@ fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow, href: Option<S
         "cancel_requested_by": run.cancel_requested_by,
         "cancel_reason": run.cancel_reason,
         "cancel_requested_at": ts(run.cancel_requested_at),
-        "root": run.root_name,
+        "work_surface": run.work_surface,
         "git_ref": run.git_ref,
         "sandbox_id": run.sandbox_id,
         "sandbox_type": run.sandbox_type,

@@ -168,7 +168,7 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
-use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow, SCRATCH_ROOT_NAME};
+use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow};
 use den_docket::{
     DocketCommitPolicy, DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint,
     DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter, DocketJobStatus,
@@ -257,7 +257,6 @@ struct RunView {
     job_route_id: String,
     job_full_id: String,
     job_title: String,
-    root: Option<String>,
     git_ref: Option<String>,
     image: Option<String>,
     sandbox_type: Option<String>,
@@ -446,7 +445,6 @@ fn run_view(run: &WorkRunRow, bear_slug: &str, job_title: &str) -> RunView {
             .as_str()
             .unwrap_or_default()
             .to_string(),
-        root: run.root_name.clone(),
         git_ref: run.git_ref.clone(),
         image: run.image_name.clone(),
         sandbox_type: run.sandbox_type.clone(),
@@ -1892,10 +1890,6 @@ async fn run_detail(
 #[derive(Debug, Default, Deserialize)]
 struct DispatchForm {
     #[serde(default)]
-    root: String,
-    #[serde(default)]
-    scratch: bool,
-    #[serde(default)]
     image: String,
     #[serde(default)]
     git_ref: String,
@@ -1923,17 +1917,11 @@ async fn dispatch_job(
     let Some(bear_id) = bear_id.filter(|bear_id| bears.contains_key(bear_id)) else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };
-    let root_name = if form.scratch {
-        Some(SCRATCH_ROOT_NAME.to_string())
-    } else {
-        clean_form_field(&form.root)
-    };
     let runs = work_runs::enqueue_work_job(
         state.sqlx_pool(),
         work_runs::WorkJobEnqueue {
             bear_id,
             job_id,
-            root_name,
             git_ref: clean_form_field(&form.git_ref),
             image_name: clean_form_field(&form.image),
             requested_by_user_id: Some(user_id),
@@ -2050,7 +2038,6 @@ async fn retry_run(
             work_runs::WorkJobEnqueue {
                 bear_id: run.bear_id,
                 job_id: run.job_id,
-                root_name: run.root_name.clone(),
                 git_ref: run.git_ref.clone(),
                 image_name: run.image_name.clone(),
                 requested_by_user_id: Some(user_id),

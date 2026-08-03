@@ -136,7 +136,6 @@ async fn auto_enqueue(pool: &PgPool) {
                 work_runs::WorkJobEnqueue {
                     bear_id,
                     job_id,
-                    root_name: None,
                     git_ref: None,
                     image_name: None,
                     requested_by_user_id,
@@ -214,12 +213,16 @@ async fn provision_run(
         }
     };
 
-    let Some(root) = run.root_name.clone().filter(|root| !root.trim().is_empty()) else {
+    let Some(root) = context
+        .work_surface_name
+        .clone()
+        .filter(|surface| !surface.trim().is_empty())
+    else {
         fail_run(
             pool,
             run,
-            "no_root",
-            "no sandbox root configured on work run: dispatch must freeze root_name before provisioning",
+            "work_surface_required",
+            "work run has no usable managed work surface",
             None,
         )
         .await;
@@ -875,7 +878,6 @@ async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
         work_runs::WorkJobEnqueue {
             bear_id: run.bear_id,
             job_id: run.job_id,
-            root_name: run.root_name.clone(),
             git_ref: run.git_ref.clone(),
             image_name: run.image_name.clone(),
             requested_by_user_id: Some(context.created_by_user_id),

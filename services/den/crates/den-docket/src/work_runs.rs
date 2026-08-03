@@ -23,9 +23,6 @@ use crate::recovery::start_turn_attempt;
 use crate::routing::{route_turn, ExecutionSurface, TurnIntent, TurnSource};
 use crate::service::PgDocketService;
 
-/// Explicit root name for a provider-managed empty workspace. Absence is not
-/// scratch: callers must opt in so rootless dispatch stays invalid.
-pub const SCRATCH_ROOT_NAME: &str = "scratch";
 pub const ATTACHED_DISCONNECT_TIMEOUT: StdDuration = StdDuration::from_mins(15);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,7 +106,7 @@ impl WorkRunState {
 
 const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, job_run_id, attempt, state, \
      runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, \
-     cancel_requested_at, root_name, git_ref, image_name, \
+     cancel_requested_at, git_ref, image_name, \
      sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, \
      execution_target, attached_client_session_id, attachment_state, attachment_warning, \
      disconnected_at, disconnect_deadline_at, \
@@ -132,7 +129,6 @@ pub struct WorkRunRow {
     /// Caller-provided reason suitable for a diagnostic surface, never a secret.
     pub cancel_reason: Option<String>,
     pub cancel_requested_at: Option<OffsetDateTime>,
-    pub root_name: Option<String>,
     pub git_ref: Option<String>,
     /// Catalog image name the run was dispatched with (None = provider default).
     pub image_name: Option<String>,
@@ -164,18 +160,10 @@ impl WorkRunRow {
     }
 }
 
-pub fn effective_work_run_root(
-    requested_root: Option<&str>,
-    managed_surface_name: Option<&str>,
-) -> Option<String> {
-    requested_root
+pub fn effective_work_run_surface(managed_surface_name: Option<&str>) -> Option<String> {
+    managed_surface_name
         .map(str::trim)
         .filter(|name| !name.is_empty())
-        .or_else(|| {
-            managed_surface_name
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-        })
         .map(ToOwned::to_owned)
 }
 
@@ -183,7 +171,6 @@ pub fn effective_work_run_root(
 pub struct WorkJobEnqueue {
     pub bear_id: Uuid,
     pub job_id: Uuid,
-    pub root_name: Option<String>,
     pub git_ref: Option<String>,
     pub image_name: Option<String>,
     pub requested_by_user_id: Option<i32>,
@@ -229,7 +216,6 @@ pub async fn enqueue_work_run(
         WorkJobEnqueue {
             bear_id: enqueue.bear_id,
             job_id,
-            root_name: enqueue.root_name,
             git_ref: enqueue.git_ref,
             image_name: enqueue.image_name,
             requested_by_user_id: enqueue.requested_by_user_id,
@@ -296,10 +282,10 @@ pub async fn enqueue_work_job(
         ));
     }
 
-    let root_name = effective_work_run_root(enqueue.root_name.as_deref(), surface_name.as_deref());
-    if root_name.is_none() {
+    let provider_surface = effective_work_run_surface(surface_name.as_deref());
+    if provider_surface.is_none() {
         return Err(DenError::ValidationError(
-            "no sandbox root configured: choose a root, select a managed surface on the job, or explicitly dispatch to scratch".into(),
+            "work_surface_required: this work job lacks a usable managed work-surface binding".into(),
         ));
     }
     let runnable: bool = sqlx::query_scalar(
@@ -349,13 +335,13 @@ pub async fn enqueue_work_job(
     let attached_client_session_id = enqueue.execution_target.client_session_id();
     let attachment_state = attached_client_session_id.map(|_| "attached");
     let run = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id, attempt, root_name, git_ref, image_name,
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id, attempt, git_ref, image_name,
                                      execution_target, attached_client_session_id, attachment_state,
                                      attachment_warning)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING {WORK_RUN_COLUMNS}"
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING {WORK_RUN_COLUMNS}"
     ))
     .bind(enqueue.bear_id).bind(enqueue.job_id).bind(job_run_id).bind(attempt)
-    .bind(root_name).bind(enqueue.git_ref).bind(enqueue.image_name)
+    .bind(enqueue.git_ref).bind(enqueue.image_name)
     .bind(execution_target).bind(attached_client_session_id).bind(attachment_state)
     .bind(enqueue.attachment_warning)
     .fetch_one(&mut *tx)
@@ -1443,15 +1429,15 @@ pub async fn recover_attached_work_run(
     // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
     let recovered = sqlx::query_as::<_, WorkRunRow>(&format!(
         "INSERT INTO bear_work_runs (
-             bear_id, job_id, job_run_id, attempt, root_name, git_ref, image_name,
+             bear_id, job_id, job_run_id, attempt, git_ref, image_name,
              execution_target, attached_client_session_id, attachment_state,
              attachment_warning, result_refs
          ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7,
-             'attached_armature', $8, 'attached', $9,
+             $1, $2, $3, $4, $5, $6,
+             'attached_armature', $7, 'attached', $8,
              jsonb_build_object('recovery', jsonb_build_object(
-                 'source_work_run_id', $10::text,
-                 'source_outcome', COALESCE($11::jsonb, '{{}}'::jsonb)
+                 'source_work_run_id', $9::text,
+                 'source_outcome', COALESCE($10::jsonb, '{{}}'::jsonb)
              ))
          ) RETURNING {WORK_RUN_COLUMNS}"
     ))
@@ -1459,7 +1445,6 @@ pub async fn recover_attached_work_run(
     .bind(source.job_id)
     .bind(source.job_run_id)
     .bind(attempt)
-    .bind(source.root_name.as_deref())
     .bind(source.git_ref.as_deref())
     .bind(source.image_name.as_deref())
     .bind(session_id)
