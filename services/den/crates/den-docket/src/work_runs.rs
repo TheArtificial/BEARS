@@ -927,6 +927,38 @@ pub async fn finalize_work_run(
             canonical_outcome["summary"] = Value::String(summary.to_string());
         }
     }
+    if result_refs
+        .pointer("/turn_outcome/detail/category")
+        .and_then(Value::as_str)
+        == Some("continuation_watchdog_timeout")
+    {
+        let affected_task: Option<(Uuid, String, String)> = sqlx::query_as(
+            "SELECT t.id, t.title, COALESCE(s.status, 'pending')
+             FROM bear_tasks t
+             LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+             WHERE t.job_id = $1 AND COALESCE(s.status, 'pending') = 'in_progress'
+             ORDER BY t.sibling_order, t.created_at
+             LIMIT 1",
+        )
+        .bind(row.job_id)
+        .bind(row.job_run_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let detail = result_refs.pointer("/turn_outcome/detail");
+        canonical_outcome = json!({
+            "status": "failed",
+            "code": "continuation_watchdog_timeout",
+            "summary": "The model continuation stopped responding before this work run could finish.",
+            "next_action": "Retry the work run. If it happens again, inspect the safe watchdog evidence below.",
+            "affected_task": affected_task.map(|(id, title, status)| json!({
+                "id": id,
+                "title": title,
+                "status": status,
+            })),
+            "forensics": detail.and_then(|detail| detail.get("forensics")).cloned(),
+            "evidence_refs": ["turn_outcome", "task_run_states"],
+        });
+    }
     let row = sqlx::query_as::<_, WorkRunRow>(&format!(
         "UPDATE bear_work_runs
          SET state = $2,

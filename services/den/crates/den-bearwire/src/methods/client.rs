@@ -307,6 +307,37 @@ fn continuation_stream_boundary(
     crate::methods::run::runtime_stream_boundary(event)
 }
 
+/// Metadata sufficient to identify a stalled request without persisting model
+/// arguments, tool input, or provider payloads.
+fn safe_tool_request_forensics(event: &den_protocol::RuntimeStreamEvent) -> Option<Value> {
+    let den_protocol::RuntimeStreamEvent::Semantic(
+        den_protocol::RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id,
+            tool_name,
+            approval_request_id,
+            approval_required,
+            run_id,
+            ..
+        },
+    ) = event
+    else {
+        return None;
+    };
+
+    Some(json!({
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "request_class": if run_id.as_deref().is_some_and(|id| !id.trim().is_empty()) {
+            "obligation_backed"
+        } else {
+            "den_owned"
+        },
+        "approval_required": approval_required,
+        "approval_request_id_present": approval_request_id.as_deref().is_some_and(|id| !id.trim().is_empty()),
+        "response_status": "not_observed_before_timeout",
+    }))
+}
+
 fn continuation_retry_pauses_seconds() -> Vec<u64> {
     continuation_retry_pauses()
         .iter()
@@ -620,6 +651,9 @@ fn spawn_continuation_task(
                     let mut wait_event_seen = false;
                     let mut cancellation_seen = false;
                     let mut last_event_kind: Option<&'static str> = None;
+                    // Keep only request metadata that is safe to persist in a failure record.
+                    // Never retain tool arguments or raw provider payloads here.
+                    let mut last_tool_request: Option<Value> = None;
                     let mut last_runtime_event_at: Option<Instant> = None;
                     let mut last_provider_activity_at: Option<Instant> = None;
                     let mut last_event_sequence: Option<i64> = None;
@@ -681,6 +715,7 @@ fn spawn_continuation_task(
                                             "terminal_event_seen": terminal_event_seen,
                                             "wait_event_seen": wait_event_seen,
                                             "last_event_kind": last_event_kind,
+                                            "last_tool_request": last_tool_request,
                                             "last_event_sequence": last_event_sequence,
                                             "last_event_age_ms": last_event_age_ms,
                                             "diagnostic_note": "The continuation watchdog observes typed provider activity and semantic runtime events. Provider activity is process-local and is not persisted to BearWire or transcript history.",
@@ -734,6 +769,7 @@ fn spawn_continuation_task(
                                 let event_kind =
                                     crate::methods::run::runtime_event_kind(&runtime_event);
                                 last_event_kind = Some(event_kind);
+                                last_tool_request = safe_tool_request_forensics(&runtime_event);
                                 let stream_boundary = continuation_stream_boundary(&runtime_event);
                                 match stream_boundary {
                                     ContinuationStreamBoundary::Terminal => {
@@ -1870,6 +1906,29 @@ mod tests {
             continuation_stream_boundary(&delta),
             ContinuationStreamBoundary::Continue
         );
+    }
+
+    #[test]
+    fn safe_tool_request_forensics_excludes_arguments() {
+        let event = den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "tool-1".to_string(),
+                tool_name: "web_fetch".to_string(),
+                title: None,
+                kind: None,
+                arguments: json!({"url": "https://secret.example/token"}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+        );
+        let evidence = safe_tool_request_forensics(&event).expect("tool request evidence");
+        assert_eq!(evidence["tool_name"], "web_fetch");
+        assert_eq!(evidence["request_class"], "den_owned");
+        assert_eq!(evidence["response_status"], "not_observed_before_timeout");
+        assert!(evidence.get("arguments").is_none());
+        assert!(!evidence.to_string().contains("secret.example"));
     }
 
     #[test]

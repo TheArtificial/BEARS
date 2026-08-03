@@ -1198,7 +1198,11 @@ pub(crate) async fn fail_run_lifecycle(
         session_id,
         run_id,
         "failed",
-        Some(json!({ "category": reason.as_str(), "message": message.clone() })),
+        Some(json!({
+            "category": reason.as_str(),
+            "message": message.clone(),
+            "forensics": context,
+        })),
     )
     .await;
     if let Ok(Some(session)) =
