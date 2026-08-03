@@ -1509,17 +1509,8 @@ async fn mark_job_running(
     run_id: Uuid,
 ) -> Result<(), DenError> {
     let mut tx = pool.begin().await?;
-    sqlx::query(
-        r"
-        UPDATE bear_jobs
-        SET status = 'running', updated_at = NOW()
-        WHERE bear_id = $1 AND id = $2 AND status <> 'running'
-        ",
-    )
-    .bind(request.bear_id)
-    .bind(request.job_id)
-    .execute(&mut *tx)
-    .await?;
+    // Job status is derived from run/task/criterion evidence. Starting this run
+    // is the only status transition needed here.
     sqlx::query(
         r"
         UPDATE bear_job_runs
