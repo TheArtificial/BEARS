@@ -223,6 +223,39 @@ async fn sandbox_repository_changes_without_publication_creates_no_run() {
     );
 }
 
+/// Regression: `bear_jobs.status` is a derived projection and is not stored.
+/// Dispatch must operate against the migrated schema without querying it.
+#[tokio::test]
+async fn dispatch_works_without_persisted_job_status() {
+    let _guard = DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "derived-job-status-dispatch").await;
+    let (job_id, _) = seed_work_job(&pool, user_id, bear_id).await;
+
+    let run = enqueue_work_job(
+        &pool,
+        WorkJobEnqueue {
+            bear_id,
+            job_id,
+            durable_result: crate::DurableResultKind::RepositoryChanges,
+            git_ref: None,
+            image_name: None,
+            requested_by_user_id: Some(user_id),
+            execution_target: WorkExecutionTarget::AttachedArmature {
+                client_session_id: format!("derived-status-{}", Uuid::new_v4().simple()),
+            },
+            attachment_warning: None,
+        },
+    )
+    .await
+    .expect("dispatch against migrated derived-status schema");
+
+    assert!(!run.is_empty());
+}
+
 #[tokio::test]
 async fn attached_disconnect_reconnect_and_timeout_are_idempotent() {
     let _guard = DB_LOCK.lock().await;

@@ -280,7 +280,7 @@ pub async fn enqueue_work_job(
         surface_id,
         surface_name,
         current_run_id,
-        status,
+        lifecycle_intent,
         commit_policy,
         work_branch,
         surface_assigned,
@@ -306,9 +306,10 @@ pub async fn enqueue_work_job(
             surface_name.as_deref().unwrap_or("unknown")
         )));
     }
-    if !matches!(status.as_deref(), Some("ready") | Some("running")) {
+    if lifecycle_intent.is_some() {
         return Err(DenError::ValidationError(
-            "job is not dispatchable; only ready or running work jobs can start work runs".into(),
+            "job is not dispatchable; cancelled or archived work jobs cannot start work runs"
+                .into(),
         ));
     }
 
@@ -634,7 +635,8 @@ pub async fn jobs_awaiting_completion(
     bear_id: Uuid,
 ) -> Result<Vec<crate::model::DocketJobRow>, DenError> {
     let rows = sqlx::query_as::<_, crate::model::DocketJobRow>(
-        "SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id, commit_policy, work_branch, status, visibility,
+        "SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id, commit_policy, work_branch,
+                COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility,
                 source_conversation_id, objective_kind, current_run_id, supersedes_job_id,
                 created_at, updated_at
          FROM bear_jobs j
