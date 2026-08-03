@@ -2970,7 +2970,7 @@ mod tests {
     }
 
     #[test]
-    fn bearwire_browser_prompt_includes_forwarded_mcp_tools() {
+    fn bearwire_context_compilation_includes_forwarded_mcp_tools() {
         let context = json!({
             "adapter": { "direct_tools": {} },
             "mcp": {
