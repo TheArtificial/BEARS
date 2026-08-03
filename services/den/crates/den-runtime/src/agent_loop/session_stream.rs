@@ -9,7 +9,7 @@ use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent}
 use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
-use futures::Stream;
+use futures::{stream, Stream};
 
 use crate::runtime::completion_policy::{
     decide_turn_completion, TurnCompletionCompleteReason, TurnCompletionDecision,
@@ -23,7 +23,7 @@ use crate::runtime_error_ux::{
 };
 use crate::{
     agent_loop::{
-        record_checkpoint_response, run_agent_step_stream,
+        evaluate_turn_budget, record_checkpoint_response, run_agent_step_stream,
         session_store::AgentLoopSessionStore,
         step::RUNTIME_CHECKPOINT_TOOL_NAME,
         tool_call_finished_event_for_content,
@@ -694,10 +694,68 @@ impl SessionTrackingStream {
             store.update(&session_key, |session| {
                 session.messages.push(message.clone());
             });
+            let observation = crate::agent_loop::ToolContinuationObservation {
+                tool_name: call.function.name.clone(),
+                signature: crate::agent_loop::tool_signature_from_call(&call),
+                class: crate::agent_loop::classify_tool_budget_class(&call.function.name),
+                failed: crate::agent_loop::tool_result_content_indicates_error(
+                    message.content.as_deref(),
+                ),
+                grounding_probe_signal: None,
+            };
             let continuation = Box::pin(async move {
-                let session = store.get(&session_key).ok_or_else(|| {
+                let mut session = store.get(&session_key).ok_or_else(|| {
                     DenError::System("native agent loop session not found".to_string())
                 })?;
+                let evaluation = evaluate_turn_budget(
+                    session.turn_budget,
+                    session.step,
+                    session.turn_budget_state.started_at.elapsed().as_millis() as u64,
+                    &session.turn_budget_state,
+                    &[observation],
+                );
+                store.update(&session_key, |session| {
+                    session.turn_budget_state = evaluation.next_state.clone();
+                });
+                if let Some(reason) = evaluation.stop_reason {
+                    tracing::warn!(
+                        event = "native_turn_budget_fuse",
+                        session_key = %session_key,
+                        conversation_id = %session.conversation_id,
+                        client_session_id = %session.client_session_id,
+                        request_id = ?session.request_id,
+                        run_id = ?session.run_id,
+                        step = session.step,
+                        limit = session.turn_budget.emergency_hard_steps,
+                        "server-side continuation stopped by turn budget"
+                    );
+                    store.update(&session_key, |session| {
+                        session.turn_budget_state = Default::default();
+                    });
+                    return Ok(Box::pin(stream::iter(vec![
+                        Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::AssistantTextDelta {
+                                text: reason.user_message(),
+                            },
+                        )),
+                        Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::TurnCompleted { turn: None },
+                        )),
+                    ])) as RuntimeEventStream);
+                }
+                session = store.get(&session_key).ok_or_else(|| {
+                    DenError::System("native agent loop session not found".to_string())
+                })?;
+                tracing::warn!(
+                    event = "native_server_tool_continuation",
+                    session_key = %session_key,
+                    conversation_id = %session.conversation_id,
+                    client_session_id = %session.client_session_id,
+                    request_id = ?session.request_id,
+                    run_id = ?session.run_id,
+                    step = session.step,
+                    "continuing after server-side tool result"
+                );
                 let llm = LlmClient::new(config.as_ref());
                 let overflow = AgentStepOverflowContext {
                     pool,

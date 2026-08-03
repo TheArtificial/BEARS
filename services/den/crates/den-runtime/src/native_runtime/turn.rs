@@ -1121,6 +1121,16 @@ pub async fn start_native_profile_turn_event_stream(
         },
     )
     .await?;
+    tracing::warn!(
+        event = "native_turn_start",
+        session_key = %session.session_key,
+        conversation_id = %conversation_id,
+        client_session_id = %client_session_id,
+        request_id = %request.request_id,
+        run_id = ?request.run_id,
+        step = session.step,
+        "native turn starts with a fresh session budget"
+    );
     let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
     let mut content_json = provenance.as_content_json("user_prompt");
     content_json["role"] = serde_json::json!("user");
@@ -1725,6 +1735,17 @@ pub async fn continue_native_client_turn_event_stream(
     let prior_session = existing_session
         .clone()
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
+    tracing::warn!(
+        event = "native_turn_continue",
+        session_key = %session_key,
+        conversation_id = %conversation_id,
+        client_session_id = %client_session_id,
+        request_id = %request.request_id,
+        run_id = ?request.run_id,
+        stored_run_id = ?prior_session.run_id,
+        step = prior_session.step,
+        "continuing native turn from client result"
+    );
     let mut tool_messages = Vec::new();
     let mut observations = Vec::new();
     let observation_run_id = request.run_id.or(prior_session.run_id.as_deref());
@@ -1934,6 +1955,17 @@ pub async fn continue_native_client_turn_event_stream(
         session.cached_activity_plan_projection = Some(refreshed_plan);
     }
     if let Some(reason) = evaluation.stop_reason {
+        tracing::warn!(
+            event = "native_turn_budget_fuse",
+            session_key = %session_key,
+            conversation_id = %conversation_id,
+            client_session_id = %client_session_id,
+            request_id = %request.request_id,
+            run_id = ?session.run_id,
+            step = session.step,
+            limit = session.turn_budget.emergency_hard_steps,
+            "client continuation stopped by turn budget"
+        );
         SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
         return Ok(continuation_budget_stop(reason));
     }
