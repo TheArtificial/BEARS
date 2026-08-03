@@ -3280,6 +3280,26 @@ fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
     })
 }
 
+fn workspace_git_remote_origins(roots: &[String]) -> Vec<String> {
+    let mut origins = roots
+        .iter()
+        .filter_map(|root| {
+            Command::new("git")
+                .args(["config", "--get", "remote.origin.url"])
+                .current_dir(root)
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .map(|origin| origin.trim().to_string())
+                .filter(|origin| !origin.is_empty())
+        })
+        .collect::<Vec<_>>();
+    origins.sort();
+    origins.dedup();
+    origins
+}
+
 fn ensure_session_context_capabilities(context: &mut SessionContext) {
     if !context.raw.is_object() {
         context.raw = json!({});
@@ -3325,6 +3345,7 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
     }
     if !context.roots.is_empty() {
         context.raw["workspace_roots"] = json!(context.roots.clone());
+        context.raw["git_remote_origins"] = json!(workspace_git_remote_origins(&context.roots));
     }
 }
 
@@ -11303,6 +11324,33 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    #[test]
+    fn workspace_git_remote_origins_reads_and_deduplicates_origins() {
+        let root = std::env::temp_dir().join(format!("bear-armature-origin-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/bears-ai/bear-den.git",
+            ])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        let root = root.to_string_lossy().to_string();
+        assert_eq!(
+            workspace_git_remote_origins(&[root.clone(), root.clone()]),
+            vec!["https://github.com/bears-ai/bear-den.git"]
+        );
+        fs::remove_dir_all(std::path::Path::new(&root)).unwrap();
+    }
 
     #[test]
     fn truncate_for_log_preserves_utf8_boundaries() {

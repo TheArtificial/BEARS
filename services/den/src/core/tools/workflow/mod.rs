@@ -2307,10 +2307,10 @@ pub(crate) struct WorkDispatchArguments {
     /// dirty tree is allowed but recorded as a warning; Den never mutates it.
     #[serde(default)]
     dirty_worktree: bool,
-    /// Execution is sandboxed unless the caller explicitly selects the
-    /// currently attached armature.
+    /// When omitted, a job bound to the current session's resolved surface
+    /// runs on its sole attached workspace; otherwise execution is sandboxed.
     #[serde(default)]
-    target: WorkDispatchTarget,
+    target: Option<WorkDispatchTarget>,
 }
 
 fn attached_dispatch_warning(target: WorkDispatchTarget, dirty_worktree: bool) -> Option<String> {
@@ -2324,10 +2324,11 @@ fn attached_dispatch_warning(target: WorkDispatchTarget, dirty_worktree: bool) -
 }
 
 fn attached_dispatch_target(
+    target: WorkDispatchTarget,
     args: &WorkDispatchArguments,
     context: &DenToolInvocationContext,
 ) -> Result<den_docket::work_runs::WorkExecutionTarget, CustomError> {
-    match args.target {
+    match target {
         WorkDispatchTarget::Sandbox => Ok(den_docket::work_runs::WorkExecutionTarget::Sandbox),
         WorkDispatchTarget::AttachedArmature => {
             let client_session_id = context
@@ -2388,8 +2389,40 @@ pub(crate) async fn dispatch_work(
         )));
     }
     let args: WorkDispatchArguments = serde_json::from_value(arguments)?;
-    let execution_target = attached_dispatch_target(&args, context)?;
-    let attachment_warning = attached_dispatch_warning(args.target, args.dirty_worktree);
+    let job = PgDocketService::from_pool(pool)
+        .get_job(context.bear_id, args.job_id)
+        .await?
+        .ok_or_else(|| DenError::NotFound(format!("Docket job {} not found", args.job_id)))?;
+    let session_surface_id = match context.client_session_id.as_deref() {
+        Some(client_session_id) => match client_sessions::find_for_user_bear_session_id(
+            pool,
+            context.user_id,
+            context.bear_id,
+            client_session_id,
+        )
+        .await?
+        {
+            Some(session) => {
+                den_service::client_session_work_surface_resolutions::find(pool, session.id)
+                    .await?
+                    .map(|resolution| resolution.work_surface_id)
+            }
+            None => None,
+        },
+        None => None,
+    };
+    let target = match args.target {
+        Some(target) => target,
+        None if job.job.work_surface_id.is_some()
+            && context.workspace_roots.len() == 1
+            && session_surface_id == job.job.work_surface_id =>
+        {
+            WorkDispatchTarget::AttachedArmature
+        }
+        None => WorkDispatchTarget::Sandbox,
+    };
+    let execution_target = attached_dispatch_target(target, &args, context)?;
+    let attachment_warning = attached_dispatch_warning(target, args.dirty_worktree);
     let runs = den_docket::work_runs::enqueue_work_job(
         pool,
         den_docket::work_runs::WorkJobEnqueue {
@@ -2405,7 +2438,7 @@ pub(crate) async fn dispatch_work(
     )
     .await?;
     let run_ids: Vec<Uuid> = runs.iter().map(|run| run.id).collect();
-    if args.target == WorkDispatchTarget::AttachedArmature {
+    if target == WorkDispatchTarget::AttachedArmature {
         let client_session_id = context
             .client_session_id
             .as_deref()
@@ -2442,12 +2475,12 @@ pub(crate) async fn dispatch_work(
             "position": info.position,
             "waiting_on_run_id": info.waiting_on_run_id,
         })).collect::<Vec<_>>(),
-        "execution_target": match args.target {
+        "execution_target": match target {
             WorkDispatchTarget::Sandbox => "sandbox",
             WorkDispatchTarget::AttachedArmature => "attached_armature",
         },
         "warning": attachment_warning,
-        "note": match args.target {
+        "note": match target {
             WorkDispatchTarget::Sandbox => "Job queued; one work run will execute its runnable work tasks in the shared sandbox.",
             WorkDispatchTarget::AttachedArmature => "Job queued for unattended execution on the explicitly attached armature; local permissions remain authoritative.",
         },
