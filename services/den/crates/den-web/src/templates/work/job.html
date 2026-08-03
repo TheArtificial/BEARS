@@ -76,7 +76,20 @@
 {% if status not in ["completed", "cancelled", "archived"] %}
 <section>
     <h2>Dispatch job</h2>
-    <p>Queues one run for this job's pending or blocked tasks using the assigned work surface. The tasks run within that shared job session.</p>
+    <dl aria-label="Dispatch topology">
+        <dt>Execution target</dt><dd>Sandbox</dd>
+        <dt>Checkout</dt><dd>Isolated from your current checkout</dd>
+        <dt>Durable result</dt><dd>Repository changes</dd>
+        <dt>Publication</dt>
+        <dd>
+            {% if dispatch_preflight.publication.kind == "commit_to_branch" %}
+            Commit{% if dispatch_preflight.publication.branch %} to <code>{{ dispatch_preflight.publication.branch }}</code>{% else %} to the generated job branch{% endif %}
+            {% else %}None — repository changes cannot be delivered{% endif %}
+        </dd>
+        <dt>Status</dt><dd>{% if dispatch_preflight.dispatchable %}Ready to launch{% else %}Cannot launch{% endif %}</dd>
+    </dl>
+    {% if not dispatch_preflight.dispatchable %}<p role="alert">Choose a publishable output policy before dispatching source-changing sandbox work.</p>{% endif %}
+    <p>Queues one run for this job's pending or blocked tasks using the assigned work surface as source context. The tasks run within one isolated job session.</p>
     {% if has_active_work_run %}
     <p><button type="button" disabled>Dispatch job</button> A job work session is already active. <a href="/bear/{{ bear_slug }}/jobs/runs/{{ active_work_run.route_id }}">{{ active_work_run.title }}</a>.</p>
     {% elif has_runnable_work %}
@@ -85,7 +98,8 @@
         {% if catalog and catalog.images %}
         <select name="image"><option value="">image: surface default</option>{% for image in catalog.images %}<option value="{{ image.name }}">{{ image.name }}</option>{% endfor %}</select>
         {% endif %}
-        <button type="submit">Dispatch job</button>
+        <button type="submit" {% if not dispatch_preflight.dispatchable %}disabled aria-describedby="dispatch-blocked-reason"{% endif %}>Dispatch job</button>
+        {% if not dispatch_preflight.dispatchable %}<small id="dispatch-blocked-reason">No publication route is configured.</small>{% endif %}
     </form>
     {% else %}
     <p><button type="button" disabled>Dispatch job</button> No pending or blocked tasks are currently runnable. Add a task above, or inspect the work runs below.</p>

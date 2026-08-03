@@ -355,6 +355,26 @@ async fn create_job_form_creates_work_job_with_tasks() {
     assert_eq!(selected_surface_id, Some(surface_id));
     assert_eq!(policy.as_deref(), Some("per_job"));
     assert_eq!(branch.as_deref(), Some("feature/updated"));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/bear/{bear_slug}/jobs/{}", route_id(job_id)))
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("job detail response");
+    assert_eq!(response.status(), StatusCode::OK);
+    use http_body_util::BodyExt;
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("Dispatch topology"));
+    assert!(body.contains("Isolated from your current checkout"));
+    assert!(body.contains("Repository changes"));
+    assert!(body.contains("feature/updated"));
+    assert!(body.contains("Ready to launch"));
 }
 
 #[tokio::test]

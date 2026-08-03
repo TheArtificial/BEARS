@@ -1495,6 +1495,17 @@ async fn job_detail(
     let allow_default_ref = selected_work_surface.is_some_and(|surface| {
         projection.job.work_branch.as_deref() == Some(surface.default_ref.as_str())
     });
+    let dispatch_preflight = den_docket::preflight_dispatch(
+        &work_runs::WorkExecutionTarget::Sandbox,
+        den_docket::DurableResultKind::RepositoryChanges,
+        match projection.job.commit_policy.as_deref() {
+            Some("none") => Some(den_docket::DocketCommitPolicy::None),
+            Some("per_task") => Some(den_docket::DocketCommitPolicy::PerTask),
+            Some("per_job") => Some(den_docket::DocketCommitPolicy::PerJob),
+            _ => None,
+        },
+        projection.job.work_branch.as_deref(),
+    );
     let catalog = provider_catalog(&state).await;
     web::render_template(
         &state,
@@ -1530,6 +1541,7 @@ async fn job_detail(
             has_active_work_run => active_work_run.is_some(),
             active_work_run => active_work_run,
             attention_run => attention_run,
+            dispatch_preflight => dispatch_preflight,
         },
     )
     .await
