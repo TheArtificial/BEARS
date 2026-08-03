@@ -1,7 +1,11 @@
 # Armature tool-obligation leasing implementation plan
 
-Status: planned  
-Date: 2026-07-30  
+Status: implemented; guarded UAT pending
+
+Date: 2026-07-30
+
+Implemented by: `8ff45a51`, `fbe42c75`, `226b130b`
+
 Related ADRs: [ADR-0048](../decisions/adr-0048-core-turn-client-obligation-coordinator.md), [ADR-0034](../decisions/adr-0034-bearwire-as-den-armature-wire.md), [ADR-0030](../decisions/adr-0030-bearwire-resource-oriented-event-model.md)
 
 ## Goal
@@ -128,12 +132,29 @@ Add one end-to-end scenario covering:
 
 Inspect logs and structured state to ensure attempt tokens are absent. Verify workspace/process inspection guidance includes the run ID and never recommends retry before reconciliation.
 
-## Delivery order
+## Implementation status
 
-Use three reviewable commits:
+All five phases are implemented locally:
 
-1. `Add fenced tool-obligation leases` — migration, coordinator, protocol, race tests.
-2. `Renew leases while ACP tools run` — armature claim/heartbeat and slow-command checks.
-3. `Make BearWire polling obligation-aware` — retry policy, reconciliation, end-to-end diagnostics.
+- `8ff45a51` added the migration, coordinator claim/renew operations, token-fenced settlement, BearWire methods, expiry semantics, and coordinator/projection checks.
+- `fbe42c75` made Armature claim before ACP execution, renew while the tool future is pending, stop on definitive lease loss, and carry the attempt token through settlement.
+- `226b130b` removed the universal five-fetch abort, added backoff and `run.state` reconciliation, and kept polling failures from terminating an actively leased command.
 
-Do not ship Phase 1 server enforcement without the matching armature claim path unless guarded by explicit capability negotiation. Prefer one coordinated deployment over a legacy fallback that weakens execution fencing.
+Validated during implementation:
+
+- coordinator contract: 10 tests passed;
+- surface projection contract: 3 tests passed;
+- Armature binary suite: 223 tests passed;
+- formatting and compilation checks passed at each checkpoint.
+
+The remaining work is guarded end-to-end UAT against a jointly updated Den server and Armature. No compatibility fallback was added for older armatures because accepting unfenced results would weaken the execution-ownership guarantee.
+
+## Delivery record
+
+Implemented as three reviewable commits:
+
+1. `8ff45a51 Add fenced tool obligation leases`
+2. `fbe42c75 Lease Armature tool execution`
+3. `226b130b Make BearWire polling obligation aware`
+
+The server enforcement and matching armature claim path must be deployed together unless a future explicit capability negotiation preserves the same fencing guarantees.

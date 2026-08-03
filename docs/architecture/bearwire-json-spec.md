@@ -1076,11 +1076,97 @@ client.tool.result
 client.permission.result
 ```
 
-`client.tool.claim` transactionally claims an open `tool_result` obligation for armature-local execution. Only after claim succeeds may the armature invoke the tool. The request identifies the session, run, obligation, and tool call. The response returns an opaque attempt token, `lease_expires_at`, and Den-selected `renew_after_ms`. Concurrent or stale claims do not authorize execution; their caller reconciles through `run.state`.
+`client.tool.claim` transactionally claims an open `tool_result` obligation for armature-local execution. Only after claim succeeds may the armature invoke the tool. The request identifies the session, run, obligation, and tool call:
 
-`client.tool.renew` conditionally extends the claimed obligation using the same durable identity plus the attempt token. Den's database clock determines the new deadline. Renewal is idempotent while the claim is current and cannot revive an expired, cancelled, superseded, or settled obligation.
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "claim_123",
+  "method": "client.tool.claim",
+  "params": {
+    "session_id": "ses_123",
+    "run_id": "run_123",
+    "obligation_id": "0191d6cc-6e92-7aa0-a738-29f92354baf1",
+    "tool_call_id": "call_123"
+  }
+}
+```
 
-`client.tool.result` answers a claimed `tool_result` obligation and includes its attempt token. Identical duplicate submissions are idempotent; conflicting or stale submissions are rejected without starting continuation. Result, expiry, cancellation, and renewal are compare-and-set transitions with one canonical winner.
+A successful response returns an opaque attempt token and server-selected timing:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "claim_123",
+  "result": {
+    "ok": true,
+    "status": "claimed",
+    "attempt_token": "opaque-bearer-token",
+    "lease_expires_at": "2026-07-30T10:33:00Z",
+    "renew_after_ms": 10000
+  }
+}
+```
+
+A concurrent or stale claim returns `{"ok":false,"status":"claim_rejected"}` and does not authorize execution. The caller must reconcile through `run.state`; it must not invoke or retry the tool.
+
+`client.tool.renew` conditionally extends the claimed obligation using the same durable identity plus the attempt token:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "renew_123",
+  "method": "client.tool.renew",
+  "params": {
+    "session_id": "ses_123",
+    "run_id": "run_123",
+    "obligation_id": "0191d6cc-6e92-7aa0-a738-29f92354baf1",
+    "tool_call_id": "call_123",
+    "attempt_token": "opaque-bearer-token"
+  }
+}
+```
+
+Successful renewal returns `ok: true`, `status: "renewed"`, a new `lease_expires_at`, and the next `renew_after_ms`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "renew_123",
+  "result": {
+    "ok": true,
+    "status": "renewed",
+    "lease_expires_at": "2026-07-30T10:33:10Z",
+    "renew_after_ms": 10000
+  }
+}
+```
+
+A stale, expired, or otherwise lost claim returns `{"ok":false,"status":"lease_lost"}`. `lease_lost` is definitive: the armature stops treating itself as execution owner and reconciles `run.state`; it never launches a replacement command.
+
+Den's database clock determines lease deadlines. The current server policy grants 30-second leases and asks for renewal after 10 seconds. These are defaults, not client protocol constants: clients must schedule from each successful response's `renew_after_ms` and treat `lease_expires_at` as diagnostic/server authority rather than derive it locally. A transient renewal transport error is not the same as `lease_lost`; clients may retry while preserving the same attempt identity, but cannot assume ownership beyond Den's last confirmed deadline.
+
+`client.tool.result` answers a claimed `tool_result` obligation and includes its attempt token:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "result_123",
+  "method": "client.tool.result",
+  "params": {
+    "session_id": "ses_123",
+    "run_id": "run_123",
+    "tool_call_id": "call_123",
+    "attempt_token": "opaque-bearer-token",
+    "status": "ok",
+    "tool_name": "run_command",
+    "content": "tests passed",
+    "structured_content": {"exit_code": 0}
+  }
+}
+```
+
+Identical duplicate submissions are idempotent; conflicting or stale submissions are rejected without starting continuation. Result, expiry, cancellation, and renewal are compare-and-set transitions with one canonical winner.
 
 The attempt token is a bearer capability for one execution attempt. It must be transmitted only in claim-dependent requests and must not be returned by `run.state`, event history, snapshots, logs, or user-visible diagnostics. `run.state` may expose typed lease status and expiry so reconnecting clients can inspect safely without acquiring execution authority.
 
