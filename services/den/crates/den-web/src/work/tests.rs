@@ -13,6 +13,7 @@ use http_body_util::BodyExt;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
+use tower_sessions_sqlx_store::PostgresStore;
 
 #[test]
 fn cargo_offline_cache_miss_is_the_primary_outcome() {
@@ -33,7 +34,6 @@ fn cargo_offline_cache_miss_is_the_primary_outcome() {
         cancel_requested_by: None,
         cancel_reason: None,
         cancel_requested_at: None,
-        root_name: None,
         git_ref: None,
         image_name: None,
         sandbox_server_url: None,
@@ -62,7 +62,30 @@ fn cargo_offline_cache_miss_is_the_primary_outcome() {
         "Blocked: Rust dependencies are unavailable in the offline cache. `serde` could not be resolved. Dependency preparation was not attempted; prepare Rust dependencies, then retry Cargo.",
     );
 }
-use tower_sessions_sqlx_store::PostgresStore;
+
+#[test]
+fn watchdog_failure_view_shows_only_safe_persisted_evidence() {
+    let refs = serde_json::json!({
+        "outcome": {
+            "code": "continuation_watchdog_timeout",
+            "affected_task": { "title": "Render failure details", "status": "in_progress" },
+            "forensics": {
+                "runtime_event_count": 1,
+                "last_event_age_ms": 30007,
+                "last_tool_request": {
+                    "tool_name": "checkpoint",
+                    "request_class": "den_owned",
+                    "arguments": { "secret": "must not project" }
+                }
+            }
+        }
+    });
+    let view = watchdog_failure_view(Some(&refs)).expect("watchdog view");
+    assert_eq!(view.task_title.as_deref(), Some("Render failure details"));
+    assert_eq!(view.tool_name.as_deref(), Some("checkpoint"));
+    assert_eq!(view.request_class.as_deref(), Some("den_owned"));
+    assert_eq!(view.idle_ms, Some(30007));
+}
 
 use crate::{auth_backend::Backend, config::Config};
 

@@ -63,6 +63,29 @@
     {% endif %}
 </section>
 
+{% if watchdog_failure %}
+<section aria-labelledby="watchdog-failure-heading">
+    <h2 id="watchdog-failure-heading">What went wrong</h2>
+    <p role="status"><strong>The model continuation stopped responding before the work run finished.</strong> Den ended the stalled continuation rather than leaving the run active indefinitely.</p>
+    {% if watchdog_failure.task_title %}
+    <p><strong>Affected task:</strong> {{ watchdog_failure.task_title }} ({{ watchdog_failure.task_status }}).</p>
+    {% else %}
+    <p><strong>Affected task:</strong> Task attribution was not recorded before the continuation stalled.</p>
+    {% endif %}
+    <p><strong>Next step:</strong> Retry this run. If it recurs, use the safe evidence below and the run output to investigate the provider/runtime boundary.</p>
+    <details>
+        <summary>Safe watchdog evidence</summary>
+        <dl>
+            {% if watchdog_failure.tool_name %}<dt>Last requested tool</dt><dd><code>{{ watchdog_failure.tool_name }}</code></dd>{% endif %}
+            {% if watchdog_failure.request_class %}<dt>Request class</dt><dd>{{ watchdog_failure.request_class }}</dd>{% endif %}
+            {% if watchdog_failure.runtime_event_count is not none %}<dt>Runtime events before stall</dt><dd>{{ watchdog_failure.runtime_event_count }}</dd>{% endif %}
+            {% if watchdog_failure.idle_ms is not none %}<dt>Idle after last event</dt><dd>{{ watchdog_failure.idle_ms }} ms</dd>{% endif %}
+        </dl>
+        <p><small>Tool arguments and raw provider payloads are intentionally not retained here.</small></p>
+    </details>
+</section>
+{% endif %}
+
 <section aria-labelledby="run-activity-heading">
     <h2 id="run-activity-heading">Activity</h2>
     {% if activity %}

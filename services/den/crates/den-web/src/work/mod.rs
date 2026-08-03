@@ -293,6 +293,52 @@ struct RunDiagnostic {
     recovery: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+struct WatchdogFailureView {
+    task_title: Option<String>,
+    task_status: Option<String>,
+    tool_name: Option<String>,
+    request_class: Option<String>,
+    runtime_event_count: Option<u64>,
+    idle_ms: Option<u64>,
+}
+
+/// Project only the safe, persisted watchdog fields into the run page. Tool
+/// arguments and raw provider payloads never belong in the web view.
+fn watchdog_failure_view(refs: Option<&serde_json::Value>) -> Option<WatchdogFailureView> {
+    let outcome = refs?.get("outcome")?;
+    if outcome.get("code")?.as_str()? != "continuation_watchdog_timeout" {
+        return None;
+    }
+    let affected_task = outcome.get("affected_task");
+    let forensics = outcome.get("forensics");
+    let request = forensics.and_then(|value| value.get("last_tool_request"));
+    Some(WatchdogFailureView {
+        task_title: affected_task
+            .and_then(|value| value.get("title"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        task_status: affected_task
+            .and_then(|value| value.get("status"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        tool_name: request
+            .and_then(|value| value.get("tool_name"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        request_class: request
+            .and_then(|value| value.get("request_class"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        runtime_event_count: forensics
+            .and_then(|value| value.get("runtime_event_count"))
+            .and_then(serde_json::Value::as_u64),
+        idle_ms: forensics
+            .and_then(|value| value.get("last_event_age_ms"))
+            .and_then(serde_json::Value::as_u64),
+    })
+}
+
 /// Recognize only failures for which this UI can give a concrete, safe next
 /// step. Everything else remains visible in the stored outcome and raw log.
 fn run_diagnostic(
@@ -1865,6 +1911,7 @@ async fn run_detail(
             bear_slug => bear_slug,
             run => view,
             outcome => work_run_outcome(&run, &task_statuses, cargo_failure.as_ref()),
+            watchdog_failure => watchdog_failure_view(run.result_refs.as_ref()),
             log_tail => log_tail,
             diff_patch => diff_patch,
             changed_files => changed_files,
