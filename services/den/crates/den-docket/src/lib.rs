@@ -29,7 +29,7 @@ mod work_runs_tests;
 pub use cursors::{clear_cursor, get_cursor, set_cursor, DocketCursor};
 pub use diagnostics::{
     run_diagnostics, DiagnosticAttachment, DiagnosticAttention, DiagnosticEvent, DiagnosticOutcome,
-    DiagnosticRollup, DiagnosticTask, RunDiagnostics,
+    DiagnosticRollup, DiagnosticTask, NormalizedFailure, RunDiagnostics,
 };
 pub use dispatch_preflight::{
     preflight_dispatch, CheckoutRelationship, DispatchBlocker, DispatchPreflight,

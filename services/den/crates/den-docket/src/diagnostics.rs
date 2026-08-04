@@ -16,6 +16,9 @@ pub struct RunDiagnostics {
     pub run_state: String,
     pub current_task: Option<DiagnosticTask>,
     pub explanation: String,
+    /// The latest canonical failure/recovery truth, suitable for conversation
+    /// headlines as well as richer forensic views.
+    pub failure: Option<NormalizedFailure>,
     pub attention: Option<DiagnosticAttention>,
     pub attachment: Option<DiagnosticAttachment>,
     pub rollups: Vec<DiagnosticRollup>,
@@ -68,6 +71,20 @@ pub struct DiagnosticEvent {
     pub outcome: Option<DiagnosticOutcome>,
 }
 
+/// Canonical failure truth shared by concise status and forensic timeline views.
+///
+/// The raw outcome remains available on [`DiagnosticOutcome`] for compatibility,
+/// but consumers should render this shape rather than infer recovery semantics
+/// from individual attempt fields.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct NormalizedFailure {
+    pub outcome: String,
+    pub cause: Option<String>,
+    pub disposition: Option<String>,
+    pub evidence: Option<Value>,
+    pub recovery_action: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct DiagnosticOutcome {
     pub outcome: String,
@@ -75,6 +92,18 @@ pub struct DiagnosticOutcome {
     pub disposition: Option<String>,
     pub evidence: Option<Value>,
     pub recovery_action: Option<String>,
+}
+
+impl From<NormalizedFailure> for DiagnosticOutcome {
+    fn from(failure: NormalizedFailure) -> Self {
+        Self {
+            outcome: failure.outcome,
+            cause: failure.cause,
+            disposition: failure.disposition,
+            evidence: failure.evidence,
+            recovery_action: failure.recovery_action,
+        }
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -146,6 +175,13 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
     ).bind(run_id).fetch_all(pool).await?;
 
     let explanation = explain_state(&job_status, &run_state, &states, attention.as_ref());
+    let mut failure = attention.as_ref().map(|attention| NormalizedFailure {
+        outcome: "attention_required".into(),
+        cause: Some(attention.cause.clone()),
+        disposition: None,
+        evidence: Some(attention.evidence.clone()),
+        recovery_action: Some(attention.recovery_action.clone()),
+    });
     let mut timeline = Vec::with_capacity(routes.len() + attempts.len() * 2 + rollups.len());
     for route in routes {
         timeline.push(DiagnosticEvent {
@@ -180,6 +216,16 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
             outcome: None,
         });
         if let (Some(at), Some(outcome)) = (attempt.finished_at, attempt.outcome) {
+            let normalized = NormalizedFailure {
+                outcome: outcome.clone(),
+                cause: attempt.cause_code.clone(),
+                disposition: attempt.retry_disposition.clone(),
+                evidence: attempt.evidence_refs.clone(),
+                recovery_action: attention.as_ref().map(|a| a.recovery_action.clone()),
+            };
+            if normalized.cause.is_some() || normalized.disposition.is_some() {
+                failure = Some(normalized.clone());
+            }
             let attribution = match (attempt.latency_ms, attempt.cost_microusd) {
                 (None, None) => String::new(),
                 (latency, cost) => format!(
@@ -193,13 +239,7 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
                 kind: "attempt_terminal".into(),
                 task_id: Some(attempt.task_id),
                 summary: format!("attempt {}: {}{}", attempt.attempt, outcome, attribution),
-                outcome: Some(DiagnosticOutcome {
-                    outcome,
-                    cause: attempt.cause_code,
-                    disposition: attempt.retry_disposition,
-                    evidence: attempt.evidence_refs,
-                    recovery_action: attention.as_ref().map(|a| a.recovery_action.clone()),
-                }),
+                outcome: Some(normalized.into()),
             });
         }
     }
@@ -220,6 +260,7 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
         run_state,
         current_task,
         explanation,
+        failure,
         attention,
         attachment,
         rollups,
@@ -254,6 +295,22 @@ fn explain_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalized_failure_preserves_recovery_semantics_for_timeline_rendering() {
+        let failure = NormalizedFailure {
+            outcome: "failed".into(),
+            cause: Some("watchdog_timeout".into()),
+            disposition: Some("retry".into()),
+            evidence: Some(serde_json::json!({"attempt": 2})),
+            recovery_action: Some("retry_task".into()),
+        };
+
+        let timeline: DiagnosticOutcome = failure.clone().into();
+        assert_eq!(timeline.outcome, failure.outcome);
+        assert_eq!(timeline.cause, failure.cause);
+        assert_eq!(timeline.recovery_action, failure.recovery_action);
+    }
 
     #[test]
     fn explanation_never_treats_empty_queue_as_completion() {
