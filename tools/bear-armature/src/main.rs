@@ -7636,6 +7636,20 @@ pub(crate) fn spawn_tool_request_task(
             return;
         }
         let den_owned_display_only = is_den_server_tool_request(&event);
+        if !den_owned_display_only && canonical.client_obligation_id().is_err() {
+            tracing::warn!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                "armature-local tool request missing obligation_id; local execution suppressed"
+            );
+            let _ = shared_state
+                .tool_tasks
+                .remove(&session_id, &tool_call_id)
+                .await;
+            return;
+        }
         let mut event = event;
         let lease = if den_owned_display_only {
             None
@@ -7649,7 +7663,9 @@ pub(crate) fn spawn_tool_request_task(
                     &config,
                     &session_id,
                     run_id,
-                    &canonical.obligation_id,
+                    canonical
+                        .client_obligation_id()
+                        .expect("armature-local tool request was validated above"),
                     &tool_call_id,
                 )
                 .await
@@ -7678,7 +7694,7 @@ pub(crate) fn spawn_tool_request_task(
                 }
             }
         };
-        tracing::info!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id = session_id.as_str(),
             tool_call_id = tool_call_id.as_str(),
@@ -7715,7 +7731,9 @@ pub(crate) fn spawn_tool_request_task(
                 None,
                 &config,
                 run_id,
-                &canonical.obligation_id,
+                canonical
+                    .client_obligation_id()
+                    .expect("armature-local tool request was validated above"),
                 &tool_call_id,
                 lease,
                 tool_future,
@@ -7770,7 +7788,7 @@ pub(crate) fn spawn_tool_request_task(
                     std::time::Instant::now(),
                 )
                 .await;
-                tracing::info!(
+                tracing::trace!(
                     target: "bear_armature::lifecycle",
                     session_id = session_id.as_str(),
                     tool_call_id = tool_call_id.as_str(),
@@ -7813,7 +7831,7 @@ pub(crate) fn spawn_tool_request_task(
                 .remove(&session_id, &tool_call_id)
                 .await;
         } else if den_owned_display_only {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id = session_id.as_str(),
                 tool_call_id = tool_call_id.as_str(),
@@ -7834,7 +7852,7 @@ pub(crate) fn spawn_tool_request_task(
                 .remove(&session_id, &tool_call_id)
                 .await;
         } else {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id = session_id.as_str(),
                 tool_call_id = tool_call_id.as_str(),
@@ -8541,11 +8559,20 @@ struct BearWireToolCallRequestCard {
 
 #[derive(Debug, Clone, Deserialize)]
 struct BearWireToolCallRequestData {
-    obligation_id: String,
+    #[serde(default)]
+    obligation_id: Option<String>,
     tool_call: BearWireToolCallRequestCard,
 }
 
 impl BearWireToolCallRequestData {
+    fn client_obligation_id(&self) -> Result<&str> {
+        self.obligation_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| anyhow!("armature-local tool request missing obligation_id"))
+    }
+
     fn parse(event: &Value) -> Result<Self> {
         let data = event
             .get("data")
@@ -9057,7 +9084,7 @@ async fn request_tool_permission(
     let request =
         RequestPermissionRequest::new(session_id.to_string(), tool_call, options).meta(Some(meta));
     let permission_timeout_ms = policy.permission_timeout_ms.unwrap_or(120_000);
-    tracing::info!(
+    tracing::trace!(
         target: "bear_armature::lifecycle",
         session_id,
         tool_call_id,
@@ -9071,7 +9098,7 @@ async fn request_tool_permission(
         std::time::Duration::from_millis(permission_timeout_ms),
     )
     .await?;
-    tracing::info!(
+    tracing::trace!(
         target: "bear_armature::lifecycle",
         session_id,
         tool_call_id,
@@ -9118,7 +9145,7 @@ async fn post_permission_result(
     payload: Value,
 ) -> Result<Value> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
-        tracing::info!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -9133,7 +9160,7 @@ async fn post_permission_result(
             payload.clone(),
         )
         .await?;
-        tracing::info!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -9200,7 +9227,7 @@ async fn post_tool_result(
 ) -> Result<()> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
         let started = std::time::Instant::now();
-        tracing::info!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -9248,7 +9275,7 @@ async fn post_tool_result(
                 duration_ms
             );
         }
-        tracing::info!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -13462,6 +13489,29 @@ mod tests {
     }
 
     #[test]
+    fn den_owned_checkpoint_request_can_omit_client_obligation() {
+        let event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-1",
+            "data": {
+                "execution_target": "den",
+                "policy": { "execution_target": "den" },
+                "tool_call": {
+                    "id": "call-checkpoint-1",
+                    "name": "checkpoint",
+                    "arguments": { "checkpoint_id": "ckpt-1" }
+                }
+            }
+        });
+
+        let parsed = BearWireToolCallRequestData::parse(&event).expect("parse Den-owned request");
+        assert_eq!(parsed.obligation_id, None);
+        assert_eq!(parsed.tool_call.name, "checkpoint");
+        assert!(parsed.client_obligation_id().is_err());
+        assert!(is_den_server_tool_request(&event));
+    }
+
+    #[test]
     fn canonical_bearwire_client_waiting_parser_reads_permission_obligation() {
         let event = json!({
             "type": "client.waiting",
@@ -13529,7 +13579,7 @@ mod tests {
         assert_eq!(event["data"]["approval_required"], false);
         assert_eq!(event["data"]["approval_request_id"], "perm-git-1");
         assert_eq!(event["data"]["policy"]["total_timeout_ms"], 150000);
-        assert_eq!(parsed.obligation_id, "obl-git-1");
+        assert_eq!(parsed.obligation_id.as_deref(), Some("obl-git-1"));
         assert_eq!(parsed.tool_call.id, "call-git-1");
         assert_eq!(parsed.tool_call.name, "git_status");
         assert_eq!(parsed.tool_call.arguments["path"], ".");

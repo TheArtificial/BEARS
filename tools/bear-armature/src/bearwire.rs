@@ -726,7 +726,7 @@ pub(crate) async fn handle_prompt(
                                 >= BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL;
                         if should_log_summary {
                             last_run_state_diagnostic_log = Instant::now();
-                            tracing::warn!(
+                            tracing::trace!(
                                 target: "bear_armature::lifecycle",
                                 session_id,
                                 run_id,
@@ -1996,7 +1996,7 @@ async fn handle_bearwire_event(
             }
         }
         "run.completed" => {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id,
                 run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
@@ -2045,7 +2045,7 @@ async fn handle_bearwire_event(
                 .await?;
         }
         "tool_call.requested" => {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id,
                 run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
@@ -2068,7 +2068,7 @@ async fn handle_bearwire_event(
             }
         }
         "tool_call.completed" | "tool_call.warning" | "tool_call.cancelled" => {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id,
                 run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
@@ -2109,7 +2109,7 @@ async fn handle_bearwire_event(
             .await?;
         }
         "client.waiting" => {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id,
                 run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
