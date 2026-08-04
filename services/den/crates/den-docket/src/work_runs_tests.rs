@@ -27,7 +27,8 @@ use crate::supervisor::set_work_run_paused;
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
-    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService,
+    DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
+    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskUpdate, PgDocketService,
     RoutingStrategy, TaskListVisibility,
 };
 
@@ -1186,6 +1187,91 @@ async fn attention_and_completion_visibility() {
     )
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn in_progress_task_definition_edits_require_a_paused_work_run() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "paused-task-edit").await;
+    let (job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let service = PgDocketService::from_pool(&pool);
+    let run_id = service
+        .get_job(bear_id, job_id)
+        .await
+        .unwrap()
+        .expect("job")
+        .current_run
+        .expect("job run")
+        .id;
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: Some(job_id),
+            task_id: task_ids[0],
+            actor_role: BearProfile::Work,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: crate::DocketTaskStatus::InProgress,
+                result_refs: None,
+                result_summary: None,
+            }),
+        })
+        .await
+        .unwrap();
+    let work_run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+
+    let edit = |title: &str| DocketTaskUpdate {
+        bear_id,
+        job_id: Some(job_id),
+        task_id: task_ids[0],
+        actor_role: BearProfile::Work,
+        actor_user_id: Some(user_id),
+        actor_agent_id: None,
+        definition: DocketTaskDefinitionPatch {
+            title: Some(title.to_string()),
+            ..DocketTaskDefinitionPatch::default()
+        },
+        run_state: Some(DocketTaskRunStateUpdate {
+            run_id,
+            status: crate::DocketTaskStatus::InProgress,
+            result_refs: None,
+            result_summary: None,
+        }),
+    };
+    assert!(service.update_task(edit("must pause first")).await.is_err());
+
+    claim_next_work_run(&pool, "runner-paused-edit", std::time::Duration::from_mins(1))
+        .await
+        .unwrap();
+    record_work_run_provisioned(
+        &pool,
+        work_run.id,
+        &WorkRunProvisioned {
+            sandbox_server_url: "http://sandbox:3002".into(),
+            sandbox_id: "paused-edit".into(),
+            sandbox_type: "container".into(),
+            sandbox_strength: "container: test".into(),
+            work_surface: serde_json::json!({}),
+            rust_dependency_preparation: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(set_work_run_paused(&pool, work_run.id, true).await.unwrap());
+    service
+        .update_task(edit("edited while paused"))
+        .await
+        .expect("paused work run permits editing its active task");
 }
 
 #[tokio::test]

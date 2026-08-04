@@ -1735,6 +1735,7 @@ pub(super) async fn update_task(
     let mut tx = pool.begin().await?;
     let current = select_task(&mut tx, update.bear_id, update.task_id).await?;
     validate_task_update_scope(&mut tx, &current, &update).await?;
+    validate_in_progress_task_edit_is_paused(&mut tx, &current, &update).await?;
     if let Some(run_state) = update
         .run_state
         .as_ref()
@@ -1964,6 +1965,55 @@ async fn validate_task_update_scope(
         }
     }
     Ok(())
+}
+
+async fn validate_in_progress_task_edit_is_paused(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    current: &DocketTaskRow,
+    update: &DocketTaskUpdate,
+) -> Result<(), DenError> {
+    let Some(run_state) = update.run_state.as_ref() else {
+        return Ok(());
+    };
+    let definition_changed = update.definition.title.is_some()
+        || update.definition.body.is_some()
+        || update.definition.completion_criteria.is_some()
+        || update.definition.parent_task_id.is_some()
+        || update.definition.sibling_order.is_some()
+        || update.definition.kind.is_some()
+        || update.definition.scope.is_some()
+        || update.definition.difficulty.is_some()
+        || update.definition.effort_hint.is_some()
+        || update.definition.routing_strategy.is_some()
+        || update.definition.expected_context_size.is_some()
+        || update.definition.result_rollup_policy.is_some();
+    if !definition_changed {
+        return Ok(());
+    }
+    let active = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM bear_task_run_state WHERE run_id=$1 AND task_id=$2 AND status='in_progress')",
+    )
+    .bind(run_state.run_id)
+    .bind(current.id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if !active {
+        return Ok(());
+    }
+    let paused = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_run_id=$1 AND task_id=$2 AND state='paused')",
+    )
+    .bind(run_state.run_id)
+    .bind(current.id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if paused {
+        Ok(())
+    } else {
+        Err(DenError::ValidationError(
+            "editing an in-progress Docket task requires its job run to be paused".into(),
+        ))
+    }
 }
 
 async fn update_task_definition(
