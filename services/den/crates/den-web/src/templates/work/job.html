@@ -131,7 +131,7 @@
                         <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/tasks/{{ task.id }}/move/down" class="inline-form"><button type="submit" aria-label="Move task down">↓</button></form>
                     </td>
                     <td style="padding-left: {{ task.depth * 1.5 }}rem">
-                        <a href="#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}"><code class="entity-reference-id">{{ task.display_id }}</code></a>
+                        <a href="?task={{ task.id }}#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}"><code class="entity-reference-id">{{ task.display_id }}</code></a>
                         {{ task.description }} <small>({{ task.kind }})</small>
                         <div>
                             {% if task.status == "done" %}✅ done
@@ -157,6 +157,23 @@
         </table>
     </details>
 </section>
+
+{% if selected_task %}
+<section id="selected-task">
+    <h2>Selected task: {{ selected_task.title }}</h2>
+    <p><code class="entity-reference-id">{{ selected_task.display_id }}</code> · <strong>{{ selected_task.status }}</strong></p>
+    <p>{{ selected_task.description }}</p>
+    {% if selected_diagnostics %}
+    <p>{{ selected_diagnostics.explanation }}</p>
+    {% if selected_diagnostics.failure %}
+    <p><strong>{{ selected_diagnostics.failure.outcome }}</strong>{% if selected_diagnostics.failure.cause %}: {{ selected_diagnostics.failure.cause }}{% endif %}{% if selected_diagnostics.failure.recovery_action %} — {{ selected_diagnostics.failure.recovery_action }}{% endif %}</p>
+    {% endif %}
+    {% if selected_diagnostics.timeline %}
+    <details><summary>Run timeline</summary><ol>{% for event in selected_diagnostics.timeline %}<li><strong>{{ event.kind }}</strong>: {{ event.summary }}</li>{% endfor %}</ol></details>
+    {% endif %}
+    {% endif %}
+</section>
+{% endif %}
 
 <section>
     <h2>Work runs</h2>

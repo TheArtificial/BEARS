@@ -1382,10 +1382,16 @@ async fn add_top_level_task(
     Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
+#[derive(Deserialize)]
+struct JobDetailQuery {
+    task: Option<String>,
+}
+
 async fn job_detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
     Path((bear_slug, job_ref)): Path<(String, String)>,
+    Query(query): Query<JobDetailQuery>,
 ) -> Result<Response, CustomError> {
     let bear = bear_context(&state, &auth_session, &bear_slug).await?;
     let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
@@ -1473,6 +1479,36 @@ async fn job_detail(
         })
         .collect();
 
+    let selected_task_id = match query.task.as_deref() {
+        Some(task_ref) => resolve_task_prefix(state.sqlx_pool(), bear_id, task_ref)
+            .await
+            .ok(),
+        None => None,
+    };
+    let selected_task = selected_task_id.and_then(|task_id| {
+        projection
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .map(|task| {
+                let state = task_states.get(&task.id).copied();
+                serde_json::json!({
+                    "id": route_id(task.id),
+                    "display_id": uuid_hex_prefix(task.id, DISPLAY_ID_HEX_LEN),
+                    "title": task.title,
+                    "description": task.body,
+                    "status": state.map(|state| state.status.as_str()).unwrap_or("pending"),
+                    "run_route_id": state.map(|state| route_id(state.run_id)),
+                })
+            })
+    });
+    let selected_diagnostics = match selected_task_id
+        .and_then(|task_id| task_states.get(&task_id).map(|state| state.run_id))
+    {
+        Some(run_id) => Some(den_docket::run_diagnostics(state.sqlx_pool(), run_id).await?),
+        None => None,
+    };
+
     let has_runnable_work = tasks.iter().any(|task| {
         matches!(
             task.get("status").and_then(serde_json::Value::as_str),
@@ -1532,6 +1568,8 @@ async fn job_detail(
             work_branch => projection.job.work_branch,
             allow_default_ref => allow_default_ref,
             tasks => tasks,
+            selected_task => selected_task,
+            selected_diagnostics => selected_diagnostics,
             runs => run_views,
             catalog => catalog,
             tasks_complete => status_report.tasks_complete,
