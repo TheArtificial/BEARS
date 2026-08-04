@@ -1678,6 +1678,7 @@ async fn handle_bearwire_tool_call_finished_event(
         .get(session_id, lookup_tool_call_id)
         .await;
     let cached_input_args = cached.as_ref().and_then(|record| record.input_args.clone());
+    let cached_display = cached.as_ref().and_then(|record| record.display.clone());
     let had_cached_start = cached.is_some();
     let tool_call_id = canonical.tool_call.id;
     let tool_name = canonical
@@ -1702,7 +1703,7 @@ async fn handle_bearwire_tool_call_finished_event(
     if let Some(args) = cached_input_args.or(canonical.tool_call.arguments) {
         projection_event["data"]["tool_call"]["arguments"] = args;
     }
-    if let Some(display) = canonical.tool_call.display {
+    if let Some(display) = canonical.tool_call.display.or(cached_display) {
         projection_event["data"]["tool_call"]["display"] = display;
     }
     send_tool_call_update_for_turn(
@@ -2816,6 +2817,21 @@ mod tests {
         assert!(message.contains("run-timeout"));
         assert!(context.contains("continuation_request_id"));
         assert!(context.contains("req-123"));
+    }
+
+    #[test]
+    fn terminal_projection_reuses_requested_display_when_completion_omits_it() {
+        let requested_display = json!({
+            "title": "Search for \"tool_call\" in this workspace",
+            "kind": "search"
+        });
+        let cached_display = Some(requested_display.clone());
+        let completion_display: Option<Value> = None;
+
+        assert_eq!(
+            completion_display.or(cached_display),
+            Some(requested_display)
+        );
     }
 
     #[test]

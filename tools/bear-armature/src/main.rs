@@ -7893,11 +7893,12 @@ pub(crate) async fn project_den_owned_tool_request(
         log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
         shared_state
             .tool_tasks
-            .remember_input(
+            .remember_presentation(
                 session_id,
                 tool_call_id,
                 tool_name,
                 canonical.tool_call.arguments.clone(),
+                canonical.tool_call.display.clone(),
             )
             .await;
     }
@@ -7971,7 +7972,13 @@ async fn handle_tool_request_event(
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
     let args = canonical.tool_call.arguments.clone();
     task_registry
-        .remember_input(session_id, tool_call_id, tool_name, args.clone())
+        .remember_presentation(
+            session_id,
+            tool_call_id,
+            tool_name,
+            args.clone(),
+            canonical.tool_call.display.clone(),
+        )
         .await;
     if is_den_server_tool_request(event) {
         project_den_owned_tool_request(shared_state, session_id, event, turn_token).await?;
@@ -8528,6 +8535,8 @@ struct BearWireToolCallRequestCard {
     id: String,
     name: String,
     arguments: Value,
+    #[serde(default)]
+    display: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

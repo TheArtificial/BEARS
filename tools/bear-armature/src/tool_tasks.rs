@@ -16,6 +16,7 @@ pub(crate) struct ToolTaskRecord {
     pub(crate) turn_token: Option<Uuid>,
     pub(crate) phase: ToolTaskPhase,
     pub(crate) input_args: Option<Value>,
+    pub(crate) display: Option<Value>,
     pub(crate) started_at: std::time::Instant,
     pub(crate) updated_at: std::time::Instant,
 }
@@ -47,6 +48,7 @@ impl ToolTaskRegistry {
                 turn_token,
                 phase: ToolTaskPhase::Received,
                 input_args: None,
+                display: None,
                 started_at: now,
                 updated_at: now,
             },
@@ -54,12 +56,13 @@ impl ToolTaskRegistry {
         true
     }
 
-    pub(crate) async fn remember_input(
+    pub(crate) async fn remember_presentation(
         &self,
         session_id: &str,
         tool_call_id: &str,
         tool_name: &str,
         input_args: Value,
+        display: Option<Value>,
     ) {
         let mut tasks = self.tasks.lock().await;
         let Some(entry) = tasks.get_mut(&Self::key(session_id, tool_call_id)) else {
@@ -67,6 +70,7 @@ impl ToolTaskRegistry {
         };
         entry.tool_name = tool_name.to_string();
         entry.input_args = Some(input_args);
+        entry.display = display;
         entry.updated_at = std::time::Instant::now();
     }
 
@@ -315,11 +319,12 @@ mod tests {
         registry.cancel_session("session-a").await;
 
         registry
-            .remember_input(
+            .remember_presentation(
                 "session-a",
                 "call-a",
                 "fs_read_text_file",
                 serde_json::json!({"path":"README.md"}),
+                None,
             )
             .await;
         registry
