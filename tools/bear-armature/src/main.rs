@@ -7625,7 +7625,7 @@ pub(crate) fn spawn_tool_request_task(
             .try_register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
             .await
         {
-            tracing::debug!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id = session_id.as_str(),
                 tool_call_id = tool_call_id.as_str(),
@@ -7880,7 +7880,7 @@ pub(crate) async fn project_den_owned_tool_request(
         .await
         .is_some_and(SurfaceToolStatus::is_terminal)
     {
-        tracing::debug!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             tool_call_id,
@@ -17396,7 +17396,6 @@ mod tests {
             "type": "tool_call.requested",
             "run_id": "run-terminal-first",
             "data": {
-                "obligation_id": "obl-terminal-first",
                 "policy": { "execution_target": "den" },
                 "tool_call": {
                     "id": tool_call_id,
