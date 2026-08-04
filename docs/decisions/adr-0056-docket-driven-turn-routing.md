@@ -1,7 +1,7 @@
 # ADR-0056: Docket-driven turn routing
 
 **Status:** Accepted; Phases 0–4 implemented
-**Date:** 2026-07-17 (revised 2026-07-20)  
+**Date:** 2026-07-17 (revised 2026-08-04)
 **Amends:** [ADR-0034: Jobs and Tasks Work-Management Model](adr-0034-jobs-and-tasks-work-management.md), [ADR-0043: ACP as edge adapter over a protocol-agnostic core](adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md), [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md), [ADR-0053: Stance-scoped delegated runs](adr-0053-stance-scoped-delegated-runs.md)  
 **Related:** [ADR-0033: Model tasks layer](adr-0033-model-tasks-layer.md), [ADR-0050: Agent loop control, adaptive budgets, and runtime checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md), [ADR-0051: Reflection performance assessments](adr-0051-reflection-performance-assessments.md)
 
@@ -79,7 +79,7 @@ The system will support multiple projections over the same underlying model:
 
 - The autonomous dispatcher is a **peer client of the router**: a `work` run advancing to the next task is a routing decision, recorded identically to a user's navigation.
 - ACP and chat-like sessions may present one continuous stream while internally routing turns across multiple conversations.
-- GUI applications may show the Docket task tree explicitly and allow users to navigate, inspect, and control routing decisions — including watching an autonomous run's position without disturbing it.
+- GUI applications may show the Docket task tree explicitly as the primary workspace: task status, progress, activity/logs, results, and recovery are organized by stable task identity, including while autonomous execution advances without being disturbed. Routing decisions and run records remain inspectable operational detail rather than the normal interaction model.
 - Debugging and audit tools may expose the full mapping between sessions, tasks, conversations, runs, and tool calls.
 
 ### Work activity transcript
@@ -498,9 +498,22 @@ Job: Improve auth reliability
     Routing: inline
 ```
 
-Human vocabulary is a strict subset of the model's. Client copy should surface **job, task, task list, run status, results, and approvals** — the vocabulary the Phase-1 UX surfaces already standardize. Conversation bindings, other sessions' cursors, routing decisions, and turn intents are trace/debug tier: available to every client, shown by default in none.
+Human vocabulary is a strict subset of the model's. Client copy should surface **job, task, task list, task status/progress, activity, results, approvals, and recovery actions**. A run may be described only where useful (for example, “retrying” or “paused”), but a user must not need a run identifier or a run-first screen to understand, inspect, or steer work. Conversation bindings, other sessions' cursors, routing decisions, turn intents, attempts, leases, and raw work-run records are trace/debug tier: available to authorized clients, shown by default in none.
 
-The GUI should not need to reverse-engineer this from transcripts. Den should provide first-class APIs for Docket cursors, routing decisions, task/conversation bindings, transcripts, and result rollups. Transcript review rests on ADR-0043's fenced requirement that tool activity is core replay state: every model-relevant tool call and result is persisted in a replayable Den transcript shape, so a log-review UI reads core state, not adapter decoration.
+### Product projection: job workspace and task activity
+
+The primary product projection is **Job → task tree → task activity**, not a collection of run pages. A task is the stable user-facing unit even when it is retried, paused, resumed, rerouted to another conversation, or executed on another surface. Den derives each task's status and progress from canonical task/run/criterion evidence, then attaches its permitted activity, rollups, failure explanation, and semantic recovery actions.
+
+```text
+Job workspace
+  ├── task tree: derived status, progress, current/last activity
+  ├── task detail: narrative activity/log sequence, rollups, recovery
+  └── job activity timeline: ordered, task-correlated events across the tree
+```
+
+Every activity item must carry durable `job_id` and `task_id` correlation. `attempt_id`, `conversation_id`, `work_run_id`, routing-decision ID, and lease data may be attached as authorized forensic metadata, but they cannot be required for normal tree, activity, failure, notification, or recovery flows. A run-first diagnostic view remains legitimate for operators and deep debugging; it is a projection over the same records, never a competing user-facing truth.
+
+The GUI should not need to reverse-engineer this from transcripts. Den should provide first-class APIs for job-workspace/task-activity projections, Docket cursors, routing decisions, task/conversation bindings, transcripts, and result rollups. Transcript review rests on ADR-0043's fenced requirement that tool activity is core replay state: every model-relevant tool call and result is persisted in a replayable Den transcript shape, so a log-review UI reads core state, not adapter decoration.
 
 ## Den API requirements
 
@@ -509,15 +522,17 @@ Den needs a robust API layer that treats Docket-driven routing as a first-class 
 Minimum conceptual API resources:
 
 ```text
+JobWorkspace            (primary job/tree/status/progress/activity projection)
+TaskActivity            (task-correlated ordered activity and recovery projection)
 DocketJob
 DocketTask
 DocketCursor            (per session; many per tree)
 Conversation
 ConversationBinding
-RoutingDecision
-JobRun                  (bear_job_runs)
-TaskRunState            (bear_task_run_state)
-WorkRun                 (bear_work_runs)
+RoutingDecision         (operational/forensic detail)
+JobRun                  (bear_job_runs; operational/forensic detail)
+TaskRunState            (bear_task_run_state; execution substrate)
+WorkRun                 (bear_work_runs; operational/forensic detail)
 ResultRollup            (run-scoped task events)
 ```
 
@@ -526,6 +541,8 @@ Note the three run-shaped records — turn runs (BearWire), job runs, and work r
 Possible API operations:
 
 ```text
+getJobWorkspace(job_id, detail_level)    -- primary tree/status/progress/activity view
+getTaskActivity(task_id, page, detail_level)
 getJob(job_id)
 getTask(task_id)
 listTaskTree(job_id)
@@ -536,9 +553,9 @@ listCursors(job_id)                      -- all sessions' viewports
 
 routeTurn(turn_intent)
 
-pauseRun(run_id)
-resumeRun(run_id)
-stopRun(run_id)                          -- terminal for the run; job stays resumable
+pauseJob(job_id)
+resumeJob(job_id)
+stopJob(job_id)                          -- implementation resolves current run; job stays resumable
 
 getTaskConversations(task_id)            -- preferred binding + per-run history
 bindTaskConversation(task_id, conversation_id)
@@ -548,11 +565,12 @@ getConversationTranscript(conversation_id, page)
 getRoutingStrategy(task_id)
 setRoutingStrategy(task_id, strategy)
 
-listRoutingDecisions(job_id | task_id | run_id)
-streamJobEvents(job_id)                  -- task/run/rollup/routing events, live
+listRoutingDecisions(job_id | task_id | run_id)  -- operational/forensic
+getExecutionDiagnostics(run_id)                  -- operational/forensic
+streamJobEvents(job_id)                  -- task-correlated live activity; runs are optional metadata
 
 completeTask(run_id, task_id, attempt, expected_state_version,
-             result_summary, completion_evidence)  -- finalizes attempt + records rollup
+             result_summary, completion_evidence)  -- internal execution finalization + rollup
 ```
 
 The API should distinguish between:

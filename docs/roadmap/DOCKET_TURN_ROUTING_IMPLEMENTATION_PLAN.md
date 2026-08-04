@@ -23,7 +23,7 @@ Depends on:
 
 ## Goal
 
-A Docket job runs to completion unattended: the work-run dispatcher feeds turn intents to one router, each task lands in a policy-chosen conversation on a policy-chosen (cheap-by-default) model, children report back as strict rollups, and every placement is recorded. Meanwhile any number of `pair`/GUI sessions hold independent cursors over the same tree — browsing status, transcripts, and routing decisions live, and editing the tree — without ever contending with the run.
+A Docket job runs to completion unattended: the work-run dispatcher feeds turn intents to one router, each task lands in a policy-chosen conversation on a policy-chosen (cheap-by-default) model, children report back as strict rollups, and every placement is recorded. The primary product surface is a job workspace: a task tree with derived status/progress and task-correlated activity/logs woven through the tree, task detail, and job timeline. Meanwhile any number of `pair`/GUI sessions hold independent cursors over the same tree — browsing and editing without ever contending with execution. Job/work runs, turn attempts, bindings, routing decisions, and leases are durable execution substrate and forensic drill-down, not concepts users must understand to follow or steer work.
 
 ## Current-state anchors (2026-07-20)
 
@@ -53,6 +53,7 @@ What this plan builds on, by file:
 12. **The supervisor, not the model, owns disposition.** Model text or a model-requested stop may report blocked work and evidence, but cannot terminalize an autonomous task or run. The runtime validates completion against task criteria and chooses retry, profile escalation, handoff, pause, await-recovery, or typed terminal failure under explicit bounded policy.
 13. **One failure truth, multiple projections.** Conversation history, task/run views, notifications, and forensic logs render the same normalized outcome/evidence record. Concise surfaces may summarize it, but must not independently infer a different cause or hide the last successful activity, the failing boundary, retry disposition, or recovery action.
 14. **Unresolved work cannot look complete.** A blocked, stalled, failed-without-retry, or stopped required task prevents job success. Task/job/run projection follows one explicit reduction table; “no actionable task” is never sufficient for job completion.
+15. **The product projection is job/tree-first.** Stable task identity is the user-facing unit of status, progress, activity, logs, and recovery. A task may be retried, paused, resumed, rerouted, or executed on another surface without changing that identity. Runs, attempts, conversations, routing decisions, and leases enrich task-correlated activity and forensic inspection, but normal job/task APIs and UI must not require users to reason about them.
 
 ## V1 delivery plan
 
@@ -62,7 +63,7 @@ The estimates are elapsed engineer effort, not calendar promises. They assume th
 
 ### Increment 0 — Contract and state inventory (2–3 engineer-weeks; cumulative 2–3)
 
-1. Trace one successful, model-blocked, watchdog-expired, provider-disconnected, cancelled, and process-orphaned turn through work-run state, transcript persistence, task events, BearWire, and the run page.
+1. Trace one successful, model-blocked, watchdog-expired, provider-disconnected, cancelled, and process-orphaned turn through work-run state, transcript persistence, task events, BearWire, the job workspace, and forensic run diagnostics.
 2. Define one strongly typed attempt/outcome/evidence contract. Include reservation/attempt identity, routing decision, lifecycle timestamps, observed boundary/cause/code, normalized outcome when known, last successful activity, failing boundary, criteria evidence, profile, supervisor disposition, recovery action, and synthetic provenance.
 3. Specify legal reservation/claim, attempt, task-run, work-run, and job-run transitions, including which component owns each transition and the transaction boundary between them. Distinguish lifecycle, observed boundary, normalized outcome, supervisor disposition, and task/run projection; reconcile continuation-loss `stalled` semantics with synthetic recovery provenance.
 4. Specify the atomic claim-and-commit contract: expected versions, owner/lease, stable turn idempotency key, decision/binding creation, late-result rejection, and release/finalization. Define the job reduction table: required blocked, stalled, exhausted-failure, and stopped tasks cannot project job success.
@@ -97,15 +98,15 @@ The estimates are elapsed engineer effort, not calendar promises. They assume th
 
 ### Increment 3 — Shared failure projection (2–3 engineer-weeks; cumulative 8–12)
 
-1. Extend the existing shared turn/work status payload with the normalized outcome/evidence contract; do not create a run-page-only DTO.
-2. Render the failed attempt in conversation sequence, including preserved partial activity and a concise cause/disposition summary.
-3. Render the same canonical record on the run page: headline by default, narrative detail, and forensic raw-event drill-down.
-4. Add recovery actions (retry/resume, handoff, or inspect) from the persisted disposition rather than client-side inference.
-5. Add a semantic parity test that feeds one normalized failure to conversation and run projections and compares cause, code, disposition, evidence refs, and recovery action.
+1. Extend the existing shared turn/work status payload with the normalized outcome/evidence contract and task-correlated activity references; do not create a run-page-only DTO.
+2. Render the failed attempt in its task activity sequence, including preserved partial activity and a concise cause/disposition summary; conversation history remains one permitted narrative projection of that same activity.
+3. Render the same canonical record in the job workspace: task-tree headline by default, task-detail narrative, and forensic raw-event drill-down. A run diagnostics page is an operational/deep-debug projection, not the primary failure surface.
+4. Add recovery actions (retry/resume, handoff, or inspect) from the persisted disposition rather than client-side inference, expressed against the affected task/job rather than requiring a run identifier.
+5. Add a semantic parity test that feeds one normalized failure to task activity, conversation, job workspace, and run-diagnostics projections and compares cause, code, disposition, evidence refs, and recovery action.
 
 **Runnable check:** replay a `5bb511df`-style watchdog timeout after a tool request. Both surfaces show what succeeded last, where activity stopped, why Den terminalized it, whether it will retry/escalate, and what the user can do; forensic view shows the underlying events.
 
-**Exit gate — failure-prevention slice complete:** failed turns cannot disappear, models cannot abandon autonomous work, and the run page explains the same failure recorded in conversation history and forensic logs.
+**Exit gate — failure-prevention slice complete:** failed turns cannot disappear, models cannot abandon autonomous work, and the job workspace explains the same failure recorded in conversation history and forensic logs; run diagnostics remain a matching deep-debug projection.
 
 ### Increment 4 — Router foundation and dispatcher adoption (4–5 engineer-weeks; cumulative 12–17)
 
@@ -138,24 +139,28 @@ The estimates are elapsed engineer effort, not calendar promises. They assume th
 
 **Exit gate:** Phase 2 acceptance is green; tier-1 failure produces a recorded tier-2 decision and bounded terminal behavior at the top tier.
 
-### Increment 7 — Cursor, browsing, and live observation (3–5 engineer-weeks; cumulative 21–31)
+### Increment 7 — Cursor, browsing, task-workspace web UI, and live observation (4–6 engineer-weeks; cumulative 22–32)
 
 1. Implement cursor lifecycle and replace focus-title behavior with compatibility-safe cursor projections.
 2. Add task-tree, task-conversation, paged transcript, routing-decision, and job-event APIs over existing canonical records.
-3. Add headline/narrative/forensic server-side projections; clients do not filter raw events to derive meaning.
-4. Add stale cursor behavior and tests for completed, blocked, and deleted tasks.
-5. Show live autonomous position without granting cursors execution authority.
+3. Add a primary job-workspace projection: stable task tree, derived task status/progress, current task activity, per-task rollups, semantic recovery actions, and an ordered job activity timeline. Every activity item carries durable `job_id`/`task_id` correlation; attempt, conversation, work-run, and routing references are optional forensic metadata.
+4. Build a **new dedicated task-workspace web UI in `den-web`** to replace the current job page and run sub-pages; do not incrementally layer this model into the run-first screens. The workspace owns job/tree navigation, task detail, woven activity/logs, progress, recovery, and controls. Run/attempt/routing views remain accessible only as appropriately authorized forensic drill-down from a task or job.
+5. Add headline/narrative/forensic server-side projections; clients do not filter raw events to derive meaning. Headline serves tree rows, narrative serves task detail and the running log, and forensic exposes permitted raw execution detail.
+6. Add stale cursor behavior and tests for completed, blocked, and deleted tasks.
+7. Show live autonomous position as task progress without granting cursors execution authority. Do not make a run identifier necessary to inspect status, logs, failures, or recovery.
+8. Define replacement parity and cutover criteria for the current job page/run sub-pages: all normal status, progress, task activity, logs, recovery, and controls must be available in the workspace; preserve deep links by redirecting or mapping them to the affected task/job workspace plus optional forensic panel.
 
-**Exit gate:** a `pair` session can inspect completed work and watch a live run without changing sequencing; golden-trace compatibility remains green.
+**Exit gate:** the new `den-web` workspace is the default job experience; a `pair` session and web user can inspect completed work, task-correlated activity, and current job progress without changing sequencing; existing job/run URLs have a compatible deep-link path; golden-trace compatibility remains green.
 
 ### Increment 8 — Steering, mutation, and v1 hardening (3–5 engineer-weeks; cumulative 24–36)
 
 1. Route interactive `user` and `continuation` intents through the same router.
 2. Reuse checkout/sync for tree mutation and add audited routing-strategy edits.
-3. Expose run controls and immediate pending acknowledgements on `pair`, chat, and UI surfaces.
-4. Persist the elicited execution-surface choice and provide one-action recovery from failed/stopped runs.
-5. Run restart, race, stale-state, authorization, migration, and compatibility suites; update operator docs and the state-machine inventory.
-6. Remove superseded focus/private-placement code and vestigial data shapes before declaring v1 complete.
+3. Expose semantic job/task controls and immediate pending acknowledgements on `pair`, chat, and UI surfaces; the web workspace resolves current-run implementation details server-side.
+4. Persist the elicited execution-surface choice and provide one-action recovery from failed/stopped work through the affected task/job workspace.
+5. Cut over from the current job page/run sub-pages only after Increment 7 replacement parity is green. Retire their normal-navigation routes and duplicate DTOs; retain a clearly labeled operational/forensic diagnostic route where required.
+6. Run restart, race, stale-state, authorization, migration, web replacement/deep-link, accessibility, and compatibility suites; update operator docs and the state-machine inventory.
+7. Remove superseded focus/private-placement code and vestigial data shapes before declaring v1 complete.
 
 **Exit gate — v1 complete:** all Phase 0–3 acceptance criteria in this document pass on the same build, migrations work from the current production schema snapshot, and no post-v1 Phase 4 capability is required for the advertised behavior.
 
@@ -164,16 +169,17 @@ The estimates are elapsed engineer effort, not calendar promises. They assume th
 - Increments 0–3 are a single dependency chain. UI work in Increment 3 may begin once the outcome contract is fixed, but it cannot ship against fabricated client-side outcomes.
 - After Increment 1, one stream may implement supervisor/recovery while another builds shared projections, using the same fixtures; integration remains gated on Increment 2 dispositions.
 - After Increment 4 fixes router and binding contracts, rollup/run-control work (Increment 5) and profile resolution (Increment 6) can proceed in parallel.
-- Cursor APIs in Increment 7 may begin after the Phase 0 cursor schema lands, but interactive routing and mutation wait for Increment 4 so no second placement mechanism appears.
-- Keep changes reviewable: prefer one migration/type PR, one repository/state-machine PR, and one vertical behavior PR per increment. Do not hold the failure slice in a long-lived branch.
+- Cursor APIs and the `den-web` workspace foundation in Increment 7 may begin after the Phase 0 cursor schema and job-workspace projection contract land, but interactive routing and mutation wait for Increment 4 so no second placement mechanism appears.
+- Keep changes reviewable: prefer one migration/type PR, one repository/state-machine PR, one projection/API PR, and one focused `den-web` vertical UX PR per increment. Do not hold the failure slice in a long-lived branch.
 
 ### V1 definition of done
 
 - All model invocations have an atomic pre-invocation reservation/claim, durable attempt, and incremental replay trail; duplicate workers and stale results cannot create side effects or settle current work.
 - Attempt lifecycle, observed boundary, normalized outcome, supervisor disposition, and task/run state are typed, evidence-bearing, idempotent, and supervisor-owned at their respective boundaries.
-- Conversation, run, notification, and forensic surfaces consume one canonical outcome without semantic drift; notification delivery is durable, authorized, retryable, and deduplicated.
+- Task activity, conversation, job workspace, notification, run-diagnostics, and forensic surfaces consume one canonical outcome without semantic drift; notification delivery is durable, authorized, retryable, and deduplicated.
 - Every turn has one routing decision with reproducible policy/profile provenance; every retry is a new attempt through the same router.
 - Required blocked, stalled, exhausted-failure, and stopped work cannot project a job as succeeded.
+- The primary product API/UI is job/tree-first: users can inspect task status, progress, activity/logs, failures, and recovery without a run identifier. Runs and attempts remain available as correlated operational/forensic detail.
 - Browsing, transcript, surface, and control access require per-resource authorization and redact unavailable details.
 - A representative nested job completes unattended with bounded escalation, rollups, controls, attention routing, and restart recovery.
 - Multiple sessions can browse and steer through cursors without controlling execution position or violating sequencing.
@@ -231,7 +237,7 @@ Acceptance: a task that fails at tier 1 re-dispatches at tier 2 with both decisi
 7. **Steering feedback.** Run-control and mid-run tree edits acknowledge immediately with a pending state on the event stream ("pausing at next boundary", "edit queued — applies at next task"), so boundary pickup never reads as ignored input. Model-facing run-control tools carry guardrails: ambiguous utterances ("hold on") elicit rather than `stopRun`; `pause` is the safe default mapping.
 8. **Recovery affordances.** A failed or stopped sandbox run, and an interactive `pair` armature turn that reaches a typed recoverable terminal state, offer one-action resume: a new run/turn seeded from task states and the failure rollup. The armature-disconnect timeout semantics for unattended `work` dispatch remain Phase 4. The failure notification carries the resume action — recovery must not require a re-dispatch ritual.
 9. **Elicitation memory.** The execution-surface choice is recorded on the job at first dispatch (alongside `commit_policy`) and reused on re-dispatch; editable later, never re-asked per dispatch.
-10. **Failure explanation.** The shared turn/work status payload includes the normalized outcome and evidence: plain-language cause, stable code, last successful activity, failing boundary, attempt/profile, retry or escalation disposition, and available recovery action. Conversation history shows the failed attempt in sequence; the run page shows the same headline with narrative and forensic drill-down. Raw events remain available but are not the UI's only explanation.
+10. **Failure explanation.** The shared turn/work status payload includes the normalized outcome and evidence: plain-language cause, stable code, last successful activity, failing boundary, attempt/profile, retry or escalation disposition, and available recovery action. Conversation history and the new task-workspace web UI show the failed attempt in its task activity sequence; an authorized forensic panel exposes the same run/attempt detail. Raw events remain available but are not the UI's only explanation.
 
 Acceptance: while a seeded job executes autonomously, an authorized `pair` session can (a) hold a cursor on a done child and read its permitted transcript and rollup, (b) watch permitted live position from run state, (c) add a child task and flip a sibling to `scoped`, all without perturbing the run; unauthorized transcript/work-surface details are redacted; stale-cursor actions degrade safely; pause/edit commands show a pending acknowledgment before their boundary; a recoverable sandbox run or interactive armature turn resumes in one action; the surface question is asked at most once per job; for the same injected watchdog failure, conversation history and the run page both show the preserved partial attempt and semantically identical cause/disposition/evidence, while forensic view exposes the underlying events only to authorized readers; state inventory updated.
 
