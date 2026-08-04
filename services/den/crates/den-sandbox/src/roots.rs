@@ -463,6 +463,75 @@ impl RootsManager {
         Ok(Some(head))
     }
 
+    /// Ensure a requested work branch exists without ever moving an existing
+    /// branch. Missing branches start at the already-resolved default ref and
+    /// are immediately published so future runs see the same branch.
+    pub async fn ensure_work_branch(
+        &self,
+        root: &SyncableRoot,
+        branch: &str,
+        base_commit: &str,
+    ) -> Result<(), RootsError> {
+        let upstream = root
+            .upstream
+            .as_ref()
+            .ok_or_else(|| RootsError::PublishUnsupported {
+                name: root.name.clone(),
+            })?;
+        let branch = branch.trim();
+        if branch.is_empty() {
+            return Err(RootsError::Workspace {
+                name: root.name.clone(),
+                detail: "requested work branch is empty".to_string(),
+            });
+        }
+        let normalized = self
+            .git(root, None, &[], &["check-ref-format", "--branch", branch])
+            .await
+            .map_err(|err| RootsError::Workspace {
+                name: root.name.clone(),
+                detail: format!("invalid requested work branch {branch:?}: {err}"),
+            })?;
+        if normalized.trim() != branch {
+            return Err(RootsError::Workspace {
+                name: root.name.clone(),
+                detail: format!("invalid requested work branch {branch:?}"),
+            });
+        }
+
+        let pristine = self.pristine_dir(root);
+        if self
+            .resolve_commit(root, &pristine, &[], branch)
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        // ponytail: this is a local check then push, not a distributed atomic
+        // create. A future concurrent dispatcher can retry after fetching.
+        self.git(
+            root,
+            Some(&pristine),
+            &[],
+            &["update-ref", &format!("refs/heads/{branch}"), base_commit],
+        )
+        .await?;
+        let env = credential_env(root, upstream)?;
+        self.git(
+            root,
+            Some(&pristine),
+            &env,
+            &[
+                "push",
+                "origin",
+                &format!("refs/heads/{branch}:refs/heads/{branch}"),
+            ],
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// Materialize a workspace for one sandbox: a self-contained local clone
     /// of the pristine repo at the requested ref, or a copy of the plain
     /// source directory. The workspace is fully independent of the source
@@ -1104,6 +1173,41 @@ mod tests {
         assert_eq!(
             sh_git(&workspace, &["rev-parse", "HEAD"]).trim(),
             test_commit
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_work_branch_is_created_from_default_ref_and_existing_branch_is_preserved() {
+        let fx = publish_fixture();
+        let base = fx.manager.sync_root(&fx.root).await.unwrap().unwrap();
+        fx.manager
+            .ensure_work_branch(&fx.root, "den/job-test", &base)
+            .await
+            .expect("missing work branch should be created");
+        let upstream = fx.tmp.join("upstream.git");
+        assert_eq!(
+            sh_git(&upstream, &["rev-parse", "den/job-test"]).trim(),
+            base
+        );
+
+        let seed = fx.tmp.join("seed");
+        sh_git(&seed, &["checkout", "-b", "den/job-test"]);
+        std::fs::write(seed.join("job.txt"), "preserved\n").unwrap();
+        sh_git(&seed, &["add", "-A"]);
+        sh_git(&seed, &["commit", "-m", "job progress"]);
+        sh_git(
+            &seed,
+            &["push", &upstream.to_string_lossy(), "den/job-test"],
+        );
+        let progressed = sh_git(&seed, &["rev-parse", "HEAD"]).trim().to_string();
+        fx.manager.sync_root(&fx.root).await.unwrap();
+        fx.manager
+            .ensure_work_branch(&fx.root, "den/job-test", &base)
+            .await
+            .expect("existing work branch should be preserved");
+        assert_eq!(
+            sh_git(&upstream, &["rev-parse", "den/job-test"]).trim(),
+            progressed
         );
     }
 

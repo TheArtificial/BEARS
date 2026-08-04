@@ -900,8 +900,19 @@ async fn provision(
     image: String,
 ) -> Result<(), Response> {
     if root.upstream.is_some() {
-        if let Err(err) = roots.sync_root(root).await {
-            return Err(roots_error_response(&err));
+        let base_commit = roots
+            .sync_root(root)
+            .await
+            .map_err(|err| roots_error_response(&err))?;
+        if let (Some(branch), Some(base_commit)) =
+            (request.git_ref.as_deref(), base_commit.as_deref())
+        {
+            if branch.starts_with("den/job-") {
+                roots
+                    .ensure_work_branch(root, branch, base_commit)
+                    .await
+                    .map_err(|err| roots_error_response(&err))?;
+            }
         }
     }
 
