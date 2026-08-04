@@ -1846,7 +1846,7 @@ async fn handle_bearwire_event(
     if current_run_id != "<unknown>" && event_is_run_scoped(ty) {
         if let Some(event_run_id) = event_run_id(event) {
             if event_run_id != current_run_id {
-                tracing::debug!(
+                tracing::trace!(
                     target: "bear_armature::lifecycle",
                     session_id,
                     current_run_id,
