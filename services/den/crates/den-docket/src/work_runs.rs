@@ -19,7 +19,7 @@ use den_core::{BearProfile, DenError};
 use crate::dispatcher::TaskDispatcher;
 use crate::execution_profiles::resolve_execution_profile;
 use crate::model::{DocketExecutionSessionUpsert, DocketTaskDifficulty};
-use crate::recovery::start_turn_attempt;
+use crate::recovery::claim_turn_attempt;
 use crate::routing::{route_turn, ExecutionSurface, TurnIntent, TurnSource};
 use crate::service::PgDocketService;
 
@@ -1721,7 +1721,7 @@ pub async fn checkout_work_run_for_session(
         },
     )
     .await?;
-    start_turn_attempt(
+    claim_turn_attempt(
         pool,
         routing.id,
         Some(run.id),

@@ -74,8 +74,11 @@ pub struct TurnAttempt {
 }
 
 const ATTEMPT_COLUMNS: &str = "id, routing_decision_id, work_run_id, attempt, state, outcome, cause_code, retry_disposition, evidence_refs, resolved_profile, profile_provenance, latency_ms, cost_microusd, started_at, last_activity_at, finished_at";
+const CLAIM_LEASE_SECONDS: i64 = 15 * 60;
 
-pub async fn start_turn_attempt(
+/// Atomically reserve the invocation authority and create its durable attempt
+/// before a worker can perform model or tool side effects.
+pub async fn claim_turn_attempt(
     pool: &PgPool,
     routing_decision_id: Uuid,
     work_run_id: Option<Uuid>,
@@ -87,12 +90,51 @@ pub async fn start_turn_attempt(
             "turn attempt must be positive".into(),
         ));
     }
-    let provenance = resolved.provenance.as_str();
+    let owner_id = format!("work-run:{}", work_run_id.unwrap_or(routing_decision_id));
     let profile = resolved.profile.map(ExecutionProfile::as_str);
-    // sqlx-dynamic: ATTEMPT_COLUMNS is a fixed local projection shared by attempt reads.
-    sqlx::query_as::<_, TurnAttempt>(&format!(
-        "INSERT INTO docket_turn_attempts (routing_decision_id, work_run_id, attempt, resolved_profile, profile_provenance) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (routing_decision_id, attempt) DO UPDATE SET last_activity_at = docket_turn_attempts.last_activity_at RETURNING {ATTEMPT_COLUMNS}"))
-        .bind(routing_decision_id).bind(work_run_id).bind(attempt).bind(profile).bind(provenance).fetch_one(pool).await.map_err(Into::into)
+    let provenance = resolved.provenance.as_str();
+    let mut tx = pool.begin().await?;
+    let decision: (Uuid, Uuid, Uuid, Uuid, Uuid) = sqlx::query_as(
+        "SELECT bear_id, job_id, run_id, task_id, id FROM docket_routing_decisions WHERE id = $1 FOR UPDATE",
+    )
+    .bind(routing_decision_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| DenError::NotFound(format!("routing decision {routing_decision_id}")))?;
+    let claim_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO docket_turn_claims (routing_decision_id, bear_id, job_id, run_id, task_id, work_run_id, owner_id, lease_expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7, now() + make_interval(secs => $8))
+         ON CONFLICT (routing_decision_id) DO UPDATE
+         SET lease_expires_at = EXCLUDED.lease_expires_at, updated_at = now()
+         WHERE docket_turn_claims.owner_id = EXCLUDED.owner_id
+           AND docket_turn_claims.state IN ('reserved', 'executing')
+         RETURNING id",
+    )
+    .bind(routing_decision_id).bind(decision.0).bind(decision.1).bind(decision.2).bind(decision.3)
+    .bind(work_run_id).bind(&owner_id).bind(CLAIM_LEASE_SECONDS)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| DenError::ValidationError("turn is already claimed by another worker".into()))?;
+    let row = sqlx::query_as::<_, TurnAttempt>(&format!(
+        "INSERT INTO docket_turn_attempts (routing_decision_id, work_run_id, attempt, claim_id, state, resolved_profile, profile_provenance)
+         VALUES ($1,$2,$3,$4,'executing',$5,$6)
+         ON CONFLICT (routing_decision_id, attempt) DO UPDATE
+         SET last_activity_at = now()
+         WHERE docket_turn_attempts.claim_id = EXCLUDED.claim_id
+         RETURNING {ATTEMPT_COLUMNS}"
+    ))
+    .bind(routing_decision_id).bind(work_run_id).bind(attempt).bind(claim_id).bind(profile).bind(provenance)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| DenError::ValidationError("turn attempt belongs to another claim".into()))?;
+    sqlx::query(
+        "UPDATE docket_turn_claims SET state = 'executing', updated_at = now() WHERE id = $1",
+    )
+    .bind(claim_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(row)
 }
 
 pub async fn record_turn_activity(
@@ -100,8 +142,20 @@ pub async fn record_turn_activity(
     attempt_id: Uuid,
     evidence: Value,
 ) -> Result<bool, DenError> {
-    let result = sqlx::query("UPDATE docket_turn_attempts SET last_activity_at = now(), evidence_refs = COALESCE(evidence_refs, '{}'::jsonb) || $2::jsonb WHERE id = $1 AND state = 'running'")
-        .bind(attempt_id).bind(evidence).execute(pool).await?;
+    let result = sqlx::query(
+        "UPDATE docket_turn_attempts
+         SET last_activity_at = now(), evidence_refs = COALESCE(evidence_refs, '{}'::jsonb) || $2::jsonb
+         WHERE id = $1 AND state = 'executing'
+           AND EXISTS (
+               SELECT 1 FROM docket_turn_claims
+               WHERE id = docket_turn_attempts.claim_id
+                 AND state = 'executing' AND lease_expires_at > now()
+           )",
+    )
+    .bind(attempt_id)
+    .bind(evidence)
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -179,8 +233,33 @@ pub async fn terminalize_turn_attempt(
             "attempt attribution cannot be negative".into(),
         ));
     }
-    let result = sqlx::query("UPDATE docket_turn_attempts SET state='terminal', outcome=$2, cause_code=$3, retry_disposition=$4, evidence_refs=COALESCE(evidence_refs, '{}'::jsonb) || $5::jsonb, latency_ms=$6, cost_microusd=$7, finished_at=now(), last_activity_at=now() WHERE id=$1 AND state='running'")
-        .bind(attempt_id).bind(outcome.as_str()).bind(cause_code).bind(disposition.as_str()).bind(evidence).bind(latency_ms).bind(cost_microusd).execute(pool).await?;
+    let result = sqlx::query(
+        "WITH settled AS (
+             UPDATE docket_turn_attempts
+             SET state='settled', outcome=$2, cause_code=$3, retry_disposition=$4,
+                 evidence_refs=COALESCE(evidence_refs, '{}'::jsonb) || $5::jsonb,
+                 latency_ms=$6, cost_microusd=$7, finished_at=now(), last_activity_at=now()
+             WHERE id=$1 AND state='executing'
+               AND EXISTS (
+                   SELECT 1 FROM docket_turn_claims
+                   WHERE id = docket_turn_attempts.claim_id
+                     AND state = 'executing' AND lease_expires_at > now()
+               )
+             RETURNING claim_id
+         )
+         UPDATE docket_turn_claims
+         SET state='settled', updated_at=now()
+         WHERE id IN (SELECT claim_id FROM settled WHERE claim_id IS NOT NULL)",
+    )
+    .bind(attempt_id)
+    .bind(outcome.as_str())
+    .bind(cause_code)
+    .bind(disposition.as_str())
+    .bind(evidence)
+    .bind(latency_ms)
+    .bind(cost_microusd)
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -194,7 +273,7 @@ pub async fn escalation_for_attempt(
     let row: (i32, Option<String>, Option<String>, String) = sqlx::query_as(
         "SELECT attempt, resolved_profile, outcome, cause_code
          FROM docket_turn_attempts
-         WHERE id = $1 AND state = 'terminal'",
+         WHERE id = $1 AND state = 'settled'",
     )
     .bind(attempt_id)
     .fetch_optional(pool)
@@ -218,8 +297,24 @@ pub async fn terminalize_stale_attempts(
     pool: &PgPool,
     stale_before: OffsetDateTime,
 ) -> Result<u64, DenError> {
-    let result = sqlx::query("UPDATE docket_turn_attempts SET state='terminal', outcome='timed_out', cause_code='activity_timeout', retry_disposition='handoff', evidence_refs=COALESCE(evidence_refs, '{}'::jsonb) || $2::jsonb, finished_at=now() WHERE state='running' AND last_activity_at < $1")
-        .bind(stale_before).bind(json!({"synthetic": true, "boundary": "watchdog"})).execute(pool).await?;
+    let result = sqlx::query(
+        "WITH settled AS (
+             UPDATE docket_turn_attempts
+             SET state='settled', outcome='timed_out', cause_code='activity_timeout',
+                 retry_disposition='handoff',
+                 evidence_refs=COALESCE(evidence_refs, '{}'::jsonb) || $2::jsonb,
+                 finished_at=now(), last_activity_at=now()
+             WHERE state='executing' AND last_activity_at < $1
+             RETURNING claim_id
+         )
+         UPDATE docket_turn_claims
+         SET state='settled', updated_at=now()
+         WHERE id IN (SELECT claim_id FROM settled WHERE claim_id IS NOT NULL)",
+    )
+    .bind(stale_before)
+    .bind(json!({"synthetic": true, "boundary": "watchdog"}))
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected())
 }
 

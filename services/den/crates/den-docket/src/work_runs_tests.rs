@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::db::get_job;
 use crate::execution_profiles::{ProfileProvenance, ResolvedExecutionProfile};
 use crate::recovery::{
-    parent_rollup_context, persist_result_rollup, start_turn_attempt, terminalize_turn_attempt,
+    claim_turn_attempt, parent_rollup_context, persist_result_rollup, terminalize_turn_attempt,
     AttemptOutcome, ResultRollup, RetryDisposition,
 };
 use crate::work_runs::{
@@ -999,7 +999,7 @@ async fn publish_wiring_image_branch_and_prompt() {
     .await
     .unwrap();
     assert_eq!(
-        start_turn_attempt(
+        claim_turn_attempt(
             &pool,
             decision_id,
             Some(run.id),
