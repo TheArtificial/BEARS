@@ -10959,24 +10959,24 @@ async fn record_surface_tool_status(
 }
 
 fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay) -> String {
-    if matches!(
-        tool_name,
-        "set_conversation_title"
-            | "run_command"
-            | "process_run"
-            | "terminal_run_command"
-            | "update_task"
-    ) {
-        return event
-            .map(|event| tool_call_title(tool_name, event))
-            .unwrap_or_else(|| display.title.clone());
+    let Some(event) = event else {
+        return display.title.clone();
+    };
+
+    // Canonical display labels are useful for opaque tools, but built-in tools with a target
+    // must derive their card title from the actual arguments. Den may preserve an older generic
+    // display label such as `Read file: file` while the canonical arguments contain the path.
+    if tool_args_from_event(event).is_some() {
+        let title = tool_call_title(tool_name, event);
+        if title != tool_display(tool_name).title {
+            return title;
+        }
     }
-    if event.is_some_and(|event| event_display_from_event(event).is_some()) {
+
+    if event_display_from_event(event).is_some() {
         display.title.clone()
     } else {
-        event
-            .map(|event| tool_call_title(tool_name, event))
-            .unwrap_or_else(|| display.title.clone())
+        tool_call_title(tool_name, event)
     }
 }
 
@@ -13719,6 +13719,19 @@ mod tests {
                 .and_then(|args| args.get("title"))
                 .and_then(Value::as_str),
             Some("Actual ACP card title")
+        );
+        let stale_file_display_event = json!({
+            "display": { "title": "Read file: file" },
+            "arguments": { "path": "/workspace/README.md" }
+        });
+        let display = ToolDisplay::from_event("fs_read_text_file", &stale_file_display_event);
+        assert_eq!(
+            tool_card_title(
+                "fs_read_text_file",
+                Some(&stale_file_display_event),
+                &display
+            ),
+            "Read file: /workspace/README.md"
         );
         assert_eq!(
             tool_call_title(
