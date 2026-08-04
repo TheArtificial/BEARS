@@ -54,7 +54,7 @@ use den_core::{config::Config, governance::Governance, profile::BearProfile, Den
 use den_docket::TaskListProjection;
 
 use super::transcript::{
-    spawn_persist_abandoned_acp_tool_results, spawn_persist_native_agent_step,
+    spawn_persist_abandoned_native_tool_results, spawn_persist_native_agent_step,
 };
 use super::{session_store::AgentLoopSession, ObjectiveOrientation, OrientationTaskRef};
 
@@ -368,12 +368,37 @@ impl SessionTrackingStream {
         );
     }
 
-    fn persist_outstanding_tools_as_incomplete(&self, reason: &str) {
+    fn outstanding_tool_details(&self) -> Vec<serde_json::Value> {
+        self.tool_calls
+            .iter()
+            .map(|(tool_call_id, (tool_name, _))| {
+                serde_json::json!({
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "execution_owner": if builtin_den_tool_descriptor_for_provider_name(tool_name)
+                        .is_some()
+                    {
+                        "server"
+                    } else {
+                        "client"
+                    },
+                })
+            })
+            .collect()
+    }
+
+    fn has_outstanding_server_tool(&self) -> bool {
+        self.tool_calls.values().any(|(tool_name, _)| {
+            builtin_den_tool_descriptor_for_provider_name(tool_name).is_some()
+        })
+    }
+
+    fn persist_outstanding_tools_as_errors(&self, reason: &str) {
         if self.tool_calls.is_empty() {
             return;
         }
         let calls = self.accumulated_tool_calls();
-        spawn_persist_abandoned_acp_tool_results(
+        spawn_persist_abandoned_native_tool_results(
             self.pool.clone(),
             self.bear_id,
             self.user_id,
@@ -383,6 +408,44 @@ impl SessionTrackingStream {
             &calls,
             reason,
         );
+    }
+
+    fn finalize_outstanding_tools_at_stream_end(
+        &mut self,
+        reason: &str,
+        stream_drop_reason: &str,
+        failure_message: &str,
+    ) -> Option<RuntimeStreamEvent> {
+        self.persist_assistant_tool_step();
+        self.finished = true;
+        let outstanding_tools = self.outstanding_tool_details();
+        if !self.has_outstanding_server_tool() {
+            tracing::info!(
+                event = "native_turn_awaiting_client_tool_results",
+                stream_drop_reason,
+                request_id = ?self.request_id,
+                conversation_id = %self.conversation_id,
+                client_session_id = %self.client_session_id,
+                tool_call_count = outstanding_tools.len(),
+                outstanding_tools = ?outstanding_tools,
+                "native runtime ended its stream while awaiting client-owned tool results"
+            );
+            return None;
+        }
+
+        self.persist_outstanding_tools_as_errors(reason);
+        tracing::warn!(
+            event = "native_turn_terminal_settlement",
+            terminal_event = "turn_failed",
+            stream_drop_reason,
+            request_id = ?self.request_id,
+            conversation_id = %self.conversation_id,
+            client_session_id = %self.client_session_id,
+            tool_call_count = outstanding_tools.len(),
+            outstanding_tools = ?outstanding_tools,
+            "native runtime settled outstanding tools after server-owned work was abandoned"
+        );
+        Some(Self::checkpoint_failure_event(failure_message.to_string()))
     }
 
     fn server_tool_context(&self) -> DenToolInvocationContext {
@@ -1648,25 +1711,16 @@ impl Stream for SessionTrackingStream {
                 if !self.tool_calls.is_empty() {
                     // Tool-call finishes must not emit TurnCompleted: client stream parks for adapter-local
                     // tool results and continues via /tool-results (same class of bug as
-                    // openai_stream synthetic TurnCompleted).
-                    self.persist_assistant_tool_step();
-                    self.persist_outstanding_tools_as_incomplete("turn_ended_before_tool_results");
-                    self.finished = true;
-                    tracing::warn!(
-                        event = "native_turn_terminal_settlement",
-                        terminal_event = "turn_failed",
-                        stream_drop_reason = "turn_completed_with_outstanding_tool_results",
-                        request_id = ?self.request_id,
-                        conversation_id = %self.conversation_id,
-                        client_session_id = %self.client_session_id,
-                        tool_call_count = self.tool_calls.len(),
-                        tool_call_ids = ?self.tool_calls.keys().collect::<Vec<_>>(),
-                        "native runtime settled outstanding tools and converted incomplete completion to terminal failure"
-                    );
-                    return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(
-                        "Native turn ended before all requested tools produced results."
-                            .to_string(),
-                    ))));
+                    // openai_stream synthetic TurnCompleted). Den-owned work, however, cannot
+                    // be left for the client to complete.
+                    return match self.finalize_outstanding_tools_at_stream_end(
+                        "turn_ended_before_tool_results",
+                        "turn_completed_with_outstanding_tool_results",
+                        "Native turn ended before all requested tools produced results.",
+                    ) {
+                        Some(event) => Poll::Ready(Some(Ok(event))),
+                        None => Poll::Ready(None),
+                    };
                 }
                 if let Err(event) = self.block_or_recover_if_checkpoint_pending("final_answer") {
                     if matches!(
@@ -1711,26 +1765,14 @@ impl Stream for SessionTrackingStream {
             }
             Poll::Ready(other) => {
                 if other.is_none() && !self.tool_calls.is_empty() {
-                    self.persist_assistant_tool_step();
-                    self.persist_outstanding_tools_as_incomplete(
+                    return match self.finalize_outstanding_tools_at_stream_end(
                         "llm_stream_ended_before_tool_results",
-                    );
-                    self.finished = true;
-                    tracing::warn!(
-                        event = "native_turn_terminal_settlement",
-                        terminal_event = "turn_failed",
-                        stream_drop_reason = "llm_eof_with_outstanding_tool_results",
-                        request_id = ?self.request_id,
-                        conversation_id = %self.conversation_id,
-                        client_session_id = %self.client_session_id,
-                        tool_call_count = self.tool_calls.len(),
-                        tool_call_ids = ?self.tool_calls.keys().collect::<Vec<_>>(),
-                        "native runtime settled outstanding tools and converted EOF to terminal failure"
-                    );
-                    return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(
-                        "Model stream ended before all requested tools produced results."
-                            .to_string(),
-                    ))));
+                        "llm_eof_with_outstanding_tool_results",
+                        "Model stream ended before all requested tools produced results.",
+                    ) {
+                        Some(event) => Poll::Ready(Some(Ok(event))),
+                        None => Poll::Ready(None),
+                    };
                 }
                 if other.is_none() {
                     if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
@@ -2163,12 +2205,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn eof_with_outstanding_tool_emits_terminal_failure() {
+    async fn eof_with_client_owned_tool_keeps_session_pending_for_result_submission() {
         let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         let mut stream = test_tracking_stream_with_session(&session);
         stream.inner = Box::pin(futures::stream::iter(vec![Ok(
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
-                tool_call_id: "call-orphan".to_string(),
+                tool_call_id: "call-client".to_string(),
                 tool_name: "fs_read_text_file".to_string(),
                 title: None,
                 kind: Some("function".to_string()),
@@ -2180,14 +2222,47 @@ mod tests {
             }),
         )]));
 
-        let events = stream.collect::<Vec<_>>().await;
+        let requested = stream
+            .next()
+            .await
+            .expect("tool request")
+            .expect("ok event");
         assert!(matches!(
-            events.as_slice(),
-            [
-                Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. })),
-                Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. })),
-            ] if message.contains("before all requested tools")
+            requested,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. })
         ));
+        assert!(
+            stream.next().await.is_none(),
+            "client tool EOF is not a failure"
+        );
+        let stored = stream
+            .store
+            .get(&stream.session_key)
+            .expect("pending session");
+        assert!(stored.find_pending_tool_call("call-client").is_some());
+    }
+
+    #[tokio::test]
+    async fn eof_with_server_owned_tool_emits_terminal_failure() {
+        let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let mut stream = test_tracking_stream_with_session(&session);
+        stream.tool_calls.insert(
+            "call-server".to_string(),
+            ("list_task_lists".to_string(), "{}".to_string()),
+        );
+        stream.sync_assistant_tool_step_to_session();
+
+        let event = stream
+            .next()
+            .await
+            .expect("terminal failure event")
+            .expect("ok event");
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { ref message, .. })
+                if message.contains("before all requested tools")
+        ));
+        assert!(stream.next().await.is_none());
     }
 
     #[tokio::test]

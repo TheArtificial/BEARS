@@ -243,7 +243,7 @@ pub fn spawn_persist_web_chat_interrupted_turn(
     );
 }
 
-pub fn spawn_persist_abandoned_acp_tool_results(
+pub fn spawn_persist_abandoned_native_tool_results(
     pool: PgPool,
     bear_id: Uuid,
     user_id: Option<i32>,
@@ -281,7 +281,7 @@ pub fn spawn_persist_abandoned_acp_tool_results(
                 Value::Null,
                 serde_json::json!({
                     "component": "den.agent_loop",
-                    "phase": "client_turn_terminal_settlement",
+                    "phase": "native_turn_terminal_settlement",
                     "reason": reason,
                     "tool_name": call.function.name,
                 }),
