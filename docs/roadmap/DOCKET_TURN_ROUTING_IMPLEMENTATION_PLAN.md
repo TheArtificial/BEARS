@@ -52,6 +52,129 @@ What this plan builds on, by file:
 11. **The supervisor, not the model, owns disposition.** Model text or a model-requested stop may report blocked work and evidence, but cannot terminalize an autonomous task or run. The runtime validates completion against task criteria and chooses retry, profile escalation, handoff, pause, or typed terminal failure under explicit bounded policy.
 12. **One failure truth, multiple projections.** Conversation history, task/run views, notifications, and forensic logs render the same normalized outcome/evidence record. Concise surfaces may summarize it, but must not independently infer a different cause or hide the last successful activity, the failing boundary, retry disposition, or recovery action.
 
+## V1 delivery plan
+
+Implement v1 as nine independently shippable increments. The first four increments are the **failure-prevention vertical slice**: they must land before broadening autonomous routing. This intentionally pulls the Phase 3 failure projection forward; waiting for all cursor/browsing work would leave autonomous runs unaccountable while the router is being built.
+
+The estimates are elapsed engineer effort, not calendar promises. They assume the existing Docket, replay transcript, work-run, and shared turn/work status substrates can be extended rather than replaced. Total: **24–36 engineer-weeks**; the failure-prevention slice: **8–12 engineer-weeks**.
+
+### Increment 0 — Contract and state inventory (2–3 engineer-weeks; cumulative 2–3)
+
+1. Trace one successful, model-blocked, watchdog-expired, provider-disconnected, cancelled, and process-orphaned turn through work-run state, transcript persistence, task events, BearWire, and the run page.
+2. Define one strongly typed normalized attempt/outcome/evidence contract. Include attempt identity, routing decision, lifecycle timestamps, outcome/cause/code, last successful activity, failing boundary, criteria evidence, profile, retry disposition, recovery action, and synthetic-terminal provenance.
+3. Specify legal attempt, task-run, work-run, and job-run transitions, including which component owns each transition and the transaction boundary between them.
+4. Update the state-machine inventory before implementation. Resolve whether the canonical replay stream can accept incremental events; do not introduce a second raw-log format.
+5. Write executable DB/state-machine fixtures for the six traced scenarios. Initially they may fail, but they become the acceptance corpus for Increments 1–3.
+
+**Exit gate:** schema/API review agrees on one canonical outcome shape and explicit transition ownership; no UI or worker independently invents failure causes.
+
+### Increment 1 — Durable attempt ledger (2–3 engineer-weeks; cumulative 4–6)
+
+1. Add routing-decision and durable turn-attempt migrations plus typed repository APIs.
+2. Create the attempt envelope before provider/model invocation in the same durable dispatch path that identifies the work run and task.
+3. Append assistant, provider, and tool activity to the canonical replay stream as it occurs; preserve ordering and idempotency keys.
+4. Add compare-and-set/idempotent terminalization for normal completion and typed failure, including synthetic terminal events when no provider terminal event exists.
+5. Wire existing work-run execution through the ledger without changing routing policy yet.
+
+**Runnable check:** inject a watchdog timeout immediately after a recorded tool request and assert that the attempt, partial transcript, typed terminal outcome, and evidence all survive a process restart.
+
+**Exit gate:** every old dispatch path either creates a durable attempt before invocation or is removed; no autonomous model invocation is unaccounted for.
+
+### Increment 2 — Supervisor-owned disposition and recovery (2–3 engineer-weeks; cumulative 6–9)
+
+1. Put autonomous completion behind a supervisor gate that validates task criteria. Model text and model-requested stop are evidence only; they cannot terminalize a task or run.
+2. Implement explicit bounded policy outcomes: retry, profile escalation request, handoff, pause, typed terminal failure, or completion. Persist the selected disposition on the normalized outcome.
+3. Ensure retries re-enter the router/dispatch boundary and create a new attempt; never overwrite the failed attempt.
+4. Add an idempotent orphan sweeper using leases/heartbeats or an equivalent positive liveness rule. It must not close a genuinely live attempt.
+5. Atomically record the failure rollup and task/run transition before retry or user attention routing.
+
+**Runnable checks:** model-authored “cannot continue” leaves work under supervisor control; retry budget exhaustion creates one terminal failure; two sweepers racing close an orphan exactly once; a live attempt is not swept.
+
+**Exit gate:** no model-originated field directly controls terminal autonomous state, and every non-completion has a durable bounded disposition.
+
+### Increment 3 — Shared failure projection (2–3 engineer-weeks; cumulative 8–12)
+
+1. Extend the existing shared turn/work status payload with the normalized outcome/evidence contract; do not create a run-page-only DTO.
+2. Render the failed attempt in conversation sequence, including preserved partial activity and a concise cause/disposition summary.
+3. Render the same canonical record on the run page: headline by default, narrative detail, and forensic raw-event drill-down.
+4. Add recovery actions (retry/resume, handoff, or inspect) from the persisted disposition rather than client-side inference.
+5. Add a semantic parity test that feeds one normalized failure to conversation and run projections and compares cause, code, disposition, evidence refs, and recovery action.
+
+**Runnable check:** replay a `5bb511df`-style watchdog timeout after a tool request. Both surfaces show what succeeded last, where activity stopped, why Den terminalized it, whether it will retry/escalate, and what the user can do; forensic view shows the underlying events.
+
+**Exit gate — failure-prevention slice complete:** failed turns cannot disappear, models cannot abandon autonomous work, and the run page explains the same failure recorded in conversation history and forensic logs.
+
+### Increment 4 — Router foundation and dispatcher adoption (4–5 engineer-weeks; cumulative 12–17)
+
+1. Land the remaining Phase 0 task-definition, binding, cursor, paused-state, and rollup-event migrations and neutral core types.
+2. Implement the pure deterministic router and exhaustive placement-table tests.
+3. Persist every routing decision and convert dispatch/continuation entry points to `TurnIntent`; delete private placement paths.
+4. Add scoped conversation creation and binding reuse. Keep task sequencing unchanged and serialized.
+5. Make the work-run dispatcher the first router client, retaining compatibility projections only where an existing client still consumes them.
+
+**Exit gate:** every dispatched or continued turn has exactly one persisted routing decision and one pre-created attempt; existing successful dispatch behavior remains green.
+
+### Increment 5 — Unattended completion, rollups, and run control (4–6 engineer-weeks; cumulative 16–23)
+
+1. Implement structured latest-per-child rollups with criteria evidence; parent prompts consume rollups, never child transcripts.
+2. Implement next-actionable-task selection, criteria-gated job completion, and blocked-task handoff.
+3. Add durable pause/resume/stop and boundary pickup for tree edits; reject edits to an in-progress task unless paused.
+4. Add attention routing through the existing handoff and approval surfaces, with deep links and chat answers that resume work.
+5. Exercise failure retry/escalation through the same completion loop rather than a side channel.
+
+**Runnable check:** a mixed inline/scoped three-level job runs unattended to completion; pause/add sibling/resume dispatches the new task; blocking notifies the user and a chat answer resumes the run.
+
+**Exit gate:** Phase 1 acceptance is green, including all Increment 1–3 failure scenarios.
+
+### Increment 6 — Model economy (2–3 engineer-weeks; cumulative 18–26)
+
+1. Implement the minimal symbolic `ModelRequestProfile` resolver adjacent to the model registry.
+2. Resolve profiles at dispatch from task descriptors, stance, model library, attempt, and prior typed outcome; never persist model identifiers on task rows.
+3. Add the bounded escalation ladder and record profile provenance, cost, and latency on decisions/runs.
+4. Verify that supervisor escalation selects the next allowed profile and cannot loop beyond policy limits.
+
+**Exit gate:** Phase 2 acceptance is green; tier-1 failure produces a recorded tier-2 decision and bounded terminal behavior at the top tier.
+
+### Increment 7 — Cursor, browsing, and live observation (3–5 engineer-weeks; cumulative 21–31)
+
+1. Implement cursor lifecycle and replace focus-title behavior with compatibility-safe cursor projections.
+2. Add task-tree, task-conversation, paged transcript, routing-decision, and job-event APIs over existing canonical records.
+3. Add headline/narrative/forensic server-side projections; clients do not filter raw events to derive meaning.
+4. Add stale cursor behavior and tests for completed, blocked, and deleted tasks.
+5. Show live autonomous position without granting cursors execution authority.
+
+**Exit gate:** a `pair` session can inspect completed work and watch a live run without changing sequencing; golden-trace compatibility remains green.
+
+### Increment 8 — Steering, mutation, and v1 hardening (3–5 engineer-weeks; cumulative 24–36)
+
+1. Route interactive `user` and `continuation` intents through the same router.
+2. Reuse checkout/sync for tree mutation and add audited routing-strategy edits.
+3. Expose run controls and immediate pending acknowledgements on `pair`, chat, and UI surfaces.
+4. Persist the elicited execution-surface choice and provide one-action recovery from failed/stopped runs.
+5. Run restart, race, stale-state, authorization, migration, and compatibility suites; update operator docs and the state-machine inventory.
+6. Remove superseded focus/private-placement code and vestigial data shapes before declaring v1 complete.
+
+**Exit gate — v1 complete:** all Phase 0–3 acceptance criteria in this document pass on the same build, migrations work from the current production schema snapshot, and no post-v1 Phase 4 capability is required for the advertised behavior.
+
+### Sequencing and parallel work
+
+- Increments 0–3 are a single dependency chain. UI work in Increment 3 may begin once the outcome contract is fixed, but it cannot ship against fabricated client-side outcomes.
+- After Increment 1, one stream may implement supervisor/recovery while another builds shared projections, using the same fixtures; integration remains gated on Increment 2 dispositions.
+- After Increment 4 fixes router and binding contracts, rollup/run-control work (Increment 5) and profile resolution (Increment 6) can proceed in parallel.
+- Cursor APIs in Increment 7 may begin after the Phase 0 cursor schema lands, but interactive routing and mutation wait for Increment 4 so no second placement mechanism appears.
+- Keep changes reviewable: prefer one migration/type PR, one repository/state-machine PR, and one vertical behavior PR per increment. Do not hold the failure slice in a long-lived branch.
+
+### V1 definition of done
+
+- All model invocations have a durable pre-invocation attempt and incremental replay trail.
+- All terminal states are typed, evidence-bearing, idempotent, and supervisor-owned.
+- Conversation, run, notification, and forensic surfaces consume one canonical outcome without semantic drift.
+- Every turn has one routing decision; every retry is a new attempt through the same router.
+- A representative nested job completes unattended with bounded escalation, rollups, controls, attention routing, and restart recovery.
+- Multiple sessions can browse and steer through cursors without controlling execution position or violating sequencing.
+- DB migrations, SQLx offline metadata, unit/integration/golden-trace tests, clippy, and state-machine documentation are green.
+- Superseded pre-release paths and shapes are removed rather than deprecated.
+
 ## Phase 0 — Schema and the focus split
 
 Foundations only; no behavior change to dispatch yet.
