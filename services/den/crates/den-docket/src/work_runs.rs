@@ -1308,7 +1308,7 @@ pub async fn request_work_run_cancel_with_provenance(
              cancel_requested_at = COALESCE(cancel_requested_at, now()),
              updated_at = now()
          WHERE id = $1 AND bear_id = $2
-           AND state IN ('queued', 'claimed', 'provisioning', 'running', 'reporting')",
+           AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')",
     )
     .bind(run_id)
     .bind(bear_id)

@@ -23,6 +23,7 @@ use crate::work_runs::{
     timeout_disconnected_work_runs, WorkExecutionTarget, WorkJobEnqueue, WorkRunCancelRequest,
     WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned, WorkRunState,
 };
+use crate::supervisor::set_work_run_paused;
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
@@ -1219,10 +1220,10 @@ async fn pause_resume_is_compare_and_set() {
     .await
     .unwrap();
 
-    assert!(crate::supervisor::set_work_run_paused(&pool, run.id, true)
+    assert!(set_work_run_paused(&pool, run.id, true)
         .await
         .unwrap());
-    assert!(!crate::supervisor::set_work_run_paused(&pool, run.id, true)
+    assert!(!set_work_run_paused(&pool, run.id, true)
         .await
         .unwrap());
     assert_eq!(
@@ -1233,15 +1234,29 @@ async fn pause_resume_is_compare_and_set() {
             .state_enum(),
         Some(WorkRunState::Paused)
     );
+    assert!(request_work_run_cancel_with_provenance(
+        &pool,
+        run.id,
+        bear_id,
+        &WorkRunCancelRequest {
+            requested_by: "test".into(),
+            reason: "stop while paused".into(),
+        },
+    )
+    .await
+    .unwrap());
+    assert!(get_work_run(&pool, run.id)
+        .await
+        .unwrap()
+        .expect("work run")
+        .cancel_requested);
 
-    assert!(crate::supervisor::set_work_run_paused(&pool, run.id, false)
+    assert!(set_work_run_paused(&pool, run.id, false)
         .await
         .unwrap());
-    assert!(
-        !crate::supervisor::set_work_run_paused(&pool, run.id, false)
-            .await
-            .unwrap()
-    );
+    assert!(!set_work_run_paused(&pool, run.id, false)
+        .await
+        .unwrap());
     assert_eq!(
         get_work_run(&pool, run.id)
             .await

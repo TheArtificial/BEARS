@@ -73,4 +73,8 @@ pub use routing::{
     route_turn, ConversationStrategy, ExecutionSurface, RoutingDecision, TurnIntent, TurnSource,
 };
 pub use service::{DocketService, PgDocketService};
-pub use work_runs::{resolve_stalled_work_run, StalledWorkRunResolution};
+pub use supervisor::set_work_run_paused;
+pub use work_runs::{
+    request_work_run_cancel_with_provenance, resolve_stalled_work_run, StalledWorkRunResolution,
+    WorkRunCancelRequest,
+};
