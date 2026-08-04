@@ -884,7 +884,15 @@ async fn reconcile_job_status(
     let (in_progress, blocked, unfinished): (i64, i64, i64) = sqlx::query_as(
         r"
         SELECT
-            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'in_progress'),
+            COUNT(*) FILTER (
+                WHERE COALESCE(state.status, 'pending') = 'in_progress'
+                  AND EXISTS (
+                      SELECT 1 FROM bear_work_runs work_run
+                      WHERE work_run.job_run_id = $2
+                        AND work_run.task_id = task.id
+                        AND work_run.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')
+                  )
+            ),
             COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'blocked'),
             COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled'))
         FROM bear_tasks task
@@ -944,6 +952,13 @@ mod derived_job_status_tests {
         assert_eq!(derived_job_status(0, 0, 1, 0), "ready");
         assert_eq!(derived_job_status(0, 0, 0, 1), "ready");
         assert_eq!(derived_job_status(0, 0, 0, 0), "completed");
+    }
+
+    #[test]
+    fn stale_task_progress_without_a_work_run_is_ready() {
+        // The query supplying `in_progress` counts only task rows backed by an
+        // active work run; a stale task state therefore reaches this branch.
+        assert_eq!(derived_job_status(0, 0, 1, 0), "ready");
     }
 }
 

@@ -140,7 +140,7 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
     // Cursors are intentionally absent: current execution comes only from run state.
     // sqlx-dynamic: transitional static query; see module ratchet note above.
     let current_task = sqlx::query_as::<_, DiagnosticTask>(
-        "SELECT t.id, t.title, s.status FROM bear_task_run_state s JOIN bear_tasks t ON t.id=s.task_id WHERE s.run_id=$1 AND s.status='in_progress'",
+        "SELECT t.id, t.title, s.status FROM bear_task_run_state s JOIN bear_tasks t ON t.id=s.task_id WHERE s.run_id=$1 AND s.status='in_progress' AND EXISTS (SELECT 1 FROM bear_work_runs w WHERE w.job_run_id=$1 AND w.task_id=t.id AND w.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting'))",
     ).bind(run_id).fetch_optional(pool).await?;
     // sqlx-dynamic: transitional static query; see module ratchet note above.
     let states: Vec<String> = sqlx::query_scalar(
