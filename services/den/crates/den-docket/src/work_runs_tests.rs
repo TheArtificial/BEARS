@@ -10,8 +10,9 @@ use uuid::Uuid;
 use crate::db::get_job;
 use crate::execution_profiles::{ProfileProvenance, ResolvedExecutionProfile};
 use crate::recovery::{
-    claim_turn_attempt, parent_rollup_context, persist_result_rollup, terminalize_turn_attempt,
-    AttemptOutcome, ResultRollup, RetryDisposition,
+    apply_supervisor_disposition, claim_turn_attempt, parent_rollup_context,
+    persist_attention_outbox, persist_result_rollup, terminalize_turn_attempt, AttemptOutcome,
+    ResultRollup, RetryDisposition, SupervisorDisposition,
 };
 use crate::work_runs::{
     checkout_work_run_for_session, claim_next_work_run, disconnect_attached_work_run,
@@ -1038,6 +1039,18 @@ async fn publish_wiring_image_branch_and_prompt() {
     )
     .await
     .unwrap());
+    assert_eq!(
+        apply_supervisor_disposition(&pool, attempt_id)
+            .await
+            .unwrap(),
+        SupervisorDisposition::Complete
+    );
+    assert!(persist_attention_outbox(&pool, attempt_id, "inspect")
+        .await
+        .unwrap());
+    assert!(!persist_attention_outbox(&pool, attempt_id, "inspect")
+        .await
+        .unwrap());
 
     assert!(checkout.prompt.contains(&format!("job_id: {}", run.job_id)));
     assert!(checkout

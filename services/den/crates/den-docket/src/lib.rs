@@ -63,10 +63,11 @@ pub use model::{
     TaskListUpdateItem, TaskListValidationError, TaskListVisibility,
 };
 pub use recovery::{
-    claim_turn_attempt, decide_escalation, escalation_for_attempt, parent_rollup_context,
-    persist_result_rollup, record_turn_activity, terminalize_stale_attempts,
-    terminalize_turn_attempt, AttemptOutcome, EscalationDecision, ResultRollup, RetryDisposition,
-    TurnAttempt, MAX_TURN_ATTEMPTS,
+    apply_supervisor_disposition, claim_turn_attempt, decide_escalation, disposition_for,
+    escalation_for_attempt, parent_rollup_context, persist_attention_outbox, persist_result_rollup,
+    record_turn_activity, terminalize_stale_attempts, terminalize_turn_attempt, AttemptOutcome,
+    EscalationDecision, ResultRollup, RetryDisposition, SupervisorDisposition, TurnAttempt,
+    MAX_TURN_ATTEMPTS,
 };
 pub use routing::{
     route_turn, ConversationStrategy, ExecutionSurface, RoutingDecision, TurnIntent, TurnSource,

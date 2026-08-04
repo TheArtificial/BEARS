@@ -19,6 +19,49 @@ pub enum EscalationDecision {
     Handoff,
 }
 
+/// Persisted supervisor action. Model output is evidence only; this value is
+/// selected from a settled attempt by deterministic Den policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SupervisorDisposition {
+    Complete,
+    Retry,
+    Escalate,
+    Handoff,
+    AwaitRecovery,
+}
+
+impl SupervisorDisposition {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Retry => "retry",
+            Self::Escalate => "escalate",
+            Self::Handoff => "handoff",
+            Self::AwaitRecovery => "await_recovery",
+        }
+    }
+
+    fn retry_disposition(self) -> RetryDisposition {
+        match self {
+            Self::Complete => RetryDisposition::None,
+            Self::Retry => RetryDisposition::Retry,
+            Self::Escalate => RetryDisposition::Escalate,
+            Self::Handoff => RetryDisposition::Handoff,
+            Self::AwaitRecovery => RetryDisposition::Pause,
+        }
+    }
+}
+
+pub fn disposition_for(decision: EscalationDecision) -> SupervisorDisposition {
+    match decision {
+        EscalationDecision::Complete => SupervisorDisposition::Complete,
+        EscalationDecision::Retry { profile: None } => SupervisorDisposition::Retry,
+        EscalationDecision::Retry { profile: Some(_) } => SupervisorDisposition::Escalate,
+        EscalationDecision::Handoff => SupervisorDisposition::Handoff,
+    }
+}
+
 /// Supervisor-owned retry policy. Only normalized infrastructure/capability
 /// failures may increase the symbolic profile, and each attempt advances at
 /// most one tier. Unknown-profile fallback retries without inventing a model.
@@ -292,7 +335,95 @@ pub async fn escalation_for_attempt(
     ))
 }
 
-/// Watchdog/process-loss sweeper. Each stale row is terminalized at most once.
+pub async fn apply_supervisor_disposition(
+    pool: &PgPool,
+    attempt_id: Uuid,
+) -> Result<SupervisorDisposition, DenError> {
+    let decision = escalation_for_attempt(pool, attempt_id).await?;
+    let disposition = disposition_for(decision);
+    let retry_disposition = disposition.retry_disposition();
+    let result = sqlx::query(
+        "UPDATE docket_turn_attempts
+         SET supervisor_disposition = $2, retry_disposition = $3
+         WHERE id = $1 AND state = 'settled'
+           AND (supervisor_disposition IS NULL OR supervisor_disposition = $2)",
+    )
+    .bind(attempt_id)
+    .bind(disposition.as_str())
+    .bind(retry_disposition.as_str())
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT supervisor_disposition FROM docket_turn_attempts WHERE id = $1",
+        )
+        .bind(attempt_id)
+        .fetch_optional(pool)
+        .await?;
+        return match existing.as_deref() {
+            Some(value) if value == disposition.as_str() => Ok(disposition),
+            Some(_) => Err(DenError::ValidationError(
+                "settled attempt already has a conflicting supervisor disposition".into(),
+            )),
+            None => Err(DenError::NotFound(format!(
+                "settled turn attempt {attempt_id}"
+            ))),
+        };
+    }
+    Ok(disposition)
+}
+
+/// Atomically persists the task-correlated attention and channel-independent
+/// delivery intent. Replaying the same terminal attempt is a no-op.
+pub async fn persist_attention_outbox(
+    pool: &PgPool,
+    attempt_id: Uuid,
+    recovery_action: &str,
+) -> Result<bool, DenError> {
+    if recovery_action.trim().is_empty() {
+        return Err(DenError::ValidationError(
+            "recovery action is required".into(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    let row: (Uuid, Uuid, String, Value, String) = sqlx::query_as(
+        "SELECT d.run_id, d.task_id, a.cause_code, COALESCE(a.evidence_refs, '{}'::jsonb), a.supervisor_disposition
+         FROM docket_turn_attempts a
+         JOIN docket_routing_decisions d ON d.id = a.routing_decision_id
+         WHERE a.id = $1 AND a.state = 'settled' AND a.supervisor_disposition IS NOT NULL
+         FOR UPDATE",
+    )
+    .bind(attempt_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| DenError::ValidationError("attempt must be settled and supervisor-disposed".into()))?;
+    sqlx::query(
+        "INSERT INTO docket_attention (run_id, task_id, cause_code, recovery_action, evidence_refs)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (run_id) WHERE resolved_at IS NULL DO UPDATE
+         SET task_id = EXCLUDED.task_id, cause_code = EXCLUDED.cause_code,
+             recovery_action = EXCLUDED.recovery_action, evidence_refs = EXCLUDED.evidence_refs",
+    )
+    .bind(row.0)
+    .bind(row.1)
+    .bind(&row.2)
+    .bind(recovery_action.trim())
+    .bind(&row.3)
+    .execute(&mut *tx)
+    .await?;
+    let deduplication_key = format!("turn-attempt:{attempt_id}:attention");
+    let result = sqlx::query(
+        "INSERT INTO docket_notification_outbox (run_id, task_id, deduplication_key, kind, payload)
+         VALUES ($1,$2,$3,'attention',$4)
+         ON CONFLICT (deduplication_key) DO NOTHING",
+    )
+    .bind(row.0).bind(row.1).bind(deduplication_key)
+    .bind(json!({"attempt_id": attempt_id, "cause_code": row.2, "disposition": row.4, "recovery_action": recovery_action.trim()}))
+    .execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(result.rows_affected() == 1)
+}
+
 pub async fn terminalize_stale_attempts(
     pool: &PgPool,
     stale_before: OffsetDateTime,
@@ -301,7 +432,7 @@ pub async fn terminalize_stale_attempts(
         "WITH settled AS (
              UPDATE docket_turn_attempts
              SET state='settled', outcome='timed_out', cause_code='activity_timeout',
-                 retry_disposition='handoff',
+                 retry_disposition='pause', supervisor_disposition='await_recovery',
                  evidence_refs=COALESCE(evidence_refs, '{}'::jsonb) || $2::jsonb,
                  finished_at=now(), last_activity_at=now()
              WHERE state='executing' AND last_activity_at < $1
@@ -429,6 +560,24 @@ mod tests {
                 "task_completed",
             ),
             EscalationDecision::Complete
+        );
+    }
+
+    #[test]
+    fn disposition_is_selected_by_supervisor_policy() {
+        assert_eq!(
+            disposition_for(EscalationDecision::Retry { profile: None }),
+            SupervisorDisposition::Retry
+        );
+        assert_eq!(
+            disposition_for(EscalationDecision::Retry {
+                profile: Some(ExecutionProfile::Balanced),
+            }),
+            SupervisorDisposition::Escalate
+        );
+        assert_eq!(
+            disposition_for(EscalationDecision::Handoff),
+            SupervisorDisposition::Handoff
         );
     }
 
