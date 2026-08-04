@@ -236,6 +236,7 @@ pub(super) async fn create_job(
     Ok(DocketJobProjection {
         job,
         current_run: Some(run),
+        has_active_work_run: false,
         criteria,
         criteria_states,
         tasks,
@@ -639,6 +640,20 @@ pub(super) async fn get_job(
         None
     };
 
+    let has_active_work_run: bool = sqlx::query_scalar(
+        r"
+        SELECT EXISTS (
+            SELECT 1
+            FROM bear_work_runs
+            WHERE job_id = $1
+              AND state NOT IN ('stalled', 'succeeded', 'blocked', 'failed', 'cancelled', 'timed_out')
+        )
+        ",
+    )
+    .bind(job.id)
+    .fetch_one(pool)
+    .await?;
+
     let criteria = sqlx::query_as::<_, DocketJobCriterionRow>(
         r"
         SELECT id, job_id, kind, description, spec, sibling_order, created_at, updated_at
@@ -679,6 +694,7 @@ pub(super) async fn get_job(
     let mut projection = DocketJobProjection {
         job,
         current_run,
+        has_active_work_run,
         criteria,
         criteria_states,
         tasks,

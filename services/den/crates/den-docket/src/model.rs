@@ -959,6 +959,8 @@ pub struct DocketCriterionStateRow {
 pub struct DocketJobProjection {
     pub job: DocketJobRow,
     pub current_run: Option<DocketJobRunRow>,
+    /// True only while a dispatched work run still has an active lifecycle state.
+    pub has_active_work_run: bool,
     pub criteria: Vec<DocketJobCriterionRow>,
     pub criteria_states: Vec<DocketCriterionStateRow>,
     pub tasks: Vec<DocketTaskRow>,
@@ -1351,10 +1353,11 @@ pub fn derived_docket_job_status(projection: &DocketJobProjection) -> String {
         return "stalled".to_string();
     }
     if run_state == Some("running")
-        || projection
-            .task_states
-            .iter()
-            .any(|state| state.status == "in_progress")
+        || (projection.has_active_work_run
+            && projection
+                .task_states
+                .iter()
+                .any(|state| state.status == "in_progress"))
     {
         return "running".to_string();
     }
@@ -1406,10 +1409,11 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
         .iter()
         .map(|state| (state.task_id, state.status.as_str()))
         .collect::<std::collections::HashMap<_, _>>();
+    let is_in_progress = |status: &str| status == "in_progress" && projection.has_active_work_run;
     let current_task = projection.tasks.iter().find(|task| {
         task_states_by_id
             .get(&task.id)
-            .is_some_and(|status| *status == "in_progress")
+            .is_some_and(|status| is_in_progress(status))
     });
     for task in &projection.tasks {
         match task_states_by_id
@@ -1417,7 +1421,8 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
             .copied()
             .unwrap_or("pending")
         {
-            "in_progress" => task_counts.in_progress += 1,
+            "in_progress" if projection.has_active_work_run => task_counts.in_progress += 1,
+            "in_progress" => task_counts.pending += 1,
             "done" => task_counts.done += 1,
             "blocked" => task_counts.blocked += 1,
             "cancelled" => task_counts.cancelled += 1,
@@ -1518,7 +1523,13 @@ pub fn task_list_projection_from_docket_job(
     tasks.sort_by_key(|task| (task.sibling_order, task.created_at, task.id));
     let items = tasks
         .into_iter()
-        .map(|task| task_list_item_from_docket_task(task, states_by_task_id.get(&task.id).copied()))
+        .map(|task| {
+            task_list_item_from_docket_task(
+                task,
+                states_by_task_id.get(&task.id).copied(),
+                projection.has_active_work_run,
+            )
+        })
         .collect::<Vec<_>>();
     let current_item = current_task_list_item(&items).cloned();
 
@@ -1567,7 +1578,9 @@ pub fn task_list_projection_from_session_tasks(
     let items = sorted_tasks
         .into_iter()
         .map(|projection| {
-            task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref())
+            // Session-anchored tasks have no dispatched work-run lifecycle;
+            // their run state is the legitimate interactive execution signal.
+            task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref(), true)
         })
         .collect::<Vec<_>>();
     let current_item = current_task_list_item(&items).cloned();
@@ -1695,9 +1708,16 @@ pub fn docket_task_status_from_task_list_item_status(
 fn task_list_item_from_docket_task(
     task: &DocketTaskRow,
     state: Option<&DocketTaskRunStateRow>,
+    has_active_work_run: bool,
 ) -> TaskListItem {
     let status = state
-        .map(|state| task_list_item_status_from_docket_task_status(&state.status))
+        .map(|state| {
+            if state.status == "in_progress" && !has_active_work_run {
+                TaskListItemStatus::Pending
+            } else {
+                task_list_item_status_from_docket_task_status(&state.status)
+            }
+        })
         .unwrap_or(TaskListItemStatus::Pending);
     TaskListItem {
         id: task.id.to_string(),
@@ -2455,6 +2475,7 @@ mod tests {
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             }),
+            has_active_work_run: true,
             criteria: vec![DocketJobCriterionRow {
                 id: Uuid::parse_str("00000000-0000-0000-0000-000000000c01").unwrap(),
                 job_id,
@@ -2520,6 +2541,23 @@ mod tests {
     }
 
     #[test]
+    fn stale_in_progress_task_without_work_run_projects_as_pending_and_ready() {
+        let mut projection = docket_projection_fixture();
+        projection.current_run.as_mut().unwrap().state = "queued".to_string();
+        projection.has_active_work_run = false;
+
+        let report = docket_job_status_report(&projection);
+        let task_list = task_list_projection_from_docket_job(&projection, None);
+
+        assert_eq!(report.job_status, "ready");
+        assert_eq!(report.task_counts.in_progress, 0);
+        assert_eq!(report.task_counts.pending, 1);
+        assert!(report.current_task_id.is_none());
+        assert_eq!(task_list.status, "ready");
+        assert_eq!(task_list.items[0].status, TaskListItemStatus::Pending);
+    }
+
+    #[test]
     fn derived_status_prefers_stalled_run_over_stale_job_status() {
         let mut projection = docket_projection_fixture();
         projection.job.status = "ready".to_string();
@@ -2561,6 +2599,7 @@ mod tests {
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             },
             current_run: None,
+            has_active_work_run: true,
             criteria: Vec::new(),
             tasks: vec![
                 DocketTaskRow {
