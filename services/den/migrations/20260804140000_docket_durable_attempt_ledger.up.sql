@@ -34,17 +34,18 @@ ALTER TABLE docket_turn_attempts
     ADD COLUMN criteria_evidence JSONB NULL,
     ADD COLUMN synthetic_provenance JSONB NULL;
 
+-- Remove both legacy checks before rewriting their constrained state values.
 -- Legacy `terminal` is preserved as v1 `settled`; open legacy rows are
 -- executing because they were already dispatched before this migration.
+ALTER TABLE docket_turn_attempts DROP CONSTRAINT IF EXISTS docket_turn_attempts_check;
+ALTER TABLE docket_turn_attempts DROP CONSTRAINT IF EXISTS docket_turn_attempts_state_check;
 UPDATE docket_turn_attempts
 SET state = CASE state WHEN 'terminal' THEN 'settled' ELSE 'executing' END;
-ALTER TABLE docket_turn_attempts DROP CONSTRAINT IF EXISTS docket_turn_attempts_state_check;
 ALTER TABLE docket_turn_attempts ADD CONSTRAINT docket_turn_attempts_state_check
     CHECK (state IN ('reserved', 'executing', 'settled', 'abandoned'));
 DROP INDEX IF EXISTS docket_turn_attempts_open_idx;
 CREATE INDEX docket_turn_attempts_open_idx
     ON docket_turn_attempts (last_activity_at) WHERE state IN ('reserved', 'executing');
-ALTER TABLE docket_turn_attempts DROP CONSTRAINT IF EXISTS docket_turn_attempts_check;
 ALTER TABLE docket_turn_attempts ADD CONSTRAINT docket_turn_attempts_lifecycle_check CHECK (
     (state IN ('reserved', 'executing') AND outcome IS NULL AND finished_at IS NULL)
     OR (state = 'settled' AND outcome IS NOT NULL AND finished_at IS NOT NULL)
