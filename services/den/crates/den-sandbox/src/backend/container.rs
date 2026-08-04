@@ -60,11 +60,10 @@ fn rust_preparation_cargo_args(request: &PrepareRustDependenciesRequest) -> Vec<
         args.push("--no-run".to_string());
     }
     if request.resolution == RustDependencyResolution::Locked {
-        // `cargo fetch --offline` validates and uses the checked-in lockfile
-        // without trying to refresh the registry. Unlike `--locked`, it can
-        // repair an older lockfile format in the disposable preparation
-        // checkout before the task sandbox mounts its cache read-only.
-        args.push("--offline".to_string());
+        // The helper has network access specifically to populate the managed
+        // cache. Keep the checked-in resolution immutable while fetching it;
+        // the task sandbox is the offline consumer of that cache.
+        args.push("--locked".to_string());
     }
     args
 }
@@ -1136,17 +1135,14 @@ mod tests {
     }
 
     #[test]
-    fn whole_workspace_preparation_fetches_offline_without_empty_package_flag() {
+    fn whole_workspace_preparation_fetches_locked_without_empty_package_flag() {
         let args = rust_preparation_cargo_args(&PrepareRustDependenciesRequest {
             manifest_path: "Cargo.toml".to_string(),
             package: String::new(),
             resolution: RustDependencyResolution::Locked,
             preparation: RustDependencyPreparation::Fetch,
         });
-        assert_eq!(
-            args,
-            ["fetch", "--manifest-path", "Cargo.toml", "--offline"]
-        );
+        assert_eq!(args, ["fetch", "--manifest-path", "Cargo.toml", "--locked"]);
     }
 
     #[test]
