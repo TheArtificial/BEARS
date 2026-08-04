@@ -505,29 +505,12 @@ impl RootsManager {
             // is a local refs/heads/* ref. In a normal clone, a non-HEAD branch
             // may exist only as origin/<name>, so resolving the same short name
             // there can fail even after a successful root readiness check.
-            let commit = match self.resolve_commit(root, &pristine, &[], reference).await {
-                Ok(commit) => commit,
-                // A requested ref that does not exist yet (e.g. a job work
-                // branch before its first publish) falls back to the default
-                // ref instead of failing the provision.
-                Err(_) if reference != upstream.default_ref => {
-                    tracing::info!(
-                        root = %root.name,
-                        requested = reference,
-                        fallback = %upstream.default_ref,
-                        "requested ref missing; provisioning at the default ref"
-                    );
-                    self.resolve_commit(root, &pristine, &[], &upstream.default_ref)
-                        .await
-                        .inspect_err(|_| {
-                            let _ = std::fs::remove_dir_all(&workspace);
-                        })?
-                }
-                Err(err) => {
+            let commit = self
+                .resolve_commit(root, &pristine, &[], reference)
+                .await
+                .inspect_err(|_| {
                     let _ = std::fs::remove_dir_all(&workspace);
-                    return Err(err);
-                }
-            };
+                })?;
             self.git(
                 root,
                 Some(&workspace),
@@ -1145,18 +1128,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn option_like_requested_ref_falls_back_without_checkout_option_injection() {
+    async fn option_like_requested_ref_is_rejected_without_checkout_option_injection() {
         let fx = publish_fixture();
         fx.manager.sync_root(&fx.root).await.unwrap();
-        let workspace = fx
+        let err = fx
             .manager
             .provision_workspace(&fx.root, Some("-b"), "sbx-option-ref")
             .await
-            .expect("option-like ref should fall back to default");
-        assert_eq!(
-            sh_git(&workspace, &["rev-parse", "HEAD"]).trim(),
-            fx.base_commit
-        );
+            .expect_err("an unknown requested ref must not fall back to default");
+        assert!(err.to_string().contains("-b"), "{err}");
     }
 
     #[tokio::test]

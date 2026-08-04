@@ -308,7 +308,7 @@ async fn provision_run(
 
     let request = CreateSandboxRequest {
         root,
-        git_ref: run.git_ref.clone().or(work_branch),
+        git_ref: work_branch.or(run.git_ref.clone()),
         sandbox_type: SandboxType::Container,
         requires_write: true,
         image: run.image_name.clone(),
