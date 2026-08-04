@@ -27,11 +27,7 @@ pub fn derive_job_state<'a>(
     if states.contains(&"pending") {
         return DerivedJobState::Ready;
     }
-    if states
-        .iter()
-        .all(|state| matches!(*state, "done" | "cancelled"))
-        && criteria_complete
-    {
+    if states.iter().all(|state| *state == "done") && criteria_complete {
         DerivedJobState::Completed
     } else {
         DerivedJobState::Blocked
@@ -114,8 +110,16 @@ mod tests {
             DerivedJobState::Blocked
         );
         assert_eq!(
-            derive_job_state(["done", "cancelled"], true),
+            derive_job_state(["done", "done"], true),
             DerivedJobState::Completed
+        );
+    }
+
+    #[test]
+    fn cancelled_required_work_is_not_completion() {
+        assert_eq!(
+            derive_job_state(["done", "cancelled"], true),
+            DerivedJobState::Blocked
         );
     }
 

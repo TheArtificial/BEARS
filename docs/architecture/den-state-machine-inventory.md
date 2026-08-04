@@ -297,6 +297,114 @@ FocusState=None => completion policy must not return Continue(FocusedWorkRemains
 
 Do not let task orientation or stale activity projection force continuation. Only active focused work may do that.
 
+### Docket routed-turn contract
+
+Every autonomous dispatch, continuation, rollup, and routed user turn follows the
+same durable claim-and-commit protocol. This is the execution contract for
+ADR-0056 and is deliberately separate from cursor and UI state.
+
+#### Typed records and ownership
+
+| Record / state | Owner | Required contents | Rule |
+| --- | --- | --- | --- |
+| Routing decision | router transaction | intent, policy version, matched rule, normalized policy inputs, execution surface and source, profile provenance, stable turn idempotency key | Immutable and created or reused before invocation. |
+| Claim / reservation | dispatcher transaction | expected job/run/task versions, owner, lease expiry, turn key, decision and binding references | The sole authority to invoke work for an eligible task position. |
+| Turn attempt | attempt ledger | reservation identity, lifecycle, timestamps, observed boundary/cause/code, normalized outcome when known, evidence, last successful activity, failing boundary, criteria evidence, disposition, recovery action, synthetic provenance | Created before provider/model work; append-only after settlement except lifecycle timestamps and lease heartbeat. |
+| Replay activity | canonical transcript stream | attempt and task correlation, sequence/idempotency key, model/provider/tool event payload | Incremental events share the canonical replay stream; no second raw-log format. |
+| Task/run projection | Docket task/run reducer | execution state and derived job status | Derived only from settled attempt/disposition, task events, and explicit run control; it cannot infer a new failure cause. |
+| Notification outbox | same finalization transaction | attention event, authorized recipient/resource scope, delivery dedupe key, delivery state and acknowledgement | Delivery workers present and retry it; they do not decide failure semantics. |
+
+`AttemptLifecycle = reserved | executing | settled | abandoned` is not an
+outcome. `ObservedBoundary` records where progress stopped; `NormalizedOutcome`
+records a known classified result (or is absent); `SupervisorDisposition` selects
+what happens next; and task/run state is the reduction of those records. A
+provider disconnect, watchdog expiry, process loss, or continuation loss must
+append synthetic provenance rather than fabricate model text or a provider
+terminal result.
+
+The pre-v1 Phase 0/1 tables are an incomplete predecessor, not a competing
+contract: their `running | terminal` attempt state, unleased routing decision,
+and untyped JSON evidence do not satisfy the contract above. Increment 1 must
+replace or migrate those shapes without losing readable history.
+
+| Current predecessor | v1 contract gap | Required migration direction |
+| --- | --- | --- |
+| `docket_routing_decisions` | No claim owner/lease, expected versions, policy-input snapshot, or surface/profile provenance source | Add a reservation keyed by the stable turn key; preserve decisions as immutable forensic records. |
+| `docket_turn_attempts` | `running | terminal` conflates lifecycle and settlement; it lacks observed boundary, last successful activity, failing boundary, criteria evidence, recovery action, and synthetic provenance | Introduce typed lifecycle and distinct outcome/disposition/evidence fields; backfill legacy terminal rows as settled history. |
+| `docket_attention` | No transactional outbox, recipient/resource authorization, delivery dedupe, retry, or acknowledgement | Keep attention as domain event and add an outbox owned by the finalization transaction. |
+| direct work-run terminal transitions | May bypass a reserved attempt and shared failure projection | Route through claim and supervisor finalization; retain compatibility projections only. |
+
+#### Claim, invocation, and finalization
+
+1. The dispatcher selects an eligible serialized task and supplies expected
+   job/run/task versions plus an owner and stable turn idempotency key.
+2. In one transaction it compares those versions, claims the position, reserves
+   or reuses the key, and creates or reuses the routing decision and scoped
+   conversation binding. A loser performs no model or tool invocation.
+3. The claimant records the `reserved` attempt, then moves it to `executing` and
+   renews its lease while appending replay activity.
+4. Finalization compares the live claim owner, lease, attempt identity, and
+   expected versions. On success it atomically settles the attempt, appends the
+   task event/rollup, updates task/run projection, and writes any attention
+   outbox item. A late or stale result remains forensic history but cannot settle
+   a replacement attempt.
+5. A recovery worker may abandon only an expired claim with positive absence of
+   liveness. Uncertain continuation loss is `stalled`/`await_recovery`, not a
+   provider failure. Concurrent sweepers converge through the same compare-and-
+   set finalization.
+
+Legal lifecycle edges are:
+
+```text
+claim absent -> reserved -> executing -> settled
+                         \-> abandoned
+reserved/executing -> abandoned          expired lease + no liveness proof
+abandoned -> reserved                    fresh router claim for a new attempt
+settled/abandoned -/-> executing         terminal attempt is immutable
+```
+
+Only the claim transaction may create a reservation; only its current claimant
+may append execution activity; only the supervisor finalizer may settle an
+attempt and change task/run execution state; only the reducer derives job state;
+and only the delivery worker changes notification delivery/acknowledgement. UI,
+cursors, and model-authored fields may supply evidence or requests but own none
+of these transitions.
+
+#### Supervisor reduction and failure truth
+
+The supervisor validates task completion against criteria. Model text, including
+“cannot continue” or a requested stop, is evidence only. Its bounded
+`SupervisorDisposition` is one of `complete`, `retry`, `escalate_profile`,
+`handoff`, `pause`, `await_recovery`, or `terminal_failure`; retries return to
+step 1 and always create a new attempt.
+
+The job reducer must use this table rather than treating “no actionable task” as
+success:
+
+| Required task condition | Job projection |
+| --- | --- |
+| all required tasks criteria-complete | completed |
+| one task executing or eligible pending | running / ready |
+| blocked, handoff, paused, or awaiting recovery | blocked / waiting |
+| stalled or exhausted terminal failure | failed |
+| run explicitly stopped with incomplete required work | stopped / cancelled, never completed |
+
+The same normalized outcome/evidence record is projected into conversation,
+task activity, job workspace, notifications, and forensic diagnostics. Concise
+views may summarize it but must retain or link the last successful activity,
+failing boundary, cause/code, disposition, recovery action, and authorized
+resources. Clients do not independently classify an error.
+
+#### Notification outbox invariants
+
+Finalization writes the durable attention event and outbox entry in the same
+transaction as the failure rollup and task/run transition. The outbox owns a
+stable per-channel dedupe key, retry state, recipient and referenced-resource
+authorization snapshot, and acknowledgement state. Presentation may coalesce
+entries but must retain the durable event link and enforce current resource
+authorization before rendering any transcript, tool output, work surface, or
+run-control reference.
+
 ### Current-turn workflow state
 
 Canonical domains:
