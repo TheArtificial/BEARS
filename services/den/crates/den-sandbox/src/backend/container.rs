@@ -647,15 +647,6 @@ impl DockerCliBackend {
         }
     }
 
-    pub(crate) async fn system_df(&self) -> Option<String> {
-        let out = self.docker(&["system", "df"], None).await.ok()?;
-        if out.success() {
-            Some(out.stdout_lossy())
-        } else {
-            None
-        }
-    }
-
     pub(crate) async fn remove_image(
         &self,
         reference: &str,

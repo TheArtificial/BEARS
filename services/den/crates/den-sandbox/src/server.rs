@@ -527,7 +527,11 @@ fn invalid_reference_response(reference: &str) -> Response {
     )
 }
 
-/// Engine image store + disk usage, annotated with catalog membership.
+/// Engine image store, annotated with catalog membership.
+///
+/// `docker system df` walks substantially more engine state than image
+/// inventory and can stall while containerd cleans up dead shims. Do not run
+/// it on the management page's regular refresh path.
 async fn list_images(State(state): State<Arc<ProviderState>>) -> Response {
     let raw = match state.backend.image_ls_json().await {
         Ok(raw) => raw,
@@ -564,8 +568,7 @@ async fn list_images(State(state): State<Arc<ProviderState>>) -> Response {
             }
         })
         .collect();
-    let disk_usage = state.backend.system_df().await;
-    Json(crate::protocol::ImageStoreResponse { images, disk_usage }).into_response()
+    Json(crate::protocol::ImageStoreResponse { images }).into_response()
 }
 
 /// Start a background pull of a registry reference into the engine store.

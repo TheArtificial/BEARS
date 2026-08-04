@@ -141,13 +141,6 @@ impl Backend {
         }
     }
 
-    /// Human-readable `docker system df` summary, when the engine answers.
-    pub async fn system_df(&self) -> Option<String> {
-        match self {
-            Self::DockerCli(b) => b.system_df().await,
-        }
-    }
-
     /// Remove an image from the engine store. `Ok(Err(stderr))` = docker
     /// refused (e.g. image in use); `Err` = the engine was unreachable.
     pub async fn remove_image(&self, reference: &str) -> Result<Result<(), String>, BackendError> {
