@@ -15,7 +15,12 @@ use den_runtime::{
     bearwire_events,
     work_activity::{WorkActivityEntry, WorkActivityKind},
 };
-use den_service::{client_sessions, conversation::persistence, DenState};
+use den_service::{
+    artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
+    client_sessions,
+    conversation::persistence,
+    DenState,
+};
 
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
@@ -146,20 +151,28 @@ async fn list_docket_diagnostic_events(
     .map_err(|err| den_core::DenError::Database(format!("list docket diagnostic events: {err}")))
 }
 
-fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Value> {
+fn docket_diagnostic_surface_event(
+    row: DocketDiagnosticEventRow,
+    artifact_refs: &[String],
+) -> Option<Value> {
+    let artifact_suffix = artifact_refs
+        .iter()
+        .map(|artifact_ref| format!("\nArtifact: {artifact_ref}"))
+        .collect::<String>();
     match row.event_type.as_str() {
         "focus_selected" => Some(json!(SurfaceHistoryEvent::Message {
             id: Some(DocketSurfaceEventId::new(row.id).to_string()),
             role: "system".to_string(),
             text: format!(
-                "Docket focus selected: job={} goal={} task={} state={}",
+                "Docket focus selected: job={} goal={} task={} state={}{}",
                 row.job_id?,
                 row.job_goal.as_deref().unwrap_or("unknown"),
                 row.task_title.as_deref().unwrap_or("unknown task"),
                 row.payload
                     .get("state")
                     .and_then(Value::as_str)
-                    .unwrap_or("active")
+                    .unwrap_or("active"),
+                artifact_suffix
             ),
             resources: Vec::<SurfaceResourceRef>::new(),
             created_at: Some(row.created_at.to_string()),
@@ -174,12 +187,13 @@ fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Valu
                 id: Some(DocketSurfaceEventId::new(row.id).to_string()),
                 role: "system".to_string(),
                 text: format!(
-                    "Docket task {}: {} ({})",
+                    "Docket task {}: {} ({}){}",
                     row.event_type,
                     title,
                     row.task_id
                         .map(|id| id.to_string())
-                        .unwrap_or_else(|| "unknown task".to_string())
+                        .unwrap_or_else(|| "unknown task".to_string()),
+                    artifact_suffix
                 ),
                 resources: Vec::<SurfaceResourceRef>::new(),
                 created_at: Some(row.created_at.to_string()),
@@ -386,7 +400,7 @@ async fn conversation_history_like_result(
     response_kind: &str,
     records_key: &str,
 ) -> Result<Value, CustomError> {
-    let (_user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: ConversationHistoryRequest = parse_params(params)?;
     let conversation_id = request.conversation_id;
     let before_sequence_no = request.before;
@@ -589,7 +603,26 @@ async fn conversation_history_like_result(
         for row in list_docket_diagnostic_events(&state.sqlx_pool, bear.id, &conversation_id, limit)
             .await?
         {
-            if let Some(event) = docket_diagnostic_surface_event(row) {
+            let artifact_refs = if let Some(task_id) = row.task_id {
+                artifacts::list_docket_artifact_citations(
+                    &state.sqlx_pool,
+                    bear.id,
+                    DocketArtifactTargetKind::Task,
+                    task_id,
+                    ArtifactAccessContext {
+                        bear_id: bear.id,
+                        user_id: Some(user_id),
+                        profile: den_core::BearProfile::Pair,
+                    },
+                )
+                .await?
+                .into_iter()
+                .map(|citation| citation.artifact_ref)
+                .collect()
+            } else {
+                Vec::new()
+            };
+            if let Some(event) = docket_diagnostic_surface_event(row, &artifact_refs) {
                 messages.push(event);
             }
         }
@@ -673,6 +706,29 @@ mod tests {
         assert!(!omit_from_review_projection(
             "runtime.objective_orientation"
         ));
+    }
+
+    #[test]
+    fn docket_artifact_refs_render_only_opaque_identifiers() {
+        let row = DocketDiagnosticEventRow {
+            id: Uuid::from_u128(1),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            event_type: "created".to_string(),
+            payload: json!({"definition": {"title": "Ship it"}}),
+            job_id: Some(Uuid::from_u128(2)),
+            job_goal: None,
+            task_id: Some(Uuid::from_u128(3)),
+            task_title: Some("Ship it".to_string()),
+        };
+        let event = docket_diagnostic_surface_event(
+            row,
+            &["artifact_0123456789abcdef0123456789abcdef".to_string()],
+        )
+        .expect("surface event");
+        let text = event["text"].as_str().expect("message text");
+        assert!(text.contains("artifact_0123456789abcdef0123456789abcdef"));
+        assert!(!text.contains("storage_key"));
+        assert!(!text.contains("content_sha256"));
     }
 
     #[test]
