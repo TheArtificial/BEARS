@@ -699,7 +699,11 @@ pub async fn hybrid_memory_search(
     // *before* the final top-N cap so a conflicting counterpart is never ranked away.
     let ids: Vec<String> = hits
         .iter()
-        .filter_map(|hit| hit.get("memory_id").and_then(Value::as_str).map(String::from))
+        .filter_map(|hit| {
+            hit.get("memory_id")
+                .and_then(Value::as_str)
+                .map(String::from)
+        })
         .collect();
     let conflicts = surface_recall_conflicts(stores, bear_id, &ids).await;
     if !conflicts.is_empty() {
@@ -1205,8 +1209,14 @@ mod tests {
         };
         mark_projection_conflicts(&mut projection, &[conflict("m1", "m2", "core/a.md")]);
 
-        assert_eq!(projection.passages[0].conflicts_with, vec!["m2".to_string()]);
-        assert_eq!(projection.passages[1].conflicts_with, vec!["m1".to_string()]);
+        assert_eq!(
+            projection.passages[0].conflicts_with,
+            vec!["m2".to_string()]
+        );
+        assert_eq!(
+            projection.passages[1].conflicts_with,
+            vec!["m1".to_string()]
+        );
         assert_eq!(projection.diagnostic["conflicts"]["pairs"], 1);
         assert_eq!(
             projection.diagnostic["conflicts"]["records"],

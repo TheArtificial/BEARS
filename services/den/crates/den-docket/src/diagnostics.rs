@@ -322,7 +322,8 @@ mod tests {
     #[test]
     fn explanation_never_treats_empty_queue_as_completion() {
         assert!(
-            explain_state("running", "running", false, &["blocked".into()], None).starts_with("Blocked")
+            explain_state("running", "running", false, &["blocked".into()], None)
+                .starts_with("Blocked")
         );
         assert!(
             explain_state("completed", "completed", false, &["done".into()], None)

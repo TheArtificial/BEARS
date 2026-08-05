@@ -1819,9 +1819,13 @@ mod tests {
             .find(|descriptor| descriptor.name == DEN_WORK_DISPATCH)
             .expect("descriptor");
 
-        assert!(descriptor.description.contains("ephemeral isolated checkout"));
+        assert!(descriptor
+            .description
+            .contains("ephemeral isolated checkout"));
         assert!(descriptor.description.contains("enabled commit policy"));
-        assert!(descriptor.description.contains("not a shared filesystem checkout"));
+        assert!(descriptor
+            .description
+            .contains("not a shared filesystem checkout"));
         assert!(descriptor.description.contains("preflight rejects"));
     }
 

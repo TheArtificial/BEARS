@@ -1401,7 +1401,11 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
         .iter()
         .map(|state| (state.task_id, state.status.as_str()))
         .collect::<std::collections::HashMap<_, _>>();
-    let active_task_ids = projection.active_task_ids.iter().copied().collect::<std::collections::HashSet<_>>();
+    let active_task_ids = projection
+        .active_task_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
     let current_task = projection
         .tasks
         .iter()
@@ -1567,11 +1571,7 @@ pub fn task_list_projection_from_session_tasks(
     let items = sorted_tasks
         .into_iter()
         .map(|projection| {
-            task_list_item_from_docket_task(
-                &projection.task,
-                projection.run_state.as_ref(),
-                false,
-            )
+            task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref(), false)
         })
         .collect::<Vec<_>>();
     let current_item = current_task_list_item(&items).cloned();

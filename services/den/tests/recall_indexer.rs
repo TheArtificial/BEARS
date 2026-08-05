@@ -491,9 +491,16 @@ async fn hybrid_search_temporal_leg_filters_by_effective_time() {
     }
 
     // A `today` window keeps just-written records and strips the temporal phrase from the query.
-    let today = hybrid_memory_search(&config, &stores, bear_id, "work", &format!("{token} today"), 10)
-        .await
-        .expect("today search");
+    let today = hybrid_memory_search(
+        &config,
+        &stores,
+        bear_id,
+        "work",
+        &format!("{token} today"),
+        10,
+    )
+    .await
+    .expect("today search");
     assert_eq!(today["temporal"]["matched"], "today", "{today}");
     assert!(
         !today["hits"].as_array().expect("hits").is_empty(),

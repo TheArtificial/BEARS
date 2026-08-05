@@ -112,7 +112,8 @@ impl WorkRunState {
     }
 }
 
-const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, \
+const WORK_RUN_COLUMNS: &str =
+    "id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, \
      runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, \
      cancel_requested_at, git_ref, image_name, \
      sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, \
@@ -853,9 +854,7 @@ pub fn canonical_work_run_state(
     if refs.pointer("/cargo_failure/code").and_then(Value::as_str)
         == Some("cargo_offline_cache_miss")
         || task_statuses.iter().any(|status| status == "blocked")
-        || task_statuses
-            .iter()
-            .any(|status| status == "pending")
+        || task_statuses.iter().any(|status| status == "pending")
     {
         WorkRunState::Blocked
     } else {

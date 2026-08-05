@@ -1530,14 +1530,23 @@ async fn import_bear_bundle(
     })?;
     rewrite_imported_memory_bear_id(&state, bear_id).await?;
 
-    if let Err(err) =
-        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, bear_id)
-            .await
+    if let Err(err) = provision::provision_bear_if_configured(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        &state.memory_stores,
+        bear_id,
+    )
+    .await
     {
         tracing::warn!(%bear_id, error = %err, "provision after Bear import failed");
     }
-    if let Err(err) =
-        provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, bear_id).await
+    if let Err(err) = provision::reconcile_bear_native(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        &state.memory_stores,
+        bear_id,
+    )
+    .await
     {
         tracing::warn!(%bear_id, error = %err, "reconcile after Bear import failed");
     }

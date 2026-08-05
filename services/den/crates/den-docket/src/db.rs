@@ -1385,8 +1385,8 @@ pub(super) async fn execute_job(
     if let Some(active) = active_task_ids.iter().next() {
         // Re-evaluate the task attached to the live work run against the plan.
         // Execution is run-owned; task state records only durable outcomes.
-        let selected = first_pending_leaf_in_plan_order(&projection, &state_by_task)
-            .map(|task| task.id);
+        let selected =
+            first_pending_leaf_in_plan_order(&projection, &state_by_task).map(|task| task.id);
         if selected != Some(*active) {
             return Err(DenError::ValidationError(format!(
                 "Docket active task {active} is not the first eligible leaf in sibling order; refusing stale work run",

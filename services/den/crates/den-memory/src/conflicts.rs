@@ -140,7 +140,8 @@ fn windows_overlap(a: &ConflictCandidate, b: &ConflictCandidate) -> bool {
     let (Some(a_from), Some(b_from)) = (a.effective_from, b.effective_from) else {
         return false;
     };
-    a.invalid_at.is_none_or(|a_end| b_from < a_end) && b.invalid_at.is_none_or(|b_end| a_from < b_end)
+    a.invalid_at.is_none_or(|a_end| b_from < a_end)
+        && b.invalid_at.is_none_or(|b_end| a_from < b_end)
 }
 
 /// The shared dimension of a pair, if any: same non-empty `logical_path` first, else the
@@ -260,7 +261,9 @@ pub async fn memory_conflicts_among(
     if memory_ids.len() < 2 {
         return Ok(Vec::new());
     }
-    Ok(detect_conflicts(&conflict_candidates(store, memory_ids).await?))
+    Ok(detect_conflicts(
+        &conflict_candidates(store, memory_ids).await?,
+    ))
 }
 
 /// Transitive supersession ancestors for each seed id, via a depth-capped recursive walk
@@ -499,9 +502,10 @@ mod tests {
     async fn superseded_chain_does_not_conflict() {
         let store = new_test_store().await;
         let logical = LogicalMemoryPath::shared_core("workflow");
-        let first = append_memory_record(&store, &logical, "note", "curate", None, "v1", &json!({}))
-            .await
-            .expect("append v1");
+        let first =
+            append_memory_record(&store, &logical, "note", "curate", None, "v1", &json!({}))
+                .await
+                .expect("append v1");
         let second = store
             .append_record_with_options(
                 &logical,
@@ -573,9 +577,18 @@ mod tests {
         let third = shared_note(&store, "ryan-mention", "mentions Ryan in passing").await;
 
         for id in [&first, &second] {
-            append_relation(&store, id, &person, "subject", &json!({}), "pair", None, None)
-                .await
-                .expect("subject relation");
+            append_relation(
+                &store,
+                id,
+                &person,
+                "subject",
+                &json!({}),
+                "pair",
+                None,
+                None,
+            )
+            .await
+            .expect("subject relation");
         }
         // Explicitly non-primary subject links never participate.
         append_relation(
@@ -596,11 +609,7 @@ mod tests {
         assert_eq!(conflicts.len(), 1, "{conflicts:?}");
         assert_eq!(
             conflicts[0],
-            MemoryConflict::new(
-                &first,
-                &second,
-                ConflictReason::SharedSubjectEntity(person)
-            )
+            MemoryConflict::new(&first, &second, ConflictReason::SharedSubjectEntity(person))
         );
     }
 
@@ -617,7 +626,10 @@ mod tests {
             .await
             .expect("first write");
         let observation = first.expect("observation created");
-        assert_eq!(observation.source_json["kind"], MEMORY_CONFLICT_OBSERVATION_KIND);
+        assert_eq!(
+            observation.source_json["kind"],
+            MEMORY_CONFLICT_OBSERVATION_KIND
+        );
         assert_eq!(observation.source_json["pair_key"], "mem-a::mem-b");
         assert_eq!(observation.source_json["reason"], "shared_path");
         assert!(observation.summary.contains("mem-a"));
@@ -629,13 +641,12 @@ mod tests {
             .expect("repeat write");
         assert!(repeat.is_none());
 
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM memory_observations WHERE bear_id = ?",
-        )
-        .bind(store.bear_id().to_string())
-        .fetch_one(store.pool())
-        .await
-        .expect("count observations");
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM memory_observations WHERE bear_id = ?")
+                .bind(store.bear_id().to_string())
+                .fetch_one(store.pool())
+                .await
+                .expect("count observations");
         assert_eq!(count, 1);
 
         // A different pair still records.

@@ -9,9 +9,7 @@
 //! outcome is the run-completion hook plus Docket task state.
 
 use axum::http::HeaderMap;
-use bearwire_protocol::compatibility::{
-    CompatibilityManifest, REQUIRED_WORK_CAPABILITIES,
-};
+use bearwire_protocol::compatibility::{CompatibilityManifest, REQUIRED_WORK_CAPABILITIES};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;

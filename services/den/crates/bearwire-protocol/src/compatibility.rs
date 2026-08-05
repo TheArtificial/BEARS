@@ -56,7 +56,9 @@ mod tests {
         };
 
         assert_eq!(
-            manifest.missing(REQUIRED_WORK_CAPABILITIES).collect::<Vec<_>>(),
+            manifest
+                .missing(REQUIRED_WORK_CAPABILITIES)
+                .collect::<Vec<_>>(),
             vec![ProtocolCapability::ToolAttemptToken]
         );
     }

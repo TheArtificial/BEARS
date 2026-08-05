@@ -78,9 +78,7 @@ pub async fn recall_watermark(
         indexed_seq,
         lag_count,
         fully_recallable: indexed_seq == canonical_seq,
-        last_success_at: runs
-            .last_success_at
-            .and_then(|at| at.format(&Rfc3339).ok()),
+        last_success_at: runs.last_success_at.and_then(|at| at.format(&Rfc3339).ok()),
         failed_run_count: runs.failed_run_count,
     }))
 }
@@ -138,7 +136,10 @@ fn compute_indexed_seq(
 
 /// Whether an indexable head still needs indexing work: some chunk of its canonical
 /// content lacks a live registry passage with a matching `content_hash`.
-fn head_is_pending(head: &IndexRequest, live_hashes: &HashMap<String, HashMap<i32, String>>) -> bool {
+fn head_is_pending(
+    head: &IndexRequest,
+    live_hashes: &HashMap<String, HashMap<i32, String>>,
+) -> bool {
     if !head.is_indexable() {
         return false;
     }
@@ -232,7 +233,10 @@ mod tests {
 
     #[test]
     fn fully_indexed_bear_reaches_canonical_seq() {
-        let heads = vec![head("mem-a", 3, "alpha body"), head("mem-b", 7, "beta body")];
+        let heads = vec![
+            head("mem-a", 3, "alpha body"),
+            head("mem-b", 7, "beta body"),
+        ];
         let live: HashMap<_, _> = [
             indexed_entry("mem-a", "alpha body"),
             indexed_entry("mem-b", "beta body"),
@@ -244,9 +248,11 @@ mod tests {
 
     #[test]
     fn lagging_head_holds_watermark_back() {
-        let heads = vec![head("mem-a", 3, "alpha body"), head("mem-b", 7, "beta body")];
-        let live: HashMap<_, _> =
-            std::iter::once(indexed_entry("mem-a", "alpha body")).collect();
+        let heads = vec![
+            head("mem-a", 3, "alpha body"),
+            head("mem-b", 7, "beta body"),
+        ];
+        let live: HashMap<_, _> = std::iter::once(indexed_entry("mem-a", "alpha body")).collect();
         // mem-b (seq 7) is unindexed: the watermark stops just below it.
         assert_eq!(compute_indexed_seq(9, &heads, &live), (6, 1));
     }

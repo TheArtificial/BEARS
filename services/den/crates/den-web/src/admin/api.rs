@@ -113,8 +113,13 @@ async fn create_bear(
         )));
     }
 
-    if let Err(e) =
-        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, id).await
+    if let Err(e) = provision::provision_bear_if_configured(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        &state.memory_stores,
+        id,
+    )
+    .await
     {
         tracing::warn!(%id, "Bear provision failed after admin API create: {e}");
     }

@@ -14,6 +14,7 @@ use crate::recovery::{
     persist_attention_outbox, persist_result_rollup, terminalize_turn_attempt, AttemptOutcome,
     ResultRollup, RetryDisposition, SupervisorDisposition,
 };
+use crate::supervisor::set_work_run_paused;
 use crate::work_runs::{
     checkout_work_run_for_session, claim_next_work_run, disconnect_attached_work_run,
     enqueue_work_job, enqueue_work_run, ensure_job_work_branch, finalize_work_run,
@@ -23,13 +24,12 @@ use crate::work_runs::{
     timeout_disconnected_work_runs, WorkExecutionTarget, WorkJobEnqueue, WorkRunCancelRequest,
     WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned, WorkRunState,
 };
-use crate::supervisor::set_work_run_paused;
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
     DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
-    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskUpdate, PgDocketService,
-    RoutingStrategy, TaskListVisibility,
+    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskUpdate, PgDocketService, RoutingStrategy,
+    TaskListVisibility,
 };
 
 /// `claim_next_work_run` is deliberately global (any runner takes the oldest
@@ -1232,9 +1232,13 @@ async fn active_task_definition_edits_require_a_paused_work_run() {
     };
     assert!(service.update_task(edit("must pause first")).await.is_err());
 
-    claim_next_work_run(&pool, "runner-paused-edit", std::time::Duration::from_mins(1))
-        .await
-        .unwrap();
+    claim_next_work_run(
+        &pool,
+        "runner-paused-edit",
+        std::time::Duration::from_mins(1),
+    )
+    .await
+    .unwrap();
     record_work_run_provisioned(
         &pool,
         work_run.id,
@@ -1288,12 +1292,8 @@ async fn pause_resume_is_compare_and_set() {
     .await
     .unwrap();
 
-    assert!(set_work_run_paused(&pool, run.id, true)
-        .await
-        .unwrap());
-    assert!(!set_work_run_paused(&pool, run.id, true)
-        .await
-        .unwrap());
+    assert!(set_work_run_paused(&pool, run.id, true).await.unwrap());
+    assert!(!set_work_run_paused(&pool, run.id, true).await.unwrap());
     assert_eq!(
         get_work_run(&pool, run.id)
             .await
@@ -1313,18 +1313,16 @@ async fn pause_resume_is_compare_and_set() {
     )
     .await
     .unwrap());
-    assert!(get_work_run(&pool, run.id)
-        .await
-        .unwrap()
-        .expect("work run")
-        .cancel_requested);
+    assert!(
+        get_work_run(&pool, run.id)
+            .await
+            .unwrap()
+            .expect("work run")
+            .cancel_requested
+    );
 
-    assert!(set_work_run_paused(&pool, run.id, false)
-        .await
-        .unwrap());
-    assert!(!set_work_run_paused(&pool, run.id, false)
-        .await
-        .unwrap());
+    assert!(set_work_run_paused(&pool, run.id, false).await.unwrap());
+    assert!(!set_work_run_paused(&pool, run.id, false).await.unwrap());
     assert_eq!(
         get_work_run(&pool, run.id)
             .await

@@ -913,9 +913,13 @@ async fn new_bear_post(
 
         bears_db::grant_membership(state.sqlx_pool(), user_id, id, Some(BEAR_ROLE_ADMIN)).await?;
 
-        if let Err(e) =
-            provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, id)
-                .await
+        if let Err(e) = provision::provision_bear_if_configured(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            &state.memory_stores,
+            id,
+        )
+        .await
         {
             tracing::warn!(%id, "Native profile provision failed: {e}");
             let page = bear_new_form_context(&state, &form).await;
@@ -932,8 +936,13 @@ async fn new_bear_post(
             .await;
         }
 
-        if let Err(err) =
-            provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, id).await
+        if let Err(err) = provision::reconcile_bear_native(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            &state.memory_stores,
+            id,
+        )
+        .await
         {
             tracing::warn!(bear_id = %id, error = %err, "Native profile reconcile after member bear create failed");
         }
@@ -1061,9 +1070,13 @@ async fn bear_edit_overview_post(
         )
         .await?;
 
-        if let Err(e) =
-            provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, bear.id)
-                .await
+        if let Err(e) = provision::reconcile_bear_native(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            &state.memory_stores,
+            bear.id,
+        )
+        .await
         {
             tracing::warn!(bear_id = %bear.id, "Native profile reconcile after overview edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
@@ -1182,9 +1195,13 @@ async fn bear_edit_prompt_post(
         )
         .await?;
 
-        if let Err(e) =
-            provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, bear.id)
-                .await
+        if let Err(e) = provision::reconcile_bear_native(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            &state.memory_stores,
+            bear.id,
+        )
+        .await
         {
             tracing::warn!(bear_id = %bear.id, "Native profile reconcile after prompt edit failed: {e}");
             return render_template(
@@ -1310,9 +1327,13 @@ async fn bear_edit_configuration_post(
         )
         .await?;
 
-        if let Err(e) =
-            provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, bear.id)
-                .await
+        if let Err(e) = provision::reconcile_bear_native(
+            state.sqlx_pool(),
+            state.config.as_ref(),
+            &state.memory_stores,
+            bear.id,
+        )
+        .await
         {
             tracing::warn!(bear_id = %bear.id, "Native profile reconcile after configuration edit failed: {e}");
             let bear = bears_db::get_bear(state.sqlx_pool(), bear.id)
