@@ -1,6 +1,6 @@
 # Artifact refs implementation plan
 
-**Status:** Proposed — implement first  
+**Status:** In progress — Phase 1 registry/core service and the currently available Phase 3 citation surfaces are implemented; Garage-backed content transfer, GC, and future consumer surfaces remain deferred.  
 **Primary ADR:** [ADR-0004: Artifacts, Garage (S3), and Cabinet separation](../decisions/adr-0004-artifacts-garage.md)  
 **Related ADRs:** [ADR-0006](../decisions/adr-0006-bear-work-surfaces.md), [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0053](../decisions/adr-0053-stance-scoped-delegated-runs.md)
 
