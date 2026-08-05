@@ -1203,6 +1203,11 @@ mod tests {
         assert_eq!(citations[0].artifact_ref, reserved.artifact_ref);
         assert!(citations[0].readable);
         assert_eq!(citations[0].content_bytes, Some(12));
+        let rendered = serde_json::to_value(&citations[0]).expect("serialize citation");
+        assert!(rendered.get("storage_key").is_none());
+        assert!(rendered.get("content_sha256").is_none());
+        assert!(rendered.get("provenance").is_none());
+        assert!(rendered.get("metadata").is_none());
     }
 
     #[tokio::test]

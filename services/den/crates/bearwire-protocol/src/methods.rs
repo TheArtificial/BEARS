@@ -176,6 +176,14 @@ pub struct DocketJobsListRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DocketJobDiagnosticsRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub job_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DocketJobsExecuteRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     pub bear_slug: String,

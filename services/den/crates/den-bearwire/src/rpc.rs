@@ -74,6 +74,11 @@ pub(crate) async fn rpc(
             methods::docket::docket_jobs_list_result(&state, &headers, &request.params).await,
             "BearWire docket.jobs.list failed",
         ),
+        "docket.jobs.diagnostics" => method_response(
+            request.id,
+            methods::docket::docket_job_diagnostics_result(&state, &headers, &request.params).await,
+            "BearWire docket.jobs.diagnostics failed",
+        ),
         "docket.jobs.execute" => method_response(
             request.id,
             methods::docket::docket_jobs_execute_result(&state, &headers, &request.params).await,

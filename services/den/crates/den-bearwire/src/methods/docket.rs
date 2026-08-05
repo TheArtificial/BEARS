@@ -1,16 +1,22 @@
 use axum::http::HeaderMap;
 use den_core::BearProfile;
-use den_docket::{DocketJobExecuteRequest, DocketJobListFilter, DocketService, PgDocketService};
+use den_docket::{
+    DocketJobExecuteRequest, DocketJobListFilter, DocketService, DocketTaskListFilter,
+    PgDocketService,
+};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use bearwire_protocol::{
-    methods::{DocketJobsExecuteRequest, DocketJobsListRequest},
+    methods::{DocketJobDiagnosticsRequest, DocketJobsExecuteRequest, DocketJobsListRequest},
     wire::BearWireEvent,
 };
 use den_http::errors::CustomError;
 use den_runtime::bearwire_events;
-use den_service::{client_sessions, DenState};
+use den_service::{
+    artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
+    client_sessions, DenState,
+};
 
 use crate::auth::authenticated_bear;
 use crate::methods::conversation::project_focus_title;
@@ -43,6 +49,55 @@ pub async fn docket_jobs_list_result(
     }))
 }
 
+pub async fn docket_job_diagnostics_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let request: DocketJobDiagnosticsRequest = parse_params(params)?;
+    let job_id = Uuid::parse_str(&request.job_id)
+        .map_err(|err| CustomError::ValidationError(format!("invalid job_id: {err}")))?;
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let service = PgDocketService::from_pool(&state.sqlx_pool);
+    let job = service
+        .get_job(bear.id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound(format!("Docket job {job_id} not found")))?;
+    let tasks = service
+        .list_tasks(
+            bear.id,
+            DocketTaskListFilter {
+                job_id: Some(job_id),
+                include_descendants: true,
+                limit: 500,
+                ..DocketTaskListFilter::default()
+            },
+        )
+        .await?;
+    let context = ArtifactAccessContext {
+        bear_id: bear.id,
+        user_id: Some(user_id),
+        profile: BearProfile::Pair,
+    };
+    let mut task_citations = Vec::with_capacity(tasks.len());
+    for task in &tasks {
+        let citations = artifacts::list_docket_artifact_citations(
+            &state.sqlx_pool,
+            bear.id,
+            DocketArtifactTargetKind::Task,
+            task.task.id,
+            context.clone(),
+        )
+        .await?;
+        task_citations.push(json!({ "task_id": task.task.id, "citations": citations }));
+    }
+
+    Ok(json!({
+        "job": job,
+        "tasks": tasks,
+        "artifact_citations": { "tasks": task_citations },
+    }))
+}
 pub async fn docket_jobs_execute_result(
     state: &DenState,
     headers: &HeaderMap,
