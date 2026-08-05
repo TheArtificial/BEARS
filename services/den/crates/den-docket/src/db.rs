@@ -1854,7 +1854,7 @@ async fn record_completion_receipt(
          SET primary_output_ref = EXCLUDED.primary_output_ref,
              immutable_identity = EXCLUDED.immutable_identity,
              validation = EXCLUDED.validation,
-             approved_at = now()",
+             recorded_at = now()",
     )
     .bind(task.id)
     .bind(run_state.run_id)
