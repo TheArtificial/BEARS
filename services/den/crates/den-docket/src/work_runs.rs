@@ -112,7 +112,7 @@ impl WorkRunState {
     }
 }
 
-const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, job_run_id, attempt, state, \
+const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, \
      runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, \
      cancel_requested_at, git_ref, image_name, \
      sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, \
@@ -127,6 +127,7 @@ pub struct WorkRunRow {
     pub bear_id: Uuid,
     pub job_id: Uuid,
     pub job_run_id: Uuid,
+    pub executing_task_id: Option<Uuid>,
     pub attempt: i32,
     pub state: String,
     pub runner_id: Option<String>,
@@ -854,7 +855,7 @@ pub fn canonical_work_run_state(
         || task_statuses.iter().any(|status| status == "blocked")
         || task_statuses
             .iter()
-            .any(|status| matches!(status.as_str(), "pending" | "in_progress"))
+            .any(|status| status == "pending")
     {
         WorkRunState::Blocked
     } else {
@@ -900,7 +901,7 @@ pub fn canonical_work_run_outcome(
         }
         let unfinished = task_statuses
             .iter()
-            .filter(|status| matches!(status.as_str(), "pending" | "in_progress"))
+            .filter(|status| *status == "pending")
             .count();
         if unfinished > 0 {
             return json!({
@@ -1009,11 +1010,9 @@ pub async fn finalize_work_run(
             "SELECT t.id, t.title, COALESCE(s.status, 'pending')
              FROM bear_tasks t
              LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
-             WHERE t.job_id = $1 AND COALESCE(s.status, 'pending') = 'in_progress'
-             ORDER BY t.sibling_order, t.created_at
-             LIMIT 1",
+             WHERE t.id = $1",
         )
-        .bind(row.job_id)
+        .bind(row.executing_task_id)
         .bind(row.job_run_id)
         .fetch_optional(&mut *tx)
         .await?;
@@ -1637,13 +1636,9 @@ pub async fn checkout_work_run_for_session(
     let active_task: Option<ActiveTaskRow> = sqlx::query_as(
         "SELECT t.id, t.title, t.body, t.completion_criteria, t.difficulty
          FROM bear_tasks t
-         JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
-         WHERE t.job_id = $1 AND s.status = 'in_progress'
-         ORDER BY t.sibling_order, t.created_at
-         LIMIT 1",
+         WHERE t.id = $1",
     )
-    .bind(run.job_id)
-    .bind(run.job_run_id)
+    .bind(run.executing_task_id)
     .fetch_optional(pool)
     .await?;
     let task = match active_task {
@@ -1669,29 +1664,12 @@ pub async fn checkout_work_run_for_session(
             )
         }
     };
-    // A checkout assigns one durable task to this work run. Persist that
-    // assignment before starting the turn so cancellation can block exactly
-    // this task rather than guessing from the job's pending tasks.
+    // A checkout records the selected task on the work run. Task state is
+    // durable outcome only; active execution is derived from this live run.
     sqlx::query(
-        "UPDATE bear_task_run_state
-         SET status = 'pending', updated_at = NOW()
-         WHERE run_id = $1 AND task_id <> $2 AND status = 'in_progress'",
+        "UPDATE bear_work_runs SET executing_task_id = $2, updated_at = NOW() WHERE id = $1",
     )
-    .bind(run.job_run_id)
-    .bind(task.0)
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "INSERT INTO bear_task_run_state (
-             run_id, task_id, status, started_at, updated_at
-         ) VALUES ($1, $2, 'in_progress', NOW(), NOW())
-         ON CONFLICT (run_id, task_id) DO UPDATE
-         SET status = 'in_progress',
-             started_at = COALESCE(bear_task_run_state.started_at, NOW()),
-             finished_at = NULL,
-             updated_at = NOW()",
-    )
-    .bind(run.job_run_id)
+    .bind(run.id)
     .bind(task.0)
     .execute(pool)
     .await?;
@@ -2018,13 +1996,7 @@ pub async fn get_work_run_dispatch_context(
                     )
                     FROM docket_result_rollups rr
                     WHERE rr.run_id = r.job_run_id
-                      AND rr.parent_task_id = (
-                          SELECT task_state.task_id
-                          FROM bear_task_run_state task_state
-                          WHERE task_state.run_id = r.job_run_id
-                            AND task_state.status = 'in_progress'
-                          LIMIT 1
-                      )
+                      AND rr.parent_task_id = r.executing_task_id
                 ), '[]'::jsonb) AS child_result_rollups
          FROM bear_work_runs r
          JOIN bears b ON b.id = r.bear_id

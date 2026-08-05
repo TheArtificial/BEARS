@@ -1190,7 +1190,7 @@ async fn attention_and_completion_visibility() {
 }
 
 #[tokio::test]
-async fn in_progress_task_definition_edits_require_a_paused_work_run() {
+async fn active_task_definition_edits_require_a_paused_work_run() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed work_runs test; database unavailable");
         return;
@@ -1208,24 +1208,6 @@ async fn in_progress_task_definition_edits_require_a_paused_work_run() {
         .current_run
         .expect("job run")
         .id;
-    service
-        .update_task(DocketTaskUpdate {
-            bear_id,
-            job_id: Some(job_id),
-            task_id: task_ids[0],
-            actor_role: BearProfile::Work,
-            actor_user_id: Some(user_id),
-            actor_agent_id: None,
-            definition: DocketTaskDefinitionPatch::default(),
-            run_state: Some(DocketTaskRunStateUpdate {
-                run_id,
-                status: crate::DocketTaskStatus::InProgress,
-                result_refs: None,
-                result_summary: None,
-            }),
-        })
-        .await
-        .unwrap();
     let work_run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .unwrap();
@@ -1243,7 +1225,7 @@ async fn in_progress_task_definition_edits_require_a_paused_work_run() {
         },
         run_state: Some(DocketTaskRunStateUpdate {
             run_id,
-            status: crate::DocketTaskStatus::InProgress,
+            status: crate::DocketTaskStatus::Pending,
             result_refs: None,
             result_summary: None,
         }),

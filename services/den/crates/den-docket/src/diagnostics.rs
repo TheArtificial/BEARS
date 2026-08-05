@@ -140,7 +140,7 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
     // Cursors are intentionally absent: current execution comes only from run state.
     // sqlx-dynamic: transitional static query; see module ratchet note above.
     let current_task = sqlx::query_as::<_, DiagnosticTask>(
-        "SELECT t.id, t.title, s.status FROM bear_task_run_state s JOIN bear_tasks t ON t.id=s.task_id WHERE s.run_id=$1 AND s.status='in_progress' AND EXISTS (SELECT 1 FROM bear_work_runs w WHERE w.job_run_id=$1 AND w.task_id=t.id AND w.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting'))",
+        "SELECT t.id, t.title, 'in_progress' AS status FROM bear_work_runs w JOIN bear_tasks t ON t.id=w.executing_task_id WHERE w.job_run_id=$1 AND w.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting') ORDER BY w.attempt DESC LIMIT 1",
     ).bind(run_id).fetch_optional(pool).await?;
     // sqlx-dynamic: transitional static query; see module ratchet note above.
     let states: Vec<String> = sqlx::query_scalar(
@@ -174,7 +174,13 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
         "SELECT a.started_at, a.finished_at, d.task_id, a.attempt, a.outcome, a.cause_code, a.retry_disposition, a.evidence_refs, a.resolved_profile, a.latency_ms, a.cost_microusd FROM docket_turn_attempts a JOIN docket_routing_decisions d ON d.id=a.routing_decision_id WHERE d.run_id=$1 ORDER BY a.started_at, a.id",
     ).bind(run_id).fetch_all(pool).await?;
 
-    let explanation = explain_state(&job_status, &run_state, &states, attention.as_ref());
+    let explanation = explain_state(
+        &job_status,
+        &run_state,
+        current_task.is_some(),
+        &states,
+        attention.as_ref(),
+    );
     let mut failure = attention.as_ref().map(|attention| NormalizedFailure {
         outcome: "attention_required".into(),
         cause: Some(attention.cause.clone()),
@@ -271,6 +277,7 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
 fn explain_state(
     job_status: &str,
     run_state: &str,
+    has_active_task: bool,
     states: &[String],
     attention: Option<&DiagnosticAttention>,
 ) -> String {
@@ -283,7 +290,7 @@ fn explain_state(
             attention.cause, attention.recovery_action
         );
     }
-    if states.iter().any(|state| state == "in_progress") {
+    if has_active_task {
         "Running the current authoritative task; browsing cursors do not affect execution.".into()
     } else if states.iter().any(|state| state == "pending") {
         "Ready because at least one task remains actionable.".into()
@@ -315,10 +322,10 @@ mod tests {
     #[test]
     fn explanation_never_treats_empty_queue_as_completion() {
         assert!(
-            explain_state("running", "running", &["blocked".into()], None).starts_with("Blocked")
+            explain_state("running", "running", false, &["blocked".into()], None).starts_with("Blocked")
         );
         assert!(
-            explain_state("completed", "completed", &["done".into()], None)
+            explain_state("completed", "completed", false, &["done".into()], None)
                 .starts_with("Completed")
         );
     }

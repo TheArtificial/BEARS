@@ -92,6 +92,10 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
   - Do not route Den-hosted tools to `bear-armature` for local execution.
 - If adding, renaming, or aliasing tools, update descriptors/resolvers first. Avoid scattered string `match` arms or hardcoded allowlists except at narrow routing boundaries.
 
+## Single Source of Truth for State
+
+- Model each piece of state once, with one canonical owner. Other layers may derive, project, or cache it, but must not keep independently writable copies that can drift; update the canonical state and regenerate derived views.
+
 ## Typed Boundaries and String Hygiene
 
 - Avoid "stringy" protocol designs. Do not embed control data in transcript text with XML/Markdown/JSON blocks or sentinel strings; use typed BearWire/ACP events, message parts, or explicit fields instead.

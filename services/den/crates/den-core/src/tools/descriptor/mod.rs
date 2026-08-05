@@ -690,7 +690,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE,
             "Update Docket task definition",
-            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, in progress, done, blocked, or cancelled; pass job_id/run_id when known to avoid ambiguous active-run inference.",
+            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, done, blocked, or cancelled; pass job_id/run_id when known to avoid ambiguous active-run inference.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
@@ -703,7 +703,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id","status"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id","status"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST_CHECKOUT,

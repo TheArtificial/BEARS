@@ -240,6 +240,7 @@ pub(super) async fn create_job(
         criteria_states,
         tasks,
         task_states,
+        active_task_ids: Vec::new(),
     })
 }
 
@@ -676,6 +677,7 @@ pub(super) async fn get_job(
         (Vec::new(), Vec::new())
     };
 
+    let active_task_ids = list_active_task_ids(pool, job.id).await?;
     let mut projection = DocketJobProjection {
         job,
         current_run,
@@ -683,9 +685,27 @@ pub(super) async fn get_job(
         criteria_states,
         tasks,
         task_states,
+        active_task_ids,
     };
     projection.job.status = derived_docket_job_status(&projection);
     Ok(Some(projection))
+}
+
+async fn list_active_task_ids(pool: &PgPool, job_id: Uuid) -> Result<Vec<Uuid>, DenError> {
+    sqlx::query_as::<_, (Uuid,)>(
+        r"
+        SELECT DISTINCT executing_task_id
+        FROM bear_work_runs
+        WHERE job_id = $1
+          AND executing_task_id IS NOT NULL
+          AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
+        ",
+    )
+    .bind(job_id)
+    .fetch_all(pool)
+    .await
+    .map(|rows| rows.into_iter().map(|(task_id,)| task_id).collect())
+    .map_err(Into::into)
 }
 
 pub(super) async fn update_job(
@@ -885,13 +905,12 @@ async fn reconcile_job_status(
         r"
         SELECT
             COUNT(*) FILTER (
-                WHERE COALESCE(state.status, 'pending') = 'in_progress'
-                  AND EXISTS (
-                      SELECT 1 FROM bear_work_runs work_run
-                      WHERE work_run.job_run_id = $2
-                        AND work_run.task_id = task.id
-                        AND work_run.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')
-                  )
+                WHERE EXISTS (
+                    SELECT 1 FROM bear_work_runs work_run
+                    WHERE work_run.job_run_id = $2
+                      AND work_run.executing_task_id = task.id
+                      AND work_run.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')
+                )
             ),
             COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'blocked'),
             COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled'))
@@ -1358,26 +1377,21 @@ pub(super) async fn execute_job(
             "Docket job is blocked; recover its current run before dispatching work".to_string(),
         ));
     }
-    if let Some(active) = projection
-        .task_states
+    let active_task_ids = projection
+        .active_task_ids
         .iter()
-        .find(|state| state.status == "in_progress")
-    {
-        // Re-evaluate the active task against the plan. Treating it as pending
-        // asks whether it is still the first unfinished leaf rather than
-        // trusting a stale focus/session record.
-        let mut eligibility = state_by_task.clone();
-        eligibility.insert(active.task_id, "pending");
-        let selected =
-            first_pending_leaf_in_plan_order(&projection, &eligibility).map(|task| task.id);
-        if selected != Some(active.task_id) {
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    if let Some(active) = active_task_ids.iter().next() {
+        // Re-evaluate the task attached to the live work run against the plan.
+        // Execution is run-owned; task state records only durable outcomes.
+        let selected = first_pending_leaf_in_plan_order(&projection, &state_by_task)
+            .map(|task| task.id);
+        if selected != Some(*active) {
             return Err(DenError::ValidationError(format!(
-                "Docket in-progress task {} is not the first eligible leaf in sibling order; refusing stale active task",
-                active.task_id
+                "Docket active task {active} is not the first eligible leaf in sibling order; refusing stale work run",
             )));
         }
-        mark_job_running(pool, &request, run.id).await?;
-        record_execution_session(pool, &request, run.id, Some(active.task_id), "active").await?;
         let job = get_job(pool, request.bear_id, request.job_id)
             .await?
             .ok_or_else(|| {
@@ -1385,35 +1399,16 @@ pub(super) async fn execute_job(
             })?;
         return Ok(DocketJobExecuteOutcome {
             job,
-            selected_task_id: Some(active.task_id),
+            selected_task_id: Some(*active),
             completed: false,
             blocked: false,
-            message: "Job has the first eligible in-progress task.".to_string(),
+            message: "Job has the first eligible active task.".to_string(),
         });
     }
 
     if let Some(next) = first_pending_leaf_in_plan_order(&projection, &state_by_task) {
         mark_job_running(pool, &request, run.id).await?;
         record_execution_session(pool, &request, run.id, Some(next.id), "active").await?;
-        update_task(
-            pool,
-            DocketTaskUpdate {
-                bear_id: request.bear_id,
-                job_id: Some(request.job_id),
-                task_id: next.id,
-                actor_role: request.actor_role,
-                actor_user_id: request.actor_user_id,
-                actor_agent_id: request.actor_agent_id.clone(),
-                definition: DocketTaskDefinitionPatch::default(),
-                run_state: Some(super::model::DocketTaskRunStateUpdate {
-                    run_id: run.id,
-                    status: super::model::DocketTaskStatus::InProgress,
-                    result_refs: None,
-                    result_summary: None,
-                }),
-            },
-        )
-        .await?;
         let job = get_job(pool, request.bear_id, request.job_id)
             .await?
             .ok_or_else(|| {
@@ -2006,7 +2001,7 @@ async fn validate_in_progress_task_edit_is_paused(
         return Ok(());
     }
     let active = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM bear_task_run_state WHERE run_id=$1 AND task_id=$2 AND status='in_progress')",
+        "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_run_id=$1 AND executing_task_id=$2 AND state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting'))",
     )
     .bind(run_state.run_id)
     .bind(current.id)
@@ -2016,7 +2011,7 @@ async fn validate_in_progress_task_edit_is_paused(
         return Ok(());
     }
     let paused = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_run_id=$1 AND task_id=$2 AND state='paused')",
+        "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_run_id=$1 AND executing_task_id=$2 AND state='paused')",
     )
     .bind(run_state.run_id)
     .bind(current.id)
@@ -2181,20 +2176,6 @@ async fn upsert_task_run_state(
     task_id: Uuid,
     update: &super::model::DocketTaskRunStateUpdate,
 ) -> Result<DocketTaskRunStateRow, DenError> {
-    if update.status.as_str() == "in_progress" {
-        sqlx::query(
-            r"
-            UPDATE bear_task_run_state
-            SET status = 'pending', updated_at = NOW()
-            WHERE run_id = $1 AND task_id <> $2 AND status = 'in_progress'
-            ",
-        )
-        .bind(update.run_id)
-        .bind(task_id)
-        .execute(&mut **tx)
-        .await?;
-    }
-
     sqlx::query_as::<_, DocketTaskRunStateRow>(
         r"
         INSERT INTO bear_task_run_state (
@@ -2202,7 +2183,7 @@ async fn upsert_task_run_state(
         )
         VALUES (
             $1, $2, $3, $4::jsonb, $5,
-            CASE WHEN $3 = 'in_progress' THEN COALESCE(NOW(), NOW()) ELSE NULL END,
+            NULL,
             CASE WHEN $3 IN ('done', 'cancelled') THEN NOW() ELSE NULL END,
             NOW()
         )
@@ -2210,13 +2191,10 @@ async fn upsert_task_run_state(
         SET status = EXCLUDED.status,
             result_refs = EXCLUDED.result_refs,
             result_summary = EXCLUDED.result_summary,
-            started_at = CASE
-                WHEN EXCLUDED.status = 'in_progress' THEN COALESCE(bear_task_run_state.started_at, NOW())
-                ELSE bear_task_run_state.started_at
-            END,
+            started_at = bear_task_run_state.started_at,
             finished_at = CASE
                 WHEN EXCLUDED.status IN ('done', 'cancelled') THEN COALESCE(bear_task_run_state.finished_at, NOW())
-                WHEN EXCLUDED.status IN ('pending', 'in_progress', 'blocked') THEN NULL
+                WHEN EXCLUDED.status IN ('pending', 'blocked') THEN NULL
                 ELSE bear_task_run_state.finished_at
             END,
             updated_at = NOW()

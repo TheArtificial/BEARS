@@ -817,7 +817,6 @@ impl ResultRollupPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum DocketTaskStatus {
     Pending,
-    InProgress,
     Done,
     Blocked,
     Cancelled,
@@ -827,7 +826,6 @@ impl DocketTaskStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
-            Self::InProgress => "in_progress",
             Self::Done => "done",
             Self::Blocked => "blocked",
             Self::Cancelled => "cancelled",
@@ -963,6 +961,8 @@ pub struct DocketJobProjection {
     pub criteria_states: Vec<DocketCriterionStateRow>,
     pub tasks: Vec<DocketTaskRow>,
     pub task_states: Vec<DocketTaskRunStateRow>,
+    /// Tasks with a live execution lease. This is the sole execution authority.
+    pub active_task_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1350,12 +1350,7 @@ pub fn derived_docket_job_status(projection: &DocketJobProjection) -> String {
     if run_state == Some("stalled") {
         return "stalled".to_string();
     }
-    if run_state == Some("running")
-        || projection
-            .task_states
-            .iter()
-            .any(|state| state.status == "in_progress")
-    {
+    if !projection.active_task_ids.is_empty() {
         return "running".to_string();
     }
     if run_state == Some("blocked")
@@ -1406,18 +1401,21 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
         .iter()
         .map(|state| (state.task_id, state.status.as_str()))
         .collect::<std::collections::HashMap<_, _>>();
-    let current_task = projection.tasks.iter().find(|task| {
-        task_states_by_id
-            .get(&task.id)
-            .is_some_and(|status| *status == "in_progress")
-    });
+    let active_task_ids = projection.active_task_ids.iter().copied().collect::<std::collections::HashSet<_>>();
+    let current_task = projection
+        .tasks
+        .iter()
+        .find(|task| active_task_ids.contains(&task.id));
     for task in &projection.tasks {
+        if active_task_ids.contains(&task.id) {
+            task_counts.in_progress += 1;
+            continue;
+        }
         match task_states_by_id
             .get(&task.id)
             .copied()
             .unwrap_or("pending")
         {
-            "in_progress" => task_counts.in_progress += 1,
             "done" => task_counts.done += 1,
             "blocked" => task_counts.blocked += 1,
             "cancelled" => task_counts.cancelled += 1,
@@ -1486,11 +1484,7 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
 }
 
 pub fn active_task_parent_id(projection: &DocketJobProjection) -> Option<Uuid> {
-    let active_task_id = projection
-        .task_states
-        .iter()
-        .find(|state| state.status == "in_progress")?
-        .task_id;
+    let active_task_id = *projection.active_task_ids.first()?;
     projection
         .tasks
         .iter()
@@ -1518,7 +1512,13 @@ pub fn task_list_projection_from_docket_job(
     tasks.sort_by_key(|task| (task.sibling_order, task.created_at, task.id));
     let items = tasks
         .into_iter()
-        .map(|task| task_list_item_from_docket_task(task, states_by_task_id.get(&task.id).copied()))
+        .map(|task| {
+            task_list_item_from_docket_task(
+                task,
+                states_by_task_id.get(&task.id).copied(),
+                projection.active_task_ids.contains(&task.id),
+            )
+        })
         .collect::<Vec<_>>();
     let current_item = current_task_list_item(&items).cloned();
 
@@ -1567,7 +1567,11 @@ pub fn task_list_projection_from_session_tasks(
     let items = sorted_tasks
         .into_iter()
         .map(|projection| {
-            task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref())
+            task_list_item_from_docket_task(
+                &projection.task,
+                projection.run_state.as_ref(),
+                false,
+            )
         })
         .collect::<Vec<_>>();
     let current_item = current_task_list_item(&items).cloned();
@@ -1685,7 +1689,7 @@ pub fn docket_task_status_from_task_list_item_status(
 ) -> DocketTaskStatus {
     match status {
         TaskListItemStatus::Pending => DocketTaskStatus::Pending,
-        TaskListItemStatus::InProgress => DocketTaskStatus::InProgress,
+        TaskListItemStatus::InProgress => DocketTaskStatus::Pending,
         TaskListItemStatus::Blocked => DocketTaskStatus::Blocked,
         TaskListItemStatus::Completed => DocketTaskStatus::Done,
         TaskListItemStatus::Cancelled => DocketTaskStatus::Cancelled,
@@ -1695,10 +1699,15 @@ pub fn docket_task_status_from_task_list_item_status(
 fn task_list_item_from_docket_task(
     task: &DocketTaskRow,
     state: Option<&DocketTaskRunStateRow>,
+    is_executing: bool,
 ) -> TaskListItem {
-    let status = state
-        .map(|state| task_list_item_status_from_docket_task_status(&state.status))
-        .unwrap_or(TaskListItemStatus::Pending);
+    let status = if is_executing {
+        TaskListItemStatus::InProgress
+    } else {
+        state
+            .map(|state| task_list_item_status_from_docket_task_status(&state.status))
+            .unwrap_or(TaskListItemStatus::Pending)
+    };
     TaskListItem {
         id: task.id.to_string(),
         title: task.title.clone(),
@@ -2500,6 +2509,7 @@ mod tests {
                 finished_at: None,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             }],
+            active_task_ids: vec![root_task_id],
         }
     }
 
@@ -2647,6 +2657,7 @@ mod tests {
                 finished_at: None,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             }],
+            active_task_ids: vec![root_task_id],
         };
 
         let root_checkout = task_list_projection_from_docket_job(&projection, None);

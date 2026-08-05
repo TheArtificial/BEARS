@@ -15,7 +15,7 @@ use crate::model::{
     DocketTaskDefinitionPatch, DocketTaskListFilter, DocketTaskProjection,
     DocketTaskRunStateUpdate, DocketTaskStatus, DocketTaskUpdate,
 };
-use crate::service::PgDocketService;
+use crate::service::{DocketService, PgDocketService};
 
 #[allow(async_fn_in_trait)]
 pub trait TaskDispatcher: Send + Sync {
@@ -189,17 +189,21 @@ impl TaskDispatcher for PgDocketService {
                 "Docket task {task_id} is not the first eligible pending leaf in sibling order"
             )));
         }
-        update_run_state(
-            self,
+        let _ = (run_id, actor_agent_id);
+        self.list_tasks(
             bear_id,
-            task_id,
-            run_id,
-            DocketTaskStatus::InProgress,
-            None,
-            None,
-            actor_agent_id,
+            DocketTaskListFilter {
+                job_id: None,
+                parent_task_id: None,
+                session_anchor_id: None,
+                include_descendants: true,
+                limit: 500,
+            },
         )
-        .await
+        .await?
+        .into_iter()
+        .find(|task| task.task.id == task_id)
+        .ok_or_else(|| DenError::NotFound(format!("Docket task {task_id} not found")))
     }
 
     async fn record_task_success(

@@ -18,12 +18,13 @@ pub enum DerivedJobState {
 
 pub fn derive_job_state<'a>(
     task_states: impl IntoIterator<Item = &'a str>,
+    has_active_work_run: bool,
     criteria_complete: bool,
 ) -> DerivedJobState {
-    let states: Vec<_> = task_states.into_iter().collect();
-    if states.contains(&"in_progress") {
+    if has_active_work_run {
         return DerivedJobState::Running;
     }
+    let states: Vec<_> = task_states.into_iter().collect();
     if states.contains(&"pending") {
         return DerivedJobState::Ready;
     }
@@ -102,15 +103,15 @@ mod tests {
     #[test]
     fn empty_queue_is_not_completion() {
         assert_eq!(
-            derive_job_state(["blocked"], true),
+            derive_job_state(["blocked"], false, true),
             DerivedJobState::Blocked
         );
         assert_eq!(
-            derive_job_state(["done", "cancelled"], false),
+            derive_job_state(["done", "cancelled"], false, false),
             DerivedJobState::Blocked
         );
         assert_eq!(
-            derive_job_state(["done", "done"], true),
+            derive_job_state(["done", "done"], false, true),
             DerivedJobState::Completed
         );
     }
@@ -118,7 +119,7 @@ mod tests {
     #[test]
     fn cancelled_required_work_is_not_completion() {
         assert_eq!(
-            derive_job_state(["done", "cancelled"], true),
+            derive_job_state(["done", "cancelled"], false, true),
             DerivedJobState::Blocked
         );
     }
