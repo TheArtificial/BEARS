@@ -21,4 +21,5 @@ time = { workspace = true, features = ["serde", "serde-well-known"] }
 uuid.workspace = true
 
 [dev-dependencies]
+sqlx = { workspace = true, default-features = false, features = ["migrate"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
