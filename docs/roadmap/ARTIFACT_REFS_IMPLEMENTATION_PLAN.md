@@ -76,7 +76,7 @@ Current ad hoc artifact-like stores:
 
 Initial implementation decisions:
 
-- **Ref format:** Den-minted `artifact_` + UUID v4, using the already-installed `uuid` crate. Do not add ULID/UUIDv7 unless ordered refs become a real requirement.
+- **Ref format:** Den-minted `artifact_` + UUID v4, using the already-installed `uuid` crate. Refs remain opaque and stable; do not add ULID/UUIDv7 unless ordered refs become a real requirement.
 - **First storage kinds:** `db_text` for metadata-only/small text JSON/diff artifacts in the registry service, and `garage_artifacts` for byte-backed artifacts in the next phase. Avoid a storage-backend trait until a second implemented backend makes it pay for itself.
 - **Lifecycle values:** start with `pending`, `finalized`, `ephemeral`, `promoted`, `cabinet_durable`, `archived`, and `deleted`. Reads of complete content require a non-pending, non-deleted finalized/promoted/durable state; finalize is one-way.
 - **Visibility/auth model:** begin with bear-scoped ownership plus visibility values aligned with Docket (`private_to_profile`, `same_user`, `bear_visible`) and optional subject links. Artifact links may justify access, but every read/write/attach/delete operation must still pass through the artifact service authorization check.
@@ -98,7 +98,7 @@ Initial implementation decisions:
   - [ ] `get_artifact_metadata(...)`
   - [ ] `authorize_artifact_access(...)`
   - [ ] `mark_artifact_deleted(...)`
-- [ ] Generate refs in Den only, using an opaque stable ID format such as `artifact_` + ULID/UUIDv7.
+- [ ] Generate opaque, stable refs in Den only as `artifact_` + UUID v4 using the existing `uuid` crate; models and clients cannot mint them.
 - [ ] Add small service-level checks for reserve/finalize/read authorization and invalid lifecycle transitions.
 
 **Exit gate:** Den can reserve, finalize, read metadata for, and lifecycle-check an artifact without exposing storage keys.
@@ -122,13 +122,15 @@ Initial implementation decisions:
 
 - [ ] Allow conversation events/messages to cite artifact refs for attachments and generated outputs.
 - [ ] Add generic artifact link/attachment records for Den subjects, including at least conversation, job, task, run, criterion, and delegated-run anchors.
-- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `input`, `source`, `output`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`.
+- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `primary_output`, `input`, `source`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`. Each Docket task has one verifier-approved finalized `primary_output` artifact; support Git-commit `external_ref` and Den-owned content artifacts first.
+- [ ] Bind required validation evidence to the task's `primary_output` ref and resolved immutable identity (Git OID or finalized content digest), including the executed check, result, execution provenance, and durable diagnostics where relevant.
+- [ ] Settle task completion only after its primary output and required validation evidence are recorded; preserve a blocked recovery path when publication succeeds but finalization fails.
 - [ ] Add run/task provenance when artifacts are created by work/runtime activity.
 - [ ] Render artifact refs in task/run completion receipts.
 - [ ] Keep criterion/task/job state separate from artifact presence; completion decisions cite evidence refs but are not implied by them.
 - [ ] Stop leaking object keys or workspace paths as durable evidence handles.
 
-**Exit gate:** A task/run can produce or cite artifact-backed evidence, and the UI/model layer can display the artifact metadata by ref.
+**Exit gate:** A task/run can produce or cite artifact-backed evidence. Every Docket task has a verifier-approved finalized primary-output artifact with validation evidence bound to its immutable identity; the UI/model layer can display the artifact metadata by ref.
 
 ### Phase 4 — Cabinet attachment integration
 
@@ -209,6 +211,7 @@ Artifact refs are ready when:
 - [ ] Pending artifacts cannot be read as complete artifacts.
 - [ ] Finalized artifacts are stable snapshots.
 - [ ] Conversation, Docket, Cabinet, and work-surface flows can cite artifact refs.
+- [ ] A Docket task completes only after a verifier-approved finalized `primary_output` artifact and required validation evidence bound to that artifact's immutable identity are recorded; terminal run telemetry and worker narratives do not settle task/job state.
 - [ ] Users can preview/download/attach artifacts from obvious UI affordances.
 - [ ] Models can cite, inspect, create, and attach artifacts through typed operations without storage trivia.
 - [ ] GC respects lifecycle and never deletes Cabinet-durable attachments.
