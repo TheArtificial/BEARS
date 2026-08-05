@@ -17,6 +17,7 @@ pub(crate) struct ToolTaskRecord {
     pub(crate) phase: ToolTaskPhase,
     pub(crate) input_args: Option<Value>,
     pub(crate) display: Option<Value>,
+    pub(crate) visible_summary: Option<String>,
     pub(crate) started_at: std::time::Instant,
     pub(crate) updated_at: std::time::Instant,
 }
@@ -49,6 +50,7 @@ impl ToolTaskRegistry {
                 phase: ToolTaskPhase::Received,
                 input_args: None,
                 display: None,
+                visible_summary: None,
                 started_at: now,
                 updated_at: now,
             },
@@ -74,6 +76,23 @@ impl ToolTaskRegistry {
         entry.updated_at = std::time::Instant::now();
     }
 
+    pub(crate) async fn remember_visible_summary(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        text: &str,
+    ) {
+        let text = text.trim();
+        if text.is_empty() || text == "Completed." || is_generic_completion(text) {
+            return;
+        }
+        let mut tasks = self.tasks.lock().await;
+        let Some(entry) = tasks.get_mut(&Self::key(session_id, tool_call_id)) else {
+            return;
+        };
+        entry.visible_summary = Some(text.to_string());
+        entry.updated_at = std::time::Instant::now();
+    }
     pub(crate) async fn get(&self, session_id: &str, tool_call_id: &str) -> Option<ToolTaskRecord> {
         self.tasks
             .lock()
@@ -190,6 +209,10 @@ impl ToolTaskRegistry {
     }
 }
 
+fn is_generic_completion(text: &str) -> bool {
+    let normalized = text.trim().trim_end_matches('.').to_ascii_lowercase();
+    normalized == "completed" || normalized.ends_with(" completed")
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ToolTaskPhase {
     Received,

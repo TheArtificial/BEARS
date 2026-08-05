@@ -10835,6 +10835,25 @@ fn friendly_tool_status(tool_name: &str, event: &Value, phase: &str) -> String {
     }
 }
 
+fn is_generic_completion_text(text: &str) -> bool {
+    let normalized = text.trim().trim_end_matches('.').to_ascii_lowercase();
+    normalized == "completed" || normalized.ends_with(" completed")
+}
+
+fn is_meaningful_terminal_tool_text(tool_name: &str, text: &str) -> bool {
+    let normalized = text.trim().trim_end_matches('.').to_ascii_lowercase();
+    if normalized.is_empty() || is_generic_completion_text(&normalized) {
+        return false;
+    }
+
+    // ACP replaces a tool card rather than patching it. These bare result-kind labels carry no
+    // outcome, and must not replace the useful request/running summary retained for the card.
+    let tool_label = tool_name.replace(['_', '.'], " ").to_ascii_lowercase();
+    !matches!(
+        normalized.as_str(),
+        "file" | "files" | "directory" | "directories" | "result" | "results"
+    ) && normalized != tool_label
+}
 fn tool_status_from_str(status: &str) -> ToolCallStatus {
     match status {
         "pending" => ToolCallStatus::Pending,
@@ -11022,6 +11041,28 @@ pub(crate) async fn send_tool_call_update_for_turn(
         {
             return Ok(());
         }
+        let text = if surface_status.is_terminal()
+            && !is_meaningful_terminal_tool_text(tool_name, payload.text)
+        {
+            shared_state
+                .tool_tasks
+                .get(session_id, tool_call_id)
+                .await
+                .and_then(|record| record.visible_summary)
+                .unwrap_or(payload.text.to_string())
+        } else {
+            payload.text.to_string()
+        };
+        if !surface_status.is_terminal() {
+            shared_state
+                .tool_tasks
+                .remember_visible_summary(session_id, tool_call_id, &text)
+                .await;
+        }
+        let payload = ToolCallUpdatePayload {
+            text: &text,
+            ..payload
+        };
         send_tool_call_update(session_id, tool_call_id, tool_name, payload).await
     } else {
         Ok(())
@@ -11354,6 +11395,22 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    #[test]
+    fn terminal_tool_card_text_keeps_prior_summary_when_completion_is_a_bare_result_kind() {
+        assert!(!is_meaningful_terminal_tool_text(
+            "fs_search_files",
+            "files"
+        ));
+        assert!(!is_meaningful_terminal_tool_text(
+            "fs_search_files",
+            "Completed."
+        ));
+        assert!(is_meaningful_terminal_tool_text(
+            "fs_search_files",
+            "Found 3 matches in 2 files."
+        ));
+    }
 
     #[test]
     fn workspace_git_remote_origins_reads_and_deduplicates_origins() {
