@@ -55,10 +55,7 @@ pub fn preflight_dispatch(
     let publication = match target {
         WorkExecutionTarget::AttachedArmature { .. } => PublicationRoute::AttachedWorktree,
         WorkExecutionTarget::Sandbox
-            if matches!(
-                commit_policy,
-                Some(DocketCommitPolicy::PerTask | DocketCommitPolicy::PerJob)
-            ) =>
+            if matches!(commit_policy, Some(DocketCommitPolicy::PerTask)) =>
         {
             PublicationRoute::CommitToBranch {
                 branch: work_branch.map(ToOwned::to_owned),
@@ -118,11 +115,11 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_repository_changes_publish_to_the_work_branch() {
+    fn sandbox_repository_changes_publish_to_the_work_branch_per_task() {
         let preflight = preflight_dispatch(
             &WorkExecutionTarget::Sandbox,
             DurableResultKind::RepositoryChanges,
-            Some(DocketCommitPolicy::PerJob),
+            Some(DocketCommitPolicy::PerTask),
             Some("den/job-1234"),
         );
 
@@ -132,6 +129,22 @@ mod tests {
             PublicationRoute::CommitToBranch {
                 branch: Some("den/job-1234".into())
             }
+        );
+    }
+
+    #[test]
+    fn sandbox_repository_changes_reject_per_job_commits() {
+        let preflight = preflight_dispatch(
+            &WorkExecutionTarget::Sandbox,
+            DurableResultKind::RepositoryChanges,
+            Some(DocketCommitPolicy::PerJob),
+            Some("den/job-1234"),
+        );
+
+        assert!(!preflight.dispatchable);
+        assert_eq!(
+            preflight.blocker,
+            Some(DispatchBlocker::RepositoryChangesWithoutPublication)
         );
     }
 
