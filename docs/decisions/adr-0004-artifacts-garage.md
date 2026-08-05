@@ -185,6 +185,12 @@ Artifacts may also be copied or mounted into work surfaces through explicit capa
 
 A work-surface path is provenance or a mount location, not an artifact ref.
 
+### 10a. Verified Docket outputs
+
+When a Docket work surface uses an artifact as its output, the finalized artifact ref is the durable candidate that the surface verifies; a worker's report only links to or summarizes it. `GitPatch`, `FileBundle`, and `Report` outputs can therefore use Garage/registry artifacts even when the execution workspace is ephemeral or has no reachable Git remote.
+
+The verification record must bind the finalized artifact's identity and digest to the work run, task, job, and work surface. For a Git-backed output, the corresponding verification record instead binds the verified commit and ref; it may additionally cite patch, test-report, or log artifacts. In either case, Docket settles completion only from the recorded verification result and required validation evidence—not from a model-generated SHA or a claimed push in run text.
+
 ### 11. Promotion path
 
 Den may support moving or copying an ephemeral artifact into Cabinet with user confirmation and policy checks. Promotion creates or links a Cabinet-durable artifact/attachment and updates lifecycle so ephemeral GC no longer treats the content as disposable.

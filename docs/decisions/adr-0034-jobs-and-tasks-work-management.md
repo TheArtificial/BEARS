@@ -48,6 +48,27 @@ BEARS adopts a two-level durable work-management model — **jobs** and **tasks*
 5. **Tasks and runs hold execution state; jobs project it.** A task's identity is stable and owned by the job. Status, results, and per-run telemetry live against a run, not on the task row. The operational job status is a derived projection of run, task, criterion, and explicit lifecycle evidence; it is not an independently authoritative persisted attribute.
 6. **Decomposition is live and audited.** Tasks added during execution are reflected in the report immediately and recorded with who added them, when, and in which run.
 7. **Storage is Den control-plane.** Jobs/tasks orchestration records live in Den Postgres, not per-Bear SQLite. The Bear *uses* Den's job-management platform to organize its work, the way a person uses a project tracker; the platform is infrastructure the Bear plugs into, not part of the Bear's cognition. This narrows [ADR-0031](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), which keeps SQLite canonical for Bear *memory*. See the **execution invariant** below.
+8. **Completion requires verified durable output, not a worker report.** When a work surface requires output, a task can settle as complete only after that surface verifies a durable run output and Docket records the verification. Worker prose, including a claimed commit hash, is a summary and never completion evidence. Required validation must likewise have recorded evidence or an explicit waiver; a failed or unrunnable command cannot silently satisfy a criterion.
+9. **Live work runs are the sole execution evidence.** Focus is navigation state, not execution. A task is in progress only while it has a live work run; task definitions retain durable outcome states rather than a mutable `in_progress` state. A job projects running from live work runs and completion from required task outcomes. Historical job-run state cannot override those projections.
+
+### Verified work output and settlement
+
+Docket owns settlement policy and evidence persistence. A work surface owns the mechanics of materializing and verifying output. The surface declares the typed output kinds it supports and may name a default, but that default is not a mandate: a job on a Git-backed surface may validly produce a verified report instead of a commit.
+
+The initial closed vocabulary is intentionally small:
+
+```rust
+enum WorkOutputKind {
+    GitCommit,
+    GitPatch,
+    FileBundle,
+    Report,
+}
+```
+
+A run submits a typed candidate output. Docket accepts it only when the output kind is supported by the selected surface, satisfies any explicit task constraint, and has been verified by that surface. For example, a Git commit verifier proves that the commit exists and is reachable from the declared ref; a patch/file-bundle/report verifier proves that the finalized artifact exists and its recorded digest matches. The resulting output reference and verification record are durable run evidence.
+
+On terminal execution, Docket must persist the outcome and verification result before recomputing task and job projections from current durable facts. Missing or failed output verification, missing required validation, or an unavailable verifier leaves the task blocked with a structured reason while preserving the candidate output and raw run evidence. It must not mark the task done and must not infer completion from a narrative result.
 
 ### Execution invariant
 

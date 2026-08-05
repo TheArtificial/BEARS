@@ -160,6 +160,31 @@ bear_plan_handoffs
 
 This ADR does not require adding these tables immediately. It defines the target concept and vocabulary.
 
+### Output and verification contract
+
+A work surface defines the durable output forms it can materialize and verify for a Docket work run. It may nominate a default output form for ordinary work, but it does not dictate the output of every job: a Git-backed surface can support both a repository commit and a durable report, and an investigation on that surface may correctly yield the latter.
+
+Den uses a small closed vocabulary rather than provider-defined strings:
+
+```rust
+enum WorkOutputKind {
+    GitCommit,
+    GitPatch,
+    FileBundle,
+    Report,
+}
+```
+
+The surface declares its supported kinds and optionally its default. A task normally accepts the default or another supported kind; it constrains the kind only when its outcome genuinely requires one. The selected surface verifies a run's typed candidate output and returns durable evidence. Docket records that evidence and applies the universal settlement rule: a required output must be verified before the task is completed. The task's prose result is a human-facing summary, never verification evidence.
+
+This boundary deliberately separates responsibilities:
+
+- **Work surface:** supported output kinds, materialization/storage binding, and verification implementation.
+- **Docket:** task acceptance constraints, evidence persistence, required-validation gates, and task/job settlement.
+- **Run:** candidate output plus raw execution evidence.
+
+A verifier failure or unavailable verification path preserves the candidate and blocks settlement with a structured reason. It cannot be converted to success merely because the worker claims a commit, push, report, or deployment in its narrative.
+
 ## Current implementation interpretation
 
 Existing planning schema should be interpreted through this lens:
