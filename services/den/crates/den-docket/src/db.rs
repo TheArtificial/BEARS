@@ -1752,6 +1752,7 @@ pub(super) async fn update_task(
         .filter(|state| state.status.as_str() == "done")
     {
         validate_primary_output_registry(&mut tx, &current, run_state).await?;
+        record_completion_receipt(&mut tx, &current, run_state).await?;
         validate_parent_completion(&mut tx, &current, run_state.run_id).await?;
     }
     let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
@@ -1824,6 +1825,44 @@ async fn validate_primary_output_registry(
                 .to_string(),
         ));
     }
+    Ok(())
+}
+
+async fn record_completion_receipt(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: &DocketTaskRow,
+    run_state: &super::model::DocketTaskRunStateUpdate,
+) -> Result<(), DenError> {
+    let result_refs = run_state
+        .result_refs
+        .as_ref()
+        .expect("validated before transaction");
+    let primary_output = result_refs["primary_output"]
+        .as_object()
+        .expect("validated before transaction");
+    let validation = result_refs["validation"]
+        .as_object()
+        .expect("validated before transaction");
+    let primary_output_ref = required_string(primary_output, "artifact_ref", "primary_output")?;
+    let immutable_identity =
+        required_string(primary_output, "immutable_identity", "primary_output")?;
+    sqlx::query(
+        "INSERT INTO docket_task_completion_receipts
+             (task_id, run_id, primary_output_ref, immutable_identity, validation)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (task_id, run_id) DO UPDATE
+         SET primary_output_ref = EXCLUDED.primary_output_ref,
+             immutable_identity = EXCLUDED.immutable_identity,
+             validation = EXCLUDED.validation,
+             approved_at = now()",
+    )
+    .bind(task.id)
+    .bind(run_state.run_id)
+    .bind(primary_output_ref)
+    .bind(immutable_identity)
+    .bind(Value::Object(validation.clone()))
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
