@@ -32,10 +32,10 @@ axum-login.workspace = true
 password-auth.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres"] }
+sqlx = { workspace = true, default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
 time = { workspace = true, features = ["serde", "serde-well-known"] }
 tower-http.workspace = true
-tower-sessions-sqlx-store.workspace = true
+tower-sessions-sqlx-store = { workspace = true, default-features = false }
 tracing.workspace = true
 utoipa.workspace = true
 validator.workspace = true

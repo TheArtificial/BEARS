@@ -16,7 +16,7 @@ workspace = true
 den-core = { path = "../den-core" }
 serde.workspace = true
 serde_json.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
+sqlx = { workspace = true, default-features = false, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
 time = { workspace = true, features = ["serde", "serde-well-known"] }
 uuid.workspace = true
 

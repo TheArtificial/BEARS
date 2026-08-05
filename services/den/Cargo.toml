@@ -38,14 +38,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.138"
 serde_yml = "0.0.12"
 sha2 = "0.10"
-sqlx = { version = "0.8" }
+sqlx = { version = "0.8", default-features = false }
 thiserror = "2.0.12"
 time = { version = "0.3.37" }
 tokio = { version = "1", default-features = false }
 tokio-util = { version = "0.7", default-features = false }
 tower = "0.5.2"
 tower-http = { version = "0.6.2", features = ["trace", "cors"] }
-tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
+tower-sessions-sqlx-store = { version = "0.15", default-features = false, features = ["postgres"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 url = "2.5.4"
@@ -195,12 +195,12 @@ password-auth.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid"] }
+sqlx = { workspace = true, default-features = false, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "migrate"] }
 thiserror.workspace = true
 time = { workspace = true, features = ["serde", "serde-well-known"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util.workspace = true
-tower-sessions-sqlx-store.workspace = true
+tower-sessions-sqlx-store = { workspace = true, default-features = false }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
@@ -216,8 +216,11 @@ serde_json.workspace = true
 http-body-util = "0.1"
 minijinja-autoreload = "2.5.0"  # Development-only template reloading
 tower = { workspace = true, features = ["util"] }
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
+sqlx = { workspace = true, default-features = false, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
 
 [build-dependencies]
 minijinja-embed.workspace = true
 time = { workspace = true, features = ["formatting"] }
+
+[patch.crates-io]
+tower-sessions-sqlx-store = { path = "vendor/tower-sessions-sqlx-store" }
