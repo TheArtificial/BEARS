@@ -3039,24 +3039,18 @@ async fn handle_request(
                         Ok(()) => {}
                         Err(err) => {
                             let server_version = fetch_server_version(&http, &config).await.ok();
-                            let mut message = format!("{err:#}");
-                            if let Some(server_version) = &server_version {
-                                message.push_str("\n\n");
-                                message.push_str(&server_version.summary());
-                            }
-                            message.push_str("\n\n");
-                            message.push_str(&format!(
-                                "Bear armature version: version={}, git_sha={}, built_at_utc={}",
-                                adapter_version(),
-                                env!("DEN_ACP_ADAPTER_GIT_SHA"),
-                                env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
-                            ));
+                            tracing::warn!(
+                                error = %format!("{err:#}"),
+                                server_version = ?server_version.as_ref().map(ServerVersion::summary),
+                                armature_version = adapter_version(),
+                                "session/prompt failed"
+                            );
                             if let Some(response_id) = response.claim() {
                                 let _ = write_response(
                                     response_id,
                                     Err(json_rpc_error(
                                         -32003,
-                                        &format!("BEARS prompt failed: {message}"),
+                                        "Den could not complete this turn. Please try again or start a fresh turn.",
                                         None,
                                     )),
                                 )

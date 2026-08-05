@@ -169,6 +169,7 @@ Budget, checkpoint, and task-focus warnings are governed by [ADR-0050 (Agent Loo
 | Near-budget warning | “close to this turn's budget” | Prefer concise wrap-up or ask for fresh turn | Den event/log context budget details |
 | Task-focus warning | “kept task focus active” | Continue next incomplete/unblocked item | Den task-focus state |
 | Recoverable continuation warning | “recovered from interrupted continuation” | Recent results preserved; verify persisted state before deciding work remains | Den logs + armature stderr if adapter-observed |
+| Task-state follow-through required | No error; continue the turn | Call the checkpoint-required task-management tool before any other action | Den logs + hidden model guidance |
 | Budget replenishment after mutation | “allowed a short verification pass” when user-relevant | Verification-oriented continuation only | Den budget state |
 
 ## Retryability Vocabulary
@@ -187,8 +188,9 @@ Use retryability to guide behavior, not to expose implementation details.
 2. BearWire `run.failed` should carry concise user copy plus structured diagnostic context, not one overloaded message string.
 3. The armature should render concise user copy and write diagnostic context to stderr.
 4. Hidden operational outcome messages should remain model-visible but user-hidden.
-5. Concise chat/history markers should accompany model-visible warnings and recovery notes when they affect behavior.
-6. If an error is entirely infrastructure-level and no model action is needed, both Den's model note and the user copy should say so in different levels of detail.
+5. A model-correctable control obligation (for example, required task-state follow-through) must emit continuation guidance, not an ACP error. Bound correction attempts; only an exhausted recovery path may terminate, with concise user copy.
+6. Concise chat/history markers should accompany model-visible warnings and recovery notes when they affect behavior.
+7. If an error is entirely infrastructure-level and no model action is needed, both Den's model note and the user copy should say so in different levels of detail.
 
 ## Current Gap To Close
 

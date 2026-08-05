@@ -992,33 +992,52 @@ impl SessionTrackingStream {
     }
 
     #[allow(clippy::result_large_err)]
-    fn enforce_required_checkpoint_task_action(
-        &self,
-        tool_name: &str,
+    fn block_or_recover_if_checkpoint_task_action_pending(
+        &mut self,
+        attempted_action: &str,
     ) -> Result<(), RuntimeStreamEvent> {
         let Some(action) = self.pending_checkpoint_task_action() else {
             return Ok(());
         };
-        if Self::required_task_action_satisfied(&action, tool_name) {
+        if Self::required_task_action_satisfied(&action, attempted_action) {
             self.store.update(&self.session_key, |session| {
                 session.pending_checkpoint_task_action = None;
                 session.pending_checkpoint_recovery_attempts = 0;
             });
             return Ok(());
         }
-        Err(Self::checkpoint_failure_event(format!(
-            "Den needs task-state follow-through with `{action:?}` before continuing, but the assistant next called `{tool_name}`. Use the task-management tool indicated by the checkpoint response before other actions. No blocked tool was executed."
-        )))
-    }
 
-    #[allow(clippy::result_large_err)]
-    fn fail_if_checkpoint_task_action_pending(&self) -> Result<(), RuntimeStreamEvent> {
-        if let Some(action) = self.pending_checkpoint_task_action() {
+        let mut attempts = 0;
+        self.store.update(&self.session_key, |session| {
+            session.pending_checkpoint_recovery_attempts = session
+                .pending_checkpoint_recovery_attempts
+                .saturating_add(1);
+            attempts = session.pending_checkpoint_recovery_attempts;
+        });
+        if attempts > MAX_CHECKPOINT_RECOVERY_ATTEMPTS {
             return Err(Self::checkpoint_failure_event(format!(
-                "Den needs task-state follow-through with `{action:?}` before stopping, but the assistant attempted to stop before using the required task-management tool. No blocked tool was executed."
+                "Den could not complete required task-state follow-through after {MAX_CHECKPOINT_RECOVERY_ATTEMPTS} correction attempts."
             )));
         }
-        Ok(())
+
+        let message = format!(
+            "Your attempted action `{attempted_action}` was blocked before execution because task-state follow-through is pending. Call the task-management tool required by the checkpoint before any other action."
+        );
+        self.push_checkpoint_recovery_guidance_for_task_action(&message);
+        self.begin_checkpoint_continuation();
+        Err(Self::checkpoint_recovery_event(message))
+    }
+
+    fn push_checkpoint_recovery_guidance_for_task_action(&self, message: &str) {
+        self.store.update(&self.session_key, |session| {
+            session.messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: Some(message.to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            });
+        });
     }
 
     fn apply_valid_checkpoint_response(
@@ -1635,8 +1654,15 @@ impl Stream for SessionTrackingStream {
                     }
                     return Poll::Ready(Some(Ok(event)));
                 }
-                if let Err(event) = self.enforce_required_checkpoint_task_action(&tool_name) {
-                    self.finished = true;
+                if let Err(event) =
+                    self.block_or_recover_if_checkpoint_task_action_pending(&tool_name)
+                {
+                    if matches!(
+                        event,
+                        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
+                    ) {
+                        self.finished = true;
+                    }
                     return Poll::Ready(Some(Ok(event)));
                 }
                 self.pending_server_tool_continuation = None;
@@ -1731,8 +1757,15 @@ impl Stream for SessionTrackingStream {
                     }
                     return Poll::Ready(Some(Ok(event)));
                 }
-                if let Err(event) = self.fail_if_checkpoint_task_action_pending() {
-                    self.finished = true;
+                if let Err(event) =
+                    self.block_or_recover_if_checkpoint_task_action_pending("final_answer")
+                {
+                    if matches!(
+                        event,
+                        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
+                    ) {
+                        self.finished = true;
+                    }
                     return Poll::Ready(Some(Ok(event)));
                 }
                 if self.assistant_text.trim().is_empty() {
@@ -2414,9 +2447,16 @@ mod tests {
             Some(RuntimeSemanticEvent::ReasoningTextDelta { ref text })
                 if text.contains("Checkpoint says the run should reconcile task state")
         ));
+        let event = stream
+            .block_or_recover_if_checkpoint_task_action_pending("tool_call:memory_read")
+            .expect_err("non-task tool should be redirected to task-state follow-through");
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { .. })
+        ));
         assert!(stream
-            .enforce_required_checkpoint_task_action("memory_read")
-            .is_err());
+            .block_or_recover_if_checkpoint_task_action_pending(DEN_TASK_LISTS_UPDATE_PROVIDER)
+            .is_ok());
         let stored = stream
             .store
             .get(&stream.session_key)
@@ -2425,9 +2465,6 @@ mod tests {
         assert_eq!(stored.checkpoint_state.consecutive_failures, 0);
         assert_eq!(stored.checkpoint_state.same_signature_repeat_count, 0);
         assert_eq!(stored.checkpoint_state.last_signature, None);
-        assert!(stream
-            .enforce_required_checkpoint_task_action(DEN_TASK_LISTS_UPDATE_PROVIDER)
-            .is_ok());
         assert!(stream.pending_checkpoint_task_action().is_none());
     }
 
@@ -2454,7 +2491,6 @@ mod tests {
         ));
         assert!(stream.pending_checkpoint_request().is_none());
         assert!(stream.pending_checkpoint_task_action().is_none());
-        assert!(stream.fail_if_checkpoint_task_action_pending().is_ok());
     }
 
     #[tokio::test]
