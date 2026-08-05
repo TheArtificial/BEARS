@@ -18,6 +18,8 @@ pub mod execution_profiles;
 #[cfg(test)]
 mod integration_tests;
 pub mod model;
+#[cfg(test)]
+mod primary_output_tests;
 pub mod recovery;
 pub mod routing;
 pub mod service;

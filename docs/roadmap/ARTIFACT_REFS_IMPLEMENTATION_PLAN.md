@@ -60,6 +60,21 @@ This plan fulfills ADR-0004 by implementing:
 - [ ] Lifecycle states for pending, ephemeral, promoted, Cabinet-durable, archived, and deleted.
 - [ ] GC that respects lifecycle and Cabinet attachment state.
 
+## Current execution status
+
+**Local execution started.** Phase 1's registry/core-service slice is already present in the workspace through migration `20260716120000_artifact_refs` and `den-service::artifacts`. During verification, `den-service` was missing SQLx's existing `migrate` feature, so the artifact tests could not compile; enabling that feature is the only Phase-1 code change made in this execution so far.
+
+Verified locally:
+
+```text
+SQLX_OFFLINE=true cargo test -p den-service artifacts::tests --lib
+SQLX_OFFLINE=true cargo check -p den-service
+```
+
+Both pass after that manifest correction. Phase 1 is functionally implemented but must not be recorded as authoritatively settled until Phase 3 supplies the verifier-approved finalized primary-output and identity-bound validation contract required by this plan. The next implementation slice is therefore Phase 3, not Garage upload/download work.
+
+**Phase 3 progress:** Docket now rejects a `done` task update unless `result_refs` contains a structured `primary_output` (`git_commit` or `den_artifact`) and passing validation that names the same ref and immutable identity, command, and execution provenance. Focused Docket tests cover the missing-evidence rejection. This is an enforcement seam only: relational artifact-link attachment, verification of a Den artifact's finalized lifecycle, and the exactly-one database constraint remain required before Phase 3 can exit.
+
 ## Implementation phases
 
 ### Phase 0 — Inventory and initial decisions

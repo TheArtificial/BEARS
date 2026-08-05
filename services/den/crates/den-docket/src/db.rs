@@ -1870,18 +1870,80 @@ fn validate_docket_task_run_state_update(
     let Some(update) = update else {
         return Ok(());
     };
-    if update.status.as_str() == "done"
-        && update
-            .result_summary
-            .as_deref()
-            .map(str::trim)
-            .is_none_or(str::is_empty)
+    if update.status.as_str() != "done" {
+        return Ok(());
+    }
+    if update
+        .result_summary
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(str::is_empty)
     {
         return Err(DenError::ValidationError(
             "Docket task completion requires non-empty result_summary".to_string(),
         ));
     }
+    validate_primary_output_evidence(update.result_refs.as_ref())
+}
+
+pub(super) fn validate_primary_output_evidence(
+    result_refs: Option<&Value>,
+) -> Result<(), DenError> {
+    let Some(result_refs) = result_refs.and_then(Value::as_object) else {
+        return Err(DenError::ValidationError(
+            "Docket task completion requires structured primary_output and validation evidence"
+                .to_string(),
+        ));
+    };
+    let Some(primary_output) = result_refs.get("primary_output").and_then(Value::as_object) else {
+        return Err(DenError::ValidationError(
+            "Docket task completion requires a primary_output object".to_string(),
+        ));
+    };
+    let primary_ref = required_string(primary_output, "artifact_ref", "primary_output")?;
+    let primary_identity = required_string(primary_output, "immutable_identity", "primary_output")?;
+    let kind = required_string(primary_output, "kind", "primary_output")?;
+    if !matches!(kind, "git_commit" | "den_artifact") {
+        return Err(DenError::ValidationError(
+            "Docket primary_output kind must be git_commit or den_artifact".to_string(),
+        ));
+    }
+    let Some(validation) = result_refs.get("validation").and_then(Value::as_object) else {
+        return Err(DenError::ValidationError(
+            "Docket task completion requires validation evidence".to_string(),
+        ));
+    };
+    if required_string(validation, "primary_output_ref", "validation")? != primary_ref
+        || required_string(validation, "immutable_identity", "validation")? != primary_identity
+    {
+        return Err(DenError::ValidationError(
+            "Docket validation must reference the primary_output's immutable identity".to_string(),
+        ));
+    }
+    let result = required_string(validation, "result", "validation")?;
+    if result != "passed" {
+        return Err(DenError::ValidationError(
+            "Docket task completion requires passing validation evidence".to_string(),
+        ));
+    }
+    required_string(validation, "command", "validation")?;
+    required_string(validation, "execution_provenance", "validation")?;
     Ok(())
+}
+
+fn required_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &str,
+    context: &str,
+) -> Result<&'a str, DenError> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            DenError::ValidationError(format!("Docket {context} requires non-empty {field}"))
+        })
 }
 
 fn validate_docket_task_patch(patch: &DocketTaskDefinitionPatch) -> Result<(), DenError> {

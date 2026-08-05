@@ -1,4 +1,5 @@
 use den_core::BearProfile;
+use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
 
@@ -12,6 +13,23 @@ use crate::{
     DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher, TaskListSyncRequest,
     TaskListVisibility,
 };
+
+fn primary_output_result_refs() -> Value {
+    json!({
+        "primary_output": {
+            "kind": "git_commit",
+            "artifact_ref": "git:0123456789abcdef0123456789abcdef01234567",
+            "immutable_identity": "0123456789abcdef0123456789abcdef01234567"
+        },
+        "validation": {
+            "primary_output_ref": "git:0123456789abcdef0123456789abcdef01234567",
+            "immutable_identity": "0123456789abcdef0123456789abcdef01234567",
+            "command": "cargo test -p den-docket",
+            "result": "passed",
+            "execution_provenance": "local integration test"
+        }
+    })
+}
 
 async fn test_pool() -> Option<PgPool> {
     let database_url = std::env::var("TEST_DATABASE_URL")
@@ -283,7 +301,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
-                result_refs: None,
+                result_refs: Some(primary_output_result_refs()),
                 result_summary: Some("Verified status projection".to_string()),
             }),
         })
@@ -403,6 +421,25 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     .expect("query task definition event");
     assert_eq!(task_definition_count, 1);
 
+    let missing_completion_evidence = service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                result_refs: None,
+                result_summary: Some("Worker narrative alone is insufficient".to_string()),
+            }),
+        })
+        .await;
+    assert!(missing_completion_evidence.is_err());
+
     let missing_summary = service
         .update_task(DocketTaskUpdate {
             bear_id,
@@ -434,7 +471,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
-                result_refs: None,
+                result_refs: Some(primary_output_result_refs()),
                 result_summary: Some("First task actually completed".to_string()),
             }),
         })
@@ -468,7 +505,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
-                result_refs: None,
+                result_refs: Some(primary_output_result_refs()),
                 result_summary: Some("Second task actually completed".to_string()),
             }),
         })
