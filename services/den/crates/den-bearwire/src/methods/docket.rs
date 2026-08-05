@@ -1,6 +1,7 @@
 use axum::http::HeaderMap;
 use den_core::BearProfile;
 use den_docket::{
+    work_runs::{self, WorkRunListFilter},
     DocketJobExecuteRequest, DocketJobListFilter, DocketService, DocketTaskListFilter,
     PgDocketService,
 };
@@ -91,13 +92,57 @@ pub async fn docket_job_diagnostics_result(
         .await?;
         task_citations.push(json!({ "task_id": task.task.id, "citations": citations }));
     }
+    let runs = work_runs::list_work_runs(
+        &state.sqlx_pool,
+        WorkRunListFilter {
+            bear_id: Some(bear.id),
+            job_id: Some(job_id),
+            limit: 200,
+            ..WorkRunListFilter::default()
+        },
+    )
+    .await?;
+    let mut run_citations = Vec::with_capacity(runs.len());
+    for run in &runs {
+        let citations = artifacts::list_docket_artifact_citations(
+            &state.sqlx_pool,
+            bear.id,
+            DocketArtifactTargetKind::Run,
+            run.id,
+            context.clone(),
+        )
+        .await?;
+        run_citations.push(json!({ "run_id": run.id, "citations": citations }));
+    }
+
+    let run_diagnostics: Vec<Value> = runs.iter().map(work_run_diagnostic).collect();
 
     Ok(json!({
         "job": job,
         "tasks": tasks,
-        "artifact_citations": { "tasks": task_citations },
+        "runs": run_diagnostics,
+        "artifact_citations": {
+            "tasks": task_citations,
+            "runs": run_citations,
+        },
     }))
 }
+
+fn work_run_diagnostic(run: &work_runs::WorkRunRow) -> Value {
+    json!({
+        "id": run.id,
+        "job_run_id": run.job_run_id,
+        "executing_task_id": run.executing_task_id,
+        "attempt": run.attempt,
+        "state": run.state,
+        "result_summary": run.result_summary,
+        "error": run.error,
+        "queued_at": run.queued_at.to_string(),
+        "started_at": run.started_at.map(|value| value.to_string()),
+        "finished_at": run.finished_at.map(|value| value.to_string()),
+    })
+}
+
 pub async fn docket_jobs_execute_result(
     state: &DenState,
     headers: &HeaderMap,
