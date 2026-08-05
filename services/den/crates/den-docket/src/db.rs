@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use den_core::{BearProfile, DenError};
@@ -1751,6 +1751,7 @@ pub(super) async fn update_task(
         .as_ref()
         .filter(|state| state.status.as_str() == "done")
     {
+        validate_primary_output_registry(&mut tx, &current, run_state).await?;
         validate_parent_completion(&mut tx, &current, run_state.run_id).await?;
     }
     let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
@@ -1775,6 +1776,55 @@ pub(super) async fn update_task(
         task: patched,
         run_state,
     })
+}
+
+async fn validate_primary_output_registry(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: &DocketTaskRow,
+    run_state: &super::model::DocketTaskRunStateUpdate,
+) -> Result<(), DenError> {
+    let result_refs = run_state
+        .result_refs
+        .as_ref()
+        .expect("validated before transaction");
+    let primary_output = result_refs["primary_output"]
+        .as_object()
+        .expect("validated before transaction");
+    if required_string(primary_output, "kind", "primary_output")? != "den_artifact" {
+        return Ok(());
+    }
+    let artifact_ref = required_string(primary_output, "artifact_ref", "primary_output")?;
+    let immutable_identity =
+        required_string(primary_output, "immutable_identity", "primary_output")?;
+    let artifact = sqlx::query(
+        "SELECT artifacts.content_sha256
+         FROM artifacts
+         JOIN artifact_links ON artifact_links.artifact_id = artifacts.id
+         WHERE artifacts.bear_id = $1
+           AND artifacts.artifact_ref = $2
+           AND artifacts.lifecycle = 'finalized'
+           AND artifact_links.target_kind = 'docket_task'
+           AND artifact_links.target_id = $3
+           AND artifact_links.role = 'primary_output'",
+    )
+    .bind(task.bear_id)
+    .bind(artifact_ref)
+    .bind(task.id.to_string())
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(artifact) = artifact else {
+        return Err(DenError::ValidationError(
+            "Docket den_artifact primary_output must be finalized and linked to this task as primary_output".to_string(),
+        ));
+    };
+    let content_sha256: Option<String> = artifact.try_get("content_sha256")?;
+    if content_sha256.as_deref() != Some(immutable_identity) {
+        return Err(DenError::ValidationError(
+            "Docket den_artifact primary_output immutable_identity must equal its finalized content SHA-256"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 async fn validate_parent_completion(

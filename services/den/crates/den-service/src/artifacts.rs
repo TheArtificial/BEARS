@@ -234,6 +234,7 @@ impl DocketArtifactTargetKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocketArtifactRole {
+    PrimaryOutput,
     Input,
     Source,
     Output,
@@ -247,6 +248,7 @@ pub enum DocketArtifactRole {
 impl DocketArtifactRole {
     fn as_str(self) -> &'static str {
         match self {
+            Self::PrimaryOutput => "primary_output",
             Self::Input => "input",
             Self::Source => "source",
             Self::Output => "output",
@@ -1136,8 +1138,8 @@ mod tests {
                 bear_id,
                 target_kind: DocketArtifactTargetKind::Task,
                 target_id: task_id,
-                role: DocketArtifactRole::Evidence,
-                metadata: json!({"note": "does not update task state"}),
+                role: DocketArtifactRole::PrimaryOutput,
+                metadata: json!({"note": "one finalized task output"}),
                 created_by_user_id: Some(user_id),
             },
         )
@@ -1145,7 +1147,44 @@ mod tests {
         .expect("attach docket artifact");
         assert_eq!(link.target_kind, "docket_task");
         assert_eq!(link.target_id, task_id.to_string());
-        assert_eq!(link.role, "evidence");
+        assert_eq!(link.role, "primary_output");
+
+        let second_reserved = reserve_artifact(&pool, reserve_input(bear_id, user_id))
+            .await
+            .expect("reserve second artifact");
+        finalize_metadata_only_artifact(
+            &pool,
+            FinalizeArtifactInput {
+                artifact_ref: second_reserved.artifact_ref.clone(),
+                bear_id,
+                storage_key: Some("db-text-placeholder-2".to_string()),
+                content_bytes: Some(12),
+                content_sha256: Some(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                ),
+                metadata: json!({}),
+            },
+        )
+        .await
+        .expect("finalize second artifact");
+
+        let duplicate_primary_output = attach_docket_artifact(
+            &pool,
+            AttachDocketArtifactInput {
+                artifact_ref: second_reserved.artifact_ref,
+                bear_id,
+                target_kind: DocketArtifactTargetKind::Task,
+                target_id: task_id,
+                role: DocketArtifactRole::PrimaryOutput,
+                metadata: json!({}),
+                created_by_user_id: Some(user_id),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(duplicate_primary_output
+            .to_string()
+            .contains("artifact_links_one_primary_output_per_docket_task"));
 
         let citations = list_docket_artifact_citations(
             &pool,
