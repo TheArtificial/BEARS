@@ -73,7 +73,7 @@ SQLX_OFFLINE=true cargo check -p den-service
 
 Both pass after that manifest correction. Phase 1 is functionally implemented but must not be recorded as authoritatively settled until Phase 3 supplies the verifier-approved finalized primary-output and identity-bound validation contract required by this plan. The next implementation slice is therefore Phase 3, not Garage upload/download work.
 
-**Phase 3 progress:** Docket now rejects a `done` task update unless `result_refs` contains a structured `primary_output` (`git_commit` or `den_artifact`) and passing validation that names the same ref and immutable identity, command, and execution provenance. For a `den_artifact` output, the completion transaction now requires a finalized registry row linked to the exact Docket task with the `primary_output` role, and requires its declared identity to equal the finalized SHA-256. Migration `20260718120000_docket_primary_output_artifacts` enforces at most one such link per task; the artifact service check exercises that constraint. The completion transaction now also writes a verifier-owned receipt (`docket_task_completion_receipts`) containing the approved output ref, immutable identity, and validation. Focused Docket tests cover missing and mismatched evidence. Remaining Phase 3 work is Git commit resolution against the assigned work surface; no trustworthy local Git/OID source has yet been identified, so the current code does not pretend caller-supplied commit identity is verified.
+**Phase 3 progress:** Docket now rejects a `done` task update unless `result_refs` contains structured `primary_output` (`git_commit` or `den_artifact`) evidence and a recorded validation attempt that names the same ref and, when supplied, immutable identity, command, and execution provenance. This is a provenance/handoff integrity check, not a judgment that the output is correct. The current implementation also contains a stronger `den_artifact` path: it requires a finalized registry row linked to the exact Docket task with the `primary_output` role and matches a declared SHA-256 to the finalized artifact. Migration `20260718120000_docket_primary_output_artifacts` enforces at most one such link per task; the artifact service check exercises that constraint. Completion writes a Docket-owned **evidence receipt** containing the recorded output, identity, and validation attempt. These artifact-finalization/link checks must become opt-in task/work-surface policy rather than universal settlement requirements. Do not add Git commit reachability/OID resolution as a universal gate: record any available work-surface observation alongside the declared commit identity instead.
 
 ## Implementation phases
 
@@ -137,15 +137,15 @@ Initial implementation decisions:
 
 - [ ] Allow conversation events/messages to cite artifact refs for attachments and generated outputs.
 - [ ] Add generic artifact link/attachment records for Den subjects, including at least conversation, job, task, run, criterion, and delegated-run anchors.
-- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `primary_output`, `input`, `source`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`. Each Docket task has one verifier-approved finalized `primary_output` artifact; support Git-commit `external_ref` and Den-owned content artifacts first.
-- [ ] Bind required validation evidence to the task's `primary_output` ref and resolved immutable identity (Git OID or finalized content digest), including the executed check, result, execution provenance, and durable diagnostics where relevant.
-- [ ] Settle task completion only after its primary output and required validation evidence are recorded; preserve a blocked recovery path when publication succeeds but finalization fails.
+- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `primary_output`, `input`, `source`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`. A primary output may be a Git-commit `external_ref` or Den-owned content artifact, but a finalized/link-verified artifact is only required when the task or work-surface policy says so.
+- [ ] Record task-required validation attempts against the task's primary-output ref and, when available, stable identity (Git OID or finalized content digest), including the executed check, observed result, execution provenance, and durable diagnostics where relevant. Identity agreement preserves evidence integrity; it does not prove correctness.
+- [ ] Settle task completion only after structured primary-output evidence and the task's required validation evidence are recorded. Preserve candidate evidence and a blocked recovery path when an explicitly required observation (such as publication or finalization) fails.
 - [ ] Add run/task provenance when artifacts are created by work/runtime activity.
 - [ ] Render artifact refs in task/run completion receipts.
 - [ ] Keep criterion/task/job state separate from artifact presence; completion decisions cite evidence refs but are not implied by them.
 - [ ] Stop leaking object keys or workspace paths as durable evidence handles.
 
-**Exit gate:** A task/run can produce or cite artifact-backed evidence. Every Docket task has a verifier-approved finalized primary-output artifact with validation evidence bound to its immutable identity; the UI/model layer can display the artifact metadata by ref.
+**Exit gate:** A task/run can produce or cite artifact-backed evidence. A Docket task that requires output records structured primary-output evidence and its required validation attempts, with consistent identities where supplied; UI/model layers can display artifact metadata by ref. Finalization, link verification, publication observations, and successful checks remain explicit stronger policies, not universal correctness certificates.
 
 ### Phase 4 — Cabinet attachment integration
 
@@ -226,7 +226,7 @@ Artifact refs are ready when:
 - [ ] Pending artifacts cannot be read as complete artifacts.
 - [ ] Finalized artifacts are stable snapshots.
 - [ ] Conversation, Docket, Cabinet, and work-surface flows can cite artifact refs.
-- [ ] A Docket task completes only after a verifier-approved finalized `primary_output` artifact and required validation evidence bound to that artifact's immutable identity are recorded; terminal run telemetry and worker narratives do not settle task/job state.
+- [ ] A Docket task that requires an output records structured primary-output evidence and any task-required validation attempt before completion. Where an output identity is recorded, associated validation names the same identity; terminal run telemetry and worker narratives alone do not settle task/job state. This is a provenance and reviewability contract, not a correctness certificate. Artifact finalization, publication observation, and successful checks are stronger gates only when the applicable task or work-surface policy requires them.
 - [ ] Users can preview/download/attach artifacts from obvious UI affordances.
 - [ ] Models can cite, inspect, create, and attach artifacts through typed operations without storage trivia.
 - [ ] GC respects lifecycle and never deletes Cabinet-durable attachments.

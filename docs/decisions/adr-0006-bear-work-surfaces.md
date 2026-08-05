@@ -175,7 +175,7 @@ enum WorkOutputKind {
 }
 ```
 
-The surface declares its supported kinds and optionally its default. A task normally accepts the default or another supported kind; it constrains the kind only when its outcome genuinely requires one. The selected surface verifies a run's typed candidate output and returns durable evidence. Docket records that evidence and applies the universal settlement rule: a required output must be verified before the task is completed. The task's prose result is a human-facing summary, never verification evidence.
+The surface declares its supported kinds and optionally its default. A task normally accepts the default or another supported kind; it constrains the kind only when its outcome genuinely requires one. The selected surface records a run's typed candidate output and may add observations such as existence, reachability, publication, or artifact finalization. Docket records that evidence and applies the universal settlement rule: a required output needs structured output evidence and any validation explicitly required by the task. The task's prose result is a human-facing summary, never sufficient evidence by itself. These records establish provenance and a reviewable handoff, not a certificate that the output is correct or complete.
 
 This boundary deliberately separates responsibilities:
 
@@ -183,7 +183,7 @@ This boundary deliberately separates responsibilities:
 - **Docket:** task acceptance constraints, evidence persistence, required-validation gates, and task/job settlement.
 - **Run:** candidate output plus raw execution evidence.
 
-A verifier failure or unavailable verification path preserves the candidate and blocks settlement with a structured reason. It cannot be converted to success merely because the worker claims a commit, push, report, or deployment in its narrative.
+A required observation or validation failure preserves the candidate and blocks settlement with a structured reason. Optional or unavailable observations are recorded as such; they do not become a universal correctness gate. A worker claim of a commit, push, report, or deployment is insufficient by itself, but Docket does not recast recorded evidence as a guarantee of correctness.
 
 ## Current implementation interpretation
 

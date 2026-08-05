@@ -96,10 +96,10 @@ reserve artifact ref -> write/upload content -> finalize artifact
 A reserved artifact exists in `pending` lifecycle state. It is not readable as complete content until finalized. Finalization is storage-kind-specific:
 
 - Den-owned byte content records size, SHA-256, content type, backend locator, and provenance.
-- An external Git commit records repository identity, object format and commit OID, the declared published output ref, and a verifier-confirmed publication/reachability receipt.
+- An external Git commit records repository identity, object format and commit OID, the declared published output ref, and any available publication/reachability observation.
 - A Cabinet document snapshot records the immutable Cabinet item/version identity.
 
-A worker claim alone never finalizes an artifact; the relevant Den service or verifier must confirm the backing durable object before finalization.
+A worker claim alone does not establish that external backing exists. When Den finalizes an artifact, the relevant service records the backing information it can observe. This confirms the identity and provenance of the cited output; it does not certify that the output is correct or complete for its intended purpose.
 
 ### 5. Finalized artifacts are stable snapshots
 
@@ -192,22 +192,20 @@ Artifacts may also be copied or mounted into work surfaces through explicit capa
 
 A work-surface path is provenance or a mount location, not an artifact ref.
 
-### 10a. Verified Docket outputs
+### 10a. Docket output evidence
 
-A Docket task's durable output is a finalized Den artifact ref, not a worker narrative or an untyped result map. Each task has one required **primary output** artifact for now; the link records the task/job/run/work-surface provenance and the role `primary_output`. Additional artifacts may be linked as `evidence`, `test_report`, or `completion_receipt` without becoming the task output.
+A Docket task records a primary output as structured evidence, rather than relying on worker narrative or an untyped result map. The record names one primary output for the task/run when the task produces a durable deliverable, plus task/job/run/work-surface provenance. Additional artifacts may be linked as `evidence`, `test_report`, or `completion_receipt`.
 
-The first supported output backings are deliberately limited to:
+A primary output may cite either:
 
-1. **Git commit artifact** — an `external_ref` artifact with kind `git_commit`. Docket's runtime adapter creates one commit per task, publishes it to the job's declared output ref, verifies that the immutable commit OID is reachable from that ref, then finalizes the artifact with the repository identity, object format/OID, output ref, and verification receipt. A Git commit is an artifact reference; Den does not copy the Git object into object storage. The commit OID is the immutable output identity; the ref proves publication to the agreed destination.
-2. **Den-owned content artifact** — a Garage, Cabinet bucket, or `db_text` artifact whose finalization verifies the stored content and records its SHA-256 digest, media type, name, and provenance. This generic form covers reports, patches, and bundles without separate Docket output kinds.
+1. **Git commit evidence** — a declared repository identity, object format and commit OID, and optionally a published output ref and publication/reachability observation.
+2. **Den-owned artifact evidence** — an `artifact_...` ref, optionally with its finalized byte digest and storage/provenance metadata when the artifact service owns the content.
 
-The contract is execution-target-neutral even though individual adapters are target-specific. A worker may create candidate bytes or describe a candidate commit, but only the artifact finalizer/verifier can produce the finalized primary-output ref.
+Docket's baseline settlement rule is deliberately evidence-oriented: it records what output was claimed or observed, its available stable identity, and any validation attempt. Validation records the executed check, observed result, execution provenance, and durable diagnostic output where relevant. If the record names an immutable identity, the primary-output and validation records must agree on it; that prevents an accidental or misleading association between a check and different output. This is provenance and handoff integrity, **not** a certificate that the deliverable is technically correct, complete, published, or fit for every intended use.
 
-Required validation evidence must name the same primary-output artifact ref and its resolved immutable identity: the Git commit OID for a Git artifact, or the finalized byte digest for Den-owned content. It also records the executed check, result, execution provenance, and durable diagnostic output where relevant. Validation for another checkout, commit, or artifact does not satisfy the task criterion.
+A task's policy may require a particular output kind, artifact lifecycle, work-surface observation, or successful validation. Those are explicit stronger requirements for that task/surface, not universal Docket settlement gates. Missing required evidence or a required failed/unavailable check leaves the task blocked with a structured reason while preserving candidate output and raw run evidence. Terminal work-run telemetry alone cannot complete or block a job.
 
-Docket settles task completion only after the primary output artifact and required validation evidence have been recorded. Job state is projected from task and criterion state; terminal work-run telemetry cannot independently complete or block a job. If commit publication succeeds but artifact finalization fails, retain the run receipt and candidate evidence for an authorized recovery verifier; the task remains blocked rather than inferring success.
-
-Cabinet items remain knowledge/document records, not task outputs by themselves. A finalized immutable Cabinet document version may later be represented as a `cabinet_document_snapshot` artifact and linked as a task's primary output using this same protocol.
+Cabinet items remain knowledge/document records, not task outputs by themselves. A Cabinet document version may be cited as `cabinet_document_snapshot` evidence with its version identity.
 
 ### 11. Promotion path
 
@@ -223,7 +221,7 @@ Den may support moving or copying an ephemeral artifact into Cabinet with user c
 - A Git commit artifact refers to a verified immutable commit; it is not a Den-owned copy of the Git object and its OID is not assumed to be a SHA-256 content digest.
 - Work surfaces may produce or consume artifacts, Cabinet items may attach artifacts, and runs may cite artifacts as evidence.
 - Finalized artifacts are stable snapshots or immutable verified external identities. Mutable work belongs in work surfaces; durable evidence belongs in artifacts.
-- A Docket task completes only with a finalized, verifier-approved primary-output artifact and validation bound to that artifact's immutable identity.
+- A Docket completion record preserves the declared/observed primary output, available stable identity, and required validation attempt. It establishes provenance and handoff integrity, not semantic correctness of the output.
 - Cabinet-durable artifacts and ephemeral run artifacts may share the artifact-ref protocol, but they do not share GC policy.
 
 ---
