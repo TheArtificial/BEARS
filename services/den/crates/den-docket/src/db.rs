@@ -1791,39 +1791,74 @@ async fn validate_primary_output_registry(
     let primary_output = result_refs["primary_output"]
         .as_object()
         .expect("validated before transaction");
-    if required_string(primary_output, "kind", "primary_output")? != "den_artifact" {
-        return Ok(());
-    }
     let artifact_ref = required_string(primary_output, "artifact_ref", "primary_output")?;
     let immutable_identity =
         required_string(primary_output, "immutable_identity", "primary_output")?;
-    let artifact = sqlx::query(
-        "SELECT artifacts.content_sha256
-         FROM artifacts
-         JOIN artifact_links ON artifact_links.artifact_id = artifacts.id
-         WHERE artifacts.bear_id = $1
-           AND artifacts.artifact_ref = $2
-           AND artifacts.lifecycle = 'finalized'
-           AND artifact_links.target_kind = 'docket_task'
-           AND artifact_links.target_id = $3
-           AND artifact_links.role = 'primary_output'",
-    )
-    .bind(task.bear_id)
-    .bind(artifact_ref)
-    .bind(task.id.to_string())
-    .fetch_optional(&mut **tx)
-    .await?;
-    let Some(artifact) = artifact else {
-        return Err(DenError::ValidationError(
-            "Docket den_artifact primary_output must be finalized and linked to this task as primary_output".to_string(),
-        ));
-    };
-    let content_sha256: Option<String> = artifact.try_get("content_sha256")?;
-    if content_sha256.as_deref() != Some(immutable_identity) {
-        return Err(DenError::ValidationError(
-            "Docket den_artifact primary_output immutable_identity must equal its finalized content SHA-256"
-                .to_string(),
-        ));
+    let kind = required_string(primary_output, "kind", "primary_output")?;
+    match kind {
+        "den_artifact" => {
+            let artifact = sqlx::query(
+                "SELECT content_sha256
+                 FROM artifacts
+                 JOIN artifact_links ON artifact_links.artifact_id = artifacts.id
+                 WHERE artifacts.bear_id = $1
+                   AND artifacts.artifact_ref = $2
+                   AND artifacts.lifecycle = 'finalized'
+                   AND artifacts.storage_kind IN ('db_text', 'garage_artifacts')
+                   AND artifact_links.target_kind = 'docket_task'
+                   AND artifact_links.target_id = $3
+                   AND artifact_links.role = 'primary_output'",
+            )
+            .bind(task.bear_id)
+            .bind(artifact_ref)
+            .bind(task.id.to_string())
+            .fetch_optional(&mut **tx)
+            .await?;
+            let Some(artifact) = artifact else {
+                return Err(DenError::ValidationError(
+                    "Docket den_artifact primary_output must be finalized and linked to this task as primary_output".to_string(),
+                ));
+            };
+            let content_sha256: Option<String> = artifact.try_get("content_sha256")?;
+            if content_sha256.as_deref() != Some(immutable_identity) {
+                return Err(DenError::ValidationError(
+                    "Docket den_artifact primary_output immutable_identity must equal its finalized content SHA-256"
+                        .to_string(),
+                ));
+            }
+        }
+        "git_commit" => {
+            let artifact = sqlx::query(
+                "SELECT metadata->'git'->>'commit_oid' AS commit_oid
+                 FROM artifacts
+                 JOIN artifact_links ON artifact_links.artifact_id = artifacts.id
+                 WHERE artifacts.bear_id = $1
+                   AND artifacts.artifact_ref = $2
+                   AND artifacts.lifecycle = 'finalized'
+                   AND artifacts.storage_kind = 'external_git_commit'
+                   AND artifact_links.target_kind = 'docket_task'
+                   AND artifact_links.target_id = $3
+                   AND artifact_links.role = 'primary_output'",
+            )
+            .bind(task.bear_id)
+            .bind(artifact_ref)
+            .bind(task.id.to_string())
+            .fetch_optional(&mut **tx)
+            .await?;
+            let Some(artifact) = artifact else {
+                return Err(DenError::ValidationError(
+                    "Docket git_commit primary_output must be a finalized Git commit artifact linked to this task as primary_output".to_string(),
+                ));
+            };
+            let commit_oid: Option<String> = artifact.try_get("commit_oid")?;
+            if commit_oid.as_deref() != Some(immutable_identity) {
+                return Err(DenError::ValidationError(
+                    "Docket git_commit primary_output immutable_identity must equal its finalized commit OID"
+                        .to_string(),
+                ));
+            }
+        }
+        _ => unreachable!("validated primary output kind"),
     }
     Ok(())
 }
