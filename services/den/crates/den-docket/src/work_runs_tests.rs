@@ -123,14 +123,22 @@ async fn seed_work_job_with_policy(
     let service = PgDocketService::from_pool(pool);
     let surface_name = format!("work-run-{}", Uuid::new_v4().simple());
     let (surface_id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO work_surfaces (name, upstream_url, created_by_user_id)
-         VALUES ($1, 'https://example.test/work-run.git', $2) RETURNING id",
+        "INSERT INTO work_surfaces (name, kind, created_by_user_id)
+         VALUES ($1, 'git_workspace', $2) RETURNING id",
     )
     .bind(surface_name)
     .bind(user_id)
     .fetch_one(pool)
     .await
     .expect("seed work surface");
+    sqlx::query(
+        "INSERT INTO git_work_surface_details (work_surface_id, upstream_url)
+         VALUES ($1, 'https://example.test/work-run.git')",
+    )
+    .bind(surface_id)
+    .execute(pool)
+    .await
+    .expect("seed git work surface details");
     sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
         .bind(surface_id)
         .bind(bear_id)
@@ -144,6 +152,7 @@ async fn seed_work_job_with_policy(
             created_by_role: "chat".to_string(),
             goal: format!("Ship the work-run slice {}", Uuid::new_v4().simple()),
             work_surface_id: Some(surface_id),
+            work_surface_assignments: vec![],
             commit_policy: Some(commit_policy),
             work_branch: None,
             status: DocketJobStatus::Ready,
@@ -224,6 +233,44 @@ async fn sandbox_repository_changes_without_publication_creates_no_run() {
         after, before,
         "rejected dispatch must not create a work run"
     );
+}
+
+#[tokio::test]
+async fn forbidden_surface_assignment_rejects_mutable_dispatch() {
+    let _guard = DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "forbidden-surface-dispatch").await;
+    let (job_id, _) = seed_work_job(&pool, user_id, bear_id).await;
+    sqlx::query(
+        "UPDATE job_work_surface_assignments SET mutation_policy = 'forbidden' WHERE job_id = $1",
+    )
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("forbid the assigned work surface");
+
+    let error = enqueue_work_job(
+        &pool,
+        WorkJobEnqueue {
+            bear_id,
+            job_id,
+            durable_result: crate::DurableResultKind::RepositoryChanges,
+            git_ref: None,
+            image_name: None,
+            requested_by_user_id: Some(user_id),
+            execution_target: WorkExecutionTarget::AttachedArmature {
+                client_session_id: format!("forbidden-{}", Uuid::new_v4().simple()),
+            },
+            attachment_warning: None,
+        },
+    )
+    .await
+    .expect_err("forbidden surface must reject mutable dispatch");
+
+    assert!(error.to_string().contains("forbids mutation"));
 }
 
 /// Regression: `bear_jobs.status` is a derived projection and is not stored.

@@ -257,6 +257,7 @@ pub async fn enqueue_work_job(
     type JobEnqueueRow = (
         Option<Uuid>,
         Option<String>,
+        Option<String>,
         Option<Uuid>,
         Option<String>,
         Option<String>,
@@ -264,14 +265,22 @@ pub async fn enqueue_work_job(
         bool,
     );
     let job: Option<JobEnqueueRow> = sqlx::query_as(
-        "SELECT j.work_surface_id, s.name, j.current_run_id, j.lifecycle_intent,
+        "SELECT a.work_surface_id, s.name, a.mutation_policy, j.current_run_id, j.lifecycle_intent,
                     j.commit_policy, j.work_branch,
                     EXISTS (
                         SELECT 1 FROM work_surface_bears wsb
-                        WHERE wsb.surface_id = j.work_surface_id AND wsb.bear_id = j.bear_id
+                        WHERE wsb.surface_id = a.work_surface_id AND wsb.bear_id = j.bear_id
                     ) AS surface_assigned
              FROM bear_jobs j
-             LEFT JOIN work_surfaces s ON s.id = j.work_surface_id
+             LEFT JOIN LATERAL (
+                 SELECT a.work_surface_id, a.mutation_policy
+                 FROM job_work_surface_assignments a
+                 JOIN work_surfaces s ON s.id = a.work_surface_id
+                 WHERE a.job_id = j.id AND s.kind = 'git_workspace'
+                 ORDER BY a.created_at
+                 LIMIT 1
+             ) a ON true
+             LEFT JOIN work_surfaces s ON s.id = a.work_surface_id
              WHERE j.id = $1 AND j.bear_id = $2 FOR UPDATE OF j",
     )
     .bind(enqueue.job_id)
@@ -281,6 +290,7 @@ pub async fn enqueue_work_job(
     let Some((
         surface_id,
         surface_name,
+        mutation_policy,
         current_run_id,
         lifecycle_intent,
         commit_policy,
@@ -301,6 +311,12 @@ pub async fn enqueue_work_job(
         return Err(DenError::ValidationError(
             "work_surface_required: this work job lacks a valid managed work-surface binding; select or rebind a surface before dispatch".into(),
         ));
+    }
+    if mutation_policy.as_deref() == Some("forbidden") {
+        return Err(DenError::ValidationError(format!(
+            "managed work surface '{}' forbids mutation for this job",
+            surface_name.as_deref().unwrap_or("unknown")
+        )));
     }
     if !surface_assigned {
         return Err(DenError::ValidationError(format!(
@@ -637,10 +653,16 @@ pub async fn jobs_awaiting_completion(
     bear_id: Uuid,
 ) -> Result<Vec<crate::model::DocketJobRow>, DenError> {
     let rows = sqlx::query_as::<_, crate::model::DocketJobRow>(
-        "SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id, commit_policy, work_branch,
-                COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility,
-                source_conversation_id, objective_kind, current_run_id, supersedes_job_id,
-                created_at, updated_at
+        "SELECT j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal,
+                (SELECT a.work_surface_id
+                 FROM job_work_surface_assignments a
+                 JOIN work_surfaces s ON s.id = a.work_surface_id
+                 WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden'
+                 ORDER BY a.created_at LIMIT 1) AS work_surface_id,
+                j.commit_policy, j.work_branch,
+                COALESCE(j.lifecycle_intent, 'draft') AS status, j.lifecycle_intent, j.visibility,
+                j.source_conversation_id, j.objective_kind, j.current_run_id, j.supersedes_job_id,
+                j.created_at, j.updated_at
          FROM bear_jobs j
          WHERE j.bear_id = $1
            AND j.lifecycle_intent IS NULL
@@ -1845,7 +1867,17 @@ pub async fn get_work_run_dispatch_context(
          FROM bear_work_runs r
          JOIN bears b ON b.id = r.bear_id
          JOIN bear_jobs j ON j.id = r.job_id
-         LEFT JOIN work_surfaces s ON s.id = j.work_surface_id
+         LEFT JOIN LATERAL (
+             SELECT a.work_surface_id
+             FROM job_work_surface_assignments a
+             JOIN work_surfaces candidate ON candidate.id = a.work_surface_id
+             WHERE a.job_id = j.id
+               AND candidate.kind = 'git_workspace'
+               AND a.mutation_policy <> 'forbidden'
+             ORDER BY a.created_at
+             LIMIT 1
+         ) assignment ON true
+         LEFT JOIN work_surfaces s ON s.id = assignment.work_surface_id
          WHERE r.id = $1",
     )
     .bind(run_id)

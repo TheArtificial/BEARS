@@ -851,6 +851,40 @@ impl DocketCriterionStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationPolicy {
+    #[default]
+    Required,
+    Optional,
+    Forbidden,
+}
+
+impl MutationPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Optional => "optional",
+            Self::Forbidden => "forbidden",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocketJobSurfaceAssignmentInput {
+    pub work_surface_id: Uuid,
+    pub mutation_policy: MutationPolicy,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct DocketJobSurfaceAssignmentRow {
+    pub job_id: Uuid,
+    pub work_surface_id: Uuid,
+    pub mutation_policy: String,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct DocketJobRow {
     pub id: Uuid,
@@ -858,7 +892,8 @@ pub struct DocketJobRow {
     pub created_by_user_id: i32,
     pub created_by_role: String,
     pub goal: String,
-    /// Canonical managed work surface this job runs on (`work_surfaces.id`).
+    /// Compatibility projection of the first dispatchable Git assignment.
+    /// The canonical job-to-surface relationship is `job_work_surface_assignments`.
     pub work_surface_id: Option<Uuid>,
     pub commit_policy: Option<String>,
     /// Upstream branch this job's work runs publish to (set on first
@@ -1057,6 +1092,9 @@ pub struct DocketJobCreate {
     pub goal: String,
     /// Managed surface id, after checking the bear's assignment.
     pub work_surface_id: Option<Uuid>,
+    /// Canonical surface assignments. An empty list preserves the
+    /// single-surface shorthand above, which becomes a required assignment.
+    pub work_surface_assignments: Vec<DocketJobSurfaceAssignmentInput>,
     pub commit_policy: Option<DocketCommitPolicy>,
     /// Explicit upstream branch for work-run publishing; generated
     /// (`den/job-<short-id>`) on first pushable dispatch when absent.
@@ -1258,6 +1296,8 @@ pub struct DocketTaskProjection {
 pub enum DocketValidationError {
     EmptyGoal,
     MissingWorkSurface,
+    AmbiguousWorkSurfaceAssignments,
+    DuplicateWorkSurfaceAssignment { work_surface_id: Uuid },
     MismatchedWorkSurfaceBinding,
     InvalidJobCreatorRole { role: String },
     EmptyCriterionDescription,
@@ -1279,6 +1319,12 @@ impl fmt::Display for DocketValidationError {
             Self::EmptyGoal => f.write_str("Docket job goal must not be empty"),
             Self::MissingWorkSurface => {
                 f.write_str("Docket work job requires a managed work surface")
+            }
+            Self::AmbiguousWorkSurfaceAssignments => f.write_str(
+                "Docket job must use either work_surface_id shorthand or work_surface_assignments, not both",
+            ),
+            Self::DuplicateWorkSurfaceAssignment { work_surface_id } => {
+                write!(f, "Docket job assigns work surface `{work_surface_id}` more than once")
             }
             Self::MismatchedWorkSurfaceBinding => f.write_str(
                 "Docket work job surface name and managed surface ID must be set together",
@@ -1751,8 +1797,19 @@ pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), Docket
     if create.goal.trim().is_empty() {
         return Err(DocketValidationError::EmptyGoal);
     }
-    if create.work_surface_id.is_none() {
+    if create.work_surface_id.is_some() && !create.work_surface_assignments.is_empty() {
+        return Err(DocketValidationError::AmbiguousWorkSurfaceAssignments);
+    }
+    if create.work_surface_id.is_none() && create.work_surface_assignments.is_empty() {
         return Err(DocketValidationError::MissingWorkSurface);
+    }
+    let mut surface_ids = std::collections::HashSet::new();
+    for assignment in &create.work_surface_assignments {
+        if !surface_ids.insert(assignment.work_surface_id) {
+            return Err(DocketValidationError::DuplicateWorkSurfaceAssignment {
+                work_surface_id: assignment.work_surface_id,
+            });
+        }
     }
     if !matches!(create.created_by_role.trim(), "chat" | "pair" | "ui") {
         return Err(DocketValidationError::InvalidJobCreatorRole {
@@ -1765,6 +1822,23 @@ pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), Docket
         }
     }
     validate_docket_task_inputs(&create.tasks)
+}
+
+pub fn docket_job_surface_assignments(
+    create: &DocketJobCreate,
+) -> Vec<DocketJobSurfaceAssignmentInput> {
+    if create.work_surface_assignments.is_empty() {
+        create
+            .work_surface_id
+            .map(|work_surface_id| DocketJobSurfaceAssignmentInput {
+                work_surface_id,
+                mutation_policy: MutationPolicy::Required,
+            })
+            .into_iter()
+            .collect()
+    } else {
+        create.work_surface_assignments.clone()
+    }
 }
 
 pub fn normalize_completion_criteria(criteria: &[String]) -> Vec<String> {
@@ -2303,6 +2377,7 @@ mod tests {
             created_by_role: "work".to_string(),
             goal: "Ship Docket".to_string(),
             work_surface_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap()),
+            work_surface_assignments: vec![],
             commit_policy: Some(DocketCommitPolicy::None),
             work_branch: None,
             status: DocketJobStatus::Ready,
@@ -2331,6 +2406,7 @@ mod tests {
             created_by_role: "pair".to_string(),
             goal: "Ship Docket".to_string(),
             work_surface_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap()),
+            work_surface_assignments: vec![],
             commit_policy: None,
             work_branch: None,
             status: DocketJobStatus::Ready,

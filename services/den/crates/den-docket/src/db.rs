@@ -13,7 +13,7 @@ use uuid::Uuid;
 use den_core::{BearProfile, DenError};
 
 use super::model::{
-    derived_docket_job_status, docket_parent_task_ref,
+    derived_docket_job_status, docket_job_surface_assignments, docket_parent_task_ref,
     docket_task_status_from_task_list_item_status, normalize_completion_criteria,
     task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
     DocketCommitPolicy, DocketCriterionStateRow, DocketCriterionStateUpdate, DocketExecutionLookup,
@@ -26,11 +26,23 @@ use super::model::{
     TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
+// `work_surface_id` remains a compatibility projection for callers that only
+// understand one Git workspace. Assignments are the canonical relationship.
+const JOB_COLUMNS: &str = "j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal, \
+    (SELECT a.work_surface_id FROM job_work_surface_assignments a \
+     JOIN work_surfaces s ON s.id = a.work_surface_id \
+     WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden' \
+     ORDER BY a.created_at LIMIT 1) AS work_surface_id, \
+    j.commit_policy, j.work_branch, COALESCE(j.lifecycle_intent, 'draft') AS status, \
+    j.lifecycle_intent, j.visibility, j.source_conversation_id, j.objective_kind, \
+    j.supersedes_job_id, j.current_run_id, j.created_at, j.updated_at";
+
 pub(super) async fn create_job(
     pool: &PgPool,
     create: DocketJobCreate,
 ) -> Result<DocketJobProjection, DenError> {
     validate_docket_job_create(&create)?;
+    let surface_assignments = docket_job_surface_assignments(&create);
     if matches!(
         create.overlap_resolution,
         super::model::DocketJobOverlapResolution::Supersede
@@ -42,14 +54,17 @@ pub(super) async fn create_job(
     let mut tx = pool.begin().await?;
     let predecessor = sqlx::query_scalar::<_, Uuid>(
         r"
-        SELECT id
-        FROM bear_jobs
-        WHERE bear_id = $1
-          AND lifecycle_intent IS NULL
-          AND lower(btrim(goal)) = lower(btrim($2))
-          AND work_surface_id IS NOT DISTINCT FROM $3
-          AND ($4::uuid IS NULL OR id = $4)
-        ORDER BY created_at DESC
+        SELECT j.id
+        FROM bear_jobs j
+        WHERE j.bear_id = $1
+          AND j.lifecycle_intent IS NULL
+          AND lower(btrim(j.goal)) = lower(btrim($2))
+          AND EXISTS (
+              SELECT 1 FROM job_work_surface_assignments a
+              WHERE a.job_id = j.id AND a.work_surface_id = $3
+          )
+          AND ($4::uuid IS NULL OR j.id = $4)
+        ORDER BY j.created_at DESC
         LIMIT 1
         FOR UPDATE
         ",
@@ -89,24 +104,21 @@ pub(super) async fn create_job(
         (_, super::model::DocketJobOverlapResolution::Independent) | (None, _) => {}
     }
 
-    let job = sqlx::query_as::<_, DocketJobRow>(
+    let job_id: Uuid = sqlx::query_scalar(
         r"
         INSERT INTO bear_jobs (
-            bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
+            bear_id, created_by_user_id, created_by_role, goal,
             commit_policy, work_branch, lifecycle_intent, visibility, source_conversation_id, objective_kind,
             supersedes_job_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-                  commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind,
-                  supersedes_job_id, current_run_id, created_at, updated_at
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING id
         ",
     )
     .bind(create.bear_id)
     .bind(create.created_by_user_id)
     .bind(create.created_by_role.trim())
     .bind(create.goal.trim())
-    .bind(create.work_surface_id)
     .bind(DocketCommitPolicy::for_new_job(create.commit_policy).as_str())
     .bind(
         create
@@ -127,6 +139,20 @@ pub(super) async fn create_job(
     .fetch_one(&mut *tx)
     .await?;
 
+    for assignment in &surface_assignments {
+        sqlx::query(
+            r"
+            INSERT INTO job_work_surface_assignments (job_id, work_surface_id, mutation_policy)
+            VALUES ($1, $2, $3)
+            ",
+        )
+        .bind(job_id)
+        .bind(assignment.work_surface_id)
+        .bind(assignment.mutation_policy.as_str())
+        .execute(&mut *tx)
+        .await?;
+    }
+
     let run = sqlx::query_as::<_, DocketJobRunRow>(
         r"
         INSERT INTO bear_job_runs (job_id, trigger, state)
@@ -135,20 +161,19 @@ pub(super) async fn create_job(
                   outcome, created_at, updated_at
         ",
     )
-    .bind(job.id)
+    .bind(job_id)
     .fetch_one(&mut *tx)
     .await?;
 
-    let job = sqlx::query_as::<_, DocketJobRow>(
+    let job = sqlx::query_as::<_, DocketJobRow>(&format!(
         r"
-        UPDATE bear_jobs
+        UPDATE bear_jobs j
         SET current_run_id = $2, updated_at = NOW()
-        WHERE id = $1
-        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-                  commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
+        WHERE j.id = $1
+        RETURNING {JOB_COLUMNS}
         ",
-    )
-    .bind(job.id)
+    ))
+    .bind(job_id)
     .bind(run.id)
     .fetch_one(&mut *tx)
     .await?;
@@ -559,17 +584,16 @@ pub(super) async fn list_jobs(
     } else {
         filter.limit.min(200)
     };
-    let rows = sqlx::query_as::<_, DocketJobRow>(
+    let rows = sqlx::query_as::<_, DocketJobRow>(&format!(
         r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-               commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
-        FROM bear_jobs
-        WHERE bear_id = $1
-          AND ($2::text IS NULL OR source_conversation_id = $2)
-        ORDER BY updated_at DESC
+        SELECT {JOB_COLUMNS}
+        FROM bear_jobs j
+        WHERE j.bear_id = $1
+          AND ($2::text IS NULL OR j.source_conversation_id = $2)
+        ORDER BY j.updated_at DESC
         LIMIT $3
         ",
-    )
+    ))
     .bind(bear_id)
     .bind(filter.source_conversation_id.as_deref())
     .bind(limit)
@@ -607,14 +631,13 @@ pub(super) async fn get_job(
     bear_id: Uuid,
     job_id: Uuid,
 ) -> Result<Option<DocketJobProjection>, DenError> {
-    let Some(job) = sqlx::query_as::<_, DocketJobRow>(
+    let Some(job) = sqlx::query_as::<_, DocketJobRow>(&format!(
         r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-               commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
-        FROM bear_jobs
-        WHERE bear_id = $1 AND id = $2
+        SELECT {JOB_COLUMNS}
+        FROM bear_jobs j
+        WHERE j.bear_id = $1 AND j.id = $2
         ",
-    )
+    ))
     .bind(bear_id)
     .bind(job_id)
     .fetch_optional(pool)
@@ -737,14 +760,13 @@ pub(super) async fn update_job(
         ));
     }
     let mut tx = pool.begin().await?;
-    let Some(current) = sqlx::query_as::<_, DocketJobRow>(
+    let Some(current) = sqlx::query_as::<_, DocketJobRow>(&format!(
         r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-               commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
-        FROM bear_jobs
-        WHERE bear_id = $1 AND id = $2
+        SELECT {JOB_COLUMNS}
+        FROM bear_jobs j
+        WHERE j.bear_id = $1 AND j.id = $2
         ",
-    )
+    ))
     .bind(update.bear_id)
     .bind(update.job_id)
     .fetch_optional(&mut *tx)
@@ -760,19 +782,16 @@ pub(super) async fn update_job(
         DocketJobStatus::Archived => Some("archived"),
         _ => None,
     });
-    let job = sqlx::query_as::<_, DocketJobRow>(
+    sqlx::query(
         r"
         UPDATE bear_jobs
         SET goal = $3,
-            work_surface_id = $4,
-            commit_policy = $5,
-            work_branch = $6,
-            lifecycle_intent = COALESCE($7, lifecycle_intent),
-            visibility = $8,
+            commit_policy = $4,
+            work_branch = $5,
+            lifecycle_intent = COALESCE($6, lifecycle_intent),
+            visibility = $7,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
-        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
-                  commit_policy, work_branch, COALESCE(lifecycle_intent, 'draft') AS status, lifecycle_intent, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         ",
     )
     .bind(update.bear_id)
@@ -783,11 +802,6 @@ pub(super) async fn update_job(
             .as_deref()
             .map(str::trim)
             .unwrap_or(&current.goal),
-    )
-    .bind(
-        update
-            .work_surface_id
-            .unwrap_or(current.work_surface_id),
     )
     .bind(
         update
@@ -808,6 +822,31 @@ pub(super) async fn update_job(
             .map(|visibility| visibility.as_str())
             .unwrap_or(&current.visibility),
     )
+    .execute(&mut *tx)
+    .await?;
+    if let Some(work_surface_id) = update.work_surface_id {
+        let work_surface_id = work_surface_id.ok_or_else(|| {
+            DenError::ValidationError(
+                "Docket work jobs cannot clear their required work surface".to_string(),
+            )
+        })?;
+        sqlx::query("DELETE FROM job_work_surface_assignments WHERE job_id = $1")
+            .bind(update.job_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO job_work_surface_assignments (job_id, work_surface_id, mutation_policy) VALUES ($1, $2, 'required')",
+        )
+        .bind(update.job_id)
+        .bind(work_surface_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let job = sqlx::query_as::<_, DocketJobRow>(&format!(
+        "SELECT {JOB_COLUMNS} FROM bear_jobs j WHERE j.bear_id = $1 AND j.id = $2",
+    ))
+    .bind(update.bear_id)
+    .bind(update.job_id)
     .fetch_one(&mut *tx)
     .await?;
     let run_id = job.current_run_id;

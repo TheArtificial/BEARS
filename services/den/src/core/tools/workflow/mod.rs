@@ -16,11 +16,12 @@ use den_docket::{
     DocketCriterionStatus, DocketEffortHint, DocketExecutionLookup, DocketJobCreate,
     DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobOverlapResolution, DocketJobProjection, DocketJobStatus, DocketJobStatusReport,
-    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
-    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
-    DocketTaskPlacement, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
-    DocketTaskUpdate, DocketValidationError, PgDocketService, TaskListCheckoutRequest,
-    TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest, TaskListVisibility,
+    DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketService, DocketTaskCreate,
+    DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
+    DocketTaskListFilter, DocketTaskPlacement, DocketTaskRunStateUpdate, DocketTaskScope,
+    DocketTaskStatus, DocketTaskUpdate, DocketValidationError, MutationPolicy, PgDocketService,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
+    TaskListVisibility,
 };
 
 use crate::{
@@ -165,10 +166,19 @@ pub(crate) enum JobOverlapResolution {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobSurfaceAssignmentArguments {
+    pub(crate) work_surface_id: Uuid,
+    #[serde(default)]
+    pub(crate) mutation_policy: MutationPolicy,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct DocketJobCreateArguments {
     pub(crate) goal: String,
     #[serde(default)]
     pub(crate) work_surface_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) work_surface_assignments: Vec<DocketJobSurfaceAssignmentArguments>,
     #[serde(default)]
     pub(crate) commit_policy: Option<DocketCommitPolicy>,
     #[serde(default)]
@@ -1220,9 +1230,21 @@ pub(crate) async fn create_job(
         );
     }
     let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
-    let (work_surface_id, surface_auto_bound) =
-        resolve_surface_id_for_create(pool, stores, context, role, args.work_surface_id).await?;
-    if work_surface_id.is_none() {
+    let (work_surface_id, surface_auto_bound) = if args.work_surface_assignments.is_empty() {
+        resolve_surface_id_for_create(pool, stores, context, role, args.work_surface_id).await?
+    } else {
+        if args.work_surface_id.is_some() {
+            return Err(DenError::ValidationError(
+                "provide either work_surface_id or work_surface_assignments, not both".to_string(),
+            )
+            .into());
+        }
+        for assignment in &args.work_surface_assignments {
+            validate_assigned_surface(pool, context, assignment.work_surface_id).await?;
+        }
+        (None, false)
+    };
+    if work_surface_id.is_none() && args.work_surface_assignments.is_empty() {
         return Err(DenError::ValidationError(
             "work_surface_required: Docket work jobs require an assigned managed work surface; choose one from get_work_catalog or use a resolved/confirmed session anchor"
                 .to_string(),
@@ -1236,6 +1258,14 @@ pub(crate) async fn create_job(
             created_by_role: role.as_str().to_string(),
             goal: args.goal,
             work_surface_id,
+            work_surface_assignments: args
+                .work_surface_assignments
+                .into_iter()
+                .map(|assignment| DocketJobSurfaceAssignmentInput {
+                    work_surface_id: assignment.work_surface_id,
+                    mutation_policy: assignment.mutation_policy,
+                })
+                .collect(),
             commit_policy: args.commit_policy,
             work_branch: args.work_branch,
             status: args.status,

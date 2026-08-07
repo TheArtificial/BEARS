@@ -85,17 +85,27 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     let surface_name = format!("surface-{}", &surface_id.simple().to_string()[..12]);
     sqlx::query(
         r"
-        INSERT INTO work_surfaces (id, name, upstream_url, created_by_user_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO work_surfaces (id, name, kind, created_by_user_id)
+        VALUES ($1, $2, 'git_workspace', $3)
         ",
     )
     .bind(surface_id)
     .bind(surface_name)
-    .bind("https://example.test/docket.git")
     .bind(user_id)
     .execute(pool)
     .await
     .expect("seed work surface");
+    sqlx::query(
+        r"
+        INSERT INTO git_work_surface_details (work_surface_id, upstream_url)
+        VALUES ($1, $2)
+        ",
+    )
+    .bind(surface_id)
+    .bind("https://example.test/docket.git")
+    .execute(pool)
+    .await
+    .expect("seed git work surface details");
     sqlx::query(
         r"
         INSERT INTO work_surface_bears (surface_id, bear_id)
@@ -118,6 +128,7 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
         created_by_role: "pair".to_string(),
         goal: format!("Docket integration lifecycle {}", Uuid::new_v4().simple()),
         work_surface_id: Some(test_work_surface_id(bear_id)),
+        work_surface_assignments: vec![],
         commit_policy: Some(DocketCommitPolicy::None),
         work_branch: None,
         status: DocketJobStatus::Ready,
