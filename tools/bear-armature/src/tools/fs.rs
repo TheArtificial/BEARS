@@ -1261,6 +1261,7 @@ pub(crate) struct ReplaceTextArgs {
     pub(crate) old_text: String,
     pub(crate) new_text: String,
     pub(crate) expected_replacements: usize,
+    pub(crate) replace_all: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1305,29 +1306,47 @@ impl ReplaceTextArgs {
         if create_if_missing && !policy_create_files {
             return Err(anyhow!("fs_replace_text does not create files yet"));
         }
+        let replace_all = args
+            .get("replace_all")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let allow_multiple = args
             .get("allow_multiple")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
-        if allow_multiple && !policy_allow_multiple {
+        if args.get("replace_all").is_some()
+            && args.get("allow_multiple").is_some()
+            && replace_all != allow_multiple
+        {
             return Err(anyhow!(
-                "fs_replace_text does not allow multiple replacements yet"
+                "fs_replace_text replace_all and allow_multiple must agree"
+            ));
+        }
+        // `allow_multiple` is the legacy fs_replace_text spelling for the
+        // public fs_edit_file `replace_all` option.
+        let replace_all = replace_all || allow_multiple;
+        let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
+        if replace_all && !policy_allow_multiple {
+            return Err(anyhow!(
+                "fs_replace_text multiple replacements are denied by policy"
             ));
         }
         let expected_replacements = args
             .get("expected_replacements")
             .and_then(Value::as_u64)
-            .unwrap_or(1) as usize;
-        let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
-        if expected_replacements == 0 || expected_replacements > policy_max_replacements {
+            .map(|value| value as usize)
+            .unwrap_or(if replace_all { 0 } else { 1 });
+        if replace_all && expected_replacements != 0 {
             return Err(anyhow!(
-                "fs_replace_text expected_replacements exceeds policy max_replacements={policy_max_replacements}"
+                "fs_replace_text replace_all cannot be combined with expected_replacements"
             ));
         }
-        if expected_replacements != 1 || allow_multiple || policy_allow_multiple {
+        let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
+        if !replace_all
+            && (expected_replacements == 0 || expected_replacements > policy_max_replacements)
+        {
             return Err(anyhow!(
-                "fs_replace_text currently supports exactly one replacement"
+                "fs_replace_text expected_replacements must be between 1 and policy max_replacements={policy_max_replacements}"
             ));
         }
         Ok(Self {
@@ -1335,6 +1354,7 @@ impl ReplaceTextArgs {
             old_text,
             new_text,
             expected_replacements,
+            replace_all,
         })
     }
 }
@@ -1353,13 +1373,29 @@ impl ReplaceTextPlan {
         ensure_replace_text_path_allowed(&path, policy)?;
         let raw = read_replace_text_input(&path, policy_max_bytes)?;
         let replacements = raw.matches(&args.old_text).count();
-        if replacements != args.expected_replacements {
+        if args.replace_all {
+            if replacements == 0 {
+                return Err(anyhow!(
+                    "fs_replace_text expected at least 1 match for old_text, found 0"
+                ));
+            }
+            if replacements > policy_max_replacements {
+                return Err(anyhow!(
+                    "fs_replace_text found {replacements} matches, exceeding policy max_replacements={policy_max_replacements}"
+                ));
+            }
+        } else if replacements != args.expected_replacements {
             return Err(anyhow!(
                 "fs_replace_text expected {} match for old_text, found {replacements}",
                 args.expected_replacements
             ));
         }
-        let updated = raw.replacen(&args.old_text, &args.new_text, args.expected_replacements);
+        let replacement_limit = if args.replace_all {
+            replacements
+        } else {
+            args.expected_replacements
+        };
+        let updated = raw.replacen(&args.old_text, &args.new_text, replacement_limit);
         let preview = replace_text_preview(&path, &args, &raw, &updated);
         Ok(Self {
             args,
@@ -1380,17 +1416,28 @@ impl ReplaceTextPlan {
         ensure_replace_text_path_allowed(&self.path, policy)?;
         let raw = read_replace_text_input(&self.path, self.policy_max_bytes)?;
         let replacements = raw.matches(&self.args.old_text).count();
-        if replacements != self.args.expected_replacements {
+        if self.args.replace_all {
+            if replacements == 0 {
+                return Err(anyhow!("fs_replace_text stale preflight: expected at least 1 match for old_text, found 0"));
+            }
+            if replacements > self.policy_max_replacements {
+                return Err(anyhow!(
+                    "fs_replace_text stale preflight: found {replacements} matches, exceeding policy max_replacements={} ",
+                    self.policy_max_replacements
+                ));
+            }
+        } else if replacements != self.args.expected_replacements {
             return Err(anyhow!(
                 "fs_replace_text stale preflight: expected {} match for old_text, found {replacements}",
                 self.args.expected_replacements
             ));
         }
-        let updated = raw.replacen(
-            &self.args.old_text,
-            &self.args.new_text,
-            self.args.expected_replacements,
-        );
+        let replacement_limit = if self.args.replace_all {
+            replacements
+        } else {
+            self.args.expected_replacements
+        };
+        let updated = raw.replacen(&self.args.old_text, &self.args.new_text, replacement_limit);
         fs::write(&self.path, updated.as_bytes())
             .with_context(|| format!("write replaced text file {}", self.path.display()))?;
         let content = format!(
