@@ -144,13 +144,14 @@ impl ToolTaskRegistry {
             .remove(&Self::key(session_id, tool_call_id));
         if let Some(record) = removed.as_ref() {
             if record.phase != ToolTaskPhase::ResultPosted {
-                eprintln!(
-                    "bear-armature: tool_task finished session_id={} tool_call_id={} tool_name={} final_phase={} total_duration_ms={}",
-                    record.session_id,
-                    record.tool_call_id,
-                    record.tool_name,
-                    record.phase.as_str(),
-                    record.started_at.elapsed().as_millis(),
+                tracing::debug!(
+                    target: "bear_armature::lifecycle",
+                    session_id = record.session_id,
+                    tool_call_id = record.tool_call_id,
+                    tool_name = record.tool_name,
+                    final_phase = record.phase.as_str(),
+                    total_duration_ms = record.started_at.elapsed().as_millis(),
+                    "tool task finished before posting a result"
                 );
             }
         }

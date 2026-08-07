@@ -3039,7 +3039,10 @@ async fn handle_request(
                         Ok(()) => {}
                         Err(err) => {
                             let server_version = fetch_server_version(&http, &config).await.ok();
-                            tracing::warn!(
+                            tracing::error!(
+                                session_id,
+                                turn_token = %turn_token,
+                                conversation_id = ?conversation_id_for_turn,
                                 error = %format!("{err:#}"),
                                 server_version = ?server_version.as_ref().map(ServerVersion::summary),
                                 armature_version = adapter_version(),
@@ -7403,6 +7406,10 @@ struct ToolExecutionLease {
     renew_after: Duration,
 }
 
+fn is_tool_execution_claim_rejection(response: &Value) -> bool {
+    response.get("status").and_then(|value| value.as_str()) == Some("claim_rejected")
+}
+
 fn parse_tool_execution_lease(response: &Value) -> Result<ToolExecutionLease> {
     if response.get("ok").and_then(Value::as_bool) != Some(true) {
         return Err(anyhow!(
@@ -7653,23 +7660,76 @@ pub(crate) fn spawn_tool_request_task(
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow!("canonical tool request omitted run_id"));
             let claim = match run_id {
-                Ok(run_id) => crate::bearwire::claim_tool_execution(
-                    &config,
-                    &session_id,
-                    run_id,
-                    canonical
-                        .client_obligation_id()
-                        .expect("armature-local tool request was validated above"),
-                    &tool_call_id,
-                )
-                .await
-                .and_then(|response| parse_tool_execution_lease(&response)),
+                Ok(run_id) => {
+                    crate::bearwire::claim_tool_execution(
+                        &config,
+                        &session_id,
+                        run_id,
+                        canonical
+                            .client_obligation_id()
+                            .expect("armature-local tool request was validated above"),
+                        &tool_call_id,
+                    )
+                    .await
+                }
                 Err(err) => Err(err),
             };
             match claim {
-                Ok(lease) => {
-                    event["data"]["attempt_token"] = json!(lease.attempt_token);
-                    Some(lease)
+                Ok(response) if response.get("ok").and_then(Value::as_bool) == Some(true) => {
+                    match parse_tool_execution_lease(&response) {
+                        Ok(lease) => {
+                            event["data"]["attempt_token"] = json!(lease.attempt_token);
+                            Some(lease)
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                target: "bear_armature::lifecycle",
+                                session_id = session_id.as_str(),
+                                tool_call_id = tool_call_id.as_str(),
+                                tool_name = tool_name.as_str(),
+                                error = %err,
+                                "tool execution claim response was invalid; local execution suppressed"
+                            );
+                            let _ = shared_state
+                                .tool_tasks
+                                .remove(&session_id, &tool_call_id)
+                                .await;
+                            return;
+                        }
+                    }
+                }
+                Ok(response) if is_tool_execution_claim_rejection(&response) => {
+                    tracing::debug!(
+                        target: "bear_armature::lifecycle",
+                        session_id = session_id.as_str(),
+                        tool_call_id = tool_call_id.as_str(),
+                        tool_name = tool_name.as_str(),
+                        claim_status = "claim_rejected",
+                        "tool execution claim rejected; local execution suppressed"
+                    );
+                    let _ = shared_state
+                        .tool_tasks
+                        .remove(&session_id, &tool_call_id)
+                        .await;
+                    return;
+                }
+                Ok(response) => {
+                    tracing::warn!(
+                        target: "bear_armature::lifecycle",
+                        session_id = session_id.as_str(),
+                        tool_call_id = tool_call_id.as_str(),
+                        tool_name = tool_name.as_str(),
+                        claim_status = response
+                            .get("status")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("unknown"),
+                        "tool execution claim returned an unexpected rejection; local execution suppressed"
+                    );
+                    let _ = shared_state
+                        .tool_tasks
+                        .remove(&session_id, &tool_call_id)
+                        .await;
+                    return;
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -7678,7 +7738,7 @@ pub(crate) fn spawn_tool_request_task(
                         tool_call_id = tool_call_id.as_str(),
                         tool_name = tool_name.as_str(),
                         error = %err,
-                        "tool execution claim rejected; local execution suppressed"
+                        "tool execution claim failed; local execution suppressed"
                     );
                     let _ = shared_state
                         .tool_tasks
@@ -12735,6 +12795,19 @@ mod tests {
                 .is_err(),
             "different-conversation overlap should not send cancellation"
         );
+    }
+
+    #[test]
+    fn adapter_identifies_only_expected_tool_execution_claim_rejections() {
+        assert!(is_tool_execution_claim_rejection(&json!({
+            "ok": false,
+            "status": "claim_rejected"
+        })));
+        assert!(!is_tool_execution_claim_rejection(&json!({
+            "ok": false,
+            "status": "invalid_obligation"
+        })));
+        assert!(!is_tool_execution_claim_rejection(&json!({ "ok": true })));
     }
 
     #[test]

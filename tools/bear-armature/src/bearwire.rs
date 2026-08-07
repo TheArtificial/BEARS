@@ -1354,7 +1354,7 @@ async fn service_run_state_tool_obligations(
         {
             continue;
         }
-        tracing::warn!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -2032,7 +2032,7 @@ async fn handle_bearwire_event(
             outcome.saw_visible_output = true;
             diagnostics.saw_error = true;
             diagnostics.saw_visible_output = true;
-            let message = "BEARS request was cancelled.";
+            let message = "Den request was cancelled.";
             eprintln!(
                 "bear-armature: BearWire run cancelled session_id={} run_id={}",
                 session_id,
