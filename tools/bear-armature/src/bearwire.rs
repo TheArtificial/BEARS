@@ -1663,31 +1663,20 @@ impl BearWireToolCallFinishedData {
     }
 }
 
-fn tool_call_finished_projection_event(
-    event: &Value,
+fn tool_call_finished_presentation(
     tool_call_id: &str,
     tool_name: &str,
     cached_input_args: Option<Value>,
     cached_display: Option<Value>,
     event_input_args: Option<Value>,
     event_display: Option<Value>,
-) -> Value {
-    let mut projection_event = json!({
-        "run_id": event.get("run_id").and_then(Value::as_str),
-        "data": {
-            "tool_call": {
-                "id": tool_call_id,
-                "name": tool_name,
-            }
-        }
-    });
-    if let Some(args) = cached_input_args.or(event_input_args) {
-        projection_event["data"]["tool_call"]["arguments"] = args;
+) -> crate::ToolRequestPresentation {
+    crate::ToolRequestPresentation {
+        tool_call_id: tool_call_id.to_string(),
+        tool_name: tool_name.to_string(),
+        arguments: cached_input_args.or(event_input_args),
+        display: event_display.or(cached_display),
     }
-    if let Some(display) = event_display.or(cached_display) {
-        projection_event["data"]["tool_call"]["display"] = display;
-    }
-    projection_event
 }
 
 async fn handle_bearwire_tool_call_finished_event(
@@ -1718,8 +1707,7 @@ async fn handle_bearwire_tool_call_finished_event(
         .ok_or_else(|| anyhow!("canonical BearWire tool completion missing tool_call.name"))?;
     let summary = tool_call_finished_summary(data, &tool_name, failed);
     let status = if failed { "failed" } else { "completed" };
-    let projection_event = tool_call_finished_projection_event(
-        event,
+    let presentation = tool_call_finished_presentation(
         &tool_call_id,
         &tool_name,
         cached_input_args,
@@ -1736,7 +1724,7 @@ async fn handle_bearwire_tool_call_finished_event(
         ToolCallUpdatePayload {
             status,
             text: &summary,
-            event: Some(&projection_event),
+            request: Some(presentation),
             raw_output: Some(compact_json_preview(
                 data,
                 BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS,
@@ -2249,8 +2237,7 @@ mod tests {
 
     #[test]
     fn terminal_projection_prefers_live_request_presentation() {
-        let projection = tool_call_finished_projection_event(
-            &json!({ "run_id": "run-1" }),
+        let presentation = tool_call_finished_presentation(
             "call-read",
             "fs_read_text_file",
             Some(json!({ "path": "/workspace/README.md" })),
@@ -2258,16 +2245,19 @@ mod tests {
             None,
             None,
         );
-
         assert_eq!(
-            projection
-                .pointer("/data/tool_call/arguments/path")
+            presentation
+                .arguments
+                .as_ref()
+                .and_then(|arguments| arguments.get("path"))
                 .and_then(Value::as_str),
             Some("/workspace/README.md")
         );
         assert_eq!(
-            projection
-                .pointer("/data/tool_call/display/title")
+            presentation
+                .display
+                .as_ref()
+                .and_then(|display| display.get("title"))
                 .and_then(Value::as_str),
             Some("Read file: /workspace/README.md")
         );

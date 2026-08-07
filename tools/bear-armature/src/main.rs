@@ -4469,7 +4469,7 @@ async fn den_get_acp_session(
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ReloadHistoryMessage {
     id: Option<String>,
     kind: String,
@@ -4730,19 +4730,30 @@ async fn fetch_conversation_surface_history_chronological(
     Ok(flatten_history_pages_chronological(pages_newest_first))
 }
 
-fn replay_tool_arguments(
-    request_arguments: &mut std::collections::HashMap<String, Value>,
-    kind: &str,
+fn replay_tool_request(
+    requests: &mut std::collections::HashMap<String, ToolRequestPresentation>,
+    message: &ReloadHistoryMessage,
     tool_call_id: &str,
-    arguments: &Value,
-) -> Value {
-    if kind == "tool_call" {
-        request_arguments.insert(tool_call_id.to_string(), arguments.clone());
-        arguments.clone()
+    tool_name: &str,
+) -> ToolRequestPresentation {
+    if message.kind == "tool_call" {
+        let request = ToolRequestPresentation {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments: (!message.arguments.is_null()).then(|| message.arguments.clone()),
+            display: None,
+        };
+        requests.insert(tool_call_id.to_string(), request.clone());
+        request
     } else {
-        request_arguments
+        requests
             .remove(tool_call_id)
-            .unwrap_or(Value::Null)
+            .unwrap_or_else(|| ToolRequestPresentation {
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                arguments: None,
+                display: None,
+            })
     }
 }
 
@@ -4767,7 +4778,7 @@ async fn replay_history_for_den_session(
         }
         // Tool results intentionally do not duplicate request arguments in canonical history.
         // Keep them only for this replay pass so terminal ACP updates preserve the request card.
-        let mut tool_call_arguments = std::collections::HashMap::<String, Value>::new();
+        let mut tool_requests = std::collections::HashMap::<String, ToolRequestPresentation>::new();
         for message in history_replay_chunks_with_boundaries(messages) {
             match message.kind.as_str() {
                 "tool_call" | "tool_result" => {
@@ -4779,23 +4790,8 @@ async fn replay_history_for_den_session(
                     let Some(tool_name) = message.tool_name.as_deref() else {
                         continue;
                     };
-                    let arguments = replay_tool_arguments(
-                        &mut tool_call_arguments,
-                        &message.kind,
-                        tool_call_id,
-                        &message.arguments,
-                    );
-                    let event = json!({
-                        "type": if message.kind == "tool_call" { "tool_call.requested" } else { "tool_call.completed" },
-                        "data": {
-                            "tool_call": {
-                                "id": tool_call_id,
-                                "name": tool_name,
-                                "arguments": arguments,
-                            },
-                            "summary": message.text,
-                        },
-                    });
+                    let request =
+                        replay_tool_request(&mut tool_requests, &message, tool_call_id, tool_name);
                     send_tool_call_update(
                         session_id,
                         tool_call_id,
@@ -4809,7 +4805,7 @@ async fn replay_history_for_den_session(
                                 },
                             ),
                             text: &message.text,
-                            event: Some(&event),
+                            request: Some(request),
                             raw_output: if message.raw_output.is_null() {
                                 None
                             } else {
@@ -7936,12 +7932,8 @@ pub(crate) fn spawn_tool_request_task(
                 session_id = session_id.as_str(),
                 tool_call_id = tool_call_id.as_str(),
                 tool_name = tool_name.as_str(),
-                "local tool task finished"
+                "local tool task finished; retaining request presentation for canonical terminal projection"
             );
-            let _ = shared_state
-                .tool_tasks
-                .remove(&session_id, &tool_call_id)
-                .await;
         }
     });
 }
@@ -8009,7 +8001,11 @@ pub(crate) async fn project_den_owned_tool_request(
         ToolCallUpdatePayload {
             status: "pending",
             text: &preparing,
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -8025,7 +8021,11 @@ pub(crate) async fn project_den_owned_tool_request(
         ToolCallUpdatePayload {
             status: "in_progress",
             text: &running,
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -8097,7 +8097,11 @@ async fn handle_tool_request_event(
         ToolCallUpdatePayload {
             status: "pending",
             text: &preparing,
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -8177,7 +8181,11 @@ async fn handle_tool_request_event(
             ToolCallUpdatePayload {
                 status: "pending",
                 text: &permission,
-                event: Some(event),
+                request: Some(ToolRequestPresentation::from_event(
+                    tool_call_id,
+                    tool_name,
+                    event,
+                )),
                 raw_output: None,
                 extra_content: replace_plan
                     .as_ref()
@@ -8303,7 +8311,11 @@ async fn handle_tool_request_event(
         ToolCallUpdatePayload {
             status: "pending",
             text: &running,
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -8557,7 +8569,11 @@ async fn handle_tool_request_event(
             ToolCallUpdatePayload {
                 status: "failed",
                 text: &message,
-                event: Some(event),
+                request: Some(ToolRequestPresentation::from_event(
+                    tool_call_id,
+                    tool_name,
+                    event,
+                )),
                 raw_output: Some(json!({
                     "component": "bear-armature",
                     "phase": "result_post_failed",
@@ -8591,7 +8607,11 @@ async fn handle_tool_request_event(
             ToolCallUpdatePayload {
                 status: &status,
                 text: &text,
-                event: Some(event),
+                request: Some(ToolRequestPresentation::from_event(
+                    tool_call_id,
+                    tool_name,
+                    event,
+                )),
                 raw_output,
                 extra_content,
             },
@@ -9045,7 +9065,11 @@ async fn post_local_tool_error_result(
         ToolCallUpdatePayload {
             status: "failed",
             text: payload["content"].as_str().unwrap_or("Local tool failed"),
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -10044,7 +10068,11 @@ pub(crate) async fn handle_permission_request_event(
                     ToolCallUpdatePayload {
                         status: "failed",
                         text: &message,
-                        event: Some(event),
+                        request: Some(ToolRequestPresentation::from_event(
+                            tool_call_id,
+                            tool_name,
+                            event,
+                        )),
                         raw_output: Some(json!({
                             "component": "bear-armature",
                             "phase": "permission_request_failed",
@@ -11057,23 +11085,11 @@ async fn record_surface_tool_status(
 }
 
 fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay) -> String {
-    let Some(event) = event else {
-        return display.title.clone();
-    };
-
-    // A request display can be a generic server fallback (for example, `Read file: file`).
-    // Built-in calls have canonical input, so keep the actual target visible on every card update.
-    if tool_args_from_event(event).is_some() {
-        let title = tool_call_title(tool_name, event);
-        if title != tool_display(tool_name).title {
-            return title;
+    match event {
+        Some(event) if event_display_from_event(event).is_none() => {
+            tool_call_title(tool_name, event)
         }
-    }
-
-    if event_display_from_event(event).is_some() {
-        display.title.clone()
-    } else {
-        tool_call_title(tool_name, event)
+        _ => display.title.clone(),
     }
 }
 
@@ -11103,10 +11119,47 @@ pub(crate) async fn send_terminal_tool_call_update(
     .await
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ToolRequestPresentation {
+    pub(crate) tool_call_id: String,
+    pub(crate) tool_name: String,
+    pub(crate) arguments: Option<Value>,
+    pub(crate) display: Option<Value>,
+}
+
+impl ToolRequestPresentation {
+    fn from_event(tool_call_id: &str, tool_name: &str, event: &Value) -> Self {
+        Self {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments: tool_args_from_event(event).cloned(),
+            display: event_display_from_event(event).cloned(),
+        }
+    }
+
+    pub(crate) fn projection_event(&self) -> Value {
+        let mut event = json!({
+            "data": {
+                "tool_call": {
+                    "id": self.tool_call_id,
+                    "name": self.tool_name,
+                }
+            }
+        });
+        if let Some(arguments) = self.arguments.as_ref() {
+            event["data"]["tool_call"]["arguments"] = arguments.clone();
+        }
+        if let Some(display) = self.display.as_ref() {
+            event["data"]["tool_call"]["display"] = display.clone();
+        }
+        event
+    }
+}
+
 struct ToolCallUpdatePayload<'a> {
     status: &'a str,
     text: &'a str,
-    event: Option<&'a Value>,
+    request: Option<ToolRequestPresentation>,
     raw_output: Option<Value>,
     extra_content: Vec<ToolCallContent>,
 }
@@ -11153,6 +11206,56 @@ pub(crate) async fn send_tool_call_update_for_turn(
     }
 }
 
+#[derive(Debug)]
+struct ToolOutcome {
+    status: ToolCallStatus,
+    text: String,
+    raw_output: Option<Value>,
+    extra_content: Vec<ToolCallContent>,
+}
+
+impl ToolOutcome {
+    fn new(
+        status: &str,
+        text: &str,
+        raw_output: Option<Value>,
+        extra_content: Vec<ToolCallContent>,
+    ) -> Self {
+        Self {
+            status: tool_status_from_str(status),
+            text: text.to_string(),
+            raw_output,
+            extra_content,
+        }
+    }
+}
+
+fn project_tool_call(request: &ToolRequestPresentation, outcome: ToolOutcome) -> ToolCall {
+    let event = request.projection_event();
+    let display = ToolDisplay::from_event(&request.tool_name, &event);
+    let mut content = Vec::new();
+    let trimmed_text = outcome.text.trim();
+    if !trimmed_text.is_empty() && trimmed_text != "Completed." {
+        content.push(ToolCallContent::from(trimmed_text.to_string()));
+    }
+    content.extend(outcome.extra_content);
+    let title = tool_card_title(&request.tool_name, Some(&event), &display);
+    let mut tool_call = ToolCall::new(request.tool_call_id.clone(), title)
+        .kind(display.kind)
+        .status(outcome.status)
+        .content(content);
+    if let Some(locations) = tool_locations_from_event(&request.tool_name, &event) {
+        tool_call = tool_call.locations(locations);
+    }
+    if let Some(args) = request.arguments.as_ref() {
+        tool_call = tool_call.raw_input(Some(compact_tool_card_json_value(args.clone())));
+    }
+    if let Some(raw_output) = outcome.raw_output {
+        tool_call = tool_call.raw_output(Some(compact_tool_card_json_value(raw_output)));
+    }
+    tool_call
+}
+
 async fn send_tool_call_update(
     session_id: &str,
     tool_call_id: &str,
@@ -11162,35 +11265,18 @@ async fn send_tool_call_update(
     let ToolCallUpdatePayload {
         status,
         text,
-        event,
+        request,
         raw_output,
         extra_content,
     } = payload;
-    let display = event
-        .map(|event| ToolDisplay::from_event(tool_name, event))
-        .unwrap_or_else(|| tool_display(tool_name));
-    let mut content = Vec::new();
-    let trimmed_text = text.trim();
-    if !trimmed_text.is_empty() && trimmed_text != "Completed." {
-        content.push(ToolCallContent::from(trimmed_text.to_string()));
-    }
-    content.extend(extra_content);
-    let title = tool_card_title(tool_name, event, &display);
-    let mut tool_call = ToolCall::new(tool_call_id.to_string(), title)
-        .kind(display.kind)
-        .status(tool_status_from_str(status))
-        .content(content);
-    if let Some(event) = event {
-        if let Some(locations) = tool_locations_from_event(tool_name, event) {
-            tool_call = tool_call.locations(locations);
-        }
-        if let Some(args) = tool_args_from_event(event) {
-            tool_call = tool_call.raw_input(Some(compact_tool_card_json_value(args.clone())));
-        }
-    }
-    if let Some(raw_output) = raw_output {
-        tool_call = tool_call.raw_output(Some(compact_tool_card_json_value(raw_output)));
-    }
+    let request = request.unwrap_or_else(|| ToolRequestPresentation {
+        tool_call_id: tool_call_id.to_string(),
+        tool_name: tool_name.to_string(),
+        arguments: None,
+        display: None,
+    });
+    let outcome = ToolOutcome::new(status, text, raw_output, extra_content);
+    let tool_call = project_tool_call(&request, outcome);
     write_notification(
         "session/update",
         json!({
@@ -17469,26 +17555,86 @@ mod tests {
 
     #[test]
     fn replay_tool_result_inherits_request_arguments_without_persisting_them() {
-        let mut request_arguments = std::collections::HashMap::new();
-        let request = json!({ "path": "/workspace/README.md" });
-        assert_eq!(
-            replay_tool_arguments(&mut request_arguments, "tool_call", "call-read", &request),
-            request
-        );
-        let terminal_arguments = replay_tool_arguments(
-            &mut request_arguments,
-            "tool_result",
+        let mut requests = std::collections::HashMap::new();
+        let request_message = ReloadHistoryMessage {
+            kind: "tool_call".to_string(),
+            arguments: json!({ "path": "/workspace/README.md" }),
+            ..Default::default()
+        };
+        let request = replay_tool_request(
+            &mut requests,
+            &request_message,
             "call-read",
-            &Value::Null,
+            "fs_read_text_file",
         );
-        assert_eq!(terminal_arguments, request);
+        let result_message = ReloadHistoryMessage {
+            kind: "tool_result".to_string(),
+            ..Default::default()
+        };
+        let terminal = replay_tool_request(
+            &mut requests,
+            &result_message,
+            "call-read",
+            "fs_read_text_file",
+        );
+        assert_eq!(terminal.arguments, request.arguments);
+        assert!(requests.is_empty());
         assert_eq!(
-            tool_call_title(
-                "fs_read_text_file",
-                &json!({ "data": { "tool_call": { "arguments": terminal_arguments } } }),
-            ),
+            tool_call_title("fs_read_text_file", &terminal.projection_event()),
             "Read file: /workspace/README.md"
         );
+    }
+
+    #[test]
+    fn live_and_replay_file_results_share_the_same_projection() {
+        let tool_call_id = "call-read";
+        let tool_name = "fs_read_text_file";
+        let arguments = json!({ "path": "/workspace/README.md" });
+        let live_event = json!({
+            "data": {
+                "tool_call": {
+                    "id": tool_call_id,
+                    "name": tool_name,
+                    "arguments": arguments,
+                }
+            }
+        });
+        let live_request =
+            ToolRequestPresentation::from_event(tool_call_id, tool_name, &live_event);
+
+        let mut replay_requests = std::collections::HashMap::new();
+        let replay_start = ReloadHistoryMessage {
+            kind: "tool_call".to_string(),
+            arguments: json!({ "path": "/workspace/README.md" }),
+            ..Default::default()
+        };
+        replay_tool_request(&mut replay_requests, &replay_start, tool_call_id, tool_name);
+        let replay_result = ReloadHistoryMessage {
+            kind: "tool_result".to_string(),
+            ..Default::default()
+        };
+        let replay_request = replay_tool_request(
+            &mut replay_requests,
+            &replay_result,
+            tool_call_id,
+            tool_name,
+        );
+
+        let live = project_tool_call(
+            &live_request,
+            ToolOutcome::new("completed", "Read complete.", None, Vec::new()),
+        );
+        let replay = project_tool_call(
+            &replay_request,
+            ToolOutcome::new("completed", "Read complete.", None, Vec::new()),
+        );
+        let live = serde_json::to_value(live).unwrap();
+        let replay = serde_json::to_value(replay).unwrap();
+
+        assert_eq!(live, replay);
+        assert_eq!(live["title"], "Read file: /workspace/README.md");
+        assert!(live.to_string().contains("/workspace/README.md"));
+        assert!(replay_requests.is_empty());
     }
 
     #[tokio::test]
@@ -17618,7 +17764,11 @@ mod tests {
                 ToolCallUpdatePayload {
                     status: "completed",
                     text: "Checkpoint accepted.",
-                    event: Some(&completed_event),
+                    request: Some(ToolRequestPresentation::from_event(
+                        &tool_call_id,
+                        "checkpoint",
+                        &completed_event,
+                    )),
                     raw_output: None,
                     extra_content: Vec::new(),
                 },
