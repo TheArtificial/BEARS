@@ -1790,8 +1790,10 @@ pub(super) async fn update_task(
         .as_ref()
         .filter(|state| state.status.as_str() == "done")
     {
-        validate_primary_output_registry(&mut tx, &current, run_state).await?;
-        record_completion_receipt(&mut tx, &current, run_state).await?;
+        if has_primary_output_evidence(run_state.result_refs.as_ref()) {
+            validate_primary_output_registry(&mut tx, &current, run_state).await?;
+            record_completion_receipt(&mut tx, &current, run_state).await?;
+        }
         validate_parent_completion(&mut tx, &current, run_state.run_id).await?;
     }
     let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
@@ -2049,15 +2051,21 @@ fn validate_docket_task_run_state_update(
     validate_primary_output_evidence(update.result_refs.as_ref())
 }
 
+fn has_primary_output_evidence(result_refs: Option<&Value>) -> bool {
+    result_refs
+        .and_then(Value::as_object)
+        .is_some_and(|refs| refs.contains_key("primary_output") || refs.contains_key("validation"))
+}
+
 pub(super) fn validate_primary_output_evidence(
     result_refs: Option<&Value>,
 ) -> Result<(), DenError> {
-    let Some(result_refs) = result_refs.and_then(Value::as_object) else {
-        return Err(DenError::ValidationError(
-            "Docket task completion requires structured primary_output and validation evidence"
-                .to_string(),
-        ));
-    };
+    if !has_primary_output_evidence(result_refs) {
+        return Ok(());
+    }
+    let result_refs = result_refs
+        .and_then(Value::as_object)
+        .expect("primary_output evidence requires a result_refs object");
     let Some(primary_output) = result_refs.get("primary_output").and_then(Value::as_object) else {
         return Err(DenError::ValidationError(
             "Docket task completion requires a primary_output object".to_string(),

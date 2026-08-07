@@ -432,7 +432,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     .expect("query task definition event");
     assert_eq!(task_definition_count, 1);
 
-    let missing_completion_evidence = service
+    let report_only_completion = service
         .update_task(DocketTaskUpdate {
             bear_id,
             job_id: None,
@@ -445,11 +445,11 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
                 run_id,
                 status: DocketTaskStatus::Done,
                 result_refs: None,
-                result_summary: Some("Worker narrative alone is insufficient".to_string()),
+                result_summary: Some("Inventory findings recorded in the task result.".to_string()),
             }),
         })
         .await;
-    assert!(missing_completion_evidence.is_err());
+    assert!(report_only_completion.is_ok());
 
     let missing_summary = service
         .update_task(DocketTaskUpdate {

@@ -25,14 +25,23 @@ fn accepts_validation_bound_to_primary_output_identity() {
 }
 
 #[test]
-fn rejects_missing_primary_output_or_validation() {
-    assert!(validate_primary_output_evidence(None).is_err());
+fn accepts_report_only_completion_without_output_evidence() {
+    assert!(validate_primary_output_evidence(None).is_ok());
+    assert!(validate_primary_output_evidence(Some(&json!({}))).is_ok());
+}
+
+#[test]
+fn rejects_incomplete_primary_output_evidence() {
     assert!(validate_primary_output_evidence(Some(&json!({
         "primary_output": {
             "kind": "git_commit",
             "artifact_ref": "git:abc",
             "immutable_identity": "abc"
         }
+    })))
+    .is_err());
+    assert!(validate_primary_output_evidence(Some(&json!({
+        "validation": {"result": "passed"}
     })))
     .is_err());
 }
