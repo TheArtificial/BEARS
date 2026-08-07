@@ -2014,13 +2014,70 @@ async fn handle_bearwire_event(
             outcome.saw_done = true;
         }
         "run.failed" => {
-            tracing::warn!(
-                target: "bear_armature::lifecycle",
-                session_id,
-                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
-                reason = event.pointer("/data/reason").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
-                "BearWire run.failed received"
-            );
+            let run_id = event
+                .get("run_id")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let reason = event
+                .pointer("/data/reason")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let timed_out_permission = event
+                .pointer("/data/context/affected_obligations")
+                .or_else(|| event.pointer("/data/affected_obligations"))
+                .and_then(Value::as_array)
+                .and_then(|obligations| {
+                    obligations.iter().find(|obligation| {
+                        obligation
+                            .get("expected_responder_action")
+                            .and_then(Value::as_str)
+                            == Some("permission_decision")
+                            || obligation.get("kind").and_then(Value::as_str)
+                                == Some("permission_decision")
+                    })
+                });
+            if reason == "client_obligation_timeout" {
+                let obligation_id = timed_out_permission
+                    .and_then(|value| value.get("obligation_id"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let permission_id = timed_out_permission
+                    .and_then(|value| value.get("permission_id"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let tool_call_id = timed_out_permission
+                    .and_then(|value| value.get("tool_call_id"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let tool_name = timed_out_permission
+                    .and_then(|value| value.get("tool_name"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let claimed = timed_out_permission
+                    .and_then(|value| value.get("claimed"))
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                tracing::error!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    reason,
+                    obligation_id,
+                    permission_id,
+                    tool_call_id,
+                    tool_name,
+                    claimed,
+                    "run failed because a permission obligation timed out; check prior permission obligation projection and ACP dispatch events"
+                );
+            } else {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    reason,
+                    "BearWire run.failed received"
+                );
+            }
             let message = bearwire_run_failed_user_message(event);
             eprintln!(
                 "bear-armature: BearWire run failed session_id={} message={}",

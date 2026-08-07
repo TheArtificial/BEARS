@@ -9748,6 +9748,20 @@ pub(crate) async fn handle_permission_request_event(
     let obligation_id = Some(canonical.obligation_id.trim());
     let tool_call_id = canonical.tool_call.id.trim();
     let tool_name = canonical.tool_call.name.trim();
+    let run_id = event
+        .get("run_id")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    tracing::debug!(
+        target: "bear_armature::lifecycle",
+        session_id,
+        run_id,
+        obligation_id = canonical.obligation_id.trim(),
+        permission_id,
+        tool_call_id,
+        tool_name,
+        "permission obligation accepted for ACP projection"
+    );
     if tool_request_execution_target(event) == Some("den") {
         eprintln!(
             "bear-armature: BearWire invariant violation: Den-owned tool arrived as client.waiting session_id={} tool_call_id={} tool_name={} permission_id={}",
@@ -9770,7 +9784,7 @@ pub(crate) async fn handle_permission_request_event(
         .as_deref()
         .map(str::trim)
         .filter(|reason| !reason.is_empty())
-        .unwrap_or("BEARS requests permission.");
+        .unwrap_or("Den requests permission.");
     let target = canonical
         .permission
         .target
@@ -10060,23 +10074,62 @@ pub(crate) async fn handle_permission_request_event(
         false
     };
     let decision = if auto_allowed {
-        if bear_debug_verbose() {
-            eprintln!(
-                "bear-armature: permission_auto_allowed session_id={} tool_name={} target={}",
-                session_id, tool_name, target_label
-            );
-        }
+        tracing::debug!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            obligation_id = canonical.obligation_id.trim(),
+            permission_id,
+            tool_call_id,
+            tool_name,
+            "permission obligation auto-approved; ACP request not dispatched"
+        );
         PermissionDecision {
             approved: true,
             remember: false,
             scope: ApprovalScope::Workspace,
         }
     } else {
+        tracing::debug!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            obligation_id = canonical.obligation_id.trim(),
+            permission_id,
+            tool_call_id,
+            tool_name,
+            "dispatching ACP permission request"
+        );
         match send_permission_request(adapter_state, request, std::time::Duration::from_secs(120))
             .await
         {
-            Ok(decision) => decision,
+            Ok(decision) => {
+                tracing::debug!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    obligation_id = canonical.obligation_id.trim(),
+                    permission_id,
+                    tool_call_id,
+                    tool_name,
+                    approved = decision.approved,
+                    remember = decision.remember,
+                    "ACP permission request completed"
+                );
+                decision
+            }
             Err(err) => {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    obligation_id = canonical.obligation_id.trim(),
+                    permission_id,
+                    tool_call_id,
+                    tool_name,
+                    error = %format!("{err:#}"),
+                    "ACP permission request failed before a decision"
+                );
                 let message = format!("Permission request timed out or failed: {err:#}");
                 let _ = post_permission_result(
                     config,
