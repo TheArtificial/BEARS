@@ -4,16 +4,18 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::tools::constants::{
-    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET,
-    DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
-    DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
-    DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
-    DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
-    DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
+    DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION,
+    DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE,
+    DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
+    DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
+    DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL,
+    DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST, DEN_WORK_RUN_RESOLVE_STALLED,
+    DEN_WORK_SURFACE_CONFIRM,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
-    DocketCriterionStatus, DocketEffortHint, DocketExecutionLookup, DocketJobCreate,
+    DocketCriterionStatus, DocketEffortHint, DocketEntryCreate, DocketEntryKind,
+    DocketEntryListFilter, DocketEntryScope, DocketExecutionLookup, DocketJobCreate,
     DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobOverlapResolution, DocketJobProjection, DocketJobStatus, DocketJobStatusReport,
     DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketService, DocketTaskCreate,
@@ -133,6 +135,8 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_TASK_FIND
             | DEN_TASK_UPDATE
             | DEN_TASK_UPDATE_CURRENT_STATUS
+            | DEN_DOCKET_ENTRY_APPEND
+            | DEN_DOCKET_ENTRY_LIST
             | DEN_TASK_LIST_SYNC
             | DEN_TASK_LIST_CHECKOUT
             | DEN_WORK_DISPATCH
@@ -347,6 +351,61 @@ pub(crate) struct DocketCurrentTaskStatusArguments {
     pub(crate) result_refs: Option<Value>,
     #[serde(default)]
     pub(crate) result_summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DocketEntryAppendKind {
+    Finding,
+    Decision,
+    Obstacle,
+    FollowUp,
+    Milestone,
+    Question,
+}
+
+impl From<DocketEntryAppendKind> for DocketEntryKind {
+    fn from(kind: DocketEntryAppendKind) -> Self {
+        match kind {
+            DocketEntryAppendKind::Finding => Self::Finding,
+            DocketEntryAppendKind::Decision => Self::Decision,
+            DocketEntryAppendKind::Obstacle => Self::Obstacle,
+            DocketEntryAppendKind::FollowUp => Self::FollowUp,
+            DocketEntryAppendKind::Milestone => Self::Milestone,
+            DocketEntryAppendKind::Question => Self::Question,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketEntryAppendArguments {
+    #[serde(default)]
+    pub(crate) job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) task_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) run_id: Option<Uuid>,
+    pub(crate) scope: DocketEntryScope,
+    pub(crate) kind: DocketEntryAppendKind,
+    pub(crate) summary: String,
+    #[serde(default)]
+    pub(crate) body: Option<String>,
+    #[serde(default)]
+    pub(crate) evidence_refs: Vec<Value>,
+    #[serde(default)]
+    pub(crate) related_task_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketEntryListArguments {
+    #[serde(default)]
+    pub(crate) job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) task_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) limit: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1957,6 +2016,53 @@ pub(crate) async fn update_current_task_status(
     }))
 }
 
+pub(crate) async fn append_docket_entry(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketEntryAppendArguments = serde_json::from_value(arguments)?;
+    let entry = PgDocketService::from_pool(pool)
+        .append_entry(DocketEntryCreate {
+            bear_id: context.bear_id,
+            job_id: args.job_id,
+            task_id: args.task_id,
+            run_id: args.run_id,
+            scope: args.scope,
+            kind: args.kind.into(),
+            summary: args.summary,
+            body: args.body,
+            evidence_refs: args.evidence_refs,
+            related_task_ids: args.related_task_ids,
+            tags: args.tags,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+        })
+        .await?;
+    Ok(json!({ "domain": "docket", "entry": entry }))
+}
+
+pub(crate) async fn list_docket_entries(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketEntryListArguments = serde_json::from_value(arguments)?;
+    let entries = PgDocketService::from_pool(pool)
+        .list_entries(
+            context.bear_id,
+            DocketEntryListFilter {
+                job_id: args.job_id,
+                task_id: args.task_id,
+                limit: args.limit,
+            },
+        )
+        .await?;
+    Ok(json!({ "domain": "docket", "entries": entries }))
+}
+
 pub(crate) async fn sync_task_list(pool: &PgPool, arguments: Value) -> Result<Value, CustomError> {
     let args: TaskListSyncArguments = serde_json::from_value(arguments)?;
     let outcome = PgDocketService::from_pool(pool)
@@ -2089,6 +2195,35 @@ mod test {
             criteria_complete: true,
             next_action: next_action.to_string(),
         }
+    }
+
+    #[test]
+    fn docket_entry_arguments_reject_outcome_and_accept_evidence() {
+        let outcome = serde_json::from_value::<DocketEntryAppendArguments>(json!({
+            "scope": "task_journal",
+            "kind": "outcome",
+            "summary": "settled"
+        }));
+        assert!(outcome.is_err());
+
+        let valid = serde_json::from_value::<DocketEntryAppendArguments>(json!({
+            "scope": "job_notebook",
+            "kind": "finding",
+            "summary": "Inventory complete",
+            "evidence_refs": [{"kind": "source", "ref": "inventory"}]
+        }))
+        .expect("valid journal arguments");
+        assert_eq!(valid.kind, DocketEntryAppendKind::Finding);
+        assert_eq!(valid.evidence_refs.len(), 1);
+    }
+
+    #[test]
+    fn docket_entry_list_defaults_to_service_limit() {
+        let args = serde_json::from_value::<DocketEntryListArguments>(json!({}))
+            .expect("empty list filter");
+        assert_eq!(args.limit, 0);
+        assert!(args.job_id.is_none());
+        assert!(args.task_id.is_none());
     }
 
     #[test]

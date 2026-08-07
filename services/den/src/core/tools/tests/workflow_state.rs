@@ -366,14 +366,18 @@ fn attached_work_dispatch_requires_current_explicit_workspace() {
     }))
     .unwrap();
 
-    let target = super::super::attached_dispatch_target(&args, &context).unwrap();
+    let target = args.target.unwrap();
+    let execution_target =
+        super::super::attached_dispatch_target(target, &args, &context).unwrap();
     assert_eq!(
-        target,
+        execution_target,
         den_docket::work_runs::WorkExecutionTarget::AttachedArmature {
             client_session_id: "client-test".to_string(),
         }
     );
-    assert!(super::super::attached_dispatch_warning(args.target, args.dirty_worktree).is_none());
+    assert!(
+        super::super::attached_dispatch_warning(target, args.dirty_worktree).is_none()
+    );
 
     let args: super::super::WorkDispatchArguments = serde_json::from_value(json!({
         "job_id": uuid::Uuid::new_v4(),
@@ -381,10 +385,16 @@ fn attached_work_dispatch_requires_current_explicit_workspace() {
         "target": "attached_armature"
     }))
     .unwrap();
-    assert!(super::super::attached_dispatch_target(&args, &context)
+    let mut context_without_workspace = context.clone();
+    context_without_workspace.workspace_roots.clear();
+    assert!(super::super::attached_dispatch_target(
+        args.target.unwrap(),
+        &args,
+        &context_without_workspace,
+    )
         .unwrap_err()
         .to_string()
-        .contains("not attached"));
+        .contains("exactly one attached workspace"));
 }
 
 #[test]

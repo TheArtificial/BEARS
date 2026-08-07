@@ -9,10 +9,10 @@ use crate::{
 use den_core::tools::{
     arguments::PrepareRustDependenciesArguments,
     constants::{
-        DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET,
-        DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
-        DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
-        DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
+        DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION,
+        DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE,
+        DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
+        DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
         DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
         DEN_WORK_PREPARE_RUST_DEPENDENCIES, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND,
         DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST, DEN_WORK_RUN_RESOLVE_STALLED,
@@ -273,6 +273,10 @@ async fn invoke_workflow_tool(
         DEN_TASK_UPDATE_CURRENT_STATUS => {
             workflow::update_current_task_status(pool, context, role, arguments).await?
         }
+        DEN_DOCKET_ENTRY_APPEND => {
+            workflow::append_docket_entry(pool, context, role, arguments).await?
+        }
+        DEN_DOCKET_ENTRY_LIST => workflow::list_docket_entries(pool, context, arguments).await?,
         DEN_TASK_LIST_SYNC => workflow::sync_task_list(pool, arguments).await?,
         DEN_TASK_LIST_CHECKOUT => {
             workflow::checkout_task_list(pool, context, role, arguments).await?

@@ -20,15 +20,16 @@ use crate::tools::{
         DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CAPABILITY_DESCRIBE,
         DEN_CAPABILITY_DESCRIBE_PROVIDER, DEN_CAPABILITY_SEARCH, DEN_CAPABILITY_SEARCH_PROVIDER,
         DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
-        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER,
-        DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE,
-        DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER,
-        DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER, DEN_ENTITY_WRITE_ACCESS_RULE,
-        DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER, DEN_ENTITY_WRITE_ANCHOR,
-        DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
-        DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
-        DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_FIND, DEN_JOB_FIND_PROVIDER, DEN_JOB_GET,
-        DEN_JOB_GET_PROVIDER, DEN_JOB_LIST, DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE,
+        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_APPEND_PROVIDER,
+        DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_LIST_PROVIDER, DEN_ENTITY_BROWSE,
+        DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER,
+        DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE,
+        DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER,
+        DEN_ENTITY_WRITE_ACCESS_RULE, DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER,
+        DEN_ENTITY_WRITE_ANCHOR, DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_JOB_CREATE,
+        DEN_JOB_CREATE_PROVIDER, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER,
+        DEN_JOB_EXECUTE, DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_FIND, DEN_JOB_FIND_PROVIDER,
+        DEN_JOB_GET, DEN_JOB_GET_PROVIDER, DEN_JOB_LIST, DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE,
         DEN_JOB_UPDATE_PROVIDER, DEN_MEMORY_APPLY_CORE_UPDATE,
         DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER, DEN_MEMORY_LIST_PROPOSALS,
@@ -153,6 +154,8 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_TASK_UPDATE_CURRENT_STATUS => {
             return DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER.to_string()
         }
+        DEN_DOCKET_ENTRY_APPEND => return DEN_DOCKET_ENTRY_APPEND_PROVIDER.to_string(),
+        DEN_DOCKET_ENTRY_LIST => return DEN_DOCKET_ENTRY_LIST_PROVIDER.to_string(),
         DEN_TASK_LIST_SYNC => return DEN_TASK_LIST_SYNC_PROVIDER.to_string(),
         DEN_TASK_LIST_CHECKOUT => return DEN_TASK_LIST_CHECKOUT_PROVIDER.to_string(),
         DEN_WORK_DISPATCH => return DEN_WORK_DISPATCH_PROVIDER.to_string(),
@@ -706,6 +709,24 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","done","blocked","cancelled"]},"result_refs":{"type":"object","description":"Optional. Omit for report-only completion. When reporting a verified output, provide primary_output {kind: git_commit|den_artifact, artifact_ref, immutable_identity} and validation {primary_output_ref, immutable_identity, command, result: passed, execution_provenance}."},"result_summary":{"type":"string","description":"Required for terminal status done, blocked, or cancelled. Den records it atomically as the durable task outcome; describe what actually occurred."}},"required":["task_id","status"],"additionalProperties":false}),
         ),
         descriptor(
+            DEN_DOCKET_ENTRY_APPEND,
+            "Append Docket entry",
+            "Append a durable finding, decision, obstacle, follow-up, milestone, or question to a task journal or job notebook. Outcomes are settlement-owned and cannot be appended manually. Questions may be recorded only by Pair.",
+            "bear.docket",
+            &["docket.task.write"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"scope":{"enum":["task_journal","job_notebook"]},"kind":{"enum":["finding","decision","obstacle","follow_up","milestone","question"]},"summary":{"type":"string"},"body":{"type":"string"},"evidence_refs":{"type":"array","items":{}},"related_task_ids":{"type":"array","items":{"type":"string","format":"uuid"}},"tags":{"type":"array","items":{"type":"string"}}},"required":["scope","kind","summary"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_DOCKET_ENTRY_LIST,
+            "List Docket entries",
+            "List durable task-journal or job-notebook entries for this Bear, filtered by job or task. Includes settlement outcomes and explicitly recorded findings, decisions, obstacles, follow-ups, milestones, and questions.",
+            "bear.docket",
+            &["docket.task.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
+        ),
+        descriptor(
             DEN_TASK_LIST_CHECKOUT,
             "Checkout task list",
             "Create a task-list projection from an explicit Docket job/root task subtree or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Use this when you want to work Docket tasks through the current conversation/task-list focus. Checkout records focus/projection state only; it does not execute tasks or change task definitions by itself.",
@@ -963,6 +984,8 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_TASK_LIST,
         DEN_TASK_UPDATE,
         DEN_TASK_UPDATE_CURRENT_STATUS,
+        DEN_DOCKET_ENTRY_APPEND,
+        DEN_DOCKET_ENTRY_LIST,
         DEN_TASK_LIST_SYNC,
         DEN_TASK_LIST_CHECKOUT,
         DEN_WORK_DISPATCH,
@@ -1061,7 +1084,7 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
             side_effect: ToolSideEffectKind::ActiveWorkState,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
-        DEN_JOB_LIST | DEN_JOB_GET => Some(ToolDescriptorGuidance {
+        DEN_JOB_LIST | DEN_JOB_GET | DEN_DOCKET_ENTRY_LIST => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
             side_effect: ToolSideEffectKind::ReadOnly,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
@@ -1073,6 +1096,7 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
         | DEN_TASK_CREATE
         | DEN_TASK_UPDATE
         | DEN_TASK_UPDATE_CURRENT_STATUS
+        | DEN_DOCKET_ENTRY_APPEND
         | DEN_TASK_LIST_SYNC
         | DEN_TASK_LIST_CHECKOUT => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
@@ -1534,6 +1558,24 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             target_arg_keys: &["status", "task_id", "result_summary"],
             sensitive_arg_keys: &["result_refs", "result_summary"],
             approval_summary: "Record this task's run-scoped status and result.",
+        },
+        DEN_DOCKET_ENTRY_APPEND => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Recording Docket entry",
+            complete_verb: "Recorded Docket entry",
+            target_arg_keys: &["kind", "summary", "task_id", "job_id"],
+            sensitive_arg_keys: &["body", "evidence_refs"],
+            approval_summary: "Append a durable Docket journal or notebook entry.",
+        },
+        DEN_DOCKET_ENTRY_LIST => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Listing Docket entries",
+            complete_verb: "Listed Docket entries",
+            target_arg_keys: &["task_id", "job_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read durable Docket journal and notebook entries.",
         },
         DEN_TASK_UPDATE => ToolDisplayDescriptor {
             label,

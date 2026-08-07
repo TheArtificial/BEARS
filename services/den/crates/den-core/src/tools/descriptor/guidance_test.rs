@@ -2,6 +2,7 @@ use crate::{
     client_tools::{provider_tool_descriptor, ClientToolName},
     tools::{
         constants::{
+            DEN_DOCKET_ENTRY_APPEND_PROVIDER, DEN_DOCKET_ENTRY_LIST_PROVIDER,
             DEN_JOB_CREATE_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
             DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER,
             DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
@@ -129,6 +130,39 @@ fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
                 .as_array()
                 .is_some_and(|items| items.iter().any(|item| item == "job_id"))
         }));
+}
+
+#[test]
+fn docket_entry_descriptors_keep_outcomes_settlement_owned() {
+    let descriptors = builtin_den_tool_descriptors();
+    let append = descriptors
+        .iter()
+        .find(|descriptor| descriptor.provider_name == DEN_DOCKET_ENTRY_APPEND_PROVIDER)
+        .expect("append_docket_entry descriptor");
+    assert!(append.description.contains("Outcomes are settlement-owned"));
+    assert_eq!(
+        append.input_schema["properties"]["kind"]["enum"],
+        serde_json::json!([
+            "finding",
+            "decision",
+            "obstacle",
+            "follow_up",
+            "milestone",
+            "question"
+        ])
+    );
+    assert!(!append.input_schema["properties"]["kind"]["enum"]
+        .as_array()
+        .expect("entry kind enum")
+        .iter()
+        .any(|kind| kind == "outcome"));
+
+    let list = descriptors
+        .iter()
+        .find(|descriptor| descriptor.provider_name == DEN_DOCKET_ENTRY_LIST_PROVIDER)
+        .expect("list_docket_entries descriptor");
+    assert!(list.description.contains("settlement outcomes"));
+    assert_eq!(list.input_schema["properties"]["limit"]["maximum"], 500);
 }
 
 #[test]

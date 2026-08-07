@@ -62,8 +62,9 @@ pub use model::{
     DocketTaskUpdate, DocketValidationError, MutationPolicy, ResultRollupPolicy, RoutingStrategy,
     TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
     TaskListHandoffRequest, TaskListItem, TaskListItemStatus, TaskListLocalProjection,
-    TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
-    TaskListUpdate, TaskListUpdateItem, TaskListValidationError, TaskListVisibility,
+    TaskListProjection, TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest,
+    TaskListSyncState, TaskListUpdate, TaskListUpdateItem, TaskListValidationError,
+    TaskListVisibility,
 };
 pub use recovery::{
     apply_supervisor_disposition, claim_turn_attempt, decide_escalation, disposition_for,
