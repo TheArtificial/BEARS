@@ -1727,6 +1727,14 @@ async fn run() -> Result<()> {
             }
         };
 
+        let request_method = request.method.clone();
+        let request_id = request.id.clone();
+        let request_session_id = request
+            .params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .filter(|session_id| !session_id.trim().is_empty())
+            .map(str::to_owned);
         if let Err(err) = handle_request(
             &http,
             &mut runtime,
@@ -1736,6 +1744,14 @@ async fn run() -> Result<()> {
         )
         .await
         {
+            tracing::error!(
+                target: "bear_armature::lifecycle",
+                request_method,
+                request_id = ?request_id,
+                session_id = ?request_session_id,
+                error = %format!("{err:#}"),
+                "ACP request handling failed before a response could be confirmed"
+            );
             eprintln!("bear-armature: request handling failed: {err:#}");
         }
     }
@@ -3049,7 +3065,7 @@ async fn handle_request(
                                 "session/prompt failed"
                             );
                             if let Some(response_id) = response.claim() {
-                                let _ = write_response(
+                                if let Err(write_err) = write_response(
                                     response_id,
                                     Err(json_rpc_error(
                                         -32003,
@@ -3057,7 +3073,23 @@ async fn handle_request(
                                         None,
                                     )),
                                 )
-                                .await;
+                                .await
+                                {
+                                    tracing::error!(
+                                        session_id,
+                                        turn_token = %turn_token,
+                                        conversation_id = ?conversation_id_for_turn,
+                                        error = %format!("{write_err:#}"),
+                                        "failed to write terminal session/prompt error response"
+                                    );
+                                } else {
+                                    tracing::debug!(
+                                        session_id,
+                                        turn_token = %turn_token,
+                                        conversation_id = ?conversation_id_for_turn,
+                                        "terminal session/prompt error response written"
+                                    );
+                                }
                             }
                         }
                     }
@@ -3096,7 +3128,7 @@ async fn handle_request(
                             id,
                             Err(json_rpc_error(
                                 -32003,
-                                "BEARS session close failed",
+                                "Den session close failed",
                                 Some(json!({ "message": format!("{err:#}") })),
                             )),
                         )
