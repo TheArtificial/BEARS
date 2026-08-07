@@ -175,6 +175,47 @@
 </section>
 {% endif %}
 
+<section aria-labelledby="job-notebook-heading">
+    <h2 id="job-notebook-heading">Job notebook</h2>
+    <p><small>Durable decisions and context promoted from task journals. Dispatched workers receive a bounded selection, not the full notebook.</small></p>
+    {% if notebook_entries %}
+    <ol>
+        {% for entry in notebook_entries %}
+        <li>
+            <strong>{{ entry.kind | replace("_", " ") }}</strong>: <span>{{ entry.summary }}</span>
+            {% if entry.task_route_id %} · <a href="?task={{ entry.task_route_id }}#selected-task">task <code class="entity-reference-id">{{ entry.task_display_id }}</code></a>{% endif %}
+            · by {{ entry.by_role }} · <time datetime="{{ entry.created_at }}">{{ entry.created_at }}</time>
+            {% if entry.body %}<details><summary>Details</summary><p>{{ entry.body }}</p></details>{% endif %}
+            {% if entry.tags %}<div><small>Tags: {{ entry.tags | join(", ") }}</small></div>{% endif %}
+            {% if entry.source_entry_id %}<div><small>Promoted by reference from its task journal.</small></div>{% endif %}
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p>No notebook entries yet. Promote a durable decision or useful task-journal entry to make it visible here and available to future workers.</p>
+    {% endif %}
+</section>
+
+<section aria-labelledby="settlement-history-heading">
+    <h2 id="settlement-history-heading">Task settlement history</h2>
+    <p><small>Append-only outcomes. Reopened and resettled tasks retain earlier entries.</small></p>
+    {% if outcome_entries %}
+    <ol>
+        {% for entry in outcome_entries %}
+        <li>
+            <strong>{% if entry.disposition %}{{ entry.disposition | replace("_", " ") }}{% else %}outcome{% endif %}</strong>: <span>{{ entry.summary }}</span>
+            {% if entry.task_route_id %} · <a href="?task={{ entry.task_route_id }}#selected-task">task <code class="entity-reference-id">{{ entry.task_display_id }}</code></a>{% endif %}
+            {% if entry.run_route_id %} · <a href="/bear/{{ bear_slug }}/jobs/runs/{{ entry.run_route_id }}">run <code class="entity-reference-id">{{ entry.run_display_id }}</code></a>{% endif %}
+            · by {{ entry.by_role }} · <time datetime="{{ entry.created_at }}">{{ entry.created_at }}</time>
+            {% if entry.evidence_refs %}<details><summary>Settlement evidence</summary><pre>{{ entry.evidence_refs | tojson(indent=2) }}</pre></details>{% endif %}
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p>No task settlements recorded yet. Terminal task outcomes will appear here.</p>
+    {% endif %}
+</section>
+
 <section>
     <h2>Work runs</h2>
     {% if runs %}

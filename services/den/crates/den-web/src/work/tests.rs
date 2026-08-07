@@ -16,6 +16,22 @@ use tower::ServiceExt;
 use tower_sessions_sqlx_store::PostgresStore;
 
 #[test]
+fn job_page_exposes_accessible_journal_history_and_empty_states() {
+    let template = include_str!("../templates/work/job.html");
+
+    for expected in [
+        "aria-labelledby=\"job-notebook-heading\"",
+        "No notebook entries yet.",
+        "aria-labelledby=\"settlement-history-heading\"",
+        "No task settlements recorded yet.",
+        "<time datetime=\"{{ entry.created_at }}\">",
+        "<summary>Settlement evidence</summary>",
+    ] {
+        assert!(template.contains(expected), "missing `{expected}`");
+    }
+}
+
+#[test]
 fn cargo_offline_cache_miss_is_the_primary_outcome() {
     let failure = serde_json::json!({
         "code": "cargo_offline_cache_miss",
@@ -26,6 +42,7 @@ fn cargo_offline_cache_miss_is_the_primary_outcome() {
         bear_id: Uuid::nil(),
         job_id: Uuid::nil(),
         job_run_id: Uuid::nil(),
+        executing_task_id: None,
         attempt: 1,
         state: "succeeded".into(),
         runner_id: None,

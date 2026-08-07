@@ -21,6 +21,14 @@ const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../prompts/fragments/stances/job_dispatch.md"),
     ),
     (
+        "fragments/stances/docket_journals.md",
+        include_str!("../../../../../prompts/fragments/stances/docket_journals.md"),
+    ),
+    (
+        "fragments/runtime/work_checkout.md",
+        include_str!("../../../../../prompts/fragments/runtime/work_checkout.md"),
+    ),
+    (
         "fragments/runtime/docket_execution_active.md",
         include_str!("../../../../../prompts/fragments/runtime/docket_execution_active.md"),
     ),

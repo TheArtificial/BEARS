@@ -171,8 +171,8 @@ use crate::{
 use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow};
 use den_docket::{
     DocketCommitPolicy, DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint,
-    DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter, DocketJobStatus,
-    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketEntryListFilter, DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter,
+    DocketJobStatus, DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
     DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate,
     DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, TaskListVisibility,
 };
@@ -1424,6 +1424,50 @@ async fn job_detail(
         .get_job(bear_id, job_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let entries = service
+        .list_entries(
+            bear_id,
+            DocketEntryListFilter {
+                job_id: Some(job_id),
+                task_id: None,
+                limit: 500,
+            },
+        )
+        .await?;
+    let notebook_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.scope == "job_notebook")
+        .map(|entry| {
+            serde_json::json!({
+                "kind": entry.kind,
+                "summary": entry.summary,
+                "body": entry.body,
+                "task_route_id": entry.task_id.map(route_id),
+                "task_display_id": entry.task_id.map(|id| uuid_hex_prefix(id, DISPLAY_ID_HEX_LEN)),
+                "tags": entry.tags,
+                "by_role": entry.by_role,
+                "source_entry_id": entry.source_entry_id,
+                "created_at": entry.created_at,
+            })
+        })
+        .collect();
+    let outcome_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.kind == "outcome")
+        .map(|entry| {
+            serde_json::json!({
+                "summary": entry.summary,
+                "disposition": entry.disposition,
+                "task_route_id": entry.task_id.map(route_id),
+                "task_display_id": entry.task_id.map(|id| uuid_hex_prefix(id, DISPLAY_ID_HEX_LEN)),
+                "run_route_id": entry.run_id.map(route_id),
+                "run_display_id": entry.run_id.map(|id| uuid_hex_prefix(id, DISPLAY_ID_HEX_LEN)),
+                "evidence_refs": entry.evidence_refs,
+                "by_role": entry.by_role,
+                "created_at": entry.created_at,
+            })
+        })
+        .collect();
     let runs = work_runs::list_work_runs(
         state.sqlx_pool(),
         WorkRunListFilter {
@@ -1572,6 +1616,8 @@ async fn job_detail(
             tasks => tasks,
             selected_task => selected_task,
             selected_diagnostics => selected_diagnostics,
+            notebook_entries => notebook_entries,
+            outcome_entries => outcome_entries,
             runs => run_views,
             catalog => catalog,
             tasks_complete => status_report.tasks_complete,

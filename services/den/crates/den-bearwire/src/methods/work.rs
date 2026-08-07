@@ -16,7 +16,10 @@ use uuid::Uuid;
 
 use den_docket::work_runs;
 use den_http::errors::CustomError;
-use den_service::DenState;
+use den_service::{
+    bears::{render_turn_fragment, repository_prompt_fragment_registry},
+    DenState,
+};
 
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
@@ -65,13 +68,18 @@ pub(crate) async fn work_checkout_result(
         "work.checkout bound armature session to work run"
     );
 
+    let prompt_registry = repository_prompt_fragment_registry()?;
+    let prompt_fragment = prompt_registry.require("runtime_work_checkout")?;
+    let prompt_context = json!({ "work": checkout.prompt_context });
+    let prompt = render_turn_fragment(prompt_fragment, &prompt_context)?;
+
     Ok(json!({
         "ok": true,
         "work_run_id": checkout.run.id,
         "job_id": checkout.run.job_id,
         "task_title": checkout.task_title,
         "attempt": checkout.run.attempt,
-        "prompt": checkout.prompt,
+        "prompt": prompt,
         "permission_mode": "workspace_write",
         // Deadline is enforced by the sandbox provider + armature env; no
         // per-run override is stored yet.

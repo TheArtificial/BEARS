@@ -711,11 +711,12 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
         .await
         .unwrap();
-    assert!(checkout.prompt.contains("Alpha work task"));
-    assert!(!checkout.prompt.contains("Beta work task"));
-    assert!(checkout
-        .prompt
-        .contains("Alpha work task is verifiably complete"));
+    assert_eq!(checkout.prompt_context.tasks.len(), 1);
+    assert_eq!(checkout.prompt_context.tasks[0].title, "Alpha work task");
+    assert!(checkout.prompt_context.tasks[0]
+        .completion_criteria
+        .iter()
+        .any(|criterion| criterion.contains("Alpha work task is verifiably complete")));
     let (execution_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM docket_execution_sessions
          WHERE bear_id = $1 AND owner_profile = 'work' AND session_id = $2 AND state = 'active'",
@@ -1101,22 +1102,12 @@ async fn publish_wiring_image_branch_and_prompt() {
         .await
         .unwrap());
 
-    assert!(checkout.prompt.contains(&format!("job_id: {}", run.job_id)));
-    assert!(checkout
-        .prompt
-        .contains(&format!("run_id: {}", run.job_run_id)));
-    assert!(checkout.prompt.contains("Task ("));
-    assert!(checkout.prompt.contains("status `done`"));
-    assert!(checkout.prompt.contains("non-empty result_summary"));
-    assert!(
-        checkout.prompt.contains("Commit the completed task"),
-        "{}",
-        checkout.prompt
-    );
-    assert!(
-        checkout.prompt.contains("Do not push"),
-        "{}",
-        checkout.prompt
+    assert_eq!(checkout.prompt_context.job_id, run.job_id);
+    assert_eq!(checkout.prompt_context.run_id, run.job_run_id);
+    assert_eq!(checkout.prompt_context.tasks.len(), 1);
+    assert_eq!(
+        checkout.prompt_context.commit_policy.as_deref(),
+        Some("per_task")
     );
 
     // An explicit branch set at creation is never overwritten.
