@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
+    DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryScope,
     DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
     DocketJobOverlapResolution, DocketJobStatus, DocketService, DocketTaskCreate,
     DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
@@ -359,6 +360,40 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     let first_task_id = created.tasks[0].id;
     let second_task_id = created.tasks[1].id;
 
+    let finding = service
+        .append_entry(DocketEntryCreate {
+            bear_id,
+            job_id: Some(created.job.id),
+            task_id: Some(first_task_id),
+            run_id: Some(run_id),
+            scope: DocketEntryScope::TaskJournal,
+            kind: DocketEntryKind::Finding,
+            summary: "Inventory contains two runnable tasks.".to_string(),
+            body: None,
+            evidence_refs: vec![],
+            related_task_ids: vec![second_task_id],
+            tags: vec!["inventory".to_string()],
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect("append task finding");
+    assert_eq!(finding.kind, "finding");
+    let journal = service
+        .list_entries(
+            bear_id,
+            DocketEntryListFilter {
+                job_id: Some(created.job.id),
+                task_id: Some(first_task_id),
+                limit: 10,
+            },
+        )
+        .await
+        .expect("list task journal");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].id, finding.id);
+
     let first = service
         .execute_job(DocketJobExecuteRequest {
             bear_id,
@@ -450,6 +485,28 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         })
         .await;
     assert!(report_only_completion.is_ok());
+
+    let (outcome_summary, outcome_disposition, evidence_count): (String, String, i64) =
+        sqlx::query_as(
+            r"
+            SELECT summary, disposition, jsonb_array_length(evidence_refs)
+            FROM bear_docket_entries
+            WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'
+            ORDER BY created_at DESC
+            LIMIT 1
+            ",
+        )
+        .bind(first_task_id)
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("query terminal outcome journal entry");
+    assert_eq!(
+        outcome_summary,
+        "Inventory findings recorded in the task result."
+    );
+    assert_eq!(outcome_disposition, "completed");
+    assert_eq!(evidence_count, 0);
 
     let missing_summary = service
         .update_task(DocketTaskUpdate {

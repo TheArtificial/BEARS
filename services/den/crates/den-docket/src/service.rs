@@ -12,12 +12,13 @@ use den_core::{BearProfile, DenError};
 
 use super::db;
 use super::model::{
-    task_list_projection_from_docket_job, DocketCriterionStateUpdate, DocketExecutionLookup,
-    DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest,
-    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate,
-    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
-    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
+    task_list_projection_from_docket_job, DocketCriterionStateUpdate, DocketEntryCreate,
+    DocketEntryListFilter, DocketEntryRow, DocketExecutionLookup, DocketExecutionSessionRow,
+    DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate, DocketTaskListFilter,
+    DocketTaskProjection, DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection,
+    TaskListSyncOutcome, TaskListSyncRequest,
 };
 
 /// Orchestration API for task and job state. The only public entry point to the
@@ -77,6 +78,14 @@ pub trait DocketService: Send + Sync {
 
     async fn update_task(&self, update: DocketTaskUpdate)
         -> Result<DocketTaskProjection, DenError>;
+
+    async fn append_entry(&self, create: DocketEntryCreate) -> Result<DocketEntryRow, DenError>;
+
+    async fn list_entries(
+        &self,
+        bear_id: Uuid,
+        filter: DocketEntryListFilter,
+    ) -> Result<Vec<DocketEntryRow>, DenError>;
 
     async fn checkout_task_list(
         &self,
@@ -188,6 +197,18 @@ impl DocketService for PgDocketService {
         update: DocketTaskUpdate,
     ) -> Result<DocketTaskProjection, DenError> {
         db::update_task(&self.pool, update).await
+    }
+
+    async fn append_entry(&self, create: DocketEntryCreate) -> Result<DocketEntryRow, DenError> {
+        db::append_entry(&self.pool, create).await
+    }
+
+    async fn list_entries(
+        &self,
+        bear_id: Uuid,
+        filter: DocketEntryListFilter,
+    ) -> Result<Vec<DocketEntryRow>, DenError> {
+        db::list_entries(&self.pool, bear_id, filter).await
     }
 
     async fn checkout_task_list(

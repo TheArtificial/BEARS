@@ -1274,6 +1274,93 @@ pub struct DocketTaskDefinitionPatch {
     pub result_rollup_policy: Option<Option<ResultRollupPolicy>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketEntryScope {
+    TaskJournal,
+    JobNotebook,
+}
+
+impl DocketEntryScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TaskJournal => "task_journal",
+            Self::JobNotebook => "job_notebook",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketEntryKind {
+    Outcome,
+    Finding,
+    Decision,
+    Obstacle,
+    FollowUp,
+    Milestone,
+    Question,
+}
+
+impl DocketEntryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Outcome => "outcome",
+            Self::Finding => "finding",
+            Self::Decision => "decision",
+            Self::Obstacle => "obstacle",
+            Self::FollowUp => "follow_up",
+            Self::Milestone => "milestone",
+            Self::Question => "question",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketEntryCreate {
+    pub bear_id: Uuid,
+    pub job_id: Option<Uuid>,
+    pub task_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
+    pub scope: DocketEntryScope,
+    pub kind: DocketEntryKind,
+    pub summary: String,
+    pub body: Option<String>,
+    pub evidence_refs: Vec<serde_json::Value>,
+    pub related_task_ids: Vec<Uuid>,
+    pub tags: Vec<String>,
+    pub actor_role: BearProfile,
+    pub actor_user_id: Option<i32>,
+    pub actor_agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DocketEntryListFilter {
+    pub job_id: Option<Uuid>,
+    pub task_id: Option<Uuid>,
+    pub limit: i64,
+}
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct DocketEntryRow {
+    pub id: Uuid,
+    pub job_id: Option<Uuid>,
+    pub task_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
+    pub scope: String,
+    pub kind: String,
+    pub summary: String,
+    pub body: Option<String>,
+    pub disposition: Option<String>,
+    pub evidence_refs: serde_json::Value,
+    pub related_task_ids: serde_json::Value,
+    pub tags: serde_json::Value,
+    pub by_role: String,
+    pub by_agent_id: Option<String>,
+    pub by_user_id: Option<i32>,
+    pub created_at: OffsetDateTime,
+}
+
 #[derive(Debug, Clone)]
 pub struct DocketTaskUpdate {
     pub bear_id: Uuid,

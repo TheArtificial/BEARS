@@ -16,14 +16,16 @@ use super::model::{
     derived_docket_job_status, docket_job_surface_assignments, docket_parent_task_ref,
     docket_task_status_from_task_list_item_status, normalize_completion_criteria,
     task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
-    DocketCommitPolicy, DocketCriterionStateRow, DocketCriterionStateUpdate, DocketExecutionLookup,
-    DocketExecutionSessionRow, DocketExecutionSessionUpsert, DocketJobCreate,
-    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
-    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
-    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
-    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketCommitPolicy, DocketCriterionStateRow, DocketCriterionStateUpdate, DocketEntryCreate,
+    DocketEntryKind, DocketEntryListFilter, DocketEntryRow, DocketEntryScope,
+    DocketExecutionLookup, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
+    DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
+    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
+    DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput,
+    DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection, DocketTaskRow,
+    DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, TaskListItemStatus,
+    TaskListProjection, TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest,
+    TaskListSyncState,
 };
 
 // `work_surface_id` remains a compatibility projection for callers that only
@@ -1673,6 +1675,165 @@ pub(super) async fn list_tasks(
         .collect())
 }
 
+pub(super) async fn append_entry(
+    pool: &PgPool,
+    create: DocketEntryCreate,
+) -> Result<DocketEntryRow, DenError> {
+    let summary = create.summary.trim();
+    if summary.is_empty() {
+        return Err(DenError::ValidationError(
+            "Docket entry summary must not be empty".to_string(),
+        ));
+    }
+    if create.kind == DocketEntryKind::Outcome {
+        return Err(DenError::ValidationError(
+            "terminal outcomes are created by task settlement".to_string(),
+        ));
+    }
+    if create.kind == DocketEntryKind::Question && create.actor_role != BearProfile::Pair {
+        return Err(DenError::ValidationError(
+            "Docket questions may only be recorded by pair".to_string(),
+        ));
+    }
+
+    let mut tx = pool.begin().await?;
+    let task_job_id = if let Some(task_id) = create.task_id {
+        Some(
+            sqlx::query_scalar::<_, Option<Uuid>>(
+                "SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2",
+            )
+            .bind(task_id)
+            .bind(create.bear_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| DenError::NotFound(format!("Docket task `{task_id}` not found")))?
+            .ok_or_else(|| {
+                DenError::ValidationError(
+                    "Docket journal entries require a job-backed task".to_string(),
+                )
+            })?,
+        )
+    } else {
+        None
+    };
+    let job_id = create.job_id.or(task_job_id).ok_or_else(|| {
+        DenError::ValidationError("Docket entry requires job_id or task_id".to_string())
+    })?;
+    if task_job_id.is_some_and(|task_job_id| task_job_id != job_id) {
+        return Err(DenError::ValidationError(
+            "Docket entry task does not belong to job".to_string(),
+        ));
+    }
+    let job_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM bear_jobs WHERE id = $1 AND bear_id = $2)",
+    )
+    .bind(job_id)
+    .bind(create.bear_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !job_exists {
+        return Err(DenError::NotFound(format!(
+            "Docket job `{job_id}` not found"
+        )));
+    }
+    match create.scope {
+        DocketEntryScope::TaskJournal if create.task_id.is_none() => {
+            return Err(DenError::ValidationError(
+                "task journal entry requires task_id".to_string(),
+            ));
+        }
+        DocketEntryScope::JobNotebook if create.job_id.is_none() => {
+            return Err(DenError::ValidationError(
+                "job notebook entry requires job_id".to_string(),
+            ));
+        }
+        _ => {}
+    }
+    if let Some(run_id) = create.run_id {
+        let run_matches = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM bear_job_runs WHERE id = $1 AND job_id = $2)",
+        )
+        .bind(run_id)
+        .bind(job_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !run_matches {
+            return Err(DenError::ValidationError(
+                "Docket entry run does not belong to job".to_string(),
+            ));
+        }
+    }
+
+    let row = sqlx::query_as::<_, DocketEntryRow>(
+        r"
+        INSERT INTO bear_docket_entries (
+            job_id, task_id, run_id, scope, kind, summary, body, evidence_refs,
+            related_task_ids, tags, by_role, by_agent_id, by_user_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13)
+        RETURNING id, job_id, task_id, run_id, scope, kind, summary, body,
+                  disposition, evidence_refs, related_task_ids, tags, by_role,
+                  by_agent_id, by_user_id, created_at
+        ",
+    )
+    .bind(job_id)
+    .bind(create.task_id)
+    .bind(create.run_id)
+    .bind(create.scope.as_str())
+    .bind(create.kind.as_str())
+    .bind(summary)
+    .bind(
+        create
+            .body
+            .as_deref()
+            .map(str::trim)
+            .filter(|body| !body.is_empty()),
+    )
+    .bind(Value::Array(create.evidence_refs))
+    .bind(json!(create.related_task_ids))
+    .bind(json!(create.tags))
+    .bind(create.actor_role.as_str())
+    .bind(create.actor_agent_id.as_deref())
+    .bind(create.actor_user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(row)
+}
+
+pub(super) async fn list_entries(
+    pool: &PgPool,
+    bear_id: Uuid,
+    filter: DocketEntryListFilter,
+) -> Result<Vec<DocketEntryRow>, DenError> {
+    let limit = if filter.limit <= 0 {
+        100
+    } else {
+        filter.limit.min(500)
+    };
+    sqlx::query_as::<_, DocketEntryRow>(
+        r"
+        SELECT e.id, e.job_id, e.task_id, e.run_id, e.scope, e.kind, e.summary,
+               e.body, e.disposition, e.evidence_refs, e.related_task_ids, e.tags,
+               e.by_role, e.by_agent_id, e.by_user_id, e.created_at
+        FROM bear_docket_entries e
+        JOIN bear_jobs j ON j.id = e.job_id
+        WHERE j.bear_id = $1
+          AND ($2::uuid IS NULL OR e.job_id = $2)
+          AND ($3::uuid IS NULL OR e.task_id = $3)
+        ORDER BY e.created_at DESC, e.id DESC
+        LIMIT $4
+        ",
+    )
+    .bind(bear_id)
+    .bind(filter.job_id)
+    .bind(filter.task_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
 async fn list_tasks_with_descendants(
     pool: &PgPool,
     bear_id: Uuid,
@@ -1803,6 +1964,7 @@ pub(super) async fn update_task(
     } else {
         None
     };
+    append_terminal_outcome(&mut tx, &patched, &update).await?;
     if let Some(run_state) = update
         .run_state
         .as_ref()
@@ -2035,7 +2197,7 @@ fn validate_docket_task_run_state_update(
     let Some(update) = update else {
         return Ok(());
     };
-    if update.status.as_str() != "done" {
+    if !matches!(update.status.as_str(), "done" | "blocked" | "cancelled") {
         return Ok(());
     }
     if update
@@ -2045,7 +2207,7 @@ fn validate_docket_task_run_state_update(
         .is_none_or(str::is_empty)
     {
         return Err(DenError::ValidationError(
-            "Docket task completion requires non-empty result_summary".to_string(),
+            "Docket terminal task settlement requires non-empty result_summary".to_string(),
         ));
     }
     validate_primary_output_evidence(update.result_refs.as_ref())
@@ -2442,6 +2604,63 @@ async fn upsert_task_run_state(
     .fetch_one(&mut **tx)
     .await
     .map_err(Into::into)
+}
+
+async fn append_terminal_outcome(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: &DocketTaskRow,
+    update: &DocketTaskUpdate,
+) -> Result<(), DenError> {
+    let Some(run_state) = update.run_state.as_ref() else {
+        return Ok(());
+    };
+    let disposition = match run_state.status.as_str() {
+        "done" => "completed",
+        "blocked" => "blocked",
+        "cancelled" => "cancelled",
+        _ => return Ok(()),
+    };
+    let summary = run_state
+        .result_summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .ok_or_else(|| {
+            DenError::ValidationError(format!(
+                "Docket terminal task settlement requires non-empty result_summary: status={}",
+                run_state.status.as_str()
+            ))
+        })?;
+    let evidence_refs = run_state
+        .result_refs
+        .as_ref()
+        .map(|refs| match refs {
+            Value::Array(refs) => Value::Array(refs.clone()),
+            refs => Value::Array(vec![refs.clone()]),
+        })
+        .unwrap_or_else(|| Value::Array(Vec::new()));
+
+    sqlx::query(
+        r"
+        INSERT INTO bear_docket_entries (
+            job_id, task_id, run_id, scope, kind, summary, disposition,
+            evidence_refs, by_role, by_agent_id, by_user_id
+        )
+        VALUES ($1, $2, $3, 'task_journal', 'outcome', $4, $5, $6::jsonb, $7, $8, $9)
+        ",
+    )
+    .bind(task.job_id)
+    .bind(task.id)
+    .bind(run_state.run_id)
+    .bind(summary)
+    .bind(disposition)
+    .bind(evidence_refs)
+    .bind(update.actor_role.as_str())
+    .bind(update.actor_agent_id.as_deref())
+    .bind(update.actor_user_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 pub(super) async fn sync_task_list(

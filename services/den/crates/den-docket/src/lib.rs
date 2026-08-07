@@ -50,6 +50,7 @@ pub use model::{
     validate_docket_task_create, validate_task_list_items, validate_task_list_update,
     DocketCommitPolicy, DocketCountByStatus, DocketCriteriaCountByStatus, DocketCriterionKind,
     DocketCriterionStateRow, DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint,
+    DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryRow, DocketEntryScope,
     DocketExecutionLookup, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
     DocketJobCreate, DocketJobCriterionInput, DocketJobCriterionRow, DocketJobExecuteOutcome,
     DocketJobExecuteRequest, DocketJobListFilter, DocketJobOverlapResolution, DocketJobProjection,
