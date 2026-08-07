@@ -118,18 +118,17 @@ impl ToolTaskRegistry {
         let total_elapsed_ms = now.duration_since(entry.started_at).as_millis();
         entry.phase = phase;
         entry.updated_at = now;
-        if phase.should_log_to_stderr() || previous_phase.should_log_to_stderr() {
-            eprintln!(
-                "bear-armature: tool_task transition session_id={} tool_call_id={} tool_name={} from_phase={} to_phase={} phase_duration_ms={} total_duration_ms={}",
-                session_id,
-                tool_call_id,
-                tool_name,
-                previous_phase.as_str(),
-                phase.as_str(),
-                previous_elapsed_ms,
-                total_elapsed_ms,
-            );
-        }
+        tracing::debug!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            tool_call_id,
+            tool_name,
+            from_phase = previous_phase.as_str(),
+            to_phase = phase.as_str(),
+            phase_duration_ms = previous_elapsed_ms,
+            total_duration_ms = total_elapsed_ms,
+            "tool task phase transitioned"
+        );
     }
 
     pub(crate) async fn remove(
@@ -172,14 +171,15 @@ impl ToolTaskRegistry {
                 return true;
             }
             if task.phase != ToolTaskPhase::ResultPosted {
-                eprintln!(
-                    "bear-armature: tool_task cancelled session_id={} turn_token={:?} tool_call_id={} tool_name={} from_phase={} total_duration_ms={}",
-                    task.session_id,
-                    task.turn_token,
-                    task.tool_call_id,
-                    task.tool_name,
-                    task.phase.as_str(),
-                    now.duration_since(task.started_at).as_millis(),
+                tracing::debug!(
+                    target: "bear_armature::lifecycle",
+                    session_id = task.session_id,
+                    turn_token = ?task.turn_token,
+                    tool_call_id = task.tool_call_id,
+                    tool_name = task.tool_name,
+                    from_phase = task.phase.as_str(),
+                    total_duration_ms = now.duration_since(task.started_at).as_millis(),
+                    "tool task cancelled"
                 );
             }
             false
@@ -230,17 +230,6 @@ pub(crate) enum ToolTaskPhase {
 }
 
 impl ToolTaskPhase {
-    pub(crate) fn should_log_to_stderr(self) -> bool {
-        matches!(
-            self,
-            Self::PermissionDenied
-                | Self::PermissionTimeout
-                | Self::ExecutionFailed
-                | Self::ResultPostFailed
-                | Self::Cancelled
-        )
-    }
-
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Received => "received",
@@ -264,15 +253,13 @@ pub(crate) fn log_tool_task_phase(
     tool_name: &str,
     phase: ToolTaskPhase,
 ) {
-    if !phase.should_log_to_stderr() {
-        return;
-    }
-    eprintln!(
-        "bear-armature: tool_task phase={} session_id={} tool_call_id={} tool_name={}",
-        phase.as_str(),
+    tracing::debug!(
+        target: "bear_armature::lifecycle",
         session_id,
         tool_call_id,
-        tool_name
+        tool_name,
+        phase = phase.as_str(),
+        "tool task phase reached"
     );
 }
 

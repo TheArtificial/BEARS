@@ -3054,24 +3054,39 @@ async fn handle_request(
                     {
                         Ok(()) => {}
                         Err(err) => {
+                            let user_message = if err.chain().any(|cause| {
+                                cause
+                                    .to_string()
+                                    .starts_with("Den API connectivity failure:")
+                            }) {
+                                "Den could not continue this turn because its API is unavailable. Check your connection or try again shortly."
+                            } else {
+                                "Den could not complete this turn. Please try again or start a fresh turn."
+                            };
                             let server_version = fetch_server_version(&http, &config).await.ok();
                             tracing::error!(
                                 session_id,
                                 turn_token = %turn_token,
                                 conversation_id = ?conversation_id_for_turn,
                                 error = %format!("{err:#}"),
+                                user_message,
                                 server_version = ?server_version.as_ref().map(ServerVersion::summary),
                                 armature_version = adapter_version(),
                                 "session/prompt failed"
                             );
+                            let user_message = if err.chain().any(|cause| {
+                                cause
+                                    .to_string()
+                                    .starts_with("Den API connectivity failure:")
+                            }) {
+                                "Den could not continue this turn because its API is unavailable. Check your connection or try again shortly."
+                            } else {
+                                "Den could not complete this turn. Please try again or start a fresh turn."
+                            };
                             if let Some(response_id) = response.claim() {
                                 if let Err(write_err) = write_response(
                                     response_id,
-                                    Err(json_rpc_error(
-                                        -32003,
-                                        "Den could not complete this turn. Please try again or start a fresh turn.",
-                                        None,
-                                    )),
+                                    Err(json_rpc_error(-32003, user_message, None)),
                                 )
                                 .await
                                 {

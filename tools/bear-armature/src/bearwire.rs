@@ -616,8 +616,18 @@ pub(crate) async fn handle_prompt(
                     && !state_reachable
                     && failure_started.elapsed() >= BEARWIRE_EVENT_FETCH_FAILURE_GRACE
                 {
+                    tracing::error!(
+                        target: "bear_armature::lifecycle",
+                        session_id,
+                        run_id,
+                        after = ?after,
+                        consecutive_fetch_errors,
+                        outage_duration_ms = failure_started.elapsed().as_millis(),
+                        event_fetch_error = %err,
+                        "Den API is unavailable; event delivery and run-state reconciliation could not recover"
+                    );
                     return Err(err).context(
-                        "BearWire event delivery and run.state reconciliation failed during the recovery grace period",
+                        "Den API connectivity failure: BearWire event delivery and run.state reconciliation both failed during the recovery grace period",
                     );
                 }
                 sleep(event_fetch_retry_delay(consecutive_fetch_errors)).await;
