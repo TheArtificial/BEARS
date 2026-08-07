@@ -16633,6 +16633,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn edit_file_replace_all_replaces_every_match_when_policy_allows_it() {
+        let root = unique_test_dir("edit-replace-all");
+        let file = root.join("a.txt");
+        fs::write(&file, "old old old\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_replace_text(
+            &state,
+            "session-1",
+            &json!({
+                "path": file.to_string_lossy(),
+                "old_text": "old",
+                "new_text": "new",
+                "replace_all": true
+            }),
+            &ToolPolicy {
+                max_replacements: Some(3),
+                allow_multiple: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["replacements"], 3);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new new new\n");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn replace_text_denies_multiple_matches_by_default() {
         let root = unique_test_dir("replace-multiple");
         let file = root.join("a.txt");
