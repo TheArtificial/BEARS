@@ -1017,11 +1017,9 @@ pub(crate) async fn handle_copy_path(
 /// Applies a deliberately simple unified-diff-like patch.
 ///
 /// This is not a fuzzy/context-aware patch engine like `git apply` or `patch(1)`.
-/// For each affected file, the parser reconstructs the complete target content
-/// from hunk context lines (` `) and added lines (`+`), while ignoring removed
-/// lines (`-`). This means callers should provide all intended resulting file
-/// content for each file in the patch. The implementation is intentionally
-/// conservative so approval previews and policy checks stay straightforward.
+/// Applies standard unified-diff hunks against the current file content. Every
+/// context and removed line must match exactly; stale patches fail rather than
+/// overwriting unrelated content.
 pub(crate) async fn handle_apply_patch(
     context: &SessionContext,
     session_id: &str,
@@ -1089,6 +1087,18 @@ pub(crate) async fn handle_apply_patch(
                 path.display()
             ));
         }
+        let new_content = if patch_file.is_delete {
+            None
+        } else if patch_file.is_create {
+            Some(apply_unified_hunks("", &patch_file.hunks)?)
+        } else {
+            let original = fs::read_to_string(&path)
+                .with_context(|| format!("read patched file {}", path.display()))?;
+            Some(
+                apply_unified_hunks(&original, &patch_file.hunks)
+                    .with_context(|| format!("apply patch to {}", path.display()))?,
+            )
+        };
         if dry_run {
             changed.push(path.to_string_lossy().to_string());
             continue;
@@ -1102,8 +1112,13 @@ pub(crate) async fn handle_apply_patch(
                 fs::create_dir_all(parent)
                     .with_context(|| format!("create parent directories {}", parent.display()))?;
             }
-            fs::write(&path, patch_file.new_content.as_bytes())
-                .with_context(|| format!("write patched file {}", path.display()))?;
+            fs::write(
+                &path,
+                new_content
+                    .as_deref()
+                    .expect("non-delete patches have content"),
+            )
+            .with_context(|| format!("write patched file {}", path.display()))?;
         }
         changed.push(path.to_string_lossy().to_string());
     }
@@ -1587,87 +1602,166 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
 #[derive(Debug)]
 struct PatchFile {
     path: PathBuf,
-    new_content: String,
+    hunks: Vec<PatchHunk>,
     is_create: bool,
     is_delete: bool,
 }
 
-/// Parses the restricted patch format used by `handle_apply_patch`.
-///
-/// Supported:
-/// - file headers: `--- a/path` / `+++ b/path`
-/// - creates: `--- /dev/null` / `+++ b/path`
-/// - deletes: `--- a/path` / `+++ /dev/null`
-/// - hunk lines beginning with ` `, `+`, or `-`
-///
-/// Unsupported by design:
-/// - fuzzy hunk application
-/// - partial hunks that rely on omitted unchanged file content
-/// - binary patches
-/// - rename/copy patch metadata
+#[derive(Debug)]
+struct PatchHunk {
+    old_start: usize,
+    lines: Vec<PatchLine>,
+    target_has_final_newline: Option<bool>,
+}
+
+#[derive(Debug)]
+struct PatchLine {
+    kind: char,
+    content: String,
+}
+
+/// Parses standard unified diffs. Hunk context is checked when the patch is
+/// applied, so this parser deliberately does not attempt fuzzy matching.
 fn parse_simple_unified_patch(patch: &str) -> Result<Vec<PatchFile>> {
     let lines = patch.lines().collect::<Vec<_>>();
     let mut files = Vec::new();
-    let mut idx = 0usize;
+    let mut idx = 0;
     while idx < lines.len() {
         if !lines[idx].starts_with("--- ") {
             idx += 1;
             continue;
         }
-        let old_raw = lines[idx]
-            .trim_start_matches("--- ")
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
+        let old_raw = lines[idx][4..].split_whitespace().next().unwrap_or("");
         idx += 1;
         if idx >= lines.len() || !lines[idx].starts_with("+++ ") {
             return Err(anyhow!(
                 "fs_apply_patch invalid unified diff: missing +++ header"
             ));
         }
-        let new_raw = lines[idx]
-            .trim_start_matches("+++ ")
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
+        let new_raw = lines[idx][4..].split_whitespace().next().unwrap_or("");
         idx += 1;
         let is_create = old_raw == "/dev/null";
         let is_delete = new_raw == "/dev/null";
-        let path_raw = if is_delete { old_raw } else { new_raw };
-        let path = normalize_patch_path(path_raw)?;
-        let mut new_content = String::new();
+        let path = normalize_patch_path(if is_delete { old_raw } else { new_raw })?;
+        let mut hunks = Vec::new();
         while idx < lines.len() && !lines[idx].starts_with("--- ") {
-            let line = lines[idx];
-            if line.starts_with("@@") || line.starts_with("\\ No newline") {
+            if !lines[idx].starts_with("@@ ") {
                 idx += 1;
                 continue;
             }
-            if is_delete {
-                idx += 1;
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix('+') {
-                new_content.push_str(rest);
-                new_content.push('\n');
-            } else if let Some(rest) = line.strip_prefix(' ') {
-                new_content.push_str(rest);
-                new_content.push('\n');
-            }
+            let old_start = parse_hunk_old_start(lines[idx])?;
             idx += 1;
+            let mut hunk_lines = Vec::new();
+            let mut target_has_final_newline = None;
+            let mut last_kind = None;
+            while idx < lines.len()
+                && !lines[idx].starts_with("@@ ")
+                && !lines[idx].starts_with("--- ")
+            {
+                let line = lines[idx];
+                if let Some(kind @ (' ' | '+' | '-')) = line.chars().next() {
+                    hunk_lines.push(PatchLine {
+                        kind,
+                        content: line[1..].to_string(),
+                    });
+                    last_kind = Some(kind);
+                } else if line.starts_with("\\ No newline at end of file") {
+                    if matches!(last_kind, Some(' ') | Some('+')) {
+                        target_has_final_newline = Some(false);
+                    }
+                } else {
+                    return Err(anyhow!("fs_apply_patch invalid hunk line: {line}"));
+                }
+                idx += 1;
+            }
+            hunks.push(PatchHunk {
+                old_start,
+                lines: hunk_lines,
+                target_has_final_newline,
+            });
+        }
+        if hunks.is_empty() {
+            return Err(anyhow!(
+                "fs_apply_patch file diff has no hunks: {}",
+                path.display()
+            ));
         }
         files.push(PatchFile {
             path,
-            new_content,
+            hunks,
             is_create,
             is_delete,
         });
     }
     if files.is_empty() {
-        return Err(anyhow!(
-            "fs_apply_patch found no file diff headers. Supply a non-empty patch with paired `--- a/path` and `+++ b/path` headers (or `/dev/null` for creates/deletes); omit prose and Markdown fences. For one exact replacement in one file, use fs_edit_file."
-        ));
+        return Err(anyhow!("fs_apply_patch found no file diff headers. Supply a non-empty patch with paired `--- a/path` and `+++ b/path` headers (or `/dev/null` for creates/deletes); omit prose and Markdown fences. For one exact replacement in one file, use fs_edit_file."));
     }
     Ok(files)
+}
+
+fn parse_hunk_old_start(header: &str) -> Result<usize> {
+    let old = header.split_whitespace().nth(1).unwrap_or("");
+    let start = old
+        .strip_prefix('-')
+        .unwrap_or("")
+        .split(',')
+        .next()
+        .unwrap_or("");
+    start
+        .parse::<usize>()
+        .map_err(|_| anyhow!("fs_apply_patch invalid hunk header: {header}"))
+}
+
+fn apply_unified_hunks(original: &str, hunks: &[PatchHunk]) -> Result<String> {
+    let had_final_newline = original.ends_with('\n');
+    let source = original.strip_suffix('\n').unwrap_or(original);
+    let source = if source.is_empty() {
+        Vec::new()
+    } else {
+        source.split('\n').collect::<Vec<_>>()
+    };
+    let mut result = Vec::new();
+    let mut cursor = 0;
+    for hunk in hunks {
+        let start = hunk.old_start.saturating_sub(1);
+        if start < cursor || start > source.len() {
+            return Err(anyhow!(
+                "fs_apply_patch hunk position does not match source"
+            ));
+        }
+        result.extend_from_slice(&source[cursor..start]);
+        cursor = start;
+        for line in &hunk.lines {
+            match line.kind {
+                ' ' => {
+                    if source.get(cursor) != Some(&line.content.as_str()) {
+                        return Err(anyhow!("fs_apply_patch hunk context does not match source"));
+                    }
+                    result.push(line.content.as_str());
+                    cursor += 1;
+                }
+                '-' => {
+                    if source.get(cursor) != Some(&line.content.as_str()) {
+                        return Err(anyhow!("fs_apply_patch hunk removal does not match source"));
+                    }
+                    cursor += 1;
+                }
+                '+' => result.push(line.content.as_str()),
+                _ => unreachable!(),
+            }
+        }
+    }
+    result.extend_from_slice(&source[cursor..]);
+    let target_has_final_newline = hunks
+        .iter()
+        .filter_map(|hunk| hunk.target_has_final_newline)
+        .next_back()
+        .unwrap_or(had_final_newline);
+    let mut output = result.join("\n");
+    if target_has_final_newline && !output.is_empty() {
+        output.push('\n');
+    }
+    Ok(output)
 }
 
 fn normalize_patch_path(raw: &str) -> Result<PathBuf> {
@@ -2040,6 +2134,40 @@ mod tests {
         assert!(message.contains("found no file diff headers"));
         assert!(message.contains("--- a/path"));
         assert!(message.contains("fs_edit_file"));
+    }
+
+    #[test]
+    fn apply_unified_hunks_preserves_content_outside_partial_hunk() {
+        let patch = parse_simple_unified_patch(
+            "--- a/example.txt\n+++ b/example.txt\n@@ -2,3 +2,3 @@\n keep-before\n-old\n+new\n keep-after\n",
+        )
+        .expect("valid patch");
+        let content = apply_unified_hunks(
+            "first\nkeep-before\nold\nkeep-after\nlast\n",
+            &patch[0].hunks,
+        )
+        .expect("hunk applies");
+        assert_eq!(content, "first\nkeep-before\nnew\nkeep-after\nlast\n");
+    }
+
+    #[test]
+    fn apply_unified_hunks_rejects_stale_context() {
+        let patch = parse_simple_unified_patch(
+            "--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-old\n+new\n",
+        )
+        .expect("valid patch");
+        assert!(apply_unified_hunks("different\n", &patch[0].hunks).is_err());
+    }
+    #[test]
+    fn apply_unified_hunks_preserves_no_final_newline() {
+        let patch = parse_simple_unified_patch(
+            "--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-old\n+new\n\\ No newline at end of file\n",
+        )
+        .expect("valid patch");
+        assert_eq!(
+            apply_unified_hunks("old\n", &patch[0].hunks).expect("hunk applies"),
+            "new"
+        );
     }
 
     #[test]
