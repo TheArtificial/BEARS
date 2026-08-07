@@ -4741,8 +4741,7 @@ fn replay_tool_arguments(
         arguments.clone()
     } else {
         request_arguments
-            .get(tool_call_id)
-            .cloned()
+            .remove(tool_call_id)
             .unwrap_or(Value::Null)
     }
 }
@@ -17476,24 +17475,17 @@ mod tests {
             replay_tool_arguments(&mut request_arguments, "tool_call", "call-read", &request),
             request
         );
-        assert_eq!(
-            replay_tool_arguments(
-                &mut request_arguments,
-                "tool_result",
-                "call-read",
-                &Value::Null
-            ),
-            request
+        let terminal_arguments = replay_tool_arguments(
+            &mut request_arguments,
+            "tool_result",
+            "call-read",
+            &Value::Null,
         );
+        assert_eq!(terminal_arguments, request);
         assert_eq!(
             tool_call_title(
                 "fs_read_text_file",
-                &json!({ "data": { "tool_call": { "arguments": replay_tool_arguments(
-                    &mut request_arguments,
-                    "tool_result",
-                    "call-read",
-                    &Value::Null,
-                ) } } }),
+                &json!({ "data": { "tool_call": { "arguments": terminal_arguments } } }),
             ),
             "Read file: /workspace/README.md"
         );
