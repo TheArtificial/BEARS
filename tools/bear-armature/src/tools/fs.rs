@@ -1669,7 +1669,24 @@ struct PatchLine {
 
 /// Parses standard unified diffs. Hunk context is checked when the patch is
 /// applied, so this parser deliberately does not attempt fuzzy matching.
+fn strip_apply_patch_envelope(patch: &str) -> Result<&str> {
+    let patch = patch.trim();
+    let has_begin = patch.starts_with("*** Begin Patch\n");
+    let has_end = patch.ends_with("\n*** End Patch");
+    match (has_begin, has_end) {
+        (false, false) => Ok(patch),
+        (true, true) => Ok(&patch["*** Begin Patch\n".len()..patch.len() - "\n*** End Patch".len()]),
+        (true, false) => Err(anyhow!(
+            "fs_apply_patch malformed patch envelope: `*** Begin Patch` requires a trailing `*** End Patch`"
+        )),
+        (false, true) => Err(anyhow!(
+            "fs_apply_patch malformed patch envelope: `*** End Patch` requires a leading `*** Begin Patch`"
+        )),
+    }
+}
+
 fn parse_simple_unified_patch(patch: &str) -> Result<Vec<PatchFile>> {
+    let patch = strip_apply_patch_envelope(patch)?;
     let lines = patch.lines().collect::<Vec<_>>();
     let mut files = Vec::new();
     let mut idx = 0;
@@ -1759,6 +1776,20 @@ fn parse_hunk_old_start(header: &str) -> Result<usize> {
         .map_err(|_| anyhow!("fs_apply_patch invalid hunk header: {header}"))
 }
 
+fn apply_hunk_line_mismatch(
+    kind: &str,
+    source_line: usize,
+    expected: &str,
+    actual: Option<&str>,
+) -> anyhow::Error {
+    let actual = actual.unwrap_or("<end of file>");
+    anyhow!(
+        "fs_apply_patch hunk {kind} does not match source at line {source_line}: expected {:?}, found {:?}; re-read the file and generate the patch from its current contents",
+        truncate_chars(expected, 160),
+        truncate_chars(actual, 160),
+    )
+}
+
 fn apply_unified_hunks(original: &str, hunks: &[PatchHunk]) -> Result<String> {
     let had_final_newline = original.ends_with('\n');
     let source = original.strip_suffix('\n').unwrap_or(original);
@@ -1782,14 +1813,24 @@ fn apply_unified_hunks(original: &str, hunks: &[PatchHunk]) -> Result<String> {
             match line.kind {
                 ' ' => {
                     if source.get(cursor) != Some(&line.content.as_str()) {
-                        return Err(anyhow!("fs_apply_patch hunk context does not match source"));
+                        return Err(apply_hunk_line_mismatch(
+                            "context",
+                            cursor + 1,
+                            &line.content,
+                            source.get(cursor).copied(),
+                        ));
                     }
                     result.push(line.content.as_str());
                     cursor += 1;
                 }
                 '-' => {
                     if source.get(cursor) != Some(&line.content.as_str()) {
-                        return Err(anyhow!("fs_apply_patch hunk removal does not match source"));
+                        return Err(apply_hunk_line_mismatch(
+                            "removal",
+                            cursor + 1,
+                            &line.content,
+                            source.get(cursor).copied(),
+                        ));
                     }
                     cursor += 1;
                 }
@@ -2184,6 +2225,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_simple_unified_patch_accepts_apply_patch_envelope() {
+        let patch = parse_simple_unified_patch(
+            "*** Begin Patch\n--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-old\n+new\n*** End Patch\n",
+        )
+        .expect("wrapped unified diff is valid");
+
+        assert_eq!(patch.len(), 1);
+        assert_eq!(patch[0].path, PathBuf::from("example.txt"));
+    }
+
+    #[test]
+    fn parse_simple_unified_patch_rejects_unmatched_apply_patch_envelope() {
+        let error =
+            parse_simple_unified_patch("*** Begin Patch\n--- a/example.txt\n+++ b/example.txt\n")
+                .expect_err("unmatched envelope must fail");
+
+        assert!(error.to_string().contains("requires a trailing"));
+    }
+
+    #[test]
     fn apply_unified_hunks_preserves_content_outside_partial_hunk() {
         let patch = parse_simple_unified_patch(
             "--- a/example.txt\n+++ b/example.txt\n@@ -2,3 +2,3 @@\n keep-before\n-old\n+new\n keep-after\n",
@@ -2203,7 +2264,12 @@ mod tests {
             "--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-old\n+new\n",
         )
         .expect("valid patch");
-        assert!(apply_unified_hunks("different\n", &patch[0].hunks).is_err());
+        let error = apply_unified_hunks("different\n", &patch[0].hunks)
+            .expect_err("stale context must fail");
+        assert_eq!(
+            error.to_string(),
+            "fs_apply_patch hunk removal does not match source at line 1: expected \"old\", found \"different\"; re-read the file and generate the patch from its current contents"
+        );
     }
     #[test]
     fn apply_unified_hunks_preserves_no_final_newline() {
