@@ -128,10 +128,11 @@ fn turn_authority_is_single_derived_permission_surface() {
         authority.denied_tool_classes(),
         vec!["workspace_mutation", "execution", "browser"]
     );
-    assert!(authority
+    let context = authority
         .read_only_runtime_context()
-        .expect("read-only context")
-        .contains("permission_mode=`Plan`; tool_enablement=`read_only`"));
+        .expect("read-only context");
+    assert_eq!(context["permission_mode"], "Plan");
+    assert_eq!(context["tool_enablement"], "read_only");
 }
 
 #[test]

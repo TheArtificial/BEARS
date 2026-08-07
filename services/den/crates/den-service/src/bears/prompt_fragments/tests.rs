@@ -187,6 +187,28 @@ fn work_checkout_prompt_is_rendered_from_a_turn_fragment() {
 }
 
 #[test]
+fn read_only_authority_is_rendered_from_a_turn_fragment() {
+    let registry = repository_prompt_fragment_registry().unwrap();
+    let fragment = registry.require("runtime_read_only_authority").unwrap();
+    let rendered = render_turn_fragment(
+        fragment,
+        &serde_json::json!({
+            "authority": {
+                "permission_mode": "Plan",
+                "tool_enablement": "read_only",
+                "allowed_tool_classes": ["read_only"],
+                "denied_tool_classes": ["workspace_mutation", "execution", "browser"]
+            }
+        }),
+    )
+    .unwrap();
+
+    assert!(rendered.contains("permission_mode=`Plan`"));
+    assert!(rendered.contains("read-only/non-mutative run"));
+    assert!(rendered.contains("permission-blocked status with evidence"));
+}
+
+#[test]
 fn docket_model_guidance_lives_in_a_prompt_fragment() {
     let registry = repository_prompt_fragment_registry().unwrap();
     let fragment = registry.require("stance_docket_journals").unwrap();

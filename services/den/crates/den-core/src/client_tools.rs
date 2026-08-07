@@ -91,17 +91,17 @@ impl TurnAuthority {
         self.session_policy.denied_tool_classes()
     }
 
-    pub fn read_only_runtime_context(&self) -> Option<String> {
+    pub fn read_only_runtime_context(&self) -> Option<serde_json::Value> {
         if self.tool_enablement().enables_non_read_tools() {
             return None;
         }
 
-        Some(format!(
-            "AUTHORITATIVE RUNTIME PERMISSION ENVELOPE for this turn: permission_mode=`{}`; tool_enablement=`read_only`; allowed_tool_classes={:?}; denied_tool_classes={:?}; state_authority=current turn capabilities override prior task orientation.\n\nYou are in a read-only/non-mutative run. Do not attempt workspace edits, file creation/deletion, commits, shell/process execution, browser actions with side effects, or other externally visible actions. If the user or focused task asks for execution that requires mutation, deliver analysis, diagnosis, a plan, a proposed patch, or an explicit permission-blocked status with evidence instead of repeatedly trying denied tools.",
-            self.mode_label(),
-            self.allowed_tool_classes(),
-            self.denied_tool_classes()
-        ))
+        Some(serde_json::json!({
+            "permission_mode": self.mode_label(),
+            "tool_enablement": "read_only",
+            "allowed_tool_classes": self.allowed_tool_classes(),
+            "denied_tool_classes": self.denied_tool_classes(),
+        }))
     }
 }
 

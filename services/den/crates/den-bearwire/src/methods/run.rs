@@ -28,7 +28,9 @@ use den_runtime::{
     turn_runs, turn_steps,
 };
 use den_service::{
-    bears::{db as bears_db, BearProfile},
+    bears::{
+        db as bears_db, render_turn_fragment, repository_prompt_fragment_registry, BearProfile,
+    },
     bifrost::BifrostCatalogEntry,
     client_sessions,
     conversation::events::{
@@ -1745,7 +1747,14 @@ pub(crate) async fn run_start_result(
         client_context.as_ref(),
         &turn_authority,
     );
-    let read_only_runtime_context = turn_authority.read_only_runtime_context();
+    let read_only_runtime_context = turn_authority
+        .read_only_runtime_context()
+        .map(|authority| {
+            let registry = repository_prompt_fragment_registry()?;
+            let fragment = registry.require("runtime_read_only_authority")?;
+            render_turn_fragment(fragment, &json!({ "authority": authority }))
+        })
+        .transpose()?;
     // Stance signal: a session bound to a live work run via `work.checkout`
     // runs in the Work stance; every other BearWire session stays Pair.
     let stance =
