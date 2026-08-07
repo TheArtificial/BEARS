@@ -1377,6 +1377,15 @@ pub struct DocketEntryListFilter {
     pub limit: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct DocketEntryPromotion {
+    pub bear_id: Uuid,
+    pub entry_id: Uuid,
+    pub actor_role: BearProfile,
+    pub actor_user_id: Option<i32>,
+    pub actor_agent_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct DocketEntryRow {
     pub id: Uuid,
@@ -1394,6 +1403,7 @@ pub struct DocketEntryRow {
     pub by_role: String,
     pub by_agent_id: Option<String>,
     pub by_user_id: Option<i32>,
+    pub source_entry_id: Option<Uuid>,
     pub created_at: OffsetDateTime,
 }
 

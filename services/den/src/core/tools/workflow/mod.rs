@@ -4,19 +4,19 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::tools::constants::{
-    DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION,
-    DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE,
-    DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
-    DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
-    DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL,
-    DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST, DEN_WORK_RUN_RESOLVE_STALLED,
-    DEN_WORK_SURFACE_CONFIRM,
+    DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_CREATE,
+    DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST,
+    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS,
+    DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
+    DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
+    DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+    DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
     DocketCriterionStatus, DocketEffortHint, DocketEntryCreate, DocketEntryKind,
-    DocketEntryListFilter, DocketEntryScope, DocketExecutionLookup, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketEntryListFilter, DocketEntryPromotion, DocketEntryScope, DocketExecutionLookup,
+    DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobOverlapResolution, DocketJobProjection, DocketJobStatus, DocketJobStatusReport,
     DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketService, DocketTaskCreate,
     DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
@@ -136,6 +136,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_TASK_UPDATE
             | DEN_TASK_UPDATE_CURRENT_STATUS
             | DEN_DOCKET_ENTRY_APPEND
+            | DEN_DOCKET_ENTRY_PROMOTE
             | DEN_DOCKET_ENTRY_LIST
             | DEN_TASK_LIST_SYNC
             | DEN_TASK_LIST_CHECKOUT
@@ -398,6 +399,11 @@ pub(crate) struct DocketEntryAppendArguments {
     pub(crate) related_task_ids: Vec<Uuid>,
     #[serde(default)]
     pub(crate) tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketEntryPromoteArguments {
+    pub(crate) entry_id: Uuid,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2039,6 +2045,25 @@ pub(crate) async fn append_docket_entry(
             evidence_refs: args.evidence_refs,
             related_task_ids: args.related_task_ids,
             tags: args.tags,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+        })
+        .await?;
+    Ok(json!({ "domain": "docket", "entry": entry }))
+}
+
+pub(crate) async fn promote_docket_entry(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketEntryPromoteArguments = serde_json::from_value(arguments)?;
+    let entry = PgDocketService::from_pool(pool)
+        .promote_entry(DocketEntryPromotion {
+            bear_id: context.bear_id,
+            entry_id: args.entry_id,
             actor_role: role,
             actor_user_id: Some(context.user_id),
             actor_agent_id: clean_optional(&context.binding_id),

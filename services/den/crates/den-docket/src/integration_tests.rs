@@ -6,13 +6,13 @@ use uuid::Uuid;
 use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
-    DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryScope,
-    DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
-    DocketJobOverlapResolution, DocketJobStatus, DocketService, DocketTaskCreate,
-    DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
-    DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
-    DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher, TaskListSyncRequest,
-    TaskListVisibility,
+    DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
+    DocketEntryScope, DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
+    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
+    DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
+    DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher,
+    TaskListSyncRequest, TaskListVisibility,
 };
 
 fn primary_output_result_refs() -> Value {
@@ -394,6 +394,48 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .expect("list task journal");
     assert_eq!(journal.len(), 1);
     assert_eq!(journal[0].id, finding.id);
+
+    let promoted = service
+        .promote_entry(DocketEntryPromotion {
+            bear_id,
+            entry_id: finding.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect("promote finding");
+    assert_eq!(promoted.scope, "job_notebook");
+    assert_eq!(promoted.source_entry_id, Some(finding.id));
+    let retried = service
+        .promote_entry(DocketEntryPromotion {
+            bear_id,
+            entry_id: finding.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect("retry finding promotion");
+    assert_eq!(retried.id, promoted.id);
+    let notebook = service
+        .list_entries(
+            bear_id,
+            DocketEntryListFilter {
+                job_id: Some(created.job.id),
+                task_id: None,
+                limit: 10,
+            },
+        )
+        .await
+        .expect("list job notebook");
+    assert_eq!(
+        notebook
+            .iter()
+            .filter(|entry| entry.source_entry_id == Some(finding.id))
+            .count(),
+        1
+    );
 
     let first = service
         .execute_job(DocketJobExecuteRequest {

@@ -21,15 +21,16 @@ use crate::tools::{
         DEN_CAPABILITY_DESCRIBE_PROVIDER, DEN_CAPABILITY_SEARCH, DEN_CAPABILITY_SEARCH_PROVIDER,
         DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
         DEN_CORE_WRITE_RESULT_SUMMARY, DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_APPEND_PROVIDER,
-        DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_LIST_PROVIDER, DEN_ENTITY_BROWSE,
-        DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER,
-        DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE,
-        DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER,
-        DEN_ENTITY_WRITE_ACCESS_RULE, DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER,
-        DEN_ENTITY_WRITE_ANCHOR, DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_JOB_CREATE,
-        DEN_JOB_CREATE_PROVIDER, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER,
-        DEN_JOB_EXECUTE, DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_FIND, DEN_JOB_FIND_PROVIDER,
-        DEN_JOB_GET, DEN_JOB_GET_PROVIDER, DEN_JOB_LIST, DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE,
+        DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_LIST_PROVIDER, DEN_DOCKET_ENTRY_PROMOTE,
+        DEN_DOCKET_ENTRY_PROMOTE_PROVIDER, DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER,
+        DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE,
+        DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER,
+        DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER, DEN_ENTITY_WRITE_ACCESS_RULE,
+        DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER, DEN_ENTITY_WRITE_ANCHOR,
+        DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
+        DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
+        DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_FIND, DEN_JOB_FIND_PROVIDER, DEN_JOB_GET,
+        DEN_JOB_GET_PROVIDER, DEN_JOB_LIST, DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE,
         DEN_JOB_UPDATE_PROVIDER, DEN_MEMORY_APPLY_CORE_UPDATE,
         DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER, DEN_MEMORY_LIST_PROPOSALS,
@@ -155,6 +156,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
             return DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER.to_string()
         }
         DEN_DOCKET_ENTRY_APPEND => return DEN_DOCKET_ENTRY_APPEND_PROVIDER.to_string(),
+        DEN_DOCKET_ENTRY_PROMOTE => return DEN_DOCKET_ENTRY_PROMOTE_PROVIDER.to_string(),
         DEN_DOCKET_ENTRY_LIST => return DEN_DOCKET_ENTRY_LIST_PROVIDER.to_string(),
         DEN_TASK_LIST_SYNC => return DEN_TASK_LIST_SYNC_PROVIDER.to_string(),
         DEN_TASK_LIST_CHECKOUT => return DEN_TASK_LIST_CHECKOUT_PROVIDER.to_string(),
@@ -718,6 +720,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"scope":{"enum":["task_journal","job_notebook"]},"kind":{"enum":["finding","decision","obstacle","follow_up","milestone","question"]},"summary":{"type":"string"},"body":{"type":"string"},"evidence_refs":{"type":"array","items":{}},"related_task_ids":{"type":"array","items":{"type":"string","format":"uuid"}},"tags":{"type":"array","items":{"type":"string"}}},"required":["scope","kind","summary"],"additionalProperties":false}),
         ),
         descriptor(
+            DEN_DOCKET_ENTRY_PROMOTE,
+            "Promote Docket entry",
+            "Promote one non-outcome task-journal entry into its job notebook by reference. The operation is idempotent and preserves the original entry and provenance rather than copying model-authored content.",
+            "bear.docket",
+            &["docket.task.write"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"entry_id":{"type":"string","format":"uuid"}},"required":["entry_id"],"additionalProperties":false}),
+        ),
+        descriptor(
             DEN_DOCKET_ENTRY_LIST,
             "List Docket entries",
             "List durable task-journal or job-notebook entries for this Bear, filtered by job or task. Includes settlement outcomes and explicitly recorded findings, decisions, obstacles, follow-ups, milestones, and questions.",
@@ -1097,6 +1108,7 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
         | DEN_TASK_UPDATE
         | DEN_TASK_UPDATE_CURRENT_STATUS
         | DEN_DOCKET_ENTRY_APPEND
+        | DEN_DOCKET_ENTRY_PROMOTE
         | DEN_TASK_LIST_SYNC
         | DEN_TASK_LIST_CHECKOUT => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
@@ -1567,6 +1579,15 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             target_arg_keys: &["kind", "summary", "task_id", "job_id"],
             sensitive_arg_keys: &["body", "evidence_refs"],
             approval_summary: "Append a durable Docket journal or notebook entry.",
+        },
+        DEN_DOCKET_ENTRY_PROMOTE => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Promoting Docket entry",
+            complete_verb: "Promoted Docket entry",
+            target_arg_keys: &["entry_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Reference a task-journal entry from its job notebook.",
         },
         DEN_DOCKET_ENTRY_LIST => ToolDisplayDescriptor {
             label,

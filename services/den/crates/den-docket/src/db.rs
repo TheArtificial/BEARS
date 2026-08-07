@@ -17,7 +17,7 @@ use super::model::{
     docket_task_status_from_task_list_item_status, normalize_completion_criteria,
     task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
     DocketCommitPolicy, DocketCriterionStateRow, DocketCriterionStateUpdate, DocketEntryCreate,
-    DocketEntryKind, DocketEntryListFilter, DocketEntryRow, DocketEntryScope,
+    DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketEntryScope,
     DocketExecutionLookup, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
     DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
@@ -1773,7 +1773,7 @@ pub(super) async fn append_entry(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13)
         RETURNING id, job_id, task_id, run_id, scope, kind, summary, body,
                   disposition, evidence_refs, related_task_ids, tags, by_role,
-                  by_agent_id, by_user_id, created_at
+                  by_agent_id, by_user_id, NULL::uuid AS source_entry_id, created_at
         ",
     )
     .bind(job_id)
@@ -1801,6 +1801,73 @@ pub(super) async fn append_entry(
     Ok(row)
 }
 
+pub(super) async fn promote_entry(
+    pool: &PgPool,
+    promotion: DocketEntryPromotion,
+) -> Result<DocketEntryRow, DenError> {
+    let mut tx = pool.begin().await?;
+    let source = sqlx::query_as::<_, DocketEntryRow>(
+        r"
+        SELECT e.id, e.job_id, e.task_id, e.run_id, e.scope, e.kind, e.summary,
+               e.body, e.disposition, e.evidence_refs, e.related_task_ids, e.tags,
+               e.by_role, e.by_agent_id, e.by_user_id, e.source_entry_id, e.created_at
+        FROM bear_docket_entries e
+        JOIN bear_jobs j ON j.id = e.job_id
+        WHERE e.id = $1 AND j.bear_id = $2
+        FOR UPDATE OF e
+        ",
+    )
+    .bind(promotion.entry_id)
+    .bind(promotion.bear_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| {
+        DenError::NotFound(format!("Docket entry `{}` not found", promotion.entry_id))
+    })?;
+    if source.scope != DocketEntryScope::TaskJournal.as_str()
+        || source.kind == DocketEntryKind::Outcome.as_str()
+        || source.source_entry_id.is_some()
+    {
+        return Err(DenError::ValidationError(
+            "only non-outcome task journal entries may be promoted".to_string(),
+        ));
+    }
+
+    let row = sqlx::query_as::<_, DocketEntryRow>(
+        r"
+        INSERT INTO bear_docket_entries (
+            job_id, task_id, run_id, scope, kind, summary, body, evidence_refs,
+            related_task_ids, tags, by_role, by_agent_id, by_user_id, source_entry_id
+        )
+        VALUES (
+            $1, $2, $3, 'job_notebook', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+        )
+        ON CONFLICT (source_entry_id) WHERE source_entry_id IS NOT NULL DO UPDATE
+        SET source_entry_id = EXCLUDED.source_entry_id
+        RETURNING id, job_id, task_id, run_id, scope, kind, summary, body,
+                  disposition, evidence_refs, related_task_ids, tags, by_role,
+                  by_agent_id, by_user_id, source_entry_id, created_at
+        ",
+    )
+    .bind(source.job_id)
+    .bind(source.task_id)
+    .bind(source.run_id)
+    .bind(source.kind)
+    .bind(source.summary)
+    .bind(source.body)
+    .bind(source.evidence_refs)
+    .bind(source.related_task_ids)
+    .bind(source.tags)
+    .bind(promotion.actor_role.as_str())
+    .bind(promotion.actor_agent_id.as_deref())
+    .bind(promotion.actor_user_id)
+    .bind(source.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(row)
+}
+
 pub(super) async fn list_entries(
     pool: &PgPool,
     bear_id: Uuid,
@@ -1815,7 +1882,7 @@ pub(super) async fn list_entries(
         r"
         SELECT e.id, e.job_id, e.task_id, e.run_id, e.scope, e.kind, e.summary,
                e.body, e.disposition, e.evidence_refs, e.related_task_ids, e.tags,
-               e.by_role, e.by_agent_id, e.by_user_id, e.created_at
+               e.by_role, e.by_agent_id, e.by_user_id, e.source_entry_id, e.created_at
         FROM bear_docket_entries e
         JOIN bear_jobs j ON j.id = e.job_id
         WHERE j.bear_id = $1
