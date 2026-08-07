@@ -62,11 +62,21 @@ Den derives typed action data from authoritative records
 → Den's owning lifecycle consumes the result
 ```
 
-For example, task settlement can create a `commit_task` obligation whose commit
-message is derived by Den from Docket task data. Its payload must contain only
-typed, validated fields. Armature resolves local paths from its session/workspace
-binding; Den must not send filesystem paths, shell text, arbitrary Git arguments,
-or credentials.
+For example, task settlement can create a `publish_task` obligation. Docket
+derives its typed publication target and idempotency key from the task and work
+run; Den authorizes the attempt and owns the durable settlement record;
+Armature prepares or validates its workspace-local artifact. The publication
+provider performs the external effect using scoped credentials that are never
+shown to the model and need not be present in the sandbox. The first backend is
+Git, but the obligation represents publication rather than a Git command, so
+artifact registries and deployment targets can use the same lifecycle.
+
+The payload must contain only typed, validated resource references and target
+configuration. Den must not send filesystem paths, shell text, arbitrary Git
+arguments, or credentials. The result records immutable provider evidence (for
+Git, commit OID and remote ref; for an artifact registry, a digest; for a
+deployment, a release/revision ID). Docket settles a task only after the
+provider reports that evidence through the valid leased attempt.
 
 ## Design checklist
 

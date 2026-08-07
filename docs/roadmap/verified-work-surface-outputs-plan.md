@@ -43,27 +43,31 @@ enum WorkOutputKind {
 
 **Done when:** both cases fail against the pre-change logic and are covered by focused tests.
 
-### 2. Define typed output contracts and evidence storage
+### 2. Define typed output contracts, publication intent, and evidence storage
 
 - Add `WorkOutputKind` and strongly typed candidate/verified-output structures in `den-core` or the smallest existing shared Docket/work-surface type module.
 - Model a work surface's supported output kinds and optional default. Do not make default output mandatory for every task.
-- Add durable run-output and verification records, including work run, task, job, surface, output locator/artifact reference, digest where applicable, verifier state, timestamps, and structured failure reason.
+- Add a typed `publish_task` intent owned by Docket and delivered as a leased BearWire obligation. It identifies the task/work run, output target, expected artifact boundary, and idempotency key; it does not contain shell text, filesystem paths, raw Git arguments, or credentials.
+- Keep publication as one durable operation: a provider may require Armature to prepare or validate a workspace-local artifact, but the provider owns the external effect and uses scoped credentials outside model context and, where policy requires, outside the sandbox.
+- Add durable publication attempt/result and verification records, including work run, task, job, surface, output locator/artifact reference, provider evidence, digest where applicable, verifier state, timestamps, and structured failure reason.
 - Reuse Den artifact refs for patch, file-bundle, and report output; do not use free-form locators or provider-defined kind strings.
 
-**Done when:** invalid output-kind/locator pairings are unrepresentable in Rust, and a migration preserves existing work-run history without inventing verified output.
+**Done when:** invalid output-kind/target pairings are unrepresentable in Rust; a publication attempt has one idempotency key and one terminal outcome; provider credentials cannot appear in an Armature/model payload; and a migration preserves existing work-run history without inventing verified output.
 
-### 3. Implement surface verification adapters
+### 3. Implement publication-provider and verification adapters
 
-- Git commit: verify commit existence and reachability from the declared job/output ref.
-- Git patch, file bundle, report: verify finalized artifact existence and digest/provenance binding.
-- Make sandbox completion capture a patch/bundle candidate when it cannot publish a verified Git output; preserve raw logs regardless.
+- Git publication: have the provider verify the expected commit/artifact boundary and publish to the declared job/output ref using short-lived, target-scoped authority. Record the commit OID and remote ref as immutable evidence.
+- Git patch, file bundle, and report: verify finalized artifact existence and digest/provenance binding; use an appropriate artifact/publication provider when external publication is required.
+- Armature may prepare or validate a workspace-local candidate, but it never receives reusable provider credentials and never decides Docket settlement.
+- Make sandbox completion capture a patch/bundle candidate when it cannot produce a verifiable Git output; preserve raw logs regardless.
 - Unsupported, missing, or unverifiable candidate output yields a structured blocked result, retaining the candidate/evidence for recovery.
 
-**Done when:** Git and artifact-backed sandbox outputs both have one executable verifier path, and a report can be accepted on a Git-backed surface if that surface supports reports.
+**Done when:** Git and artifact-backed outputs each have one executable provider/verifier path, a provider result can be replayed idempotently without duplicating its external effect, and a report can be accepted on a Git-backed surface if that surface supports reports.
 
 ### 4. Gate task settlement and validation
 
-- Make work-run finalization persist candidate output and run validation evidence before task settlement.
+- Make work-run finalization persist candidate output, publication evidence, and run validation evidence before task settlement.
+- For `commit_policy = per_task`, replace any sandbox-owned implicit auto-commit/push path with one `publish_task` intent and provider result. Retain any per-job publication behavior only where it is explicitly selected by `commit_policy = per_job`.
 - Require verified output when the selected surface/task contract requires it.
 - Require success evidence for non-waived command/check criteria. An unrunnable command is unmet/blocked, not passed.
 - Remove any completion path based only on a worker result summary, claimed SHA, or claimed push.
@@ -97,6 +101,18 @@ SQLX_OFFLINE=true cargo check -p den-web
 ```
 
 Add focused integration tests for Git verification, artifact-backed sandbox output, report output on a Git-backed surface, missing output, failed/unrunnable validation, and job settlement ordering. Run the smallest relevant command for each changed crate before broad workspace checks.
+
+## Publication and credentials
+
+Docket owns the decision to publish a completed task and records its durable
+intent, idempotency key, target, and settlement. BearWire projects and leases
+that typed `publish_task` obligation; it does not become a second publication
+state machine. Armature can prepare or validate workspace-local output but does
+not receive reusable credentials or arbitrary command text. A Den-controlled
+publication provider performs the external effect with short-lived,
+target-scoped authority and reports immutable evidence. This is deliberately
+backend-neutral: Git branch publication is the first provider, while artifact
+registries and deployments can use the same lifecycle.
 
 ## Non-goals
 

@@ -39,6 +39,7 @@ Index of agent- and contributor-oriented docs for **this project**.
 |--------|-----------|
 | Concurrency model (prompt stream ↔ tool-result POST rendezvous) | [`acp-den-concurrency-model.md`](acp-den-concurrency-model.md) |
 | Runtime invariants | [`acp-runtime-invariants.md`](acp-runtime-invariants.md) |
+| BearWire state ownership, events, and leased obligations | [`bearwire-state-management.md`](bearwire-state-management.md) |
 | Lessons learned | [`acp-lessons.md`](acp-lessons.md) |
 | Troubleshooting | [`acp-troubleshooting.md`](acp-troubleshooting.md) |
 
