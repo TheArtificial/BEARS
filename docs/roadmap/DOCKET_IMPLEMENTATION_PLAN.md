@@ -102,22 +102,29 @@ Phases 0–4 are complete/retired in the current runtime. They remain below as t
 
 **Exit gate:** New turns do not create, read, or update raw legacy work-plan rows; compatibility code is removed from active runtime paths.
 
-### Phase 5 — Conversation objectives, runtime dispatch, and operator UX — remaining
+### Phase 5 — Conversation objectives, runtime dispatch, settlement, and operator UX — in progress
 
-**Goal:** Use Docket for structured work state while keeping the conversation task list as the Bear/human working view.
+**Goal:** Use Docket for structured work state while keeping the conversation task list as the Bear/human working view, with accountable terminal outcomes and one consistent diagnostic story across model, conversation, run logs, and web UI.
 
-| Task | Done when |
-| --- | --- |
-| Implement conversation-linked objectives | A conversation that enters task orientation has one mutable Docket-backed objective representing the structured work state for that conversation. |
-| Project active task context | Runtime orientation projects the active top-level task/subtree from the conversation objective instead of owning separate session task state. |
-| Implement `TaskDispatcher` integration | Docket can dispatch ready durable tasks to `work` runtime through the runtime-owned dispatch trait. |
-| Sync task-list changes through Docket | Authorized completion, edits, new subtasks, blockers, and evidence update the conversation objective's Docket task tree. |
-| Derive operational job status | `job.status` is computed from explicit lifecycle intent plus canonical run, task, and criterion evidence through one shared normalizer. APIs, conversation status, operator UI, and logs show that same projection; no independently authoritative persisted job-status field remains. |
-| Support stalled work runs | Continuation loss or missing tool-progress confirmation records the run as `stalled`, retains last evidence and diagnostic, and does not manufacture `failed`/`cancelled`. Operators can wait/resume when supported, cancel/end, or resolve as failed; the job projection reports unresolved stalled work. |
-| Test projection recovery | Tests cover status precedence, stalled-run resolution, and rebuilding the projection from persisted evidence so partial writes or restarts cannot leave job status inconsistent with run outcomes. |
-| Operator UI reflects projection vs ownership | Operators can see the conversation task list, top-level task/subtree focus, durable Docket jobs, and run state without confusing projection with ownership. |
+> **Status (2026-08):** Runtime dispatch and the first settlement/journal vertical slices have landed. Docket now exposes durable task journals and job notebooks, typed terminal outcome dispositions, idempotent notebook promotion, and bounded notebook context at worker checkout. Model-facing instructions for these workflows are compiled from repository prompt fragments rather than hardcoded Rust prose. The job UI shows notebook entries and append-only settlement history. Remaining work is primarily conversation-objective ownership/projection, output-contract resolution and enforcement, stalled-run/projection recovery, database-backed UAT, and end-to-end model/browser review.
 
-**Exit gate:** A Bear can evolve a conversation-linked Docket objective across turns, work the active task/subtree in-session, and have runtime/UI projections recover from Docket rather than session-owned task state. Job operational status is recomputed from lifecycle intent and run/task/criterion evidence, and an unresolved continuation loss is visible as a stalled run rather than an invented terminal outcome.
+| Task | Status | Done when |
+| --- | --- | --- |
+| Implement conversation-linked objectives | Remaining | A conversation that enters task orientation has one mutable Docket-backed objective representing the structured work state for that conversation. |
+| Project active task context | Remaining | Runtime orientation projects the active top-level task/subtree from the conversation objective instead of owning separate session task state. |
+| Implement `TaskDispatcher` integration | Landed | Docket dispatches ready durable tasks to `work` through the runtime-owned dispatch seam; worker checkout receives typed task context. |
+| Add accountable terminal settlement | Landed; database UAT pending | Terminal updates create durable outcomes, retries are idempotent, reopen/resettle preserves history, and lifecycle-compatible typed dispositions are enforced. |
+| Add journals and selectively shared notebook context | Landed; database UAT pending | Models can append/list task-journal and job-notebook entries, promote an entry by reference idempotently, and workers receive deterministic bounded notebook context. |
+| Resolve and enforce output contracts | Remaining | Docket derives evidence requirements from assigned surfaces, mutation/publication policy, task criteria, and observed effects; required evidence is validated without inventing a separate model-authored output taxonomy. |
+| Sync task-list changes through Docket | Partial | Authorized completion, edits, new subtasks, blockers, journal entries, and evidence update the conversation objective's Docket task tree. |
+| Derive operational job status | Remaining | `job.status` is computed from explicit lifecycle intent plus canonical run, task, criterion, and settlement evidence through one shared normalizer. APIs, conversation status, operator UI, and logs show that same projection; no independently authoritative persisted job-status field remains. |
+| Support stalled work runs | Remaining | Continuation loss or missing tool-progress confirmation records the run as `stalled`, retains last evidence and diagnostic, and does not manufacture `failed`/`cancelled`. Operators can wait/resume when supported, cancel/end, or resolve as failed; the job projection reports unresolved stalled work. |
+| Test projection recovery | Remaining | Tests cover status precedence, stalled-run resolution, retry/reopen settlement journeys, and rebuilding projections from persisted evidence so partial writes or restarts cannot leave status inconsistent with outcomes. |
+| Review end-to-end model experience | In progress | Fresh and existing sessions discover the same compiled guidance; completion, malformed evidence, retry, reopen, promotion, dispatch context, and recovery journeys produce actionable behavior without inviting invented evidence. Critical findings block completion. |
+| Review Docket web UI end to end | In progress | Operators can inspect notebook and settlement history with matching normalized status/evidence across conversation and run/log views; loading, empty, error, permission, responsive, keyboard, and accessibility states are exercised in a running browser. Critical findings block completion. |
+| Keep model guidance in context compilation | Ongoing invariant | Model-facing prompt text lives in registered prompt fragments rendered by context compilation. Rust carries typed context and structural tool schemas, not embedded behavioral prompt prose. |
+
+**Exit gate:** A Bear can evolve a conversation-linked Docket objective across turns, work or dispatch its active task/subtree, and recover runtime/UI projections from canonical Docket facts. Terminal outcomes are accountable and idempotent, required output evidence is enforced by resolved policy, and unresolved continuation loss is visible as stalled rather than converted into an invented outcome. PostgreSQL-backed journey tests and end-to-end model/browser reviews have no unresolved critical findings.
 
 ### Conversation-linked task-list objectives
 
@@ -177,4 +184,3 @@ Promoting these module seams to compile-time **crate** boundaries — turning th
 - Supersedes the schema/CRUD/handoff portions of [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) (phases 1–4); its runtime-dispatch and operator/UX phases (5–6) remain valid, read through ADR-0034, ADR-0045, and this plan.
 - [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md) consumes this plan's `DocketService`/`TaskDispatcher` trait seams and promotes them (and the `MemoryStore` seam) to Cargo workspace crate boundaries, motivated by build/test time.
 - Session task-list checkout/sync semantics are canonicalized in [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md) and should guide future model-facing `task_list` tool naming.
-- The MemFS intent/approved-task pipeline remains the unattended, `review`-gated path and is out of Docket's scope.
