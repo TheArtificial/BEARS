@@ -4730,6 +4730,23 @@ async fn fetch_conversation_surface_history_chronological(
     Ok(flatten_history_pages_chronological(pages_newest_first))
 }
 
+fn replay_tool_arguments(
+    request_arguments: &mut std::collections::HashMap<String, Value>,
+    kind: &str,
+    tool_call_id: &str,
+    arguments: &Value,
+) -> Value {
+    if kind == "tool_call" {
+        request_arguments.insert(tool_call_id.to_string(), arguments.clone());
+        arguments.clone()
+    } else {
+        request_arguments
+            .get(tool_call_id)
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
+}
+
 async fn replay_history_for_den_session(
     http: &reqwest::Client,
     config: &Config,
@@ -4749,6 +4766,9 @@ async fn replay_history_for_den_session(
                 conv
             );
         }
+        // Tool results intentionally do not duplicate request arguments in canonical history.
+        // Keep them only for this replay pass so terminal ACP updates preserve the request card.
+        let mut tool_call_arguments = std::collections::HashMap::<String, Value>::new();
         for message in history_replay_chunks_with_boundaries(messages) {
             match message.kind.as_str() {
                 "tool_call" | "tool_result" => {
@@ -4760,13 +4780,19 @@ async fn replay_history_for_den_session(
                     let Some(tool_name) = message.tool_name.as_deref() else {
                         continue;
                     };
+                    let arguments = replay_tool_arguments(
+                        &mut tool_call_arguments,
+                        &message.kind,
+                        tool_call_id,
+                        &message.arguments,
+                    );
                     let event = json!({
                         "type": if message.kind == "tool_call" { "tool_call.requested" } else { "tool_call.completed" },
                         "data": {
                             "tool_call": {
                                 "id": tool_call_id,
                                 "name": tool_name,
-                                "arguments": message.arguments,
+                                "arguments": arguments,
                             },
                             "summary": message.text,
                         },
@@ -11036,9 +11062,8 @@ fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay
         return display.title.clone();
     };
 
-    // Canonical display labels are useful for opaque tools, but built-in tools with a target
-    // must derive their card title from the actual arguments. Den may preserve an older generic
-    // display label such as `Read file: file` while the canonical arguments contain the path.
+    // Built-in calls derive titles from canonical input when present. This also keeps request
+    // targets visible when an older server display label is generic.
     if tool_args_from_event(event).is_some() {
         let title = tool_call_title(tool_name, event);
         if title != tool_display(tool_name).title {
@@ -17441,6 +17466,37 @@ mod tests {
         }));
         assert_eq!(late, BearWireToolResultResponseClass::LateIgnored);
         assert!(late.needs_attention());
+    }
+
+    #[test]
+    fn replay_tool_result_inherits_request_arguments_without_persisting_them() {
+        let mut request_arguments = std::collections::HashMap::new();
+        let request = json!({ "path": "/workspace/README.md" });
+        assert_eq!(
+            replay_tool_arguments(&mut request_arguments, "tool_call", "call-read", &request),
+            request
+        );
+        assert_eq!(
+            replay_tool_arguments(
+                &mut request_arguments,
+                "tool_result",
+                "call-read",
+                &Value::Null
+            ),
+            request
+        );
+        assert_eq!(
+            tool_call_title(
+                "fs_read_text_file",
+                &json!({ "data": { "tool_call": { "arguments": replay_tool_arguments(
+                    &mut request_arguments,
+                    "tool_result",
+                    "call-read",
+                    &Value::Null,
+                ) } } }),
+            ),
+            "Read file: /workspace/README.md"
+        );
     }
 
     #[tokio::test]
