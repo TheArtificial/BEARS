@@ -8,6 +8,8 @@
 
 > **Amended by [ADR-0056](adr-0056-docket-driven-turn-routing.md).** Tasks gain routing/placement metadata (`routing_strategy`, plus advisory `expected_context_size` and `result_rollup_policy`); result rollups are recorded as append-only, run-scoped `bear_task_events` entries read latest-per-child by the parent. This ADR's invariants stand unchanged: task rows still hold no status, result, or model name; execution profiles are resolved by the ADR-0033 model-tasks layer at dispatch and recorded on routing decisions and runs.
 
+> **2026-07-14 amendment — journals, notebooks, and checkpoints.** Docket entries provide the durable semantic record for task outcomes and selectively shared job knowledge. Every terminal task settlement requires an `outcome` journal entry; the applicable output contract determines whether that outcome also requires independently inspectable evidence. Runtime checkpoints remain tactical continuation control under ADR-0050, not automatic history, but may deliberately append a durable entry when one is warranted.
+
 ## Context
 
 BEARS already has several overlapping work-management surfaces:
@@ -28,7 +30,7 @@ This ADR also resolves how the new model relates to and supersedes parts of the 
 
 ### Relationship to adjacent decisions
 
-- [ADR-0006 (Bear work surfaces)](adr-0006-bear-work-surfaces.md): jobs attach to a work surface. The normalized `bear_work_surfaces` entity does not yet exist, so jobs carry a nullable `work_surface_ref` slug until it does.
+- [ADR-0006 (Bear work surfaces)](adr-0006-bear-work-surfaces.md): jobs assign zero or more work surfaces. Each assignment states whether mutation is `required`, `optional`, or `forbidden`; the work surface and its typed adapter define how any resulting output is materialized and observed.
 - [ADR-0026 (Work handoff and human escalation)](adr-0026-work-handoff-and-human-escalation.md): a job that blocks for human input opens a `work_handoffs` record. Handoff is a **peer** concept, not owned by the job.
 - [ADR-0027 (Workflow state ontology)](adr-0027-workflow-state-ontology.md): jobs span the **workplan** domain (goal, acceptance criteria, task definitions) and the **activity** domain (run status, report). Task execution state is the **execution** domain. These remain distinct; this ADR labels each table accordingly.
 - [ADR-0031 (SQLite-first canonical store)](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md): adopts that ADR's append-only `task_events` shape. This ADR implements it in **Den Postgres**, not SQLite. The event taxonomy here is the authoritative one for jobs/tasks.
@@ -48,12 +50,22 @@ BEARS adopts a two-level durable work-management model — **jobs** and **tasks*
 5. **Tasks and runs hold execution state; jobs project it.** A task's identity is stable and owned by the job. Status, results, and per-run telemetry live against a run, not on the task row. The operational job status is a derived projection of run, task, criterion, and explicit lifecycle evidence; it is not an independently authoritative persisted attribute.
 6. **Decomposition is live and audited.** Tasks added during execution are reflected in the report immediately and recorded with who added them, when, and in which run.
 7. **Storage is Den control-plane.** Jobs/tasks orchestration records live in Den Postgres, not per-Bear SQLite. The Bear *uses* Den's job-management platform to organize its work, the way a person uses a project tracker; the platform is infrastructure the Bear plugs into, not part of the Bear's cognition. This narrows [ADR-0031](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), which keeps SQLite canonical for Bear *memory*. See the **execution invariant** below.
-8. **Completion requires recorded output evidence, not a worker report alone.** When a work surface requires output, a task can settle as complete only after Docket records the declared or observed durable run output and the task's required validation evidence. Worker prose, including a claimed commit hash, is a summary and never sufficient completion evidence. This records provenance and a reviewable handoff; it does not certify that the output is technically correct. A task may explicitly require stronger surface observation, publication, artifact finalization, or a successful check.
+8. **Completion requires an accountable outcome and recorded output evidence where required, not a worker report alone.** Every terminal task settlement has a durable `outcome` journal entry. When the task's output contract requires evidence, Docket may settle it as complete only after recording the declared or observed durable run output and required validation evidence. Worker prose, including a claimed commit hash, is a summary and never sufficient completion evidence. This records provenance and a reviewable result; it does not certify that the output is technically correct. A task may explicitly require stronger surface observation, publication, artifact finalization, or a successful check.
 9. **Live work runs are the sole execution evidence.** Focus is navigation state, not execution. A task is in progress only while it has a live work run; task definitions retain durable outcome states rather than a mutable `in_progress` state. A job projects running from live work runs and completion from required task outcomes. Historical job-run state cannot override those projections.
 
 ### Output evidence and settlement
 
-Docket owns settlement policy and evidence persistence. A work surface owns the mechanics of materializing an output and may contribute observations about it. The surface declares the typed output kinds it supports and may name a default, but that default is not a mandate: a job on a Git-backed surface may validly produce a report instead of a commit.
+Docket owns settlement policy and evidence persistence. A work surface owns the mechanics of materializing an output and may contribute observations about it. Jobs assign work surfaces through `job_work_surface_assignments`; an assignment's mutation policy has these semantics:
+
+| Policy | Meaning |
+| --- | --- |
+| `required` | The job is expected to leave a durable mutation on this surface. This is the default when the singular creation shorthand is used. |
+| `optional` | The surface may be mutated when warranted, but a no-change or report-only outcome is valid. Any mutation that does occur still requires the surface's applicable evidence and validation. |
+| `forbidden` | The surface is context only. Mutable dispatch and mutation capabilities for that assignment are rejected. |
+
+Mutation policy expresses expectation and authorization, not a second model-authored output taxonomy. The surface declares the typed output kinds it supports and may name a default. Docket resolves the applicable output contract from assigned surfaces, mutation policies, publication policy, task acceptance criteria, and observed authorized effects. The model does not separately classify every task and declare an output requirement.
+
+A `required` assignment normally makes corresponding durable surface evidence mandatory before the job can settle successfully. It does not mean every individual task must independently mutate that surface: with per-job publication, intermediate tasks can settle with accountable outcomes while final job settlement proves the required surface output. An `optional` or `forbidden` assignment does not create a fake output obligation.
 
 The initial closed vocabulary is intentionally small:
 
@@ -70,7 +82,33 @@ A run records a typed primary output and validation evidence. The output record 
 
 These records make the work reviewable and give Docket a credible basis to distinguish a result from a bare narrative. They are **not** a universal proof that the output is correct, complete, or fit for its intended purpose. Stronger requirements—such as a successful command, a finalized artifact, or publication/reachability observation—are explicit task or surface policy. A missing or failed *required* observation/check leaves the task blocked with a structured reason while preserving the candidate output and raw run evidence; an optional unavailable verifier does not turn ordinary work completion into a false failure.
 
-On terminal execution, Docket persists the outcome and its evidence before recomputing task and job projections from current durable facts. It must not infer completion from a narrative result alone.
+On terminal execution, Docket persists the task's `outcome` journal entry and its required evidence before recomputing task and job projections from current durable facts. It must not infer completion from a narrative result alone. The contract may permit evidence to be optional for an explicitly coordination-shaped task, but that does not waive the terminal outcome: it must still state the disposition and what actually occurred. This allows legitimate decomposition, inspection, and no-change outcomes without incentivizing fake commits or artifacts.
+
+### Docket journals and notebooks
+
+Docket stores append-only semantic entries rather than treating raw run/session logs as the durable work record. A **task journal** is the task-centric accountable record: it establishes what a task accomplished, learned, chose, or encountered. A **job notebook** is the job-centric, selectively shared knowledge pool: it captures findings and decisions that may matter to other work within the same job. Neither is a mirror of automatic run logs.
+
+The same entry model serves both views. An entry has a task-journal or job-notebook scope and may link to its originating task, run, evidence, and related tasks. A task-journal entry can be promoted to the job notebook without duplicating its content. Job-notebook publication does not promote knowledge into Bear memory; it remains Docket-scoped work context unless separately promoted through the normal memory process.
+
+The initial vocabulary is deliberately small:
+
+| Kind | Meaning |
+| --- | --- |
+| `outcome` | Accountable terminal statement of what happened to a task. |
+| `finding` | A fact learned through inspection, experiment, or validation; it may be confirmed or provisional. |
+| `decision` | A deliberate choice, with rationale and material consequences where applicable. |
+| `obstacle` | Something that impeded progress. It does not itself assert that the task lifecycle is `blocked`. |
+| `follow_up` | Linked work that must continue elsewhere in the same job; it does not imply transfer to another agent. |
+| `milestone` | A meaningful nonterminal phase boundary; used sparingly. |
+| `question` | A request for user direction; writable only in `pair` stance. |
+
+`outcome` carries a typed disposition: `completed`, `no_change`, `delegated`, `blocked`, `failed`, or `cancelled`. A task's terminal lifecycle state must not contradict its outcome disposition: in particular, a `blocked` or `failed` outcome cannot be presented as task `done`. `delegated` settles a task only when its actual responsibility was coordination or decomposition; it does not settle a parent that remains responsible for the delegated substantive result.
+
+Every terminal task state requires exactly one current `outcome` entry associated with that task. If work is reopened, the prior entry remains append-only history and a later terminal settlement appends a new outcome. Other entry kinds are intentional rather than routine: do not create `progress`, `status`, `comment`, or `checkpoint` entries merely to narrate activity.
+
+An `outcome` always requires a concise semantic summary. Evidence references are mandatory when the task's output contract requires them, and otherwise optional. Valid evidence includes typed work outputs, artifacts, workspace revisions/diffs, command or check results, file references, child-task references, and other durable Docket records. Raw logs may be linked as supporting evidence but cannot alone establish that the task's intended result was achieved.
+
+Workers receive bounded, relevant notebook context rather than the entire chronological entry stream: pinned job decisions, explicit follow-ups, and manually tagged entries relevant to the task are the initial selection mechanism. This is intentionally simple until observation justifies a richer retrieval system.
 ### Execution invariant
 
 This control-plane placement holds **only** because Job execution stays inside the Bear. Den dispatches a Job to the Bear's own role runtime (e.g. `work`) **running with the Bear's scoped memory context**. One Job Run owns one sandbox/workspace/session and advances the Job's task tree with at most one task `in_progress` at a time. Den schedules, gates (acceptance criteria), and records; it does **not** execute task `body` content via generic, non-Bear subagents. If Den ever executed task bodies outside the Bear's memory context, the task tree would be Bear cognition smuggled into the control plane, and the storage decision in principle 7 (and the ADR-0031 amendment it rests on) would no longer be justified.
@@ -109,8 +147,7 @@ bear_jobs
 - created_by_user_id  uuid NOT NULL FK        -- humans only
 - created_by_role     bear_agent_role          -- channel the human used (pair | chat | ui)
 - goal                text NOT NULL            -- workplan: intent
-- work_surface_ref    text nullable            -- slug; FK once ADR-0006 lands
-- commit_policy       commit_policy nullable   -- none | per_task | per_job
+- commit_policy       commit_policy nullable   -- none | per_task | per_job; publication timing, not mutation expectation
 - cancellation_requested_at timestamptz nullable -- explicit user lifecycle intent
 - paused_at           timestamptz nullable     -- explicit user lifecycle intent
 - archived_at         timestamptz nullable     -- explicit user lifecycle intent
@@ -118,6 +155,33 @@ bear_jobs
 - current_run_id      uuid nullable FK         -- convenience pointer; non-authoritative
 - created_at, updated_at
 ```
+
+#### `work_surfaces` and typed adapters — managed work targets and context
+
+```text
+work_surfaces
+- id                  uuid PK
+- kind                work_surface_kind   -- git_workspace | ...
+- name, description
+- created_by_user_id  uuid FK
+- created_at, updated_at
+
+git_work_surface_details
+- work_surface_id     uuid PK/FK -> work_surfaces
+- upstream_url
+- default_ref
+- sandbox_image
+- encrypted_credentials
+- adapter-specific configuration
+
+job_work_surface_assignments
+- job_id              uuid FK -> bear_jobs
+- work_surface_id     uuid FK -> work_surfaces
+- mutation_policy     mutation_policy -- required | optional | forbidden
+- PRIMARY KEY (job_id, work_surface_id)
+```
+
+`work_surfaces` is the sole generic registry. Kind-specific fields live in strongly typed adapter tables rather than nullable generic columns or untyped configuration blobs. The assignment table is the sole canonical job-to-surface relationship. A singular `work_surface_id` accepted by a creation API is convenience syntax for one `required` assignment, not a second persisted relationship.
 
 #### `bear_job_criteria` — acceptance criteria (workplan domain)
 
@@ -222,6 +286,31 @@ bear_task_events
 
 `child_added` records live decomposition: the parent task, the new child's id, `by_role`/`by_agent_id`/`by_user_id`, and the run. It bubbles up to a `task_added` job event. Execution events carry `run_id`; definitional edits (reordering, human refinement between runs) carry a null `run_id`.
 
+#### `bear_docket_entries` — durable task journals and job notebooks (activity domain)
+
+```text
+bear_docket_entries
+- id                uuid PK
+- job_id            uuid FK -> bear_jobs
+- task_id           uuid nullable FK -> bear_tasks
+- run_id            uuid nullable FK -> bear_job_runs
+- scope             docket_entry_scope -- task_journal | job_notebook
+- kind              docket_entry_kind  -- outcome | finding | decision | obstacle
+                                      --  | follow_up | milestone | question
+- summary           text
+- body              text nullable
+- disposition       outcome_disposition nullable
+- evidence_refs     jsonb not null default '[]'
+- related_task_ids  jsonb not null default '[]'
+- tags              jsonb not null default '[]'
+- by_role           bear_agent_role
+- by_agent_id       text nullable
+- by_user_id        uuid nullable
+- created_at        timestamptz
+```
+
+`summary` is required for every entry. `disposition` is required only for `outcome`; it is null for other kinds. `question` creation is authorized only in `pair` stance. `task_id` is required for task-journal entries and optional for job-notebook entries. An entry can be visible in both views by promotion/reference without copying text. Insertions emit the corresponding task/job audit event, but the entry row—not opaque event payload—is the canonical semantic record.
+
 #### `bear_job_events` — report + audit stream (activity domain)
 
 ```text
@@ -252,7 +341,7 @@ The user-facing **status report** and operational **job status** are projections
 
 A terminal failed run is evidence, not a separate job status: it leaves the job `ready` when remediation remains runnable, otherwise `blocked` with its failure evidence. Implementations may materialize this projection for query performance, but it is a rebuildable cache and never an authority. The report remains an auditable rendering of `bear_job_events` plus the same normalized run/task/criterion evidence; it must not semantically disagree with the status projection.
 
-Runtime checkpoints from ADR-0050 are not `bear_task_events` or `bear_job_events`. They may reference Docket run/task ids for loop-control continuity, but durable task progress, blockers, completion, criteria evaluation, and report-visible history still require explicit task/job events produced through the task-management path.
+Runtime checkpoints from ADR-0050 are tactical continuation-focus evaluations, not `bear_task_events`, `bear_job_events`, or automatic journal history. They may reference Docket run/task ids to assess what changed, what remains, and the smallest credible next action. A checkpoint may deliberately append or promote a journal/notebook entry only when it produces a durable `finding`, `decision`, `obstacle`, `follow_up`, `milestone`, or `outcome`. Checkpoint text is never progress, task output, or completion evidence by itself, and writing an entry does not itself earn continuation budget. Durable task progress, outcomes, criteria evaluation, and report-visible history still require the explicit Docket records defined here.
 
 ### Decomposition, template vs. run scope, and learning
 
@@ -264,7 +353,7 @@ This promotion/pruning loop is the explicit mechanism for learning job structure
 
 Evolves the `den.work_plan.*` tools.
 
-- **Job management (`pair` / `chat` / UI):** `den.job.create` (goal, criteria, initial task tree, work_surface_ref, commit_policy), `den.job.get` (job + task tree + derived operational status + rendered report), `den.job.list`. Lifecycle mutations record explicit pause, cancellation, archive, or supersession intent; they do not write a job status.
+- **Job management (`pair` / `chat` / UI):** `den.job.create` (goal, criteria, initial task tree, `work_surface_id` shorthand or typed `work_surface_assignments`, commit policy), `den.job.get` (job + task tree + assignments + derived operational status + rendered report), `den.job.list`. Callers use the assignment list only for multiple surfaces or a non-default mutation policy. Lifecycle mutations record explicit pause, cancellation, archive, or supersession intent; they do not write a job status.
 - **Task tree (all roles):** `den.task.create` (body, kind, parent_task_id, job_id or session_anchor_id), `den.task.update` (status/result via run context), `den.task.list`.
 - **Execution (`work`):** receives one Job dispatch from Den. The Job Run retains one sandbox/workspace/session while `work` advances the task tree (one `in_progress` task at a time), with Job goal and acceptance criteria injected; it may call `den.task.create` to add run-scoped children. Dispatch/watchdog paths record run progress and mark an unconfirmed continuation `stalled`, preserving evidence for an operator decision rather than fabricating a terminal outcome.
 
@@ -284,7 +373,7 @@ Deferred — **only the scheduler behavior**, not the data model:
 
 ### Tests, commits, and documentation
 
-These behaviors are **not** modeled as task-type enums. They belong to work-surface instructions (per ADR-0006 anchors and the orientation recommendations) referenced through acceptance criteria and `commit_policy`. When a job's `work_surface_ref` resolves to a git surface, Den injects that surface's git/test/doc conventions into each task dispatch. This keeps the task schema surface-agnostic (research, design, and ops work surfaces are not git-centric) while making code conventions mandatory context where they apply.
+These behaviors are **not** modeled as task-type enums. They belong to assigned work-surface instructions (per ADR-0006 anchors and the orientation recommendations), mutation policy, acceptance criteria, and publication policy. When an assigned surface resolves to a Git adapter, Den injects that surface's Git/test/doc conventions into applicable task dispatches. `required`, `optional`, and `forbidden` say whether mutation is expected, permitted, or prohibited; they do not themselves define a validation command. This keeps the task schema surface-agnostic while making code conventions mandatory context where they apply.
 
 ## Consequences
 

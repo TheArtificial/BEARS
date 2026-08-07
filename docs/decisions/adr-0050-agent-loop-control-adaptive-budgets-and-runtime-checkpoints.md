@@ -17,6 +17,7 @@
 - [ADR-0037: Work sandbox, egress gateway, and upstream auth](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)
 - [ADR-0051: Reflection performance assessments](adr-0051-reflection-performance-assessments.md)
 - [ADR-0056: Docket-driven turn routing](adr-0056-docket-driven-turn-routing.md)
+- [ADR-0034: Jobs and tasks work-management model](adr-0034-jobs-and-tasks-work-management.md)
 - [Den state machine inventory](../architecture/den-state-machine-inventory.md)
 
 > **Relationship to [ADR-0056](adr-0056-docket-driven-turn-routing.md).** The focused Job remains the durable execution focus this ADR defines; ADR-0056's Docket cursors are a different axis — per-session attention viewports that grant no continuation authority and never contend with the focused Job or run state. Loop-control continuation ("Den prompts the model toward the next logical incomplete, unblocked task") is one producer of `continuation`/`dispatch` turn intents into the ADR-0056 turn router, and control-level ↔ model-capability mirroring is an input to that ADR's escalation-vs-checkpoint-overhead cost policy.
@@ -30,6 +31,8 @@
 > 4. The **Initial policy shape** now uses a persisted budget ledger and offline replay, but because Den is pre-release, completed loop-control slices are active by default once tested rather than hidden behind long advisory/observe rollout periods. Sequencing lives in [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md).
 >
 > **2026-07-13 terminology update.** Loop control separates **governance** (how hard the runtime drives or yields) from the **focused Job** (the Docket Job, if any, that must remain centered). `work` normally requires a focused Job and drives it under autonomous-continuation governance. `pair` normally has no focused Job, but may designate one explicitly through conversation or client command.
+>
+> **2026-07-14 journal integration.** A checkpoint remains a tactical continuation-focus evaluation: it asks what changed, what remains, and what smallest next bounded action could credibly justify continuing. It neither establishes task output nor automatically writes durable task/job history. Per ADR-0034, it may deliberately append or promote a typed Docket entry only when it yields a durable finding, decision, obstacle, follow-up, milestone, or outcome. Routine checkpoint narration remains run-loop telemetry; checkpoint text and entry creation never alone justify additional budget.
 
 ## Context
 
