@@ -835,6 +835,41 @@ impl DocketTaskStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum DocketOutcomeDisposition {
+    Completed,
+    NoChange,
+    Delegated,
+    Blocked,
+    Failed,
+    Cancelled,
+}
+
+impl DocketOutcomeDisposition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::NoChange => "no_change",
+            Self::Delegated => "delegated",
+            Self::Blocked => "blocked",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn is_valid_for(self, status: DocketTaskStatus) -> bool {
+        matches!(
+            (status, self),
+            (
+                DocketTaskStatus::Done,
+                Self::Completed | Self::NoChange | Self::Delegated
+            ) | (DocketTaskStatus::Blocked, Self::Blocked | Self::Failed)
+                | (DocketTaskStatus::Cancelled, Self::Cancelled)
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DocketCriterionStatus {
     Unmet,
     Met,
@@ -1254,6 +1289,7 @@ pub struct DocketTaskListFilter {
 pub struct DocketTaskRunStateUpdate {
     pub run_id: Uuid,
     pub status: DocketTaskStatus,
+    pub outcome_disposition: Option<DocketOutcomeDisposition>,
     pub result_refs: Option<serde_json::Value>,
     pub result_summary: Option<String>,
 }
@@ -2131,6 +2167,27 @@ mod tests {
             blocked_reason: None,
             source_refs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn outcome_dispositions_match_terminal_lifecycle_states() {
+        use DocketOutcomeDisposition as Outcome;
+        use DocketTaskStatus as Status;
+
+        for disposition in [Outcome::Completed, Outcome::NoChange, Outcome::Delegated] {
+            assert!(disposition.is_valid_for(Status::Done));
+        }
+        for disposition in [Outcome::Blocked, Outcome::Failed] {
+            assert!(disposition.is_valid_for(Status::Blocked));
+        }
+        assert!(Outcome::Cancelled.is_valid_for(Status::Cancelled));
+
+        for status in [Status::Pending, Status::Blocked, Status::Cancelled] {
+            assert!(!Outcome::Completed.is_valid_for(status));
+        }
+        assert!(!Outcome::Failed.is_valid_for(Status::Done));
+        assert!(!Outcome::NoChange.is_valid_for(Status::Blocked));
+        assert!(!Outcome::Delegated.is_valid_for(Status::Cancelled));
     }
 
     #[test]

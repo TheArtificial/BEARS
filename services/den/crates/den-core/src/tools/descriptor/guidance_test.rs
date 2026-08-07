@@ -7,6 +7,7 @@ use crate::{
             DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER,
             DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
             DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER,
+            DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
         },
         descriptor::builtin_den_tool_descriptors,
     },
@@ -130,6 +131,30 @@ fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
                 .as_array()
                 .is_some_and(|items| items.iter().any(|item| item == "job_id"))
         }));
+}
+
+#[test]
+fn current_task_status_descriptor_exposes_compatible_outcomes() {
+    let descriptor = builtin_den_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.provider_name == DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER)
+        .expect("update_current_task_status descriptor");
+
+    assert_eq!(
+        descriptor.input_schema["properties"]["outcome_disposition"]["enum"],
+        serde_json::json!([
+            "completed",
+            "no_change",
+            "delegated",
+            "blocked",
+            "failed",
+            "cancelled"
+        ])
+    );
+    assert!(descriptor.description.contains("done accepts completed"));
+    assert!(descriptor
+        .description
+        .contains("blocked accepts blocked or failed"));
 }
 
 #[test]

@@ -274,6 +274,7 @@ async fn update_run_state(
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status,
+                outcome_disposition: None,
                 result_refs,
                 result_summary,
             }),

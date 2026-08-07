@@ -1959,12 +1959,15 @@ pub(super) async fn update_task(
     }
     let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
     append_task_updated_events(&mut tx, &patched, &update).await?;
+    let append_outcome = should_append_terminal_outcome(&mut tx, &patched, &update).await?;
     let run_state = if let Some(run_state) = update.run_state.as_ref() {
         Some(upsert_task_run_state(&mut tx, update.task_id, run_state).await?)
     } else {
         None
     };
-    append_terminal_outcome(&mut tx, &patched, &update).await?;
+    if append_outcome {
+        append_terminal_outcome(&mut tx, &patched, &update).await?;
+    }
     if let Some(run_state) = update
         .run_state
         .as_ref()
@@ -2319,6 +2322,7 @@ async fn select_task(
                created_at, updated_at
         FROM bear_tasks
         WHERE bear_id = $1 AND id = $2
+        FOR UPDATE
         ",
     )
     .bind(bear_id)
@@ -2606,6 +2610,104 @@ async fn upsert_task_run_state(
     .map_err(Into::into)
 }
 
+async fn should_append_terminal_outcome(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: &DocketTaskRow,
+    update: &DocketTaskUpdate,
+) -> Result<bool, DenError> {
+    let Some(run_state) = update.run_state.as_ref() else {
+        return Ok(false);
+    };
+    let Some(disposition) = terminal_outcome_disposition(run_state)? else {
+        return Ok(false);
+    };
+    let previous_status = sqlx::query_scalar::<_, String>(
+        "SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
+    )
+    .bind(run_state.run_id)
+    .bind(task.id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if previous_status.as_deref() != Some(run_state.status.as_str()) {
+        return Ok(true);
+    }
+
+    let summary = run_state
+        .result_summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .ok_or_else(|| {
+            DenError::ValidationError(format!(
+                "Docket terminal task settlement requires non-empty result_summary: status={}",
+                run_state.status.as_str()
+            ))
+        })?;
+    let evidence_refs = terminal_evidence_refs(run_state.result_refs.as_ref());
+    let existing = sqlx::query(
+        r"
+        SELECT summary, disposition, evidence_refs
+        FROM bear_docket_entries
+        WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        ",
+    )
+    .bind(task.id)
+    .bind(run_state.run_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(existing) = existing else {
+        // ponytail: repair pre-journal terminal state on its next settlement retry;
+        // remove this fallback once all pre-journal runs have aged out.
+        return Ok(true);
+    };
+    let existing_summary: String = existing.try_get("summary")?;
+    let existing_disposition: String = existing.try_get("disposition")?;
+    let existing_evidence: Value = existing.try_get("evidence_refs")?;
+    if existing_summary == summary
+        && existing_disposition == disposition
+        && existing_evidence == evidence_refs
+    {
+        return Ok(false);
+    }
+    Err(DenError::ValidationError(format!(
+        "Docket terminal settlement is append-only; reopen task before replacing its outcome: task_id={}, run_id={}",
+        task.id, run_state.run_id
+    )))
+}
+
+fn terminal_outcome_disposition(
+    run_state: &super::model::DocketTaskRunStateUpdate,
+) -> Result<Option<&'static str>, DenError> {
+    use super::model::{DocketOutcomeDisposition, DocketTaskStatus};
+
+    let default = match run_state.status {
+        DocketTaskStatus::Pending => return Ok(None),
+        DocketTaskStatus::Done => DocketOutcomeDisposition::Completed,
+        DocketTaskStatus::Blocked => DocketOutcomeDisposition::Blocked,
+        DocketTaskStatus::Cancelled => DocketOutcomeDisposition::Cancelled,
+    };
+    let disposition = run_state.outcome_disposition.unwrap_or(default);
+    if !disposition.is_valid_for(run_state.status) {
+        return Err(DenError::ValidationError(format!(
+            "Docket outcome disposition '{}' contradicts task status '{}'",
+            disposition.as_str(),
+            run_state.status.as_str()
+        )));
+    }
+    Ok(Some(disposition.as_str()))
+}
+
+fn terminal_evidence_refs(result_refs: Option<&Value>) -> Value {
+    result_refs
+        .map(|refs| match refs {
+            Value::Array(refs) => Value::Array(refs.clone()),
+            refs => Value::Array(vec![refs.clone()]),
+        })
+        .unwrap_or_else(|| Value::Array(Vec::new()))
+}
+
 async fn append_terminal_outcome(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     task: &DocketTaskRow,
@@ -2614,11 +2716,8 @@ async fn append_terminal_outcome(
     let Some(run_state) = update.run_state.as_ref() else {
         return Ok(());
     };
-    let disposition = match run_state.status.as_str() {
-        "done" => "completed",
-        "blocked" => "blocked",
-        "cancelled" => "cancelled",
-        _ => return Ok(()),
+    let Some(disposition) = terminal_outcome_disposition(run_state)? else {
+        return Ok(());
     };
     let summary = run_state
         .result_summary
@@ -2631,14 +2730,7 @@ async fn append_terminal_outcome(
                 run_state.status.as_str()
             ))
         })?;
-    let evidence_refs = run_state
-        .result_refs
-        .as_ref()
-        .map(|refs| match refs {
-            Value::Array(refs) => Value::Array(refs.clone()),
-            refs => Value::Array(vec![refs.clone()]),
-        })
-        .unwrap_or_else(|| Value::Array(Vec::new()));
+    let evidence_refs = terminal_evidence_refs(run_state.result_refs.as_ref());
 
     sqlx::query(
         r"
@@ -2782,6 +2874,7 @@ pub(super) async fn sync_task_list(
                     run_state: Some(super::model::DocketTaskRunStateUpdate {
                         run_id,
                         status: docket_task_status_from_task_list_item_status(item.status),
+                        outcome_disposition: None,
                         result_refs: None,
                         result_summary,
                     }),

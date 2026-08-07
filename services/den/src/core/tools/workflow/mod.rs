@@ -348,6 +348,8 @@ pub(crate) struct DocketCurrentTaskStatusArguments {
     pub(crate) task_id: Uuid,
     pub(crate) status: DocketTaskStatus,
     #[serde(default)]
+    pub(crate) outcome_disposition: Option<den_docket::DocketOutcomeDisposition>,
+    #[serde(default)]
     pub(crate) result_refs: Option<Value>,
     #[serde(default)]
     pub(crate) result_summary: Option<String>,
@@ -1973,6 +1975,7 @@ pub(crate) async fn update_current_task_status(
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: args.status,
+                outcome_disposition: args.outcome_disposition,
                 result_refs: args.result_refs,
                 result_summary: args.result_summary,
             }),

@@ -313,6 +313,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
+                outcome_disposition: None,
                 result_refs: Some(primary_output_result_refs()),
                 result_summary: Some("Verified status projection".to_string()),
             }),
@@ -479,6 +480,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
+                outcome_disposition: None,
                 result_refs: None,
                 result_summary: Some("Inventory findings recorded in the task result.".to_string()),
             }),
@@ -508,6 +510,103 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     assert_eq!(outcome_disposition, "completed");
     assert_eq!(evidence_count, 0);
 
+    let identical_retry = service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: Some("Inventory findings recorded in the task result.".to_string()),
+            }),
+        })
+        .await;
+    assert!(identical_retry.is_ok());
+    let (outcome_count,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM bear_docket_entries WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'",
+    )
+    .bind(first_task_id)
+    .bind(run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count terminal outcomes after retry");
+    assert_eq!(outcome_count, 1);
+
+    let replacement_without_reopen = service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: Some("Changed after settlement.".to_string()),
+            }),
+        })
+        .await;
+    assert!(replacement_without_reopen.is_err());
+
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Pending,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: None,
+            }),
+        })
+        .await
+        .expect("reopen settled task");
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: Some("Rechecked after reopening.".to_string()),
+            }),
+        })
+        .await
+        .expect("resettle reopened task");
+    let (outcome_count,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM bear_docket_entries WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'",
+    )
+    .bind(first_task_id)
+    .bind(run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count terminal outcomes after resettlement");
+    assert_eq!(outcome_count, 2);
+
     let missing_summary = service
         .update_task(DocketTaskUpdate {
             bear_id,
@@ -520,6 +619,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
+                outcome_disposition: None,
                 result_refs: None,
                 result_summary: None,
             }),
@@ -539,6 +639,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
+                outcome_disposition: None,
                 result_refs: Some(primary_output_result_refs()),
                 result_summary: Some("First task actually completed".to_string()),
             }),
@@ -573,6 +674,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
+                outcome_disposition: None,
                 result_refs: Some(primary_output_result_refs()),
                 result_summary: Some("Second task actually completed".to_string()),
             }),

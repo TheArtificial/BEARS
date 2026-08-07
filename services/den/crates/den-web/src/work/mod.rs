@@ -1830,6 +1830,7 @@ async fn retry_task(
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Pending,
+                outcome_disposition: None,
                 result_refs: Some(serde_json::json!({
                     "retry": {
                         "reason": reason,

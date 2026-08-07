@@ -1273,6 +1273,7 @@ async fn active_task_definition_edits_require_a_paused_work_run() {
         run_state: Some(DocketTaskRunStateUpdate {
             run_id,
             status: crate::DocketTaskStatus::Pending,
+            outcome_disposition: None,
             result_refs: None,
             result_summary: None,
         }),
