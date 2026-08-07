@@ -1663,6 +1663,33 @@ impl BearWireToolCallFinishedData {
     }
 }
 
+fn tool_call_finished_projection_event(
+    event: &Value,
+    tool_call_id: &str,
+    tool_name: &str,
+    cached_input_args: Option<Value>,
+    cached_display: Option<Value>,
+    event_input_args: Option<Value>,
+    event_display: Option<Value>,
+) -> Value {
+    let mut projection_event = json!({
+        "run_id": event.get("run_id").and_then(Value::as_str),
+        "data": {
+            "tool_call": {
+                "id": tool_call_id,
+                "name": tool_name,
+            }
+        }
+    });
+    if let Some(args) = cached_input_args.or(event_input_args) {
+        projection_event["data"]["tool_call"]["arguments"] = args;
+    }
+    if let Some(display) = event_display.or(cached_display) {
+        projection_event["data"]["tool_call"]["display"] = display;
+    }
+    projection_event
+}
+
 async fn handle_bearwire_tool_call_finished_event(
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -1691,21 +1718,15 @@ async fn handle_bearwire_tool_call_finished_event(
         .ok_or_else(|| anyhow!("canonical BearWire tool completion missing tool_call.name"))?;
     let summary = tool_call_finished_summary(data, &tool_name, failed);
     let status = if failed { "failed" } else { "completed" };
-    let mut projection_event = json!({
-        "run_id": event.get("run_id").and_then(Value::as_str),
-        "data": {
-            "tool_call": {
-                "id": tool_call_id,
-                "name": tool_name.clone(),
-            }
-        }
-    });
-    if let Some(args) = cached_input_args.or(canonical.tool_call.arguments) {
-        projection_event["data"]["tool_call"]["arguments"] = args;
-    }
-    if let Some(display) = canonical.tool_call.display.or(cached_display) {
-        projection_event["data"]["tool_call"]["display"] = display;
-    }
+    let projection_event = tool_call_finished_projection_event(
+        event,
+        &tool_call_id,
+        &tool_name,
+        cached_input_args,
+        cached_display,
+        canonical.tool_call.arguments,
+        canonical.tool_call.display,
+    );
     send_tool_call_update_for_turn(
         shared_state,
         session_id,
@@ -2224,6 +2245,32 @@ mod tests {
             "runtime.objective_orientation"
         ));
         assert!(!is_optional_runtime_metadata_event("runtime.unknown"));
+    }
+
+    #[test]
+    fn terminal_projection_prefers_live_request_presentation() {
+        let projection = tool_call_finished_projection_event(
+            &json!({ "run_id": "run-1" }),
+            "call-read",
+            "fs_read_text_file",
+            Some(json!({ "path": "/workspace/README.md" })),
+            Some(json!({ "title": "Read file: /workspace/README.md" })),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            projection
+                .pointer("/data/tool_call/arguments/path")
+                .and_then(Value::as_str),
+            Some("/workspace/README.md")
+        );
+        assert_eq!(
+            projection
+                .pointer("/data/tool_call/display/title")
+                .and_then(Value::as_str),
+            Some("Read file: /workspace/README.md")
+        );
     }
 
     #[test]

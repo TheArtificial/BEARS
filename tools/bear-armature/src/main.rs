@@ -11061,8 +11061,8 @@ fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay
         return display.title.clone();
     };
 
-    // Built-in calls derive titles from canonical input when present. This also keeps request
-    // targets visible when an older server display label is generic.
+    // A request display can be a generic server fallback (for example, `Read file: file`).
+    // Built-in calls have canonical input, so keep the actual target visible on every card update.
     if tool_args_from_event(event).is_some() {
         let title = tool_call_title(tool_name, event);
         if title != tool_display(tool_name).title {
