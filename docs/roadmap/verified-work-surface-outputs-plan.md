@@ -16,10 +16,12 @@ The correction is not Git-only. A work surface determines which typed durable ou
 
 - Focus/selection never starts work or changes lifecycle.
 - A task is executing only while a live work run selects it.
+- Each job-to-work-surface assignment declares a mutation policy: `required` (the default), `optional`, or `forbidden`.
+- `required` means the job must produce a verified durable mutation on that surface; `optional` permits but does not require one; `forbidden` makes the surface context-only and denies mutation capability.
 - A work surface declares supported `WorkOutputKind` values and may provide a default.
-- A task may constrain output only when necessary; otherwise it may accept the surface default or another supported output.
 - A worker report is not completion evidence.
-- A task requiring output completes only with a surface-verified durable output plus recorded required-validation evidence (or an explicit waiver).
+- Completion evidence is derived from assigned work-surface mutation policy and the surface-specific verifier, not from the `execution | investigation | decision` task-kind enum or a model-authored per-task output-requirement schema.
+- A required surface mutation completes only with a surface-verified durable output plus recorded required-validation evidence (or an explicit waiver). A job with no required mutation may complete with durable result evidence and any required validation.
 - Task/job projections are recomputed from durable task outcomes, live work-run evidence, and verification records. Historical job-run snapshots cannot overwrite them.
 
 Initial output kinds:
@@ -45,8 +47,13 @@ enum WorkOutputKind {
 
 ### 2. Define typed output contracts, publication intent, and evidence storage
 
-- Add `WorkOutputKind` and strongly typed candidate/verified-output structures in `den-core` or the smallest existing shared Docket/work-surface type module.
-- Model a work surface's supported output kinds and optional default. Do not make default output mandatory for every task.
+- Model job creation remains task-first: the model describes tasks and chooses/receives their work surfaces; it does not declare task kind plus a separate output-requirement schema.
+- Add a `MutationPolicy` to each job-to-work-surface assignment: `required` (default), `optional`, or `forbidden`.
+  - `required`: the job must produce a verified durable mutation on this surface before it settles successfully.
+  - `optional`: a mutation is permitted but a report-only outcome remains valid; any mutation that occurs is still recorded and verified by the surface.
+  - `forbidden`: the surface is context-only; mutation capabilities are not offered and any attempted mutation is rejected.
+- Keep mutation policy separate from publication policy: mutation policy says whether an effect is expected or allowed; `commit_policy`/publication policy says when and how a permitted Git effect is externally finalized.
+- Derive completion evidence from the assigned surface policy and its verifier, not from the `execution | investigation | decision` task-kind enum. A required Git surface needs verified Git/publication evidence; a required Cabinet surface needs an authorized durable record/revision reference; no required surface mutation needs durable result evidence and required validation only.
 - Add a typed `publish_task` intent owned by Docket and delivered as a leased BearWire obligation. It identifies the task/work run, output target, expected artifact boundary, and idempotency key; it does not contain shell text, filesystem paths, raw Git arguments, or credentials.
 - Keep publication as one durable operation: a provider may require Armature to prepare or validate a workspace-local artifact, but the provider owns the external effect and uses scoped credentials outside model context and, where policy requires, outside the sandbox.
 - Add durable publication attempt/result and verification records, including work run, task, job, surface, output locator/artifact reference, provider evidence, digest where applicable, verifier state, timestamps, and structured failure reason.
@@ -68,7 +75,8 @@ enum WorkOutputKind {
 
 - Make work-run finalization persist candidate output, publication evidence, and run validation evidence before task settlement.
 - For `commit_policy = per_task`, replace any sandbox-owned implicit auto-commit/push path with one `publish_task` intent and provider result. Retain any per-job publication behavior only where it is explicitly selected by `commit_policy = per_job`.
-- Require verified output when the selected surface/task contract requires it.
+- Require verified output for every work surface assigned with `required` mutation policy. A job with no required surface mutation settles from durable result evidence and required validation. The model does not select this evidence policy by task kind or a per-task output schema; Den derives it from the job's surface assignments and surface adapters.
+
 - Require success evidence for non-waived command/check criteria. An unrunnable command is unmet/blocked, not passed.
 - Remove any completion path based only on a worker result summary, claimed SHA, or claimed push.
 
@@ -105,14 +113,26 @@ Add focused integration tests for Git verification, artifact-backed sandbox outp
 ## Publication and credentials
 
 Docket owns the decision to publish a completed task and records its durable
-intent, idempotency key, target, and settlement. BearWire projects and leases
-that typed `publish_task` obligation; it does not become a second publication
-state machine. Armature can prepare or validate workspace-local output but does
-not receive reusable credentials or arbitrary command text. A Den-controlled
-publication provider performs the external effect with short-lived,
-target-scoped authority and reports immutable evidence. This is deliberately
-backend-neutral: Git branch publication is the first provider, while artifact
-registries and deployments can use the same lifecycle.
+intent, idempotency key, target, and settlement. Each job-to-work-surface
+assignment has a mutation policy: `required` (default), `optional`, or
+`forbidden`. `required` means successful job settlement needs a verified
+durable mutation on that surface; `optional` permits a surface mutation without
+requiring one; `forbidden` makes the surface context-only and denies mutation
+capabilities. This expectation/authorization policy is distinct from a
+publication policy such as Git `per_task` or `per_job`, which controls when and
+how an allowed Git change becomes externally final. The model describes tasks
+and uses assigned surfaces; it does not author a task-kind-dependent output
+matrix. Surface adapters derive the needed evidence from their policy and
+verifier.
+
+BearWire projects and leases a typed `publish_task` obligation; it does not
+become a second publication state machine. Armature can prepare or validate
+workspace-local output but does not receive reusable credentials or arbitrary
+command text. A Den-controlled publication provider performs the external
+effect with short-lived, target-scoped authority and reports immutable evidence.
+This is deliberately backend-neutral: Git branch publication is the first
+provider, while Cabinet revisions, artifact registries, and deployments can use
+the same lifecycle.
 
 ## Non-goals
 
