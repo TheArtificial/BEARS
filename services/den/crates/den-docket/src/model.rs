@@ -1407,6 +1407,53 @@ pub struct DocketEntryRow {
     pub created_at: OffsetDateTime,
 }
 
+pub const DISPATCH_NOTEBOOK_CONTEXT_MAX_ENTRIES: usize = 12;
+pub const DISPATCH_NOTEBOOK_CONTEXT_MAX_CHARS: usize = 6_000;
+
+/// Selects durable notebook knowledge worth carrying into a dispatched worker.
+///
+/// Decisions and follow-ups are always eligible. Other entry kinds must be
+/// explicitly tagged. Higher-value kinds win before recency, and the returned
+/// text is bounded for direct prompt inclusion.
+pub fn select_dispatch_notebook_context(entries: &[DocketEntryRow]) -> Vec<DocketEntryRow> {
+    let mut eligible = entries
+        .iter()
+        .filter(|entry| entry.scope == DocketEntryScope::JobNotebook.as_str())
+        .filter_map(|entry| {
+            let priority = match entry.kind.as_str() {
+                "decision" => 0,
+                "follow_up" => 1,
+                _ if entry.tags.as_array().is_some_and(|tags| !tags.is_empty()) => 2,
+                _ => return None,
+            };
+            Some((priority, entry))
+        })
+        .collect::<Vec<_>>();
+    eligible.sort_by(|(left_priority, left), (right_priority, right)| {
+        left_priority
+            .cmp(right_priority)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let mut used_chars = 0;
+    eligible
+        .into_iter()
+        .take(DISPATCH_NOTEBOOK_CONTEXT_MAX_ENTRIES)
+        .filter_map(|(_, entry)| {
+            let entry_chars = entry.summary.chars().count()
+                + entry.body.as_deref().map_or(0, |body| body.chars().count());
+            if used_chars + entry_chars > DISPATCH_NOTEBOOK_CONTEXT_MAX_CHARS {
+                return None;
+            }
+            used_chars += entry_chars;
+            Some(entry.clone())
+        })
+        .collect()
+    // ponytail: fixed priority/count/text bounds avoid retrieval machinery;
+    // add relevance ranking only when real notebooks exceed these ceilings.
+}
+
 #[derive(Debug, Clone)]
 pub struct DocketTaskUpdate {
     pub bear_id: Uuid,
@@ -2177,6 +2224,53 @@ mod tests {
             blocked_reason: None,
             source_refs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn dispatch_notebook_context_is_explicit_prioritized_and_bounded() {
+        fn entry(
+            kind: &str,
+            summary: &str,
+            tags: serde_json::Value,
+            seconds: i64,
+        ) -> DocketEntryRow {
+            DocketEntryRow {
+                id: Uuid::new_v4(),
+                job_id: Some(Uuid::nil()),
+                task_id: Some(Uuid::nil()),
+                run_id: None,
+                scope: "job_notebook".to_string(),
+                kind: kind.to_string(),
+                summary: summary.to_string(),
+                body: None,
+                disposition: None,
+                evidence_refs: serde_json::json!([]),
+                related_task_ids: serde_json::json!([]),
+                tags,
+                by_role: "pair".to_string(),
+                by_agent_id: None,
+                by_user_id: None,
+                source_entry_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(seconds),
+            }
+        }
+
+        let entries = vec![
+            entry("finding", "ignored", serde_json::json!([]), 4),
+            entry("finding", "tagged", serde_json::json!(["api"]), 3),
+            entry("follow_up", "follow", serde_json::json!([]), 2),
+            entry("decision", "decision", serde_json::json!([]), 1),
+        ];
+
+        let selected = select_dispatch_notebook_context(&entries);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|entry| entry.summary.as_str())
+                .collect::<Vec<_>>(),
+            vec!["decision", "follow", "tagged"]
+        );
+        assert!(selected.len() <= DISPATCH_NOTEBOOK_CONTEXT_MAX_ENTRIES);
     }
 
     #[test]
