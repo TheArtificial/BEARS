@@ -546,17 +546,19 @@ pub(crate) async fn get_task_list_status(
     activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
     let _ignored_arguments: Value = serde_json::from_value(arguments)?;
-    let session_anchor_id = match context.client_session_id.as_deref() {
-        Some(client_session_id) => client_sessions::find_for_user_bear_session_id(
-            pool,
-            context.user_id,
-            context.bear_id,
-            client_session_id,
-        )
-        .await?
-        .map(|session| session.id),
+    let session = match context.client_session_id.as_deref() {
+        Some(client_session_id) => {
+            client_sessions::find_for_user_bear_session_id(
+                pool,
+                context.user_id,
+                context.bear_id,
+                client_session_id,
+            )
+            .await?
+        }
         None => None,
     };
+    let session_anchor_id = session.as_ref().map(|session| session.id);
 
     let tasks = if let Some(session_anchor_id) = session_anchor_id {
         PgDocketService::from_pool(pool)
@@ -575,15 +577,16 @@ pub(crate) async fn get_task_list_status(
         Vec::new()
     };
 
-    let task_list = session_anchor_id.and_then(|session_anchor_id| {
-        docket::task_list_projection_from_session_tasks(
+    let task_list = session.as_ref().and_then(|session| {
+        docket::task_list_projection_from_session_tasks_with_current_task(
             context.bear_id,
             role,
             clean_optional(&context.conversation_id)
                 .as_deref()
                 .unwrap_or(""),
-            session_anchor_id,
+            session.id,
             &tasks,
+            session.current_task_id,
         )
     });
 
@@ -1711,6 +1714,21 @@ pub(crate) async fn create_task(
             created_in_run_id: args.created_in_run_id,
         })
         .await?;
+    if job_id.is_none() && session_anchor_id.is_some() {
+        let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
+            DenError::ValidationError(
+                "session task creation needs the current client session".to_string(),
+            )
+        })?;
+        client_sessions::set_current_task(
+            pool,
+            context.user_id,
+            context.bear_id,
+            client_session_id,
+            Some(task.id),
+        )
+        .await?;
+    }
     let task_list = if job_id.is_none() {
         if let Some(session_anchor_id) = session_anchor_id {
             session_anchored_task_list_projection(pool, context, role, session_anchor_id).await?

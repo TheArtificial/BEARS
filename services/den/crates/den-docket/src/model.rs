@@ -1782,6 +1782,26 @@ pub fn task_list_projection_from_session_tasks(
     session_anchor_id: Uuid,
     tasks: &[DocketTaskProjection],
 ) -> Option<TaskListProjection> {
+    task_list_projection_from_session_tasks_with_current_task(
+        bear_id,
+        owner_profile,
+        conversation_id,
+        session_anchor_id,
+        tasks,
+        None,
+    )
+}
+
+/// Builds a session task projection, preferring an explicitly selected task
+/// when it remains actionable in the anchored task tree.
+pub fn task_list_projection_from_session_tasks_with_current_task(
+    bear_id: Uuid,
+    owner_profile: BearProfile,
+    conversation_id: &str,
+    session_anchor_id: Uuid,
+    tasks: &[DocketTaskProjection],
+    selected_task_id: Option<Uuid>,
+) -> Option<TaskListProjection> {
     let first_task = tasks.first()?;
     let mut sorted_tasks = tasks.iter().collect::<Vec<_>>();
     // See task_list_projection_from_docket_job: ACP plan projection must be
@@ -1799,7 +1819,18 @@ pub fn task_list_projection_from_session_tasks(
             task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref(), false)
         })
         .collect::<Vec<_>>();
-    let current_item = current_task_list_item(&items).cloned();
+    let current_item = selected_task_id
+        .and_then(|task_id| {
+            items.iter().find(|item| {
+                item.id == task_id.to_string()
+                    && matches!(
+                        item.status,
+                        TaskListItemStatus::Pending | TaskListItemStatus::InProgress
+                    )
+            })
+        })
+        .cloned()
+        .or_else(|| current_task_list_item(&items).cloned());
     let status = if items
         .iter()
         .all(|item| item.status == TaskListItemStatus::Completed)
@@ -2589,6 +2620,53 @@ mod tests {
         .expect("completed session projection");
 
         assert_eq!(completed.status, "completed");
+    }
+
+    #[test]
+    fn session_task_projection_prefers_an_explicit_actionable_task() {
+        let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
+        let first_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let selected_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+        let task = |id, order, title: &str| DocketTaskProjection {
+            task: DocketTaskRow {
+                id,
+                bear_id,
+                job_id: None,
+                session_anchor_id: Some(session_anchor_id),
+                parent_task_id: None,
+                sibling_order: order,
+                kind: "execution".to_string(),
+                scope: "run".to_string(),
+                title: title.to_string(),
+                body: String::new(),
+                completion_criteria: Json(vec![]),
+                difficulty: None,
+                effort_hint: None,
+                routing_strategy: "auto".to_string(),
+                expected_context_size: None,
+                result_rollup_policy: None,
+                created_by_role: "pair".to_string(),
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                created_in_run_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            run_state: None,
+        };
+
+        let projection = task_list_projection_from_session_tasks_with_current_task(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[task(first_id, 0, "first"), task(selected_id, 1, "selected")],
+            Some(selected_id),
+        )
+        .expect("session projection");
+
+        assert_eq!(projection.current_item.unwrap().id, selected_id.to_string());
     }
 
     #[test]

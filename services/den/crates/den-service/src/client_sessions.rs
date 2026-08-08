@@ -65,6 +65,10 @@ pub struct ClientSessionRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter_environment: Option<serde_json::Value>,
     pub current_mode: String,
+    /// The Docket task explicitly selected as this session's current objective.
+    /// This is distinct from an active Docket execution and from a Work assignment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_task_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,6 +197,29 @@ pub async fn set_current_mode(
     Ok(())
 }
 
+pub async fn set_current_task(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: &str,
+    task_id: Option<Uuid>,
+) -> Result<(), DenError> {
+    sqlx::query(
+        r"
+        UPDATE client_sessions
+        SET current_task_id = $4, updated_at = NOW()
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
+        ",
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(client_session_id)
+    .bind(task_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn mark_resolved(
     pool: &PgPool,
     user_id: i32,
@@ -225,7 +252,7 @@ pub async fn find_for_user_bear_session(
     let row = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM client_sessions
@@ -250,7 +277,7 @@ pub async fn find_for_user_bear_session_id(
     let row = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM client_sessions
@@ -274,7 +301,7 @@ pub async fn find_latest_for_bear_conversation(
     let row = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM client_sessions
@@ -326,6 +353,10 @@ pub struct OpenReflectionCandidateRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter_environment: Option<serde_json::Value>,
     pub current_mode: String,
+    /// The Docket task explicitly selected as this session's current objective.
+    /// This is distinct from an active Docket execution and from a Work assignment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_task_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -363,6 +394,7 @@ impl OpenReflectionCandidateRow {
             cwd: self.cwd.clone(),
             adapter_environment: self.adapter_environment.clone(),
             current_mode: self.current_mode.clone(),
+            current_task_id: self.current_task_id,
             conversation_title: self.conversation_title.clone(),
             conversation_title_updated_at: self.conversation_title_updated_at,
             conversation_title_synced_at: self.conversation_title_synced_at,
@@ -473,7 +505,7 @@ pub async fn list_open_reflection_candidates(
             LIMIT $3
         )
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at,
                events.event_count AS "event_count!", last_reflected_at,
@@ -508,7 +540,7 @@ pub async fn list_for_user_bear(
     let rows = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM client_sessions
@@ -646,7 +678,7 @@ pub async fn list_for_bear_conversation(
     sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM client_sessions

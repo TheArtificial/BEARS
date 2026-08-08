@@ -7,9 +7,9 @@
 
 use den_core::DenError;
 use den_docket::{
-    task_list_projection_from_session_tasks, DocketExecutionLookup, DocketService,
-    DocketTaskListFilter, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
-    TaskListProjection,
+    task_list_projection_from_session_tasks_with_current_task, DocketExecutionLookup,
+    DocketService, DocketTaskListFilter, PgDocketService, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListProjection,
 };
 use den_service::{bears::BearProfile, client_sessions};
 use sqlx::PgPool;
@@ -35,6 +35,12 @@ impl RuntimeTaskSource {
 #[derive(Debug, Clone)]
 pub struct RuntimeTaskContext {
     pub source: RuntimeTaskSource,
+    /// The explicitly selected task for this session, when one exists.
+    ///
+    /// This remains separate from the task-list projection: the projection
+    /// supplies surrounding task-tree context, while this ID identifies the
+    /// task Pair should treat as its current objective.
+    pub current_task_id: Option<Uuid>,
     pub cached_activity_plan_projection: Option<TaskListProjection>,
 }
 
@@ -117,6 +123,7 @@ pub async fn resolve_runtime_task_context(
                 .await?;
             return Ok(RuntimeTaskContext {
                 source: RuntimeTaskSource::DurableDocketExecution,
+                current_task_id: None,
                 cached_activity_plan_projection: plan,
             });
         }
@@ -125,6 +132,7 @@ pub async fn resolve_runtime_task_context(
     let Some(user_id) = user_id else {
         return Ok(RuntimeTaskContext {
             source: RuntimeTaskSource::None,
+            current_task_id: None,
             cached_activity_plan_projection: None,
         });
     };
@@ -134,6 +142,7 @@ pub async fn resolve_runtime_task_context(
     else {
         return Ok(RuntimeTaskContext {
             source: RuntimeTaskSource::None,
+            current_task_id: None,
             cached_activity_plan_projection: None,
         });
     };
@@ -143,23 +152,30 @@ pub async fn resolve_runtime_task_context(
             bear_id,
             DocketTaskListFilter {
                 session_anchor_id: Some(session.id),
-                include_descendants: false,
+                include_descendants: true,
                 limit: 100,
                 ..DocketTaskListFilter::default()
             },
         )
         .await?;
-    let plan = task_list_projection_from_session_tasks(
+    let current_task_id = session
+        .current_task_id
+        .filter(|selected_task_id| tasks.iter().any(|task| task.task.id == *selected_task_id));
+    let plan = task_list_projection_from_session_tasks_with_current_task(
         bear_id,
         profile,
         &conversation_id,
         session.id,
         &tasks,
+        current_task_id,
     );
     Ok(RuntimeTaskContext {
-        source: plan.as_ref().map_or(RuntimeTaskSource::None, |_| {
+        source: if current_task_id.is_some() || plan.is_some() {
             RuntimeTaskSource::SessionCurrentTask
-        }),
+        } else {
+            RuntimeTaskSource::None
+        },
+        current_task_id,
         cached_activity_plan_projection: plan,
     })
 }
@@ -172,6 +188,7 @@ mod tests {
     fn session_current_task_exposes_its_projection() {
         let context = RuntimeTaskContext {
             source: RuntimeTaskSource::SessionCurrentTask,
+            current_task_id: None,
             cached_activity_plan_projection: None,
         };
         assert!(context.active_activity_plan().is_none());

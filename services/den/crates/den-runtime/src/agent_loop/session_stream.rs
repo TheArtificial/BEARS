@@ -2375,6 +2375,7 @@ mod tests {
 
         stream.prepare_autonomous_final_gate(RuntimeTaskContext {
             source: crate::runtime::task_context::RuntimeTaskSource::None,
+            current_task_id: None,
             cached_activity_plan_projection: Some(completed_task_list_projection()),
         });
 
