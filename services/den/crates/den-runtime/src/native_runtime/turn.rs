@@ -214,8 +214,8 @@ fn active_docket_execution_lookup_for_session(
 ) -> DocketExecutionLookup {
     DocketExecutionLookup {
         session_id: Some(client_session_id.to_string()),
-        // ponytail: conversation-scoped focus is the durable restore path for now; upgrade to an
-        // explicit conversation focus record if focus needs history, labels, or multi-job stacks.
+        // ponytail: conversation-scoped Docket execution is the durable restore path for now;
+        // upgrade to an explicit session current-task record when session-local tasks land.
         source_conversation_id: Some(conversation_id.to_string()),
         source_client_session_id: Some(client_session_id.to_string()),
     }
@@ -778,7 +778,9 @@ async fn build_session(
     }
     let may_define_task = match &objective_orientation {
         ObjectiveOrientation::Freeform { policy } => policy.may_define_task,
-        ObjectiveOrientation::Oriented { .. } | ObjectiveOrientation::Focused { .. } => true,
+        ObjectiveOrientation::Oriented { .. } | ObjectiveOrientation::DocketExecution { .. } => {
+            true
+        }
     };
     let tools = merge_den_and_client_tools(
         deps.config,
@@ -2079,7 +2081,7 @@ mod tests {
     }
 
     #[test]
-    fn active_docket_execution_lookup_uses_conversation_focus_restore_path() {
+    fn active_docket_execution_lookup_uses_conversation_execution_restore_path() {
         let lookup = active_docket_execution_lookup_for_session("conv-1", "session-1");
         assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
         assert_eq!(lookup.source_conversation_id.as_deref(), Some("conv-1"));

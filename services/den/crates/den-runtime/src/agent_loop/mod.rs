@@ -76,7 +76,7 @@ pub use control::{
     CheckpointConfidence, CheckpointEvaluation, CheckpointEvidenceRef, CheckpointField,
     CheckpointNextAction, CheckpointPolicy, CheckpointReason, CheckpointResponseValidationError,
     CheckpointState, CheckpointTaskContext, CheckpointThinkingPolicy, CheckpointTrigger,
-    FreeformPolicy, JobOrientation, KoPolicy, ObjectiveOrientation,
+    DocketExecutionOrientation, FreeformPolicy, KoPolicy, ObjectiveOrientation,
     ObjectiveOrientationResolutionInput, OrientationTaskRef, OrientedChildTaskPolicy,
     ResolvedAgentLoopControl, RuntimeCheckpointRequest, RuntimeCheckpointResponse, TaskOrientation,
     TaskStateChangeIntent, DEFAULT_ORIENTED_MAX_CHILDREN, DEFAULT_ORIENTED_MAX_DEPTH,

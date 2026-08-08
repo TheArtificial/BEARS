@@ -15,8 +15,8 @@ use crate::runtime::completion_policy::{
     decide_turn_completion, TurnCompletionCompleteReason, TurnCompletionDecision,
     TurnCompletionPolicyInput,
 };
-use crate::runtime::focus_context::{
-    resolve_runtime_focus_context, RuntimeFocusContext, RuntimeFocusResolveRequest,
+use crate::runtime::task_context::{
+    resolve_runtime_task_context, RuntimeTaskContext, RuntimeTaskResolveRequest,
 };
 use crate::runtime_error_ux::{
     checkpoint_follow_through_required_policy, RuntimeIssueDisposition, RuntimeIssueSeverity,
@@ -87,7 +87,7 @@ type FinalGateContinuationFuture =
     Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 type FinalGateFocusFuture = Pin<
     Box<
-        dyn Future<Output = Result<crate::runtime::focus_context::RuntimeFocusContext, DenError>>
+        dyn Future<Output = Result<crate::runtime::task_context::RuntimeTaskContext, DenError>>
             + Send,
     >,
 >;
@@ -281,7 +281,7 @@ impl SessionTrackingStream {
         let may_define_task = match &session.objective_orientation {
             crate::agent_loop::ObjectiveOrientation::Freeform { policy } => policy.may_define_task,
             crate::agent_loop::ObjectiveOrientation::Oriented { .. }
-            | crate::agent_loop::ObjectiveOrientation::Focused { .. } => true,
+            | crate::agent_loop::ObjectiveOrientation::DocketExecution { .. } => true,
         };
         Self {
             inner,
@@ -518,7 +518,7 @@ impl SessionTrackingStream {
             .get(&self.session_key)
             .map(|session| session.objective_orientation)?;
         match orientation {
-            ObjectiveOrientation::Focused { job } if !job.mutable => Some(
+            ObjectiveOrientation::DocketExecution { job } if !job.mutable => Some(
                 "objective orientation is immutable focused; task decomposition is not allowed"
                     .to_string(),
             ),
@@ -1230,14 +1230,14 @@ impl SessionTrackingStream {
         });
     }
 
-    fn prepare_autonomous_final_gate(&mut self, focus: RuntimeFocusContext) {
-        let focused_task_list = focus.active_activity_plan().cloned();
+    fn prepare_autonomous_final_gate(&mut self, focus: RuntimeTaskContext) {
+        let current_task_list = focus.active_activity_plan().cloned();
         self.store.update(&self.session_key, |session| {
             session
                 .cached_activity_plan_projection
-                .clone_from(&focused_task_list);
+                .clone_from(&current_task_list);
         });
-        self.evaluate_final_gate_or_complete(focused_task_list);
+        self.evaluate_final_gate_or_complete(current_task_list);
     }
 
     fn evaluate_final_gate_or_complete(
@@ -1260,7 +1260,7 @@ impl SessionTrackingStream {
             .unwrap_or_default();
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: self.profile,
-            focused_task_list: cached_activity_plan_projection.as_ref(),
+            current_task_list: cached_activity_plan_projection.as_ref(),
             assistant_text: &self.assistant_text,
             recent_texts: &recent_texts,
         });
@@ -1355,9 +1355,9 @@ impl SessionTrackingStream {
             .get(&self.session_key)
             .and_then(|session| session.cached_activity_plan_projection);
         self.pending_final_gate_focus = Some(Box::pin(async move {
-            resolve_runtime_focus_context(
+            resolve_runtime_task_context(
                 &pool,
-                RuntimeFocusResolveRequest {
+                RuntimeTaskResolveRequest {
                     bear_id,
                     profile,
                     user_id,
@@ -1991,8 +1991,8 @@ mod tests {
     #[tokio::test]
     async fn immutable_focused_orientation_denies_task_decomposition() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
-        session.objective_orientation = crate::agent_loop::ObjectiveOrientation::Focused {
-            job: crate::agent_loop::JobOrientation {
+        session.objective_orientation = crate::agent_loop::ObjectiveOrientation::DocketExecution {
+            job: crate::agent_loop::DocketExecutionOrientation {
                 job_id: uuid::Uuid::new_v4().to_string(),
                 active_task_ref: None,
                 mutable: false,
@@ -2373,8 +2373,8 @@ mod tests {
         session.cached_activity_plan_projection = Some(completed_task_list_projection());
         let mut stream = test_tracking_stream_with_session(&session);
 
-        stream.prepare_autonomous_final_gate(RuntimeFocusContext {
-            source: crate::runtime::focus_context::RuntimeFocusSource::None,
+        stream.prepare_autonomous_final_gate(RuntimeTaskContext {
+            source: crate::runtime::task_context::RuntimeTaskSource::None,
             cached_activity_plan_projection: Some(completed_task_list_projection()),
         });
 

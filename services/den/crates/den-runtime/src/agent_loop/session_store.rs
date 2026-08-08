@@ -63,7 +63,7 @@ pub struct AgentLoopSession {
     pub latest_recalled_memory: Option<Value>,
     /// Volatile task-list projection cache. Durable Docket execution is the
     /// source of truth for focused work; behavior decisions should resolve
-    /// `RuntimeFocusContext` instead of treating this cache as authoritative.
+    /// `RuntimeTaskContext` instead of treating this cache as authoritative.
     pub cached_activity_plan_projection: Option<TaskListProjection>,
     pub profile: BearProfile,
     pub overflow_retry_attempted: bool,
@@ -127,7 +127,7 @@ impl AgentLoopSession {
                 "stance": self.profile.as_str(),
                 "governance": self.governance.as_str(),
                 "objective_orientation_kind": self.objective_orientation.kind(),
-                "focused_job_id": focused_job_id(&self.objective_orientation),
+                "docket_job_id": docket_job_id(&self.objective_orientation),
             },
             "active_turn": {
                 "present": true,
@@ -196,16 +196,16 @@ impl AgentLoopSession {
     }
 }
 
-fn focused_job_id(orientation: &ObjectiveOrientation) -> Option<&str> {
+fn docket_job_id(orientation: &ObjectiveOrientation) -> Option<&str> {
     match orientation {
-        ObjectiveOrientation::Focused { job } => Some(job.job_id.as_str()),
+        ObjectiveOrientation::DocketExecution { job } => Some(job.job_id.as_str()),
         ObjectiveOrientation::Freeform { .. } | ObjectiveOrientation::Oriented { .. } => None,
     }
 }
 
 fn orientation_active_task_title(orientation: &ObjectiveOrientation) -> Option<String> {
     let task_ref = match orientation {
-        ObjectiveOrientation::Focused { job } => job.active_task_ref.as_ref()?,
+        ObjectiveOrientation::DocketExecution { job } => job.active_task_ref.as_ref()?,
         ObjectiveOrientation::Oriented { task } => Some(&task.task_ref)?,
         ObjectiveOrientation::Freeform { .. } => return None,
     };
@@ -241,14 +241,14 @@ fn docket_context_json(
             })
         });
     let orientation_task_ref = match orientation {
-        ObjectiveOrientation::Focused { job } => job.active_task_ref.as_ref(),
+        ObjectiveOrientation::DocketExecution { job } => job.active_task_ref.as_ref(),
         ObjectiveOrientation::Oriented { task } => Some(&task.task_ref),
         ObjectiveOrientation::Freeform { .. } => None,
     };
     json!({
         "active_job_id": plan
             .and_then(|plan| plan.source_ref.docket_job_id.clone())
-            .or_else(|| focused_job_id(orientation).map(str::to_string))
+            .or_else(|| docket_job_id(orientation).map(str::to_string))
             .or_else(|| plan.map(|plan| plan.id.to_string())),
         "active_run_id": Value::Null,
         "active_task_id": active_task
@@ -376,8 +376,8 @@ mod tests {
     use den_core::profile::BearProfile;
 
     use crate::agent_loop::{
-        resolve_agent_loop_control, AgentLoopControlResolutionInput, FreeformPolicy,
-        JobOrientation, ObjectiveOrientation, PostMutationVerificationWindow, StrategyProfile,
+        resolve_agent_loop_control, AgentLoopControlResolutionInput, DocketExecutionOrientation,
+        FreeformPolicy, ObjectiveOrientation, PostMutationVerificationWindow, StrategyProfile,
         ToolCallBudgetLimits,
     };
 
@@ -468,7 +468,7 @@ mod tests {
         assert_eq!(run["stance"], "pair");
         assert_eq!(run["governance"], "interactive");
         assert_eq!(run["objective_orientation_kind"], "freeform");
-        assert!(run["focused_job_id"].is_null());
+        assert!(run["docket_job_id"].is_null());
     }
 
     #[test]
@@ -484,9 +484,9 @@ mod tests {
     }
 
     #[test]
-    fn runtime_snapshot_includes_focused_job_id() {
-        let session = test_session(ObjectiveOrientation::Focused {
-            job: JobOrientation {
+    fn runtime_snapshot_includes_docket_job_id() {
+        let session = test_session(ObjectiveOrientation::DocketExecution {
+            job: DocketExecutionOrientation {
                 job_id: "job-123".to_string(),
                 active_task_ref: None,
                 mutable: true,
@@ -496,8 +496,8 @@ mod tests {
         let snapshot = session.session_info_runtime_snapshot();
         let run = &snapshot["run"];
 
-        assert_eq!(run["objective_orientation_kind"], "focused");
-        assert_eq!(run["focused_job_id"], "job-123");
+        assert_eq!(run["objective_orientation_kind"], "docket_execution");
+        assert_eq!(run["docket_job_id"], "job-123");
         assert_eq!(snapshot["task_focus"]["active"], true);
         assert_eq!(snapshot["docket"]["active_job_id"], "job-123");
         assert_eq!(snapshot["docket"]["source"], "objective_orientation");

@@ -18,9 +18,9 @@ use den_runtime::{
     },
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
-    runtime::focus_context::{
-        active_docket_execution_lookup_for_session, resolve_runtime_focus_context,
-        RuntimeFocusResolveRequest,
+    runtime::task_context::{
+        active_docket_execution_lookup_for_session, resolve_runtime_task_context,
+        RuntimeTaskResolveRequest,
     },
     turn_obligations,
 };
@@ -233,11 +233,11 @@ async fn session_state_payload(
         &conversation_runtime_id,
         &session.client_session_id,
     );
-    let runtime_focus_context = if work_enabled {
+    let runtime_task_context = if work_enabled {
         Some(
-            resolve_runtime_focus_context(
+            resolve_runtime_task_context(
                 &state.sqlx_pool,
-                RuntimeFocusResolveRequest {
+                RuntimeTaskResolveRequest {
                     bear_id: session.bear_id,
                     profile: BearProfile::Pair,
                     user_id: Some(session.user_id),
@@ -254,7 +254,7 @@ async fn session_state_payload(
     } else {
         None
     };
-    let active_activity_plan = runtime_focus_context.as_ref().and_then(|focus| {
+    let active_activity_plan = runtime_task_context.as_ref().and_then(|focus| {
         focus
             .active_activity_plan()
             .cloned()

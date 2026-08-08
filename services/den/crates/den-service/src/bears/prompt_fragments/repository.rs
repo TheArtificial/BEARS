@@ -45,8 +45,8 @@ const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../prompts/fragments/runtime/objective_oriented.md"),
     ),
     (
-        "fragments/runtime/objective_focused.md",
-        include_str!("../../../../../prompts/fragments/runtime/objective_focused.md"),
+        "fragments/runtime/objective_docket_execution.md",
+        include_str!("../../../../../prompts/fragments/runtime/objective_docket_execution.md"),
     ),
     (
         "fragments/runtime/budget_warning.md",

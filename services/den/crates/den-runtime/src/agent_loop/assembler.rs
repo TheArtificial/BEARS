@@ -36,7 +36,7 @@ use crate::context_budget::AssembledTurnBudgetComponents;
 use crate::runtime::compaction::{
     on_turn_assemble_compaction, render_compaction_prompt_context, CompactionMode,
 };
-use crate::runtime::focus_context::active_docket_execution_lookup;
+use crate::runtime::task_context::active_docket_execution_lookup;
 
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
@@ -296,10 +296,10 @@ fn objective_orientation_input(
     work_enabled: bool,
 ) -> ObjectiveOrientationResolutionInput {
     ObjectiveOrientationResolutionInput {
-        focused_job_id: cached_activity_plan_projection
+        docket_job_id: cached_activity_plan_projection
             .and_then(|plan| plan.source_ref.docket_job_id.clone())
             .or_else(|| active_execution.map(|execution| execution.job_id.to_string())),
-        focused_job_mutable: true,
+        docket_execution_mutable: true,
         active_task_ref: cached_activity_plan_projection
             .and_then(active_orientation_task_ref)
             .or_else(|| {
@@ -774,8 +774,8 @@ mod tests {
         );
         assert_eq!(
             orientation,
-            ObjectiveOrientation::Focused {
-                job: crate::agent_loop::JobOrientation {
+            ObjectiveOrientation::DocketExecution {
+                job: crate::agent_loop::DocketExecutionOrientation {
                     job_id: job_id.to_string(),
                     active_task_ref: Some(OrientationTaskRef::DocketTask {
                         job_id: Some(job_id.to_string()),

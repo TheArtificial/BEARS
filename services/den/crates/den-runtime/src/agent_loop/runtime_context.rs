@@ -22,7 +22,7 @@ const FOCUSED_MUTABLE_NEXT_TASK_GUIDANCE: &str = "choosing or creating the next 
 const FOCUSED_IMMUTABLE_NEXT_TASK_GUIDANCE: &str = "choosing the next existing concrete task";
 const FOCUSED_MUTABLE_STRUCTURE_GUIDANCE: &str = "Add child tasks when useful.";
 const FOCUSED_IMMUTABLE_STRUCTURE_GUIDANCE: &str =
-    "Task-definition edits are unavailable while focused job_mutable=false; choose existing tasks and update status/results instead.";
+    "Task-definition edits are unavailable while Docket execution is immutable; choose existing tasks and update status/results instead.";
 
 fn system_reminder(body: String) -> String {
     format!("<system-reminder>\n{body}\n</system-reminder>")
@@ -93,7 +93,7 @@ fn render_objective_orientation_context(
                 }),
             )
         }
-        ObjectiveOrientation::Focused { job } => {
+        ObjectiveOrientation::DocketExecution { job } => {
             let active_task_ref = job
                 .active_task_ref
                 .as_ref()
@@ -117,7 +117,7 @@ fn render_objective_orientation_context(
                 "unavailable"
             };
             render_runtime_fragment(
-                "runtime_objective_focused",
+                "runtime_objective_docket_execution",
                 json!({
                     "orientation": {
                         "job_id": job.job_id,
@@ -255,7 +255,7 @@ pub async fn assemble_den_owned_runtime_supplement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_loop::{FreeformPolicy, JobOrientation, OrientationTaskRef};
+    use crate::agent_loop::{DocketExecutionOrientation, FreeformPolicy, OrientationTaskRef};
 
     #[test]
     fn runtime_context_already_includes_den_owned_blocks_detects_compaction() {
@@ -277,15 +277,11 @@ mod tests {
         )
         .unwrap();
         assert!(pair.contains("Pair task-orientation hint"));
-        assert!(pair.contains("Docket is the user-visible durable work surface"));
-        assert!(pair.contains("conversation's implied Docket objective"));
-        assert!(pair.contains("Create an explicit Job only for separable objectives"));
+        assert!(pair.contains("do bounded work here"));
         assert!(pair.contains(
-            "lifecycle, focus, delegation, work surface, commit policy, or execution tracking"
+            "Create a Job only when it needs its own lifecycle, work surface, commit policy, or background execution"
         ));
-        assert!(pair.contains(
-            "Docket/task tools record durable work state; they do not authorize autonomous execution"
-        ));
+        assert!(pair.contains("Do not taskify ordinary Q&A"));
 
         let chat = render_objective_orientation_context(
             "chat",
@@ -310,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn focused_guidance_branches_on_active_task_and_mutability() {
+    fn docket_execution_guidance_branches_on_active_task_and_mutability() {
         let active_task = OrientationTaskRef::DocketTask {
             job_id: Some("job-1".to_string()),
             task_id: "task-1".to_string(),
@@ -319,8 +315,8 @@ mod tests {
 
         let active_mutable = render_objective_orientation_context(
             "pair",
-            &ObjectiveOrientation::Focused {
-                job: JobOrientation {
+            &ObjectiveOrientation::DocketExecution {
+                job: DocketExecutionOrientation {
                     job_id: "job-1".to_string(),
                     active_task_ref: Some(active_task),
                     mutable: true,
@@ -328,14 +324,14 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(active_mutable.contains("by advancing the active task"));
+        assert!(active_mutable.contains("Advance the assigned active task when one is present"));
         assert!(active_mutable.contains("Add child tasks when useful."));
         assert!(!active_mutable.contains("If active_task_ref"));
 
         let no_active_mutable = render_objective_orientation_context(
             "pair",
-            &ObjectiveOrientation::Focused {
-                job: JobOrientation {
+            &ObjectiveOrientation::DocketExecution {
+                job: DocketExecutionOrientation {
                     job_id: "job-1".to_string(),
                     active_task_ref: None,
                     mutable: true,
@@ -343,13 +339,13 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(no_active_mutable.contains("by choosing or creating the next concrete task"));
+        assert!(no_active_mutable.contains("choosing or creating the next concrete task"));
         assert!(no_active_mutable.contains("Add child tasks when useful."));
 
         let no_active_immutable = render_objective_orientation_context(
             "pair",
-            &ObjectiveOrientation::Focused {
-                job: JobOrientation {
+            &ObjectiveOrientation::DocketExecution {
+                job: DocketExecutionOrientation {
                     job_id: "job-1".to_string(),
                     active_task_ref: None,
                     mutable: false,
@@ -357,10 +353,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(no_active_immutable.contains("by choosing the next existing concrete task"));
+        assert!(no_active_immutable.contains("choosing the next existing concrete task"));
         assert!(no_active_immutable.contains("task_definition_tools=unavailable"));
         assert!(no_active_immutable
-            .contains("Task-definition edits are unavailable while focused job_mutable=false"));
+            .contains("Task-definition edits are unavailable while Docket execution is immutable"));
     }
 
     #[test]
