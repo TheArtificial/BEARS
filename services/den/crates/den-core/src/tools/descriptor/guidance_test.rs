@@ -9,8 +9,9 @@ use crate::{
             DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER,
             DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
         },
-        descriptor::builtin_den_tool_descriptors,
+        descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
     },
+    BearProfile,
 };
 
 #[test]
@@ -210,8 +211,21 @@ fn docket_work_descriptors_keep_execution_evidence_and_surfaces_explicit() {
         .iter()
         .find(|descriptor| descriptor.provider_name == "dispatch_work")
         .expect("dispatch_work descriptor");
-    assert!(dispatch.description.contains("separate execution surface"));
-    assert!(dispatch.description.contains("work run e4e4797b"));
+    assert!(dispatch.description.contains("execution surface"));
+    assert!(dispatch.description.contains("sole attached workspace"));
+    assert!(dispatch
+        .description
+        .contains("multiple attached workspaces"));
+    assert_eq!(
+        dispatch.input_schema["properties"]["target"]["enum"],
+        serde_json::json!(["sandbox", "local"])
+    );
+    assert!(builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
+        .iter()
+        .any(|descriptor| descriptor.provider_name == "dispatch_work"));
+    assert!(!builtin_den_tool_descriptors_for_profile(BearProfile::Work)
+        .iter()
+        .any(|descriptor| descriptor.provider_name == "dispatch_work"));
 
     let work_run = descriptors
         .iter()

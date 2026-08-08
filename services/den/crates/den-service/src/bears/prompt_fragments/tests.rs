@@ -41,8 +41,8 @@ fn repository_bundle_references_pair_stance_fragment() {
         vec![
             "den_baseline",
             "stance_pair",
-            "stance_job_dispatch",
-            "stance_docket_journals"
+            "stance_docket_coordination",
+            "stance_docket_execution"
         ]
     );
 }
@@ -74,8 +74,8 @@ fn renders_repository_pair_bundle_fragments() {
     assert_eq!(rendered.len(), 4);
     assert_eq!(rendered[0].id, "den_baseline");
     assert_eq!(rendered[1].id, "stance_pair");
-    assert_eq!(rendered[2].id, "stance_job_dispatch");
-    assert_eq!(rendered[3].id, "stance_docket_journals");
+    assert_eq!(rendered[2].id, "stance_docket_coordination");
+    assert_eq!(rendered[3].id, "stance_docket_execution");
     assert!(rendered[1].body.contains("You are Builder Bear"));
 }
 
@@ -145,16 +145,13 @@ fn focused_runtime_fragments_keep_execution_moving_across_tasks() {
 #[test]
 fn pair_fragment_treats_jobs_as_the_dispatch_unit() {
     let registry = repository_prompt_fragment_registry().unwrap();
-    let guidance = registry.require("stance_job_dispatch").unwrap();
+    let guidance = registry.require("stance_docket_coordination").unwrap();
     assert!(guidance
         .body
-        .contains("A dispatched Job gets one shared work session"));
+        .contains("shared work session for its unfinished executable tasks"));
     assert!(guidance
         .body
-        .contains("Call `dispatch_work` once with the `job_id`"));
-    assert!(guidance
-        .body
-        .contains("one shared work session for its unfinished executable tasks"));
+        .contains("call `dispatch_work` once with the `job_id`"));
 }
 
 #[test]
@@ -209,12 +206,21 @@ fn read_only_authority_is_rendered_from_a_turn_fragment() {
 }
 
 #[test]
-fn docket_model_guidance_lives_in_a_prompt_fragment() {
+fn docket_model_guidance_is_split_by_capability() {
     let registry = repository_prompt_fragment_registry().unwrap();
-    let fragment = registry.require("stance_docket_journals").unwrap();
-    assert!(fragment.body.contains("do not append outcomes manually"));
-    assert!(fragment.body.contains("bounded selection"));
-    assert!(fragment.body.contains("defaults to 100"));
+    let coordination = registry.require("stance_docket_coordination").unwrap();
+    assert!(coordination.body.contains("defaults to 100"));
+    assert!(coordination.body.contains("one attached workspace"));
+    assert!(coordination.body.contains("multiple attached workspaces"));
+    assert!(coordination.body.contains("target: \"sandbox\""));
+    assert!(coordination.body.contains("isolated checkout"));
+    assert!(coordination.body.contains("local dispatch"));
+    assert!(!coordination.body.contains("update_current_task_status"));
+
+    let execution = registry.require("stance_docket_execution").unwrap();
+    assert!(execution.body.contains("do not append outcomes manually"));
+    assert!(execution.body.contains("bounded notebook selection"));
+    assert!(!execution.body.contains("dispatch_work"));
 }
 
 #[test]

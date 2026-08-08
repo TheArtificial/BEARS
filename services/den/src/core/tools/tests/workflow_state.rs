@@ -357,12 +357,86 @@ async fn create_task_without_job_defaults_to_current_session_or_fails_before_db(
 }
 
 #[test]
-fn attached_work_dispatch_requires_current_explicit_workspace() {
+fn work_dispatch_defaults_to_pairs_current_workspace() {
+    let args: super::super::WorkDispatchArguments = serde_json::from_value(json!({
+        "job_id": uuid::Uuid::new_v4()
+    }))
+    .unwrap();
+    let context = pair_context();
+
+    assert_eq!(
+        super::super::resolve_dispatch_target(
+            den_service::bears::BearProfile::Pair,
+            args.target,
+            &context,
+        )
+        .unwrap(),
+        super::super::WorkDispatchTarget::Local
+    );
+}
+
+#[test]
+fn work_dispatch_without_current_workspace_defaults_to_sandbox() {
+    let mut context = pair_context();
+    context.workspace_roots.clear();
+
+    assert_eq!(
+        super::super::resolve_dispatch_target(
+            den_service::bears::BearProfile::Pair,
+            None,
+            &context,
+        )
+        .unwrap(),
+        super::super::WorkDispatchTarget::Sandbox
+    );
+}
+
+#[test]
+fn non_pair_dispatch_defaults_to_sandbox_even_with_attached_workspace() {
+    let context = pair_context();
+
+    assert_eq!(
+        super::super::resolve_dispatch_target(
+            den_service::bears::BearProfile::Chat,
+            None,
+            &context,
+        )
+        .unwrap(),
+        super::super::WorkDispatchTarget::Sandbox
+    );
+}
+
+#[test]
+fn work_dispatch_ambiguous_workspace_requires_explicit_target() {
+    let mut context = pair_context();
+    context.workspace_roots.push("/another-workspace".to_string());
+
+    assert!(super::super::resolve_dispatch_target(
+        den_service::bears::BearProfile::Pair,
+        None,
+        &context,
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("specify `target` explicitly"));
+    assert_eq!(
+        super::super::resolve_dispatch_target(
+            den_service::bears::BearProfile::Pair,
+            Some(super::super::WorkDispatchTarget::Sandbox),
+            &context,
+        )
+        .unwrap(),
+        super::super::WorkDispatchTarget::Sandbox
+    );
+}
+
+#[test]
+fn local_work_dispatch_requires_current_explicit_workspace() {
     let context = pair_context();
     let args: super::super::WorkDispatchArguments = serde_json::from_value(json!({
         "job_id": uuid::Uuid::new_v4(),
         "root": "/workspace",
-        "target": "attached_armature"
+        "target": "local"
     }))
     .unwrap();
 
@@ -376,13 +450,13 @@ fn attached_work_dispatch_requires_current_explicit_workspace() {
         }
     );
     assert!(
-        super::super::attached_dispatch_warning(target, args.dirty_worktree).is_none()
+        super::super::local_dispatch_warning(target, args.dirty_worktree).is_none()
     );
 
     let args: super::super::WorkDispatchArguments = serde_json::from_value(json!({
         "job_id": uuid::Uuid::new_v4(),
         "root": "/somewhere-else",
-        "target": "attached_armature"
+        "target": "local"
     }))
     .unwrap();
     let mut context_without_workspace = context.clone();
