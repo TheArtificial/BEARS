@@ -2470,14 +2470,6 @@ mod test {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum WorkDispatchTarget {
-    #[default]
-    Sandbox,
-    Local,
-}
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkDispatchArguments {
     job_id: Uuid,
@@ -2486,81 +2478,6 @@ pub(crate) struct WorkDispatchArguments {
     /// Catalog image name on the sandbox provider (see get_work_catalog).
     #[serde(default)]
     image: Option<String>,
-    /// Trusted adapter observation for the explicitly attached workspace. A
-    /// dirty tree is allowed but recorded as a warning; Den never mutates it.
-    #[serde(default)]
-    dirty_worktree: bool,
-    /// Explicit execution surface. When omitted, Pair uses its sole attached
-    /// workspace; other contexts use an isolated sandbox.
-    #[serde(default)]
-    target: Option<WorkDispatchTarget>,
-}
-
-fn resolve_dispatch_target(
-    role: BearProfile,
-    requested: Option<WorkDispatchTarget>,
-    context: &DenToolInvocationContext,
-) -> Result<WorkDispatchTarget, CustomError> {
-    if let Some(target) = requested {
-        return Ok(target);
-    }
-    if role != BearProfile::Pair || context.workspace_roots.is_empty() {
-        return Ok(WorkDispatchTarget::Sandbox);
-    }
-    if context.workspace_roots.len() == 1 {
-        return Ok(WorkDispatchTarget::Local);
-    }
-    Err(CustomError::ValidationError(
-        "dispatch target is ambiguous with multiple attached workspaces; specify `target` explicitly"
-            .to_string(),
-    ))
-}
-
-fn local_dispatch_warning(target: WorkDispatchTarget, dirty_worktree: bool) -> Option<String> {
-    match (target, dirty_worktree) {
-        (WorkDispatchTarget::Local, true) => Some(
-            "Attached workspace has uncommitted changes; they will be preserved and local permissions remain authoritative."
-                .to_string(),
-        ),
-        _ => None,
-    }
-}
-
-fn attached_dispatch_target(
-    target: WorkDispatchTarget,
-    args: &WorkDispatchArguments,
-    context: &DenToolInvocationContext,
-) -> Result<den_docket::work_runs::WorkExecutionTarget, CustomError> {
-    match target {
-        WorkDispatchTarget::Sandbox => Ok(den_docket::work_runs::WorkExecutionTarget::Sandbox),
-        WorkDispatchTarget::Local => {
-            let client_session_id = context
-                .client_session_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    CustomError::ValidationError(
-                        "local dispatch requires the current client session".to_string(),
-                    )
-                })?;
-            if context.workspace_roots.len() != 1 {
-                return Err(CustomError::ValidationError(
-                    "local dispatch requires exactly one attached workspace".to_string(),
-                ));
-            }
-            if args.image.as_deref().and_then(clean_optional).is_some() {
-                return Err(CustomError::ValidationError(
-                    "local dispatch does not accept a sandbox image".to_string(),
-                ));
-            }
-            Ok(
-                den_docket::work_runs::WorkExecutionTarget::AttachedArmature {
-                    client_session_id: client_session_id.to_string(),
-                },
-            )
-        }
-    }
 }
 
 pub(crate) async fn dispatch_work(
@@ -2581,9 +2498,7 @@ pub(crate) async fn dispatch_work(
         .get_job(context.bear_id, args.job_id)
         .await?
         .ok_or_else(|| DenError::NotFound(format!("Docket job {} not found", args.job_id)))?;
-    let target = resolve_dispatch_target(role, args.target, context)?;
-    let execution_target = attached_dispatch_target(target, &args, context)?;
-    let attachment_warning = local_dispatch_warning(target, args.dirty_worktree);
+    let execution_target = den_docket::work_runs::WorkExecutionTarget::Sandbox;
     let runs = den_docket::work_runs::enqueue_work_job(
         pool,
         den_docket::work_runs::WorkJobEnqueue {
@@ -2594,31 +2509,11 @@ pub(crate) async fn dispatch_work(
             image_name: args.image.as_deref().and_then(clean_optional),
             requested_by_user_id: Some(context.user_id),
             execution_target,
-            attachment_warning: attachment_warning.clone(),
+            attachment_warning: None,
         },
     )
     .await?;
     let run_ids: Vec<Uuid> = runs.iter().map(|run| run.id).collect();
-    if target == WorkDispatchTarget::Local {
-        let client_session_id = context
-            .client_session_id
-            .as_deref()
-            .expect("attached_dispatch_target validated the current client session");
-        for run in &runs {
-            den_runtime::bearwire_events::append_ephemeral_bearwire_event(
-                pool,
-                client_session_id,
-                Some(context.bear_id),
-                Some(context.user_id),
-                "work.dispatch_requested",
-                json!({
-                    "work_order_id": run.id,
-                    "job_id": run.job_id,
-                }),
-            )
-            .await?;
-        }
-    }
     let queue = den_docket::work_runs::queued_run_positions(pool, &run_ids).await?;
     let web_base = docket_web_base(pool, config, context.bear_id).await?;
     let presentations = docket_entity_presentations("work run", run_ids.iter().copied(), |id| {
@@ -2635,19 +2530,9 @@ pub(crate) async fn dispatch_work(
             "position": info.position,
             "waiting_on_run_id": info.waiting_on_run_id,
         })).collect::<Vec<_>>(),
-        "execution_target": match target {
-            WorkDispatchTarget::Sandbox => "sandbox",
-            WorkDispatchTarget::Local => "local",
-        },
-        "internal_execution_target": match target {
-            WorkDispatchTarget::Sandbox => "sandbox",
-            WorkDispatchTarget::Local => "attached_armature",
-        },
-        "warning": attachment_warning,
-        "note": match target {
-            WorkDispatchTarget::Sandbox => "Job queued; one work run will execute its runnable work tasks in the shared sandbox.",
-            WorkDispatchTarget::Local => "Job queued for unattended execution in the current local workspace; local permissions remain authoritative.",
-        },
+        "execution_target": "sandbox",
+        "internal_execution_target": "sandbox",
+        "note": "Job queued; one work run will execute its runnable work tasks in the shared sandbox.",
     }))
 }
 

@@ -749,11 +749,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_DISPATCH,
             "Dispatch work job",
-            "Queue a ready Docket job for background execution. `target` selects the execution surface. When omitted, Pair uses its sole attached workspace; contexts without one use `sandbox`, and multiple attached workspaces require an explicit target. `root` identifies the managed source or explicit local workspace, `image` applies only to sandbox execution, and `dirty_worktree` records the caller's trusted observation for local execution. Keep full UUIDs for calls and evidence; use typed short handles only in prose.",
+            "Queue a ready Docket job for isolated background execution in a sandbox. `root` identifies the managed source or sandbox-provider root; `image` selects a sandbox toolchain image. Docket dispatch never modifies Pair's attached checkout. Keep full UUIDs for calls and evidence; use typed short handles only in prose.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface, sandbox provider root, or explicit current local workspace."},"git_ref":{"type":"string"},"image":{"type":"string","description":"Catalog image name; sandbox only."},"target":{"enum":["sandbox","local"],"description":"Execution surface. When omitted, Pair uses its sole attached workspace; otherwise sandbox."},"dirty_worktree":{"type":"boolean","description":"Trusted current-workspace observation for local dispatch; records a non-blocking preservation warning."}},"required":["job_id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface or sandbox provider root."},"git_ref":{"type":"string"},"image":{"type":"string","description":"Catalog image name for sandbox execution."}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_WORK_RUN_LIST,
