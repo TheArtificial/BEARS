@@ -26,16 +26,65 @@ pub struct CapabilityEntry {
     pub kind: String,
     pub summary: String,
     pub tags: Vec<String>,
+    /// Stable definition identity. Session-bound providers should expose a separate instance id.
+    pub definition_id: String,
+    /// Whether this entry describes a durable definition or a connection-bound instance.
+    pub descriptor_lifecycle: String,
+    /// Connection-scoped identity. Absent for durable definitions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
     pub provider: String,
+    pub source: String,
     pub execution_locality: String,
     pub authority: String,
     pub lifetime: String,
     pub surface: String,
+    pub availability: String,
+    pub applicability: CapabilityApplicability,
     pub risk: String,
     pub good_for: Vec<String>,
     pub not_good_for: Vec<String>,
     pub execution_options: Vec<String>,
+    pub code_mode_compatibility: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub relationships: Vec<CapabilityRelationship>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<CapabilityReplacement>,
     pub tool: Option<CapabilityToolRef>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilityApplicability {
+    pub allowed_roles: Vec<String>,
+    pub required_scope: String,
+    pub policy: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilityRelationship {
+    pub kind: String,
+    pub r#ref: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilityReplacement {
+    pub status: String,
+    pub replacement_ref: String,
+}
+
+/// A provider connection exposes this capability instance only for its current session.
+#[derive(Debug, Clone)]
+pub struct SessionCapabilityDescriptor {
+    pub instance_id: String,
+    pub name: String,
+    pub summary: String,
+    pub kind: String,
+    pub provider: String,
+    pub execution_locality: String,
+    pub authority: String,
+    pub surface: String,
+    pub availability: String,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,20 +142,81 @@ pub fn tool_descriptor_to_capability(descriptor: DenToolDescriptor) -> Capabilit
         kind: "tool".to_string(),
         summary: descriptor.description.to_string(),
         tags: tags_for_tool(&descriptor),
+        definition_id: format!("tool-definition:{}", descriptor.name),
+        descriptor_lifecycle: "durable_definition".to_string(),
+        instance_id: None,
         provider: descriptor.provider.to_string(),
+        source: "den_tool_descriptor".to_string(),
         execution_locality: locality_for_tool(&descriptor).to_string(),
         authority: authority_for_tool(&descriptor).to_string(),
         lifetime: lifetime_for_tool(&descriptor).to_string(),
         surface: descriptor.scope.to_string(),
+        availability: descriptor.availability.to_string(),
+        applicability: CapabilityApplicability {
+            allowed_roles: descriptor
+                .allowed_roles
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            required_scope: descriptor.scope.to_string(),
+            policy: format!("approval:{}", descriptor.approval_policy),
+        },
         risk: risk.as_str().to_string(),
         good_for: good_for_tool(&descriptor),
         not_good_for: not_good_for_tool(&descriptor, risk),
         execution_options: execution_options_for_tool(&descriptor, risk),
+        code_mode_compatibility: code_mode_compatibility(&descriptor, risk).to_string(),
+        relationships: vec![CapabilityRelationship {
+            kind: "schema".to_string(),
+            r#ref: format!("tool-schema:{}", descriptor.name),
+        }],
+        replacement: None,
         tool: Some(CapabilityToolRef {
             canonical_name: descriptor.name.to_string(),
             provider_name: descriptor.provider_name.clone(),
             schema_ref: format!("tool-schema:{}", descriptor.name),
         }),
+    }
+}
+
+pub fn session_capability_to_catalog_entry(
+    descriptor: SessionCapabilityDescriptor,
+) -> CapabilityEntry {
+    CapabilityEntry {
+        r#ref: format!("capability-instance:{}", descriptor.instance_id),
+        kind: descriptor.kind,
+        summary: descriptor.summary,
+        tags: descriptor.tags,
+        definition_id: format!("provider-definition:{}", descriptor.name),
+        descriptor_lifecycle: "session_instance".to_string(),
+        instance_id: Some(descriptor.instance_id),
+        provider: descriptor.provider,
+        source: "session_provider_descriptor".to_string(),
+        execution_locality: descriptor.execution_locality,
+        authority: descriptor.authority,
+        lifetime: "current provider connection/session".to_string(),
+        surface: descriptor.surface.clone(),
+        availability: descriptor.availability,
+        applicability: CapabilityApplicability {
+            allowed_roles: Vec::new(),
+            required_scope: descriptor.surface,
+            policy: "provider connection and current session policy".to_string(),
+        },
+        risk: CapabilityRisk::DependsOnInvokedCapabilities
+            .as_str()
+            .to_string(),
+        good_for: vec!["operations exposed by this connected provider".to_string()],
+        not_good_for: vec![
+            "assuming the instance survives reconnection or applies to another surface".to_string(),
+        ],
+        execution_options: vec!["direct invocation through the connected provider".to_string()],
+        code_mode_compatibility: "requires_explicit_local_provider_mediation".to_string(),
+        relationships: vec![CapabilityRelationship {
+            kind: "definition".to_string(),
+            r#ref: format!("provider-definition:{}", descriptor.name),
+        }],
+        replacement: None,
+        tool: None,
     }
 }
 
@@ -121,11 +231,21 @@ pub fn code_mode_capability(role: BearProfile) -> CapabilityEntry {
             "batching".to_string(),
             format!("role.{}", role.as_str()),
         ],
+        definition_id: "executor-definition:code_mode.den".to_string(),
+        descriptor_lifecycle: "durable_definition".to_string(),
+        instance_id: None,
         provider: "den".to_string(),
+        source: "curated_catalog_entry".to_string(),
         execution_locality: "den-managed sandbox".to_string(),
         authority: "current Bear/session policy; only explicitly mediated capabilities".to_string(),
         lifetime: "not yet executable; catalog guidance only".to_string(),
         surface: "allowed Den capability calls".to_string(),
+        availability: "discoverable; not executable".to_string(),
+        applicability: CapabilityApplicability {
+            allowed_roles: vec![role.as_str().to_string()],
+            required_scope: "allowed Den capability calls".to_string(),
+            policy: "mediated capabilities only".to_string(),
+        },
         risk: CapabilityRisk::DependsOnInvokedCapabilities
             .as_str()
             .to_string(),
@@ -142,6 +262,9 @@ pub fn code_mode_capability(role: BearProfile) -> CapabilityEntry {
             "direct access to armature-local files, local commands, or adapter/browser session state unless mediated".to_string(),
         ],
         execution_options: vec!["discover now; executable Code Mode lands later".to_string()],
+        code_mode_compatibility: "self".to_string(),
+        relationships: Vec::new(),
+        replacement: None,
         tool: None,
     }
 }
@@ -218,12 +341,19 @@ fn compact_result(entry: &CapabilityEntry) -> Value {
         "kind": entry.kind,
         "summary": entry.summary,
         "tags": entry.tags,
+        "definition_id": entry.definition_id,
+        "descriptor_lifecycle": entry.descriptor_lifecycle,
+        "instance_id": entry.instance_id,
         "provider": entry.provider,
+        "source": entry.source,
         "execution_locality": entry.execution_locality,
         "authority": entry.authority,
         "lifetime": entry.lifetime,
         "surface": entry.surface,
+        "availability": entry.availability,
+        "applicability": entry.applicability,
         "risk": entry.risk,
+        "code_mode_compatibility": entry.code_mode_compatibility,
         "execution_options": entry.execution_options,
     })
 }
@@ -318,6 +448,20 @@ fn execution_options_for_tool(
     options
 }
 
+fn code_mode_compatibility(descriptor: &DenToolDescriptor, risk: CapabilityRisk) -> &'static str {
+    if descriptor.execution_target != "den" {
+        return "requires_explicit_local_provider_mediation";
+    }
+    if matches!(
+        risk,
+        CapabilityRisk::ReadOnly | CapabilityRisk::ExternalNetwork
+    ) {
+        "eligible_when_executor_is_available"
+    } else {
+        "direct_invocation_or_explicit_approval"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,5 +529,52 @@ mod tests {
             .not_good_for
             .iter()
             .any(|note| note.contains("armature-local")));
+    }
+
+    #[test]
+    fn session_instance_preserves_connection_bound_identity_and_locality() {
+        let entry = session_capability_to_catalog_entry(SessionCapabilityDescriptor {
+            instance_id: "acp-123:mcp:filesystem.read".to_string(),
+            name: "filesystem.read".to_string(),
+            summary: "Read a file through the connected MCP server.".to_string(),
+            kind: "tool".to_string(),
+            provider: "mcp".to_string(),
+            execution_locality: "armature-local workspace".to_string(),
+            authority: "connected MCP server policy".to_string(),
+            surface: "workspace:/repo".to_string(),
+            availability: "connected".to_string(),
+            tags: vec!["mcp".to_string(), "filesystem.read".to_string()],
+        });
+
+        assert_eq!(entry.descriptor_lifecycle, "session_instance");
+        assert_eq!(
+            entry.instance_id.as_deref(),
+            Some("acp-123:mcp:filesystem.read")
+        );
+        assert_eq!(entry.lifetime, "current provider connection/session");
+        assert_eq!(
+            entry.code_mode_compatibility,
+            "requires_explicit_local_provider_mediation"
+        );
+        assert_eq!(entry.relationships[0].kind, "definition");
+    }
+
+    #[test]
+    fn tool_projection_exposes_phase_zero_contract() {
+        let descriptor = builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
+            .into_iter()
+            .find(|descriptor| descriptor.name == "den.memory.search")
+            .unwrap();
+        let entry = tool_descriptor_to_capability(descriptor);
+
+        assert_eq!(entry.definition_id, "tool-definition:den.memory.search");
+        assert_eq!(entry.descriptor_lifecycle, "durable_definition");
+        assert_eq!(entry.source, "den_tool_descriptor");
+        assert_eq!(entry.applicability.required_scope, "bear.memory");
+        assert_eq!(
+            entry.code_mode_compatibility,
+            "eligible_when_executor_is_available"
+        );
+        assert_eq!(entry.relationships[0].kind, "schema");
     }
 }
