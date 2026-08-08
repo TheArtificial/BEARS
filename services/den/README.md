@@ -84,17 +84,14 @@ Recommended dev setup (bare-metal provider, host docker):
    inside containers (e.g. `http://host.docker.internal:3001`; must be
    plain http in the default restricted network mode).
 5. Create a Docket job with tasks assigned to `work` — conversationally via
-   `create_job`, or at `/work/new` — and dispatch with the `dispatch_work`
-   tool or the job page's dispatch form. Dispatch has two execution targets:
-   `sandbox` uses an isolated checkout in a different workspace, while `local`
-   uses the current attached workspace and can see its uncommitted state. In
-   Pair, omitting the target selects `local` when exactly one workspace is
-   attached, selects `sandbox` when none is attached, and fails on ambiguity;
-   other coordinating stances default to `sandbox`. An explicit target always
-   wins. The dispatch tool is not exposed to the Work stance, so a Work run
-   cannot recursively dispatch another run. Sandbox dispatch also selects a
-   catalog image; local dispatch rejects sandbox-only images. Watch progress
-   and results at `/work`.
+   `create_job`, or at `/work/new` — and dispatch it with the `dispatch_work`
+   tool or the job page's dispatch form. A Docket dispatch always uses an
+   isolated sandbox checkout: it cannot see uncommitted files in Pair's
+   attached workspace or modify that checkout. Dispatch is for explicitly
+   requested durable/background work; normal Pair work stays in the current
+   conversation. The dispatch tool is not exposed to the Work stance, so a
+   Work run cannot recursively dispatch another run. Dispatch selects a
+   catalog image by name. Watch progress and results at `/work`.
 
 Publishing: with job `commit_policy` `per_task` or `per_job`, each successful
 run's commits are pushed **host-side with the root's credentials** to the

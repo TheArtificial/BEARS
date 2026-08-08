@@ -1,5 +1,17 @@
 # Docket UI standards
 
+## Execution boundaries
+
+A Docket job is an explicit durable work contract: it owns durable task trees,
+journals, retries, delivery policy, and isolated Work runs. Creating or
+dispatching one is not the default way for Pair to perform ordinary work.
+
+A Pair session instead has an optional current task that supplies its working
+objective. A bounded local delegate is a separate session-level operation and
+is not a Docket dispatch. Until local delegation has a workspace-reservation
+protocol, it must be read-only. Docket dispatches always use isolated sandbox
+checkouts and must not be presented as changes to Pair's attached workspace.
+
 ## Entity references
 
 Work surfaces, jobs, tasks, and work runs use one linked reference form:
