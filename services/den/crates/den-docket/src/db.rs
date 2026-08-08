@@ -129,11 +129,7 @@ pub(super) async fn create_job(
             .map(str::trim)
             .filter(|branch| !branch.is_empty()),
     )
-    .bind(match create.status {
-        DocketJobStatus::Cancelled => Some("cancelled"),
-        DocketJobStatus::Archived => Some("archived"),
-        _ => None,
-    })
+    .bind(Option::<&str>::None)
     .bind(create.visibility.as_str())
     .bind(create.source_conversation_id.as_deref())
     .bind(create.objective_kind.as_deref())
@@ -260,7 +256,7 @@ pub(super) async fn create_job(
     tx.commit().await?;
     let task_states = list_task_run_states(pool, run.id).await?;
     let criteria_states = list_criterion_states(pool, run.id).await?;
-    Ok(DocketJobProjection {
+    let mut projection = DocketJobProjection {
         job,
         current_run: Some(run),
         criteria,
@@ -268,7 +264,9 @@ pub(super) async fn create_job(
         tasks,
         task_states,
         active_task_ids: Vec::new(),
-    })
+    };
+    projection.job.status = derived_docket_job_status(&projection);
+    Ok(projection)
 }
 
 fn docket_task_definition_payload(task: &DocketTaskRow) -> Value {

@@ -1845,7 +1845,7 @@ pub async fn get_work_run_dispatch_context(
     sqlx::query_as::<_, WorkRunDispatchContext>(
         "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, s.name AS work_surface_name,
                 j.commit_policy, j.work_branch,
-                COALESCE(j.work_branch = s.default_ref, FALSE) AS allow_default_ref,
+                COALESCE(j.work_branch = g.default_ref, FALSE) AS allow_default_ref,
                 COALESCE((
                     SELECT jsonb_agg(
                         jsonb_build_object('summary', rr.summary, 'evidence_refs', rr.evidence_refs)
@@ -1869,6 +1869,7 @@ pub async fn get_work_run_dispatch_context(
              LIMIT 1
          ) assignment ON true
          LEFT JOIN work_surfaces s ON s.id = assignment.work_surface_id
+         LEFT JOIN git_work_surface_details g ON g.id = s.id
          WHERE r.id = $1",
     )
     .bind(run_id)

@@ -188,8 +188,6 @@ pub(crate) struct DocketJobCreateArguments {
     pub(crate) commit_policy: Option<DocketCommitPolicy>,
     #[serde(default)]
     pub(crate) work_branch: Option<String>,
-    #[serde(default = "default_job_status")]
-    pub(crate) status: DocketJobStatus,
     #[serde(default = "default_job_visibility")]
     pub(crate) visibility: TaskListVisibility,
     #[serde(default)]
@@ -238,8 +236,6 @@ pub(crate) struct DocketJobUpdateArguments {
     pub(crate) commit_policy: Option<DocketCommitPolicy>,
     #[serde(default)]
     pub(crate) clear_commit_policy: bool,
-    #[serde(default)]
-    pub(crate) status: Option<DocketJobStatus>,
     #[serde(default)]
     pub(crate) visibility: Option<TaskListVisibility>,
 }
@@ -456,10 +452,6 @@ fn resolve_reference(
             "{kind} reference is ambiguous: {reference}"
         ))),
     }
-}
-
-fn default_job_status() -> DocketJobStatus {
-    DocketJobStatus::Ready
 }
 
 fn default_job_visibility() -> TaskListVisibility {
@@ -1335,7 +1327,6 @@ pub(crate) async fn create_job(
                 .collect(),
             commit_policy: args.commit_policy,
             work_branch: args.work_branch,
-            status: args.status,
             visibility: args.visibility,
             source_conversation_id: clean_optional(&context.conversation_id),
             objective_kind: None,
@@ -1547,7 +1538,7 @@ pub(crate) async fn update_job(
                 .then_some(None)
                 .or_else(|| args.commit_policy.map(Some)),
             work_branch: None,
-            status: args.status,
+            status: None,
             visibility: args.visibility,
         })
         .await?;

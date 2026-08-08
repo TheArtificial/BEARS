@@ -1134,7 +1134,6 @@ pub struct DocketJobCreate {
     /// Explicit upstream branch for work-run publishing; generated
     /// (`den/job-<short-id>`) on first pushable dispatch when absent.
     pub work_branch: Option<String>,
-    pub status: DocketJobStatus,
     pub visibility: TaskListVisibility,
     pub source_conversation_id: Option<String>,
     pub objective_kind: Option<String>,
@@ -2628,7 +2627,6 @@ mod tests {
             work_surface_assignments: vec![],
             commit_policy: Some(DocketCommitPolicy::None),
             work_branch: None,
-            status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::BearVisible,
             source_conversation_id: None,
             objective_kind: None,
@@ -2657,7 +2655,6 @@ mod tests {
             work_surface_assignments: vec![],
             commit_policy: None,
             work_branch: None,
-            status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::BearVisible,
             source_conversation_id: None,
             objective_kind: None,

@@ -132,7 +132,6 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
         work_surface_assignments: vec![],
         commit_policy: Some(DocketCommitPolicy::None),
         work_branch: None,
-        status: DocketJobStatus::Ready,
         visibility: TaskListVisibility::SameUser,
         source_conversation_id: None,
         objective_kind: None,
