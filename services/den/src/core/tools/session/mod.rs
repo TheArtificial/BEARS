@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use crate::{
@@ -388,13 +388,38 @@ impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitl
         conversation_id: &str,
         title: &str,
     ) -> Result<u64, crate::errors::DenError> {
-        conversation_persistence::set_conversation_title_and_sync_client_sessions(
+        let synced_acp_sessions =
+            conversation_persistence::set_conversation_title_and_sync_client_sessions(
+                self.pool,
+                bear_id,
+                conversation_id,
+                title,
+            )
+            .await?;
+        for session in den_service::client_sessions::list_for_bear_conversation(
             self.pool,
             bear_id,
             conversation_id,
-            title,
         )
-        .await
+        .await?
+        {
+            den_runtime::bearwire_events::append_ephemeral_bearwire_event(
+                self.pool,
+                &session.client_session_id,
+                Some(bear_id),
+                Some(session.user_id),
+                "session_info_update",
+                json!({
+                    "title": title,
+                    "updated_at": session
+                        .conversation_title_updated_at
+                        .unwrap_or(session.updated_at)
+                        .to_string(),
+                }),
+            )
+            .await?;
+        }
+        Ok(synced_acp_sessions)
     }
 }
 

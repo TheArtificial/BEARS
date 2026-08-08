@@ -638,6 +638,29 @@ pub async fn set_title_for_bear_conversation(
     Ok(result.rows_affected())
 }
 
+pub async fn list_for_bear_conversation(
+    pool: &PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+) -> Result<Vec<ClientSessionRow>, DenError> {
+    sqlx::query_as::<_, ClientSessionRow>(
+        r"
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_title, conversation_title_updated_at, conversation_title_synced_at,
+               closed_at, archived_at, created_at, updated_at
+        FROM client_sessions
+        WHERE bear_id = $1
+          AND (conversation_id = $2 OR resolved_conversation_id = $2)
+        ",
+    )
+    .bind(bear_id)
+    .bind(conversation_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
 pub async fn mark_title_synced(
     pool: &PgPool,
     user_id: i32,
