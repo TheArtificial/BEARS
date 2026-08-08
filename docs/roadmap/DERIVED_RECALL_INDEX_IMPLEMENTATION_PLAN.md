@@ -1,6 +1,6 @@
 # Derived Recall Index — Implementation Plan
 
-**Status:** Phases 0–3.5 + 5 landed; Phase 4 (Cabinet) deferred on its ingestion pipeline  
+**Status:** Phases 0–3.5 + 5 landed; Phase 4 (Cabinet) deferred on [Cabinet publication and research-ingestion contracts](CABINET_IMPLEMENTATION_PLAN.md)  
 **Architecture:** [ADR-0038 — Platform embedding standard and derived recall index](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)  
 **Contracts:** [Den archival memory and ingestion](../architecture/den-archival-memory-and-ingestion-contract.md), [Den runtime — turn context](../architecture/den-runtime.md#turn-context-assembly)
 

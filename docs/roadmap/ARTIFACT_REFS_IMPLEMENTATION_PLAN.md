@@ -149,7 +149,7 @@ Initial implementation decisions:
 
 ### Phase 4 — Cabinet attachment integration
 
-**Goal:** Let Cabinet use artifact refs without conflating Cabinet records with blob storage.
+**Goal:** Let Cabinet use artifact refs without conflating Cabinet records with blob storage. The Cabinet item, ACL, and review contract is owned by the [Cabinet implementation plan](CABINET_IMPLEMENTATION_PLAN.md).
 
 - [ ] Add Cabinet attachment link model: Cabinet item -> artifact ref + attachment role.
 - [ ] Support `cabinet_durable` lifecycle or equivalent retention promotion for attached artifacts.
