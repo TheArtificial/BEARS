@@ -332,10 +332,16 @@ pub async fn surface_by_id(
     pool: &PgPool,
     surface_id: Uuid,
 ) -> Result<Option<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as::<_, WorkSurfaceRow>(&format!(
-        "SELECT {SURFACE_COLUMNS} {GIT_SURFACE_FROM} AND s.id = $1",
-    ))
-    .bind(surface_id)
+    Ok(sqlx::query_as!(
+        WorkSurfaceRow,
+        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+                  g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  s.created_by_user_id, s.created_at, s.updated_at
+           FROM work_surfaces s
+           INNER JOIN git_work_surface_details g ON g.id = s.id
+           WHERE s.kind = 'git_workspace' AND s.id = $1"#,
+        surface_id
+    )
     .fetch_optional(pool)
     .await?)
 }
@@ -344,18 +350,31 @@ pub async fn surface_by_name(
     pool: &PgPool,
     name: &str,
 ) -> Result<Option<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as::<_, WorkSurfaceRow>(&format!(
-        "SELECT {SURFACE_COLUMNS} {GIT_SURFACE_FROM} AND s.name = $1",
-    ))
-    .bind(name)
+    Ok(sqlx::query_as!(
+        WorkSurfaceRow,
+        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+                  g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  s.created_by_user_id, s.created_at, s.updated_at
+           FROM work_surfaces s
+           INNER JOIN git_work_surface_details g ON g.id = s.id
+           WHERE s.kind = 'git_workspace' AND s.name = $1"#,
+        name
+    )
     .fetch_optional(pool)
     .await?)
 }
 
 pub async fn list_all_surfaces(pool: &PgPool) -> Result<Vec<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as::<_, WorkSurfaceRow>(&format!(
-        "SELECT {SURFACE_COLUMNS} {GIT_SURFACE_FROM} ORDER BY s.name",
-    ))
+    Ok(sqlx::query_as!(
+        WorkSurfaceRow,
+        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+                  g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  s.created_by_user_id, s.created_at, s.updated_at
+           FROM work_surfaces s
+           INNER JOIN git_work_surface_details g ON g.id = s.id
+           WHERE s.kind = 'git_workspace'
+           ORDER BY s.name"#
+    )
     .fetch_all(pool)
     .await?)
 }
@@ -364,17 +383,21 @@ pub async fn list_surfaces_managed_by(
     pool: &PgPool,
     user_id: i32,
 ) -> Result<Vec<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as::<_, WorkSurfaceRow>(&format!(
-        r"
-        SELECT {SURFACE_COLUMNS} {GIT_SURFACE_FROM}
-        AND EXISTS (
-            SELECT 1 FROM work_surface_managers m
-            WHERE m.surface_id = s.id AND m.user_id = $1
-        )
-        ORDER BY s.name
-        ",
-    ))
-    .bind(user_id)
+    Ok(sqlx::query_as!(
+        WorkSurfaceRow,
+        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+                  g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  s.created_by_user_id, s.created_at, s.updated_at
+           FROM work_surfaces s
+           INNER JOIN git_work_surface_details g ON g.id = s.id
+           WHERE s.kind = 'git_workspace'
+             AND EXISTS (
+                 SELECT 1 FROM work_surface_managers m
+                 WHERE m.surface_id = s.id AND m.user_id = $1
+             )
+           ORDER BY s.name"#,
+        user_id
+    )
     .fetch_all(pool)
     .await?)
 }
