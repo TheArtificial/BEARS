@@ -1,5 +1,6 @@
 use std::{
     fmt,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -227,6 +228,42 @@ fn workspace_roots_from_client_context(client_context: Option<&Value>) -> Vec<St
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn workspace_root_contains_cwd(root: &str, cwd: &str) -> bool {
+    let root = Path::new(root);
+    let cwd = Path::new(cwd);
+    root.is_absolute()
+        && cwd.is_absolute()
+        && cwd
+            .components()
+            .collect::<Vec<_>>()
+            .starts_with(&root.components().collect::<Vec<_>>())
+}
+
+pub(crate) fn normalized_workspace_roots(
+    client_context: Option<&Value>,
+    cwd: Option<&str>,
+) -> Result<Vec<String>, CustomError> {
+    let workspace_roots = workspace_roots_from_client_context(client_context);
+    let Some(cwd) = cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
+        return Ok(workspace_roots);
+    };
+
+    if workspace_roots.is_empty() {
+        return Ok(vec![cwd.to_string()]);
+    }
+
+    if workspace_roots
+        .iter()
+        .any(|root| workspace_root_contains_cwd(root, cwd))
+    {
+        return Ok(workspace_roots);
+    }
+
+    Err(CustomError::ValidationError(format!(
+        "cwd {cwd:?} is outside declared workspace_roots"
+    )))
 }
 
 fn runtime_upstream_target(
@@ -1732,7 +1769,7 @@ pub(crate) async fn run_start_result(
         runtime_upstream_target(&conversation_id, resolved_conversation_id.as_deref());
     let cwd = request.cwd;
     let client_context = request.client_context;
-    let workspace_roots = workspace_roots_from_client_context(client_context.as_ref());
+    let workspace_roots = normalized_workspace_roots(client_context.as_ref(), cwd.as_deref())?;
     let requested_mode = request.requested_mode;
     // `TurnAuthority` is the single local authority seam for BearWire's tool
     // surface and prompt permission envelope. The concrete stance is resolved

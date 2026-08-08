@@ -46,12 +46,43 @@ use crate::{
     events::{events_page, EventPageQuery},
     methods::{
         conversation::project_focus_title,
-        run::{persist_run_failed, RunFailureReason},
+        run::{normalized_workspace_roots, persist_run_failed, RunFailureReason},
     },
     rpc::rpc,
 };
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
 
+#[test]
+fn normalized_workspace_roots_uses_cwd_when_roots_are_not_declared() {
+    assert_eq!(
+        normalized_workspace_roots(None, Some("/workspace"))
+            .expect("cwd fallback should be accepted"),
+        vec!["/workspace"]
+    );
+}
+
+#[test]
+fn normalized_workspace_roots_accepts_cwd_inside_a_declared_root() {
+    assert_eq!(
+        normalized_workspace_roots(
+            Some(&json!({ "workspace_roots": ["/workspace"] })),
+            Some("/workspace/services/den"),
+        )
+        .expect("containing root should be accepted"),
+        vec!["/workspace"]
+    );
+}
+
+#[test]
+fn normalized_workspace_roots_rejects_cwd_outside_declared_roots() {
+    let error = normalized_workspace_roots(
+        Some(&json!({ "workspace_roots": ["/workspace"] })),
+        Some("/other-workspace"),
+    )
+    .expect_err("outside cwd must not become a workspace root");
+
+    assert!(format!("{error:?}").contains("outside declared workspace_roots"));
+}
 #[test]
 fn project_focus_title_prefix_is_projection_only_and_idempotent() {
     assert_eq!(

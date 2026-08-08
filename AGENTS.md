@@ -48,6 +48,13 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 ./scripts/smoke-stack.sh
 ```
 
+Run SQLx commands through `scripts/sqlx.sh`. It starts and verifies bundled Postgres without building Den, makes the Compose service reachable from this workspace, changes to the Den Cargo workspace, and supplies the matching `DATABASE_URL` to Cargo:
+
+```bash
+./scripts/sqlx.sh migrate run
+./scripts/sqlx.sh prepare --workspace -- --all-targets
+```
+
 ## Dependency Hygiene
 
 - Before adding a dependency, check whether an existing crate in the workspace already solves the problem. Prefer reusing existing dependencies over adding parallel libraries for the same concern.
