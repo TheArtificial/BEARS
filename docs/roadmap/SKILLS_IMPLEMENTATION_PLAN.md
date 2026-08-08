@@ -12,6 +12,10 @@ Related sources:
 - [Reflection system plan](REFLECTION_SYSTEM_PLAN.md) — future `skill_review` and `skill_apply` lanes.
 - [Bear package format](../guides/bear-package.md) — approved skills are portable Bear package artifacts.
 
+## Documentation and model experience
+
+Each delivered Skills phase must review and update [`MODEL_EXPERIENCE.md`](../../MODEL_EXPERIENCE.md) for model-facing skill discovery, proposal, approval, or availability changes. Create or update the relevant documentation in [`docs/guides`](../guides), including skill packaging, operator review, Bear attachment, reconciliation, and portability behavior.
+
 ---
 
 ## Goals

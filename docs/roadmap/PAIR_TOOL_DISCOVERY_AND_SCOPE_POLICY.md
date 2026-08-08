@@ -7,9 +7,13 @@ For the canonical stance model and current stance names, see [bear stances](../a
 
 Initial implementation slice complete. `session_info` is the canonical orientation descriptor, its output includes policy/activity state for ACP pair turns, and memory/workplan/ACP local tool descriptors now include scope and orientation guidance. User testing confirms the agent uses tools naturally without prompt suffix injection.
 
+**Ownership:** This is the implemented Pair-specific scope, advertisement, command-routing, and tool-call UX policy. General catalog discovery and Code Mode are owned by [Capability discovery and Code Mode](CAPABILITY_DISCOVERY_AND_CODE_MODE_IMPLEMENTATION_PLAN.md); Bear/stance authority, connections, and MCP catalog attachments are owned by [Bear capability configuration and portability](BEAR_CAPABILITY_CONFIGURATION_AND_PORTABILITY_PLAN.md). Provider-specific MCP implementations remain in their provider plans.
+
+**Documentation and model experience:** Any change to this policy must review and update [`MODEL_EXPERIENCE.md`](../../MODEL_EXPERIENCE.md) for Pair model-facing behavior, and create or update the relevant user/operator documentation under [`docs/guides`](../guides), including scope orientation, tool activity, approvals, and diagnostics.
+
 ## Purpose
 
-`pair` agents need enough awareness to use tools and memory well without reintroducing Den-generated runtime text into persisted Letta user messages.
+`pair` agents need enough awareness to use tools and memory well without reintroducing Den-generated runtime text into persisted user messages.
 
 This policy complements:
 
@@ -327,6 +331,6 @@ Agents should discover skills through structured skill descriptors, not prompt s
 ## Follow-up slices
 
 1. [x] Generalize descriptor guidance into a shared taxonomy/helper for Den tools, ACP local tools, future channels, and agentic skills.
-2. Introduce a shared `PairTurnRequest` boundary so future `pair` channels cannot append runtime context to Letta user messages.
+2. Introduce a shared `PairTurnRequest` boundary so future `pair` channels cannot append runtime context to persisted user messages.
 3. Improve work-surface resolution beyond candidate hints using repo metadata, memory anchors, explicit user references, and user confirmation state.
 4. Stabilize smoke-stack regression coverage for the clean user-message boundary.

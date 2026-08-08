@@ -13,6 +13,14 @@
 - [Pair tool discovery and scope policy](PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md)
 - [Context window budget](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md)
 
+## Plan boundaries
+
+This plan owns the model-facing capability lifecycle: catalog taxonomy, search/describe, availability-aware discovery, lazy loading, bundles, governed invocation, and Code Mode. Bear/stance authority, connections, portability, and general MCP catalog attachments are owned by [Bear capability configuration and portability](BEAR_CAPABILITY_CONFIGURATION_AND_PORTABILITY_PLAN.md). Provider-specific bridges remain in their provider plans; Pair-specific scope and tool-call UX remain in [Pair tool discovery and scope policy](PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md).
+
+## Documentation and model experience
+
+Every phase that changes model-facing capability discovery, descriptors, invocation, or Code Mode must review and update [`MODEL_EXPERIENCE.md`](../../MODEL_EXPERIENCE.md). Create or update corresponding documentation in [`docs/guides`](../guides), covering the supported discovery and invocation workflow, user-visible limitations, and operator setup where applicable.
+
 ## Goal
 
 Reduce model-context pollution from growing tool, skill, and execution catalogs by adding a small, stable capability discovery surface. Bears should learn how to discover and reuse relevant capabilities instead of receiving the full catalog in every runtime prompt.

@@ -7,6 +7,10 @@ For the canonical stance model and current stance names, see [bear stances](../a
 **Date:** 2026-05-18  
 **Related ADR:** `docs/architecture/adr/acp-host-browser-mcp-bridge.md`
 
+**Plan boundary:** This plan implements the browser-only MCP provider and bridge. General MCP catalog records, Bear/stance attachments, connection state, and descriptor eligibility are owned by [Bear capability configuration and portability](BEAR_CAPABILITY_CONFIGURATION_AND_PORTABILITY_PLAN.md); this plan must consume that contract rather than recreate it.
+
+**Documentation and model experience:** Each bridge phase that changes model-facing browser availability, descriptors, or failure behavior must review and update [`MODEL_EXPERIENCE.md`](../../MODEL_EXPERIENCE.md). Create or update relevant setup, security, and troubleshooting documentation in [`docs/guides`](../guides).
+
 ## Goal
 
 Add a browser-only host MCP bridge mode to the single installable `bears-acp-adapter` binary, then teach container-running ACP adapters to connect to that bridge as a constrained browser MCP source.
