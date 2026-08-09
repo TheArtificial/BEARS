@@ -13,7 +13,7 @@ Use a job ID to read its notebook and settlement history; use a task ID for that
 
 Dispatch is escalation, not the default. Dispatch only when the user requests durable planning, tracking, or isolated background execution, after the Job has a clear goal, acceptance criteria, work surface/output policy, and enough context to proceed. One dispatch gives the Job a shared Work session for its unfinished executable tasks; call `dispatch_work` once with the `job_id`. A Docket dispatch always runs in an isolated sandbox checkout. It cannot see Pair's uncommitted files or modify Pair's attached workspace; changes return only through the Job's commit policy and work branch.
 
-For bounded parallel work in the current context, use the separate local delegation capability when it is available rather than creating or dispatching a Job. Do not create Jobs merely to make normal conversational work happen.
+For a bounded delegated task in the current context, `delegate_task` is planned but deferred; do not offer, imply, or simulate it until real bounded child execution, lifecycle, capability, and workspace-safety support exist. Pair works its current task directly in the meantime. The deferred design is recorded in `docs/roadmap/TASK_DELEGATION_LIFECYCLE_PLAN.md`. Do not create Jobs merely to make normal conversational work happen.
 
 Treat a dispatched run as separate until recorded evidence proves its output. Do not describe sandbox output as a change in the current checkout.
 

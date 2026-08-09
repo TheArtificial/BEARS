@@ -7,10 +7,12 @@ journals, retries, delivery policy, and isolated Work runs. Creating or
 dispatching one is not the default way for Pair to perform ordinary work.
 
 A Pair session instead has an optional current task that supplies its working
-objective. A bounded local delegate is a separate session-level operation and
-is not a Docket dispatch. Until local delegation has a workspace-reservation
-protocol, it must be read-only. Docket dispatches always use isolated sandbox
-checkouts and must not be presented as changes to Pair's attached workspace.
+objective. Task delegation is deferred; do not offer, imply, or simulate
+`delegate_task` until its real execution lifecycle and shared workspace-safety
+protocol exist. The planned contract and prerequisites are recorded in
+`docs/roadmap/TASK_DELEGATION_LIFECYCLE_PLAN.md`. Docket dispatches always use
+isolated sandbox checkouts and must not be presented as changes to Pair's
+attached workspace.
 
 ## Entity references
 
