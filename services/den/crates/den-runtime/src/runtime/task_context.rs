@@ -1,9 +1,9 @@
 //! Runtime current-task resolution.
 //!
-//! A session's current task may come from an active durable Docket execution or
-//! from its session-anchored task tree. The task-list projection is a volatile
-//! cache used to seed prompts and tools; runtime behavior resolves this context
-//! rather than treating a cached session value as authoritative.
+//! Pair resolves its persisted session current task before considering a legacy
+//! durable Docket execution. The task-list projection is a volatile cache used
+//! to seed prompts and tools; runtime behavior resolves persisted state rather
+//! than treating a cached projection as authoritative.
 
 use den_core::DenError;
 use den_docket::{
@@ -98,37 +98,6 @@ pub async fn resolve_runtime_task_context(
         cached_activity_plan_projection: _,
     } = request;
 
-    if let Some(user_id) = user_id {
-        let service = PgDocketService::from_pool(pool);
-        if let Some(execution) = service
-            .get_active_execution_session(
-                bear_id,
-                profile,
-                active_docket_execution_lookup_for_session(&conversation_id, &client_session_id),
-            )
-            .await?
-        {
-            let plan = service
-                .checkout_task_list(
-                    bear_id,
-                    profile,
-                    user_id,
-                    TaskListCheckoutRequest {
-                        source: TaskListCheckoutSource::DocketJob {
-                            job_id: execution.job_id,
-                            parent_task_id: None,
-                        },
-                    },
-                )
-                .await?;
-            return Ok(RuntimeTaskContext {
-                source: RuntimeTaskSource::DurableDocketExecution,
-                current_task_id: None,
-                cached_activity_plan_projection: plan,
-            });
-        }
-    }
-
     let Some(user_id) = user_id else {
         return Ok(RuntimeTaskContext {
             source: RuntimeTaskSource::None,
@@ -161,6 +130,51 @@ pub async fn resolve_runtime_task_context(
     let current_task_id = session
         .current_task_id
         .filter(|selected_task_id| tasks.iter().any(|task| task.task.id == *selected_task_id));
+    if current_task_id.is_some() {
+        let plan = task_list_projection_from_session_tasks_with_current_task(
+            bear_id,
+            profile,
+            &conversation_id,
+            session.id,
+            &tasks,
+            current_task_id,
+        );
+        return Ok(RuntimeTaskContext {
+            source: RuntimeTaskSource::SessionCurrentTask,
+            current_task_id,
+            cached_activity_plan_projection: plan,
+        });
+    }
+
+    let service = PgDocketService::from_pool(pool);
+    if let Some(execution) = service
+        .get_active_execution_session(
+            bear_id,
+            profile,
+            active_docket_execution_lookup_for_session(&conversation_id, &client_session_id),
+        )
+        .await?
+    {
+        let plan = service
+            .checkout_task_list(
+                bear_id,
+                profile,
+                user_id,
+                TaskListCheckoutRequest {
+                    source: TaskListCheckoutSource::DocketJob {
+                        job_id: execution.job_id,
+                        parent_task_id: None,
+                    },
+                },
+            )
+            .await?;
+        return Ok(RuntimeTaskContext {
+            source: RuntimeTaskSource::DurableDocketExecution,
+            current_task_id: None,
+            cached_activity_plan_projection: plan,
+        });
+    }
+
     let plan = task_list_projection_from_session_tasks_with_current_task(
         bear_id,
         profile,
