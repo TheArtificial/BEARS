@@ -120,6 +120,7 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
         conversation_selection: Some("conv-memory-resolve-tool-test".to_string()),
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,

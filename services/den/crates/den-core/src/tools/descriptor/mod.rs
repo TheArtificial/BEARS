@@ -57,10 +57,10 @@ use crate::tools::{
         DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER,
         DEN_TASK_LISTS_UPDATE, DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT,
         DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC,
-        DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_REJECT_INTENT, DEN_TASK_UPDATE,
-        DEN_TASK_UPDATE_CURRENT_STATUS, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
-        DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ,
-        DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
+        DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_REJECT_INTENT, DEN_TASK_SELECT,
+        DEN_TASK_SELECT_PROVIDER, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS,
+        DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT,
+        DEN_TOOL_OUTPUT_READ, DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
         DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH,
         DEN_WEB_SEARCH_PROVIDER, DEN_WORK_CATALOG, DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH,
         DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_PREPARE_RUST_DEPENDENCIES,
@@ -152,6 +152,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_TASK_LIST => return DEN_TASK_LIST_PROVIDER.to_string(),
         DEN_TASK_FIND => return DEN_TASK_FIND_PROVIDER.to_string(),
         DEN_TASK_UPDATE => return DEN_TASK_UPDATE_PROVIDER.to_string(),
+        DEN_TASK_SELECT => return DEN_TASK_SELECT_PROVIDER.to_string(),
         DEN_TASK_UPDATE_CURRENT_STATUS => {
             return DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER.to_string()
         }
@@ -700,6 +701,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["docket.task.write"],
             &["pair", "work"],
             json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"description":"Replacement concrete criteria that define when this task is done."},"parent_task_id":{"type":["string","null"],"format":"uuid"},"clear_parent_task_id":{"type":"boolean"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"difficulty":{"enum":["trivial","moderate","hard","unknown",null]},"effort_hint":{"enum":["low","medium","high",null]}} ,"required":["task_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_SELECT,
+            "Select current Pair task",
+            "Select an actionable task anchored to this Pair session as its canonical current task. Omit task_id to clear the selection. This changes Pair context only; it does not execute or settle work and cannot affect Work runs, which remain Job-scoped.",
+            "bear.docket",
+            &["docket.task.write"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"task_id":{"type":["string","null"],"format":"uuid"}},"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_UPDATE_CURRENT_STATUS,

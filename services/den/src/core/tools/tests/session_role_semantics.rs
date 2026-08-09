@@ -21,6 +21,7 @@ fn context_for(role: BearProfile) -> DenToolInvocationContext {
         conversation_selection: Some("src/main.rs".to_string()),
         runtime_target: Some("repo:builder-bear".to_string()),
         workspace_roots: vec!["/workspace".to_string()],
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,

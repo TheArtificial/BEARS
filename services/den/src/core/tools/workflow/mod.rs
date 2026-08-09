@@ -8,8 +8,8 @@ use den_core::tools::constants::{
     DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST,
     DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS,
     DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
-    DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
-    DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+    DEN_TASK_SELECT, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
+    DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
     DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
 };
 use den_docket::{
@@ -135,6 +135,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_TASK_FIND
             | DEN_TASK_UPDATE
             | DEN_TASK_UPDATE_CURRENT_STATUS
+            | DEN_TASK_SELECT
             | DEN_DOCKET_ENTRY_APPEND
             | DEN_DOCKET_ENTRY_PROMOTE
             | DEN_DOCKET_ENTRY_LIST
@@ -287,6 +288,12 @@ pub(crate) struct DocketTaskFindArguments {
     pub(crate) task_ref: String,
     #[serde(default)]
     pub(crate) job_ref: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketTaskSelectArguments {
+    #[serde(default)]
+    pub(crate) task_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1121,15 +1128,30 @@ async fn session_anchored_task_list_projection(
             },
         )
         .await?;
-    Ok(docket::task_list_projection_from_session_tasks(
-        context.bear_id,
-        role,
-        clean_optional(&context.conversation_id)
-            .as_deref()
-            .unwrap_or(""),
-        session_anchor_id,
-        &tasks,
-    ))
+    let selected_task_id = if let Some(client_session_id) = context.client_session_id.as_deref() {
+        client_sessions::find_for_user_bear_session_id(
+            pool,
+            context.user_id,
+            context.bear_id,
+            client_session_id,
+        )
+        .await?
+        .and_then(|session| session.current_task_id)
+    } else {
+        None
+    };
+    Ok(
+        docket::task_list_projection_from_session_tasks_with_current_task(
+            context.bear_id,
+            role,
+            clean_optional(&context.conversation_id)
+                .as_deref()
+                .unwrap_or(""),
+            session_anchor_id,
+            &tasks,
+            selected_task_id,
+        ),
+    )
 }
 
 fn refresh_runtime_session_activity_plan(
@@ -1777,6 +1799,74 @@ pub(crate) async fn create_task(
                 "Created durable Docket task definition. Status and results remain run-scoped."
             ]
         }
+    }))
+}
+
+pub(crate) async fn select_current_task(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearProfile::Pair {
+        return Err(DenError::ValidationError(
+            "select_current_task is available only in Pair stance".to_string(),
+        )
+        .into());
+    }
+    let args: DocketTaskSelectArguments = serde_json::from_value(arguments)?;
+    let session_anchor_id = resolve_task_session_anchor_id(pool, context, None, None)
+        .await?
+        .ok_or_else(|| {
+            DenError::ValidationError(
+                "select_current_task needs the current client session".to_string(),
+            )
+        })?;
+    if let Some(task_id) = args.task_id {
+        let task_list =
+            session_anchored_task_list_projection(pool, context, role, session_anchor_id)
+                .await?
+                .ok_or_else(|| {
+                    DenError::ValidationError(
+                        "the current session has no selectable tasks".to_string(),
+                    )
+                })?;
+        let selectable = task_list.items.iter().any(|item| {
+            item.id == task_id.to_string()
+                && matches!(
+                    item.status,
+                    docket::TaskListItemStatus::Pending | docket::TaskListItemStatus::InProgress
+                )
+        });
+        if !selectable {
+            return Err(DenError::ValidationError(
+                "selected task must be an actionable task anchored to the current session"
+                    .to_string(),
+            )
+            .into());
+        }
+    }
+    let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
+        DenError::ValidationError(
+            "select_current_task needs the current client session".to_string(),
+        )
+    })?;
+    client_sessions::set_current_task(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+        args.task_id,
+    )
+    .await?;
+    let task_list =
+        session_anchored_task_list_projection(pool, context, role, session_anchor_id).await?;
+    refresh_runtime_session_activity_plan(context, task_list.clone());
+    Ok(json!({
+        "domain": "docket",
+        "current_task_id": args.task_id,
+        "task_list": task_list,
+        "summary": if args.task_id.is_some() { "Selected the current Pair task." } else { "Cleared the current Pair task." },
     }))
 }
 
