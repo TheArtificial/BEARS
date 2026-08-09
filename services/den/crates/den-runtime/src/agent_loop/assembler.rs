@@ -28,7 +28,8 @@ use super::{
         KeyMemoryProjectionInput, KeyMemoryProjectionResult,
     },
     runtime_context::{
-        assemble_den_owned_runtime_supplement, runtime_context_already_includes_den_owned_blocks,
+        assemble_den_owned_runtime_supplement, render_capability_discovery_guidance,
+        runtime_context_already_includes_den_owned_blocks,
     },
     FreeformPolicy, ObjectiveOrientation, ObjectiveOrientationResolutionInput, OrientationTaskRef,
 };
@@ -602,6 +603,12 @@ pub async fn assemble_native_turn_for_bear(
             system_text.push_str("\n\n");
             system_text.push_str(&supplement);
         }
+    }
+    let capability_discovery = render_capability_discovery_guidance()?;
+    if !capability_discovery.trim().is_empty() {
+        budget_components.capability_discovery_chars = capability_discovery.chars().count() as u32;
+        system_text.push_str("\n\n");
+        system_text.push_str(&capability_discovery);
     }
     if ctx.profile == BearProfile::Chat {
         let tool_surface_blurb =

@@ -20,7 +20,7 @@ pub struct CapabilityDescribeArguments {
     pub r#ref: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CapabilityEntry {
     pub r#ref: String,
     pub kind: String,
@@ -53,20 +53,20 @@ pub struct CapabilityEntry {
     pub tool: Option<CapabilityToolRef>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CapabilityApplicability {
     pub allowed_roles: Vec<String>,
     pub required_scope: String,
     pub policy: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CapabilityRelationship {
     pub kind: String,
     pub r#ref: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CapabilityReplacement {
     pub status: String,
     pub replacement_ref: String,
@@ -98,7 +98,7 @@ pub fn session_capability_entries(
         .collect()
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CapabilityToolRef {
     pub canonical_name: String,
     pub provider_name: String,
@@ -364,8 +364,13 @@ fn compact_result(entry: &CapabilityEntry) -> Value {
         "availability": entry.availability,
         "applicability": entry.applicability,
         "risk": entry.risk,
+        "good_for": entry.good_for,
+        "not_good_for": entry.not_good_for,
         "code_mode_compatibility": entry.code_mode_compatibility,
         "execution_options": entry.execution_options,
+        "relationships": entry.relationships,
+        "replacement": entry.replacement,
+        "tool": entry.tool,
     })
 }
 

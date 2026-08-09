@@ -226,6 +226,10 @@ async fn load_prompt_memory_runtime_text(
     Ok(render_prompt_memory_block_context(&compilation))
 }
 
+pub fn render_capability_discovery_guidance() -> Result<String, DenError> {
+    render_runtime_fragment("runtime_capability_discovery", json!({}))
+}
+
 pub async fn assemble_den_owned_runtime_supplement(
     pool: &PgPool,
     bear_id: Uuid,
@@ -265,6 +269,15 @@ mod tests {
         assert!(!runtime_context_already_includes_den_owned_blocks(
             "plain runtime notes"
         ));
+    }
+
+    #[test]
+    fn capability_discovery_guidance_explains_lazy_loading_and_authority() {
+        let guidance = render_capability_discovery_guidance().unwrap();
+        assert!(guidance.contains("full catalog is not projected"));
+        assert!(guidance.contains("capability_search"));
+        assert!(guidance.contains("Code Mode"));
+        assert!(guidance.contains("not an authority grant"));
     }
 
     #[test]

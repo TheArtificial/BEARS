@@ -13,6 +13,8 @@ pub struct AssembledTurnBudgetComponents {
     pub key_memory_projection_chars: u32,
     pub recall_chars: u32,
     pub runtime_supplement_chars: u32,
+    pub capability_discovery_chars: u32,
+    pub recently_discovered_capabilities_chars: u32,
     pub tool_surface_guidance_chars: u32,
     pub compaction_chars: u32,
     pub transcript_chars: u32,
@@ -109,6 +111,18 @@ pub fn estimate_context_budget(
             "runtime_supplement",
             "Runtime supplement",
             parts.runtime_supplement_chars,
+            tokens_per_char,
+        ),
+        component(
+            "capability_discovery",
+            "Capability discovery guidance",
+            parts.capability_discovery_chars,
+            tokens_per_char,
+        ),
+        component(
+            "recently_discovered_capabilities",
+            "Recently discovered capabilities",
+            parts.recently_discovered_capabilities_chars,
             tokens_per_char,
         ),
         component(
@@ -246,6 +260,8 @@ mod tests {
                 key_memory_projection_chars: 80,
                 recall_chars: 40,
                 runtime_supplement_chars: 20,
+                capability_discovery_chars: 12,
+                recently_discovered_capabilities_chars: 18,
                 tool_surface_guidance_chars: 60,
                 compaction_chars: 10,
                 transcript_chars: 200,
@@ -272,6 +288,14 @@ mod tests {
         assert_eq!(calibration.tokens_per_million_chars, 250_000);
         assert_eq!(calibration.sample_count, 0);
         assert!(report.components.iter().any(|c| c.key == "compiled_prompt"));
+        assert!(report
+            .components
+            .iter()
+            .any(|c| c.key == "capability_discovery" && c.estimated_characters == 12));
+        assert!(report
+            .components
+            .iter()
+            .any(|c| c.key == "recently_discovered_capabilities" && c.estimated_characters == 18));
         assert!(report.components.iter().any(|c| c.key == "tool_schemas"));
         assert!(report
             .components

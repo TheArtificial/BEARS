@@ -16,7 +16,9 @@ use crate::{
         evaluate_turn_context_budget,
         overflow_retry::compact_session_messages_for_overflow,
         record_context_budget_pressure_decision,
-        session_store::{AgentLoopSession, AgentLoopSessionStore},
+        session_store::{
+            render_recently_discovered_capabilities, AgentLoopSession, AgentLoopSessionStore,
+        },
     },
     context_budget::estimate_context_budget,
     llm::{
@@ -728,6 +730,24 @@ pub async fn run_agent_step_stream(
         overflow_recovery = overflow.is_some(),
         "native agent step starting LLM stream"
     );
+    let recently_discovered =
+        render_recently_discovered_capabilities(&session.recently_discovered_capabilities);
+    if !recently_discovered.is_empty() {
+        let chars = recently_discovered.chars().count() as u32;
+        messages.insert(
+            0,
+            crate::llm::ChatMessage {
+                role: "system".to_string(),
+                content: Some(recently_discovered),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            },
+        );
+        session
+            .budget_components
+            .recently_discovered_capabilities_chars = chars;
+    }
     let (request, budget, context_budget_evaluation) = loop {
         let tools = tools_with_checkpoint_tool(&session);
         let thinking_effort = checkpoint_thinking_effort_for_session(&session, !tools.is_empty());

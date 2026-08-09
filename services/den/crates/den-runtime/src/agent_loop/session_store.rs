@@ -4,8 +4,9 @@ use std::{
 };
 
 use den_core::{
-    governance::Governance, profile::BearProfile,
-    tools::capability_catalog::SessionCapabilityDescriptor,
+    governance::Governance,
+    profile::BearProfile,
+    tools::capability_catalog::{CapabilityEntry, SessionCapabilityDescriptor},
 };
 use den_docket::TaskListProjection;
 use den_protocol::ContextBudgetReport;
@@ -22,6 +23,68 @@ use crate::{
     llm::{ChatMessage, ChatToolCall, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},
 };
 
+const RECENT_CAPABILITY_LIMIT: usize = 6;
+
+#[derive(Debug, Clone)]
+pub struct RecentCapability {
+    pub entry: CapabilityEntry,
+}
+
+pub fn retain_recent_capability_entries(
+    recent: &mut Vec<RecentCapability>,
+    entries: impl IntoIterator<Item = CapabilityEntry>,
+) {
+    for entry in entries {
+        recent.retain(|current| current.entry.r#ref != entry.r#ref);
+        recent.push(RecentCapability { entry });
+    }
+    if recent.len() > RECENT_CAPABILITY_LIMIT {
+        recent.drain(..recent.len() - RECENT_CAPABILITY_LIMIT);
+    }
+}
+
+pub fn discovered_capability_entries(tool_name: &str, result: &Value) -> Vec<CapabilityEntry> {
+    match tool_name {
+        "capability_search" => result
+            .get("results")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| serde_json::from_value(entry.clone()).ok())
+            .collect(),
+        "capability_describe" => result
+            .get("capability")
+            .cloned()
+            .and_then(|entry| serde_json::from_value(entry).ok())
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub fn render_recently_discovered_capabilities(recent: &[RecentCapability]) -> String {
+    if recent.is_empty() {
+        return String::new();
+    }
+    let mut text =
+        String::from("Recently discovered (context only; re-check authority before use):\n");
+    for recent in recent {
+        let entry = &recent.entry;
+        text.push_str(&format!("- `{}`: {}", entry.r#ref, entry.summary));
+        if entry.risk != "read_only" {
+            text.push_str(&format!(" Risk: {}; scope: {}.", entry.risk, entry.surface));
+        }
+        if entry.descriptor_lifecycle == "session_instance" {
+            text.push_str(&format!(
+                " Locality: {}; surface: {}; authority: {}; lifetime: {}.",
+                entry.execution_locality, entry.surface, entry.authority, entry.lifetime
+            ));
+        }
+        text.push('\n');
+    }
+    text
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentLoopSession {
     pub session_key: String,
@@ -35,6 +98,9 @@ pub struct AgentLoopSession {
     pub work_run_id: Option<Uuid>,
     pub workspace_roots: Vec<String>,
     pub session_capabilities: Vec<SessionCapabilityDescriptor>,
+    /// Bounded, volatile projection of successful catalog lookups for the next model step.
+    /// This is context only; it never grants capability authority.
+    pub recently_discovered_capabilities: Vec<RecentCapability>,
     pub request_id: Option<String>,
     pub run_id: Option<String>,
     pub messages: Vec<ChatMessage>,
@@ -397,6 +463,8 @@ mod tests {
             client_session_id: "client-test".to_string(),
             work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),
             messages: Vec::new(),
@@ -505,6 +573,74 @@ mod tests {
         assert_eq!(snapshot["task_focus"]["active"], true);
         assert_eq!(snapshot["docket"]["active_job_id"], "job-123");
         assert_eq!(snapshot["docket"]["source"], "objective_orientation");
+    }
+
+    #[test]
+    fn recently_discovered_entries_are_bounded_deduplicated_and_rendered() {
+        let entry = |ref_name: &str, lifecycle: &str| {
+            serde_json::from_value(serde_json::json!({
+                "ref": ref_name,
+                "kind": "tool",
+                "summary": "Useful capability",
+                "tags": [],
+                "definition_id": "definition",
+                "descriptor_lifecycle": lifecycle,
+                "instance_id": null,
+                "provider": "provider",
+                "source": "test",
+                "execution_locality": "local workspace",
+                "authority": "current session",
+                "lifetime": "connection",
+                "surface": "workspace",
+                "availability": "available",
+                "applicability": {"allowed_roles": [], "required_scope": "workspace", "policy": "test"},
+                "risk": "mutating",
+                "good_for": [],
+                "not_good_for": [],
+                "execution_options": [],
+                "relationships": [],
+                "replacement": null,
+                "code_mode_compatibility": "requires_mediation"
+            }))
+            .expect("valid capability entry")
+        };
+        let mut recent = Vec::new();
+        retain_recent_capability_entries(&mut recent, [entry("tool:a", "durable_definition")]);
+        retain_recent_capability_entries(&mut recent, [entry("tool:a", "session_instance")]);
+        for index in 0..RECENT_CAPABILITY_LIMIT {
+            retain_recent_capability_entries(
+                &mut recent,
+                [entry(&format!("tool:{index}"), "durable_definition")],
+            );
+        }
+
+        assert_eq!(recent.len(), RECENT_CAPABILITY_LIMIT);
+        assert!(!recent.iter().any(|entry| entry.entry.r#ref == "tool:a"));
+        let rendered = render_recently_discovered_capabilities(&[RecentCapability {
+            entry: entry("capability-instance:local", "session_instance"),
+        }]);
+        assert!(rendered.contains("Risk: mutating; scope: workspace"));
+        assert!(rendered.contains("Locality: local workspace"));
+    }
+
+    #[test]
+    fn extracts_only_capability_discovery_results() {
+        let result = serde_json::json!({"results": [{
+            "ref": "tool:a", "kind": "tool", "summary": "A", "tags": [],
+            "definition_id": "definition", "descriptor_lifecycle": "durable_definition",
+            "instance_id": null,
+            "provider": "den", "source": "test", "execution_locality": "den",
+            "authority": "policy", "lifetime": "durable", "surface": "den",
+            "availability": "available", "applicability": {"allowed_roles": [], "required_scope": "den", "policy": "test"},
+            "risk": "read_only", "good_for": [], "not_good_for": [],
+            "execution_options": [], "relationships": [], "replacement": null,
+            "code_mode_compatibility": "supported"
+        }]});
+        assert_eq!(
+            discovered_capability_entries("capability_search", &result).len(),
+            1
+        );
+        assert!(discovered_capability_entries("session_info", &result).is_empty());
     }
 
     #[test]

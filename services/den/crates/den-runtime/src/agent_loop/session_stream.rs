@@ -24,7 +24,9 @@ use crate::runtime_error_ux::{
 use crate::{
     agent_loop::{
         evaluate_turn_budget, record_checkpoint_response, run_agent_step_stream,
-        session_store::AgentLoopSessionStore,
+        session_store::{
+            discovered_capability_entries, retain_recent_capability_entries, AgentLoopSessionStore,
+        },
         step::RUNTIME_CHECKPOINT_TOOL_NAME,
         tool_call_finished_event_for_content,
         tool_policy::{
@@ -717,6 +719,15 @@ impl SessionTrackingStream {
             };
             let content = match result {
                 Ok(value) => {
+                    let discovered = discovered_capability_entries(&canonical, &value);
+                    if !discovered.is_empty() {
+                        store.update(&session_key, |session| {
+                            retain_recent_capability_entries(
+                                &mut session.recently_discovered_capabilities,
+                                discovered,
+                            );
+                        });
+                    }
                     let compacted = compact_json_tool_result(value.clone());
                     if compacted.truncated {
                         match create_tool_output_artifact(
@@ -1929,6 +1940,8 @@ mod tests {
             client_session_id: "client-test".to_string(),
             work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),
             messages: Vec::new(),
