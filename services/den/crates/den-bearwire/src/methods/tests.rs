@@ -353,8 +353,8 @@ async fn session_open_mode_change_clears_active_focus(pool: sqlx::PgPool) {
 
     let docket_job_id: Uuid = sqlx::query_scalar(
         r"
-        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, status)
-        VALUES ($1, $2, 'pair', 'Focused job', 'running')
+        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)
+        VALUES ($1, $2, 'pair', 'Focused job')
         RETURNING id
         ",
     )
@@ -2026,8 +2026,8 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
 
     let docket_job_id: Uuid = sqlx::query_scalar(
         r"
-        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, status)
-        VALUES ($1, $2, 'pair', 'Surface diagnostics job', 'running')
+        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)
+        VALUES ($1, $2, 'pair', 'Surface diagnostics job')
         RETURNING id
         ",
     )
@@ -2108,11 +2108,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .bind(user_id)
     .bind(json!({
         "definition": {
-            "task_id": docket_task_id,
-            "job_id": docket_job_id,
-            "title": "Diagnostic task",
-            "body": "Check projection",
-            "completion_criteria": ["projection includes task"]
+            "title": "Diagnostic task"
         }
     }))
     .execute(&pool)
@@ -2200,7 +2196,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     assert!(
         surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("session_info_update")
-                && event.get("title").and_then(Value::as_str) == Some("Persisted replay title")
+                && event.get("title").and_then(Value::as_str) == Some("⌖ Persisted replay title")
                 && event.get("title_updated_at").and_then(Value::as_str)
                     == Some("2026-07-07T00:00:00Z")
         }),
@@ -2214,12 +2210,11 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         "surface history should omit reasoning with replay_policy=none: {surface_response}"
     );
     assert!(
-        surface_events.iter().any(|event| {
+        !surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("reasoning_delta")
                 && event.get("text").and_then(Value::as_str) == Some("replayable thought")
-                && event.get("replay_policy").and_then(Value::as_str) == Some("thought")
         }),
-        "surface history should expose only replayable typed reasoning with replay policy: {surface_response}"
+        "conversation surface history should omit transient reasoning events: {surface_response}"
     );
     assert!(
         !surface_events.iter().any(|event| {
@@ -2258,7 +2253,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                     .is_some_and(|text| {
                         text.contains("Docket focus selected")
                             && text.contains("goal=Surface diagnostics job")
-                            && text.contains("status=running")
+                            && text.contains("state=active")
                             && text.contains("task=Diagnostic task")
                     })
         }),

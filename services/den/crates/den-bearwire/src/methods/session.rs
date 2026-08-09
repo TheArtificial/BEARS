@@ -260,6 +260,9 @@ async fn session_state_payload(
             .cloned()
             .map(|plan| active_activity_plan_projection(plan, focus.source.as_str()))
     });
+    let current_task = runtime_task_context
+        .as_ref()
+        .and_then(pair_current_task_projection);
     let active_docket_execution = if work_enabled {
         PgDocketService::from_pool(&state.sqlx_pool)
             .get_active_execution_session(
@@ -324,6 +327,7 @@ async fn session_state_payload(
         "created_at": session.created_at,
         "updated_at": session.updated_at,
         "context_budget": latest_context_budget,
+        "current_task": current_task,
         "diagnostics": {
             "trusted_workspace": trusted_workspace,
             "runtime_conversation_id": conversation_runtime_id,
@@ -333,6 +337,27 @@ async fn session_state_payload(
             "active_docket_execution": active_docket_execution,
             "open_obligations": open_obligations,
         }
+    }))
+}
+
+fn pair_current_task_projection(
+    context: &den_runtime::runtime::task_context::RuntimeTaskContext,
+) -> Option<Value> {
+    let task_id = context.current_task_id?;
+    if context.source != den_runtime::runtime::task_context::RuntimeTaskSource::SessionCurrentTask {
+        return None;
+    }
+    let item = context
+        .active_activity_plan()?
+        .current_item
+        .as_ref()
+        .filter(|item| item.id == task_id.to_string())?;
+    Some(json!({
+        "id": item.id,
+        "title": item.title,
+        "summary": item.summary,
+        "status": item.status,
+        "source_ref": item.source_ref,
     }))
 }
 
@@ -389,6 +414,67 @@ fn acp_plan_item_status(item: &TaskListItem, current_item_id: Option<&str>) -> &
         TaskListItemStatus::Pending
         | TaskListItemStatus::Blocked
         | TaskListItemStatus::Cancelled => "pending",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use den_docket::{TaskListProjection, TaskListSourceRef, TaskListSyncState};
+    use den_runtime::runtime::task_context::{RuntimeTaskContext, RuntimeTaskSource};
+    use sqlx::types::time::OffsetDateTime;
+    use uuid::Uuid;
+
+    fn session_current_task_context(task_id: Uuid) -> RuntimeTaskContext {
+        let item = TaskListItem {
+            id: task_id.to_string(),
+            title: "Selected task".to_string(),
+            summary: Some("Only explicit selections project".to_string()),
+            status: TaskListItemStatus::Pending,
+            blocked_reason: None,
+            source_ref: TaskListSourceRef::local(vec![]),
+            sync_state: TaskListSyncState::CheckedOut,
+        };
+        RuntimeTaskContext {
+            source: RuntimeTaskSource::SessionCurrentTask,
+            current_task_id: Some(task_id),
+            cached_activity_plan_projection: Some(TaskListProjection {
+                id: Uuid::new_v4(),
+                bear_id: Uuid::new_v4(),
+                title: "Session tasks".to_string(),
+                summary: String::new(),
+                owner_profile: "pair".to_string(),
+                visibility: "private_to_profile".to_string(),
+                status: "active".to_string(),
+                version: 1,
+                source_ref: TaskListSourceRef::local(vec![]),
+                items: vec![item.clone()],
+                current_item: Some(item),
+                source_conversation_id: None,
+                source_client_session_id: None,
+                handoff_intent_path: None,
+                handoff_task_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            }),
+        }
+    }
+
+    #[test]
+    fn pair_current_task_projects_only_explicit_session_selection() {
+        let task_id = Uuid::new_v4();
+        let projected = pair_current_task_projection(&session_current_task_context(task_id))
+            .expect("selected task should project");
+        assert_eq!(projected["id"], task_id.to_string());
+        assert_eq!(projected["title"], "Selected task");
+
+        let mut no_selection = session_current_task_context(task_id);
+        no_selection.current_task_id = None;
+        assert!(pair_current_task_projection(&no_selection).is_none());
+
+        let mut legacy_execution = session_current_task_context(task_id);
+        legacy_execution.source = RuntimeTaskSource::DurableDocketExecution;
+        assert!(pair_current_task_projection(&legacy_execution).is_none());
     }
 }
 
