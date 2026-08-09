@@ -587,6 +587,10 @@ async fn execute_one_web_chat_den_tool(
             conversation_selection: Some(runtime.conversation_id.clone()),
             runtime_target: Some(runtime.conversation_id.clone()),
             workspace_roots: Vec::new(),
+            session_capabilities: session_snapshot
+                .as_ref()
+                .map(|session| session.session_capabilities.clone())
+                .unwrap_or_default(),
             session_policy: None,
             activity: session_snapshot
                 .as_ref()

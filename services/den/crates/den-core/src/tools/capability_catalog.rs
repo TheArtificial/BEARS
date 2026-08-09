@@ -73,7 +73,7 @@ pub struct CapabilityReplacement {
 }
 
 /// A provider connection exposes this capability instance only for its current session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionCapabilityDescriptor {
     pub instance_id: String,
     pub name: String,
@@ -85,6 +85,17 @@ pub struct SessionCapabilityDescriptor {
     pub surface: String,
     pub availability: String,
     pub tags: Vec<String>,
+}
+
+pub fn session_capability_entries(
+    descriptors: &[SessionCapabilityDescriptor],
+) -> Vec<CapabilityEntry> {
+    descriptors
+        .iter()
+        .cloned()
+        .filter(|descriptor| descriptor.availability == "available")
+        .map(session_capability_to_catalog_entry)
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -542,7 +553,7 @@ mod tests {
             execution_locality: "armature-local workspace".to_string(),
             authority: "connected MCP server policy".to_string(),
             surface: "workspace:/repo".to_string(),
-            availability: "connected".to_string(),
+            availability: "available".to_string(),
             tags: vec!["mcp".to_string(), "filesystem.read".to_string()],
         });
 
@@ -557,6 +568,24 @@ mod tests {
             "requires_explicit_local_provider_mediation"
         );
         assert_eq!(entry.relationships[0].kind, "definition");
+    }
+
+    #[test]
+    fn unavailable_session_instances_are_not_discoverable() {
+        let entries = session_capability_entries(&[SessionCapabilityDescriptor {
+            instance_id: "disconnected:mcp__filesystem__read".to_string(),
+            name: "mcp__filesystem__read".to_string(),
+            summary: "Stale provider instance".to_string(),
+            kind: "tool".to_string(),
+            provider: "mcp".to_string(),
+            execution_locality: "connected MCP provider".to_string(),
+            authority: "current client connection".to_string(),
+            surface: "current client session".to_string(),
+            availability: "unavailable".to_string(),
+            tags: vec!["session-bound".to_string()],
+        }]);
+
+        assert!(entries.is_empty());
     }
 
     #[test]

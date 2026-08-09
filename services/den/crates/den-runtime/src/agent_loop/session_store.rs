@@ -3,7 +3,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use den_core::{governance::Governance, profile::BearProfile};
+use den_core::{
+    governance::Governance, profile::BearProfile,
+    tools::capability_catalog::SessionCapabilityDescriptor,
+};
 use den_docket::TaskListProjection;
 use den_protocol::ContextBudgetReport;
 use serde_json::{json, Value};
@@ -31,6 +34,7 @@ pub struct AgentLoopSession {
     /// into Den-hosted tool invocations; it is absent for ordinary sessions.
     pub work_run_id: Option<Uuid>,
     pub workspace_roots: Vec<String>,
+    pub session_capabilities: Vec<SessionCapabilityDescriptor>,
     pub request_id: Option<String>,
     pub run_id: Option<String>,
     pub messages: Vec<ChatMessage>,

@@ -464,6 +464,10 @@ impl SessionTrackingStream {
         let recalled_memory = session
             .as_ref()
             .and_then(|session| session.latest_recalled_memory.clone());
+        let session_capabilities = session
+            .as_ref()
+            .map(|session| session.session_capabilities.clone())
+            .unwrap_or_default();
         DenToolInvocationContext {
             bear_id: self.bear_id,
             bear_slug: self.bear_slug.clone(),
@@ -479,6 +483,7 @@ impl SessionTrackingStream {
             conversation_selection: Some(self.conversation_id.clone()),
             runtime_target: Some(self.conversation_id.clone()),
             workspace_roots,
+            session_capabilities,
             session_policy: None,
             activity: None,
             runtime: None,

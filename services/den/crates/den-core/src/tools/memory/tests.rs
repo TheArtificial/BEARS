@@ -20,6 +20,7 @@ fn sample_context() -> DenToolInvocationContext {
         conversation_selection: Some("conv-1".to_string()),
         runtime_target: Some("conv-1".to_string()),
         workspace_roots: vec![],
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,

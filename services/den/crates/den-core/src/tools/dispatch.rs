@@ -85,8 +85,8 @@ pub async fn invoke_den_tool(
         DEN_USER_GET_CURRENT => identity::get_current_user(ctx, &context).await,
         DEN_BEAR_LIST_MEMBERS => identity::list_bear_members(ctx, &context).await,
         DEN_CAPABILITIES_LIST_SELF => Ok(identity::list_capabilities_self(&context, role)),
-        DEN_CAPABILITY_SEARCH => identity::capability_search(arguments, role),
-        DEN_CAPABILITY_DESCRIBE => identity::capability_describe(arguments, role),
+        DEN_CAPABILITY_SEARCH => identity::capability_search(arguments, role, &context),
+        DEN_CAPABILITY_DESCRIBE => identity::capability_describe(arguments, role, &context),
         DEN_CHANNEL_GET_CONTEXT => Ok(identity::channel_context(&context)),
         DEN_POLICY_GET_SELF => identity::policy_self(ctx, &context).await,
         DEN_SITUATION_GET | DEN_SITUATION_GET_PROVIDER => {

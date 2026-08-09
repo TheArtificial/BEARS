@@ -1,6 +1,7 @@
 use den_core::config::Config;
 use den_core::tools::{
     arguments::DenToolChannelContext,
+    capability_catalog::SessionCapabilityDescriptor,
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
@@ -71,6 +72,53 @@ use den_service::conversation::persistence::PersistedTranscriptRecord;
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> =
     LazyLock::new(AgentLoopSessionStore::default);
+
+fn session_capabilities_from_client_tools(
+    client_tools: Option<&serde_json::Value>,
+    client_session_id: &str,
+    workspace_roots: Option<&[String]>,
+) -> Vec<SessionCapabilityDescriptor> {
+    let surface = workspace_roots
+        .filter(|roots| !roots.is_empty())
+        .map(|roots| format!("workspace roots: {}", roots.join(", ")))
+        .unwrap_or_else(|| "current client session".to_string());
+    client_tools
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| {
+            let name = tool.get("name")?.as_str()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let is_mcp = name.starts_with("mcp__");
+            Some(SessionCapabilityDescriptor {
+                instance_id: format!("{client_session_id}:{name}"),
+                name: name.to_string(),
+                summary: tool
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|description| !description.trim().is_empty())
+                    .unwrap_or("Connected client provider tool")
+                    .to_string(),
+                kind: "tool".to_string(),
+                provider: if is_mcp { "mcp" } else { "armature" }.to_string(),
+                execution_locality: if is_mcp {
+                    "connected MCP provider".to_string()
+                } else {
+                    "armature-local client workspace".to_string()
+                },
+                authority: "current client connection and turn policy".to_string(),
+                surface: surface.clone(),
+                availability: "available".to_string(),
+                tags: vec![
+                    "session-bound".to_string(),
+                    if is_mcp { "mcp" } else { "armature" }.to_string(),
+                ],
+            })
+        })
+        .collect()
+}
 
 fn render_host_context_for_model(prompt_context: Option<&serde_json::Value>) -> Option<String> {
     let host_context = prompt_context?.get("host_context")?;
@@ -897,6 +945,11 @@ async fn build_session(
         workspace_roots: workspace_roots
             .map(|items| items.to_vec())
             .unwrap_or_default(),
+        session_capabilities: session_capabilities_from_client_tools(
+            client_tools,
+            client_session_id,
+            workspace_roots,
+        ),
         request_id: request_id.map(|id| id.to_string()),
         run_id: run_id.map(str::to_string),
         messages,
@@ -1684,6 +1737,7 @@ async fn execute_approved_den_tool_for_session(
         conversation_selection: Some(session.conversation_id.clone()),
         runtime_target: Some(session.conversation_id.clone()),
         workspace_roots: session.workspace_roots.clone(),
+        session_capabilities: session.session_capabilities.clone(),
         session_policy: None,
         activity: session
             .cached_activity_plan_projection

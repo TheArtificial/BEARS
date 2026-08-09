@@ -12,6 +12,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::tools::arguments::DenToolChannelContext;
+use crate::tools::capability_catalog::SessionCapabilityDescriptor;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DenToolInvocationContext {
@@ -36,6 +37,10 @@ pub struct DenToolInvocationContext {
     pub runtime_target: Option<String>,
     #[serde(default)]
     pub workspace_roots: Vec<String>,
+    /// Provider tools advertised for this runtime session after adapter and
+    /// turn-policy gating. They are not durable or globally invocable.
+    #[serde(default)]
+    pub session_capabilities: Vec<SessionCapabilityDescriptor>,
     #[serde(default)]
     pub session_policy: Option<Value>,
     #[serde(default)]
