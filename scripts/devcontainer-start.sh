@@ -30,8 +30,7 @@ run_logged() {
 }
 
 ensure_devcontainer_network() {
-  local network="${BEARS_DEVCONTAINER_NETWORK:-bears-stack_default}"
-  local container_id
+  local postgres_id network container_id
   container_id="$(hostname)"
 
   if ! command -v docker >/dev/null 2>&1; then
@@ -44,12 +43,18 @@ ensure_devcontainer_network() {
     return 0
   fi
 
-  if ! docker network inspect "${network}" >/dev/null 2>&1; then
-    log "Docker network ${network} is not present yet; creating it so service DNS can be attached"
-    if ! run_logged docker network create "${network}"; then
-      log "Could not create Docker network ${network}; tests may not resolve bears-postgres"
-      return 0
-    fi
+  postgres_id="$(docker compose --profile bundled ps -q bears-postgres 2>>"${LOG_FILE}" || true)"
+  if [ -z "${postgres_id}" ]; then
+    log "Bundled Postgres container is not running yet; skipping devcontainer network attachment"
+    return 0
+  fi
+
+  # The Compose project prefix varies by checkout. Get the network that owns
+  # the service alias instead of assuming a `bears-stack_default` network.
+  network="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}' "${postgres_id}" 2>>"${LOG_FILE}" || true)"
+  if [ -z "${network}" ]; then
+    log "Could not determine the bundled Postgres network; tests may not resolve bears-postgres"
+    return 0
   fi
 
   if docker inspect "${container_id}" --format "{{json .NetworkSettings.Networks}}" 2>/dev/null | grep -q "\"${network}\""; then
@@ -64,8 +69,6 @@ ensure_devcontainer_network() {
     log "Could not attach devcontainer to ${network}; tests may not resolve bears-postgres"
   fi
 }
-
-ensure_devcontainer_network
 
 # shellcheck source=/workspace/scripts/load-env.sh
 . "${ROOT}/scripts/load-env.sh"
@@ -113,6 +116,8 @@ if ! run_logged docker compose --profile bundled up -d bears-postgres; then
   log "Bundled Postgres startup failed; devcontainer remains usable. See ${LOG_FILE}."
   exit 0
 fi
+
+ensure_devcontainer_network
 
 postgres_ready=1
 if ! wait_postgres_service bears-postgres bears den "Den Postgres"; then
