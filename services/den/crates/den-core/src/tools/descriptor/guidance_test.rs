@@ -6,7 +6,7 @@ use crate::{
             DEN_JOB_CREATE_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
             DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER,
             DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
-            DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER,
+            DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_SELECT_PROVIDER,
             DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
         },
         descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
@@ -132,6 +132,27 @@ fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
                 .as_array()
                 .is_some_and(|items| items.iter().any(|item| item == "job_id"))
         }));
+}
+
+#[test]
+fn select_current_task_descriptor_requires_confirmation_for_redirection() {
+    let descriptor = builtin_den_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.provider_name == DEN_TASK_SELECT_PROVIDER)
+        .expect("select_current_task descriptor");
+
+    assert!(descriptor
+        .description
+        .contains("first ask the user to confirm the proposed task switch"));
+    assert!(descriptor
+        .description
+        .contains("If several eligible tasks could match, ask which one to select"));
+    assert!(descriptor
+        .description
+        .contains("If none matches, ask whether to create a new session task or continue with no selected task"));
+    assert!(descriptor
+        .description
+        .contains("Never silently select, clear, replace, complete, or create a Pair task"));
 }
 
 #[test]

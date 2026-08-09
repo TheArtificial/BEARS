@@ -705,7 +705,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_SELECT,
             "Select current Pair task",
-            "Select an actionable task anchored to this Pair session as its canonical current task. Omit task_id to clear the selection. This changes Pair context only; it does not execute or settle work and cannot affect Work runs, which remain Job-scoped.",
+            "Select an actionable task anchored to this Pair session as its canonical current task. Omit task_id to clear the selection. This changes Pair context only; it does not execute or settle work and cannot affect Work runs, which remain Job-scoped. Do not call this merely because the conversational topic appears to change: first ask the user to confirm the proposed task switch. If several eligible tasks could match, ask which one to select. If none matches, ask whether to create a new session task or continue with no selected task. Never silently select, clear, replace, complete, or create a Pair task in response to redirection.",
             "bear.docket",
             &["docket.task.write"],
             PAIR_PROFILES,
