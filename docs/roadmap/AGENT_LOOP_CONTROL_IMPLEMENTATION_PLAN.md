@@ -657,16 +657,16 @@ Pair behavior:
 - Pair works its current task directly by default;
 - establishing a session-local task does not create a Job, dispatch Work, or change permissions;
 - attaching a Docket task, creating a Job, or dispatching durable background work requires the explicit user request/approval boundary from the architecture revision;
-- a future local `delegate_task` creates a bounded child task and initially remains read-only.
+- task delegation is deferred. Do not expose `delegate_task` until its real end-to-end lifecycle can ship as described in the [Task delegation lifecycle plan](TASK_DELEGATION_LIFECYCLE_PLAN.md); do not add a read-only or intent-only placeholder.
 
 Work behavior:
 
-- every WorkRun has an explicit Docket task or bounded subtree assignment before continuation begins;
+- every WorkRun has one explicit assigned Docket Job before continuation begins and may advance only that Job's approved task tree;
 - isolated Docket dispatch is the only initial WorkRun execution surface;
 - an assignment does not alter Pair's current task, and Pair's task does not alter the WorkRun assignment;
 - mutable Jobs may change their task tree through Docket task tools; static/frozen Jobs reject or escalate unsupported decomposition.
 
-Task selection within an assigned subtree is deterministic: an `in_progress` task wins; otherwise use the first actionable `pending` task in depth-first order; siblings order by `sibling_order`, creation time, then id. Parent tasks remain actionable unless their state says otherwise.
+Task progress within the assigned Job is deterministic: an existing `in_progress` task wins; otherwise use the first actionable `pending` task in the Job's approved task tree in depth-first order; siblings order by `sibling_order`, creation time, then id. This in-run progress choice is not the WorkRun assignment: the WorkRun remains assigned to the Job. Parent tasks remain actionable unless their state says otherwise.
 
 Checkpoint requests include the relevant current-task or assignment reference when available. `task_state_change_needed` is advisory only; state changes still require the appropriate session-task or Docket task tool and evidence. Checkpoint artifacts may reference job/task/run ids for audit but do not become task events or create continuation state.
 
@@ -675,7 +675,7 @@ Checkpoint requests include the relevant current-task or assignment reference wh
 | Attach objective context | Checkpoint requests include the resolved session current-task or Work-assignment refs when available. |
 | Preserve session-local boundary | Session task creation/replacement/clear never creates a Job or run implicitly. |
 | Require explicit Work Job binding | Work cannot continue without an assigned Docket Job. |
-| Keep delegation separate | Delegation creates a bounded child activity without replacing Pair's current task; local delegation remains read-only until reservation exists. |
+| Keep delegation deferred | Do not expose `delegate_task` until the real shared Pair/Work execution, lifecycle, and workspace-safety requirements in the task delegation lifecycle plan can ship together; do not add a read-only or intent-only placeholder. |
 | Validate task-state intent | Checkpoint reports can recommend update/sync/handoff but cannot mutate task state. |
 | Require tool call for state changes | Runtime requires the relevant task-management tool when a state change is needed. |
 | Add audit correlation | Work checkpoint artifacts can be queried by run/job/assignment refs. |
@@ -729,7 +729,7 @@ Default control levels:
 Implementation order:
 
 1. **Types + resolver:** add typed profiles, resolution precedence, and diagnostics.
-2. **Hard invariants:** immediately enforce explicit Work-assignment requirements, static/frozen Job blockers, trust/permission gates, and global fuses.
+2. **Hard invariants:** immediately enforce explicit Work Job-binding requirements, static/frozen Job blockers, trust/permission gates, and global fuses.
 3. **Checkpoint protocol + artifacts:** add runtime-owned checkpoint calls and artifact-ref-style retention, especially for `work`.
 4. **Checkpoint enforcement:** enforce repeated failure, over-exploration, task-state reconciliation, and bounded retry rules as each trigger class lands.
 5. **Grounding probes:** execute only when requested by policy/checkpoint/task criteria; feed evidence without expanding budgets or bypassing stop conditions.
@@ -757,7 +757,7 @@ The first implementation slice is:
 1. add typed control levels/profiles;
 2. add resolver with model default + Bear/stance override support;
 3. emit `agent_loop_control_resolved` diagnostics;
-4. enforce the already-decided hard invariants (`work` requires an explicit assignment; trust/permission gates and global fuses dominate);
+4. enforce the already-decided hard invariants (`work` requires an explicit Job assignment; trust/permission gates and global fuses dominate);
 5. add checkpoint request/response DTOs and checkpoint artifact retention for `work`;
 6. add tests proving checkpoint artifacts are not conversation history, not model replay, and not Docket events.
 

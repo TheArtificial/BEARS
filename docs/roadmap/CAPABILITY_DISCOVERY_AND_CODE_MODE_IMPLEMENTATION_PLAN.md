@@ -1,6 +1,6 @@
 # Capability Discovery and Code Mode Implementation Plan
 
-**Status:** Proposed
+**Status:** In progress — Phases 0–2 implemented; Phases 3–6 planned
 
 **Decision source of truth:** [ADR-0054 — Capability Discovery and Code Mode](../decisions/adr-0054-capability-discovery-and-code-mode.md)
 
@@ -21,7 +21,18 @@ This plan owns the model-facing capability lifecycle: catalog taxonomy, search/d
 
 Every phase that changes model-facing capability discovery, descriptors, invocation, or Code Mode must review and update [`MODEL_EXPERIENCE.md`](../../MODEL_EXPERIENCE.md). Create or update corresponding documentation in [`docs/guides`](../guides), covering the supported discovery and invocation workflow, user-visible limitations, and operator setup where applicable.
 
-## Goal
+## Current implementation status
+
+**Implemented (Phases 0–2):**
+
+- Curated capability descriptors now provide stable refs, taxonomy tags, provider/origin, locality, authority, availability/lifetime, scope, risk, relationship, and Code Mode compatibility metadata.
+- `capability_search` and `capability_describe` expose durable Den-managed definitions plus available session-bound provider instances. Session instances preserve connection-specific identity and locality; discovery does not change invocation, approval, or authorization behavior.
+- A runtime prompt fragment explains discovery, direct one-off invocation, and Code Mode as the composition-heavy option.
+- Successful discovery calls retain a bounded, deduplicated, recency-ordered `Recently discovered` working set for continuation prompts. It includes risk/scope details and session locality/surface/authority/lifetime details where applicable.
+- Context-budget diagnostics separately attribute static capability-discovery guidance and dynamic recently-discovered context.
+
+**Deferred:** Bear capability configuration, stance overrides, Bear-scoped connection coverage, and broader bundle members (skills, policies, memories, and surfaces) remain governed by the companion configuration/portability work and Phases 3–6 of this plan. Code Mode is currently catalogued guidance, not an implemented governed executor.
+
 
 Reduce model-context pollution from growing tool, skill, and execution catalogs by adding a small, stable capability discovery surface. Bears should learn how to discover and reuse relevant capabilities instead of receiving the full catalog in every runtime prompt.
 
