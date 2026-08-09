@@ -5,7 +5,7 @@ ALTER TABLE bear_work_runs
 
 ALTER TABLE bear_work_runs
     ADD CONSTRAINT bear_work_runs_state_check
-    CHECK (state IN ('queued', 'claimed', 'provisioning', 'running', 'reporting',
+    CHECK (state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting',
                     'succeeded', 'stalled', 'blocked', 'failed', 'cancelled', 'timed_out'));
 
 ALTER TABLE bear_job_runs

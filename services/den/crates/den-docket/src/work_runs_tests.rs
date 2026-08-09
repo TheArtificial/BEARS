@@ -111,7 +111,7 @@ fn work_task(title: &str, order: i32, _stance: BearProfile) -> DocketTaskInput {
 /// Job with two work-assigned tasks and one pair task; returns
 /// (job_id, [task ids in sibling order]).
 async fn seed_work_job(pool: &PgPool, user_id: i32, bear_id: Uuid) -> (Uuid, Vec<Uuid>) {
-    seed_work_job_with_policy(pool, user_id, bear_id, DocketCommitPolicy::None).await
+    seed_work_job_with_policy(pool, user_id, bear_id, DocketCommitPolicy::PerTask).await
 }
 
 async fn seed_work_job_with_policy(
@@ -121,18 +121,20 @@ async fn seed_work_job_with_policy(
     commit_policy: DocketCommitPolicy,
 ) -> (Uuid, Vec<Uuid>) {
     let service = PgDocketService::from_pool(pool);
+    let surface_id = Uuid::new_v4();
     let surface_name = format!("work-run-{}", Uuid::new_v4().simple());
-    let (surface_id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO work_surfaces (name, kind, created_by_user_id)
-         VALUES ($1, 'git_workspace', $2) RETURNING id",
+    sqlx::query(
+        "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
+         VALUES ($1, $2, 'git_workspace', $3, now(), now())",
     )
+    .bind(surface_id)
     .bind(surface_name)
     .bind(user_id)
-    .fetch_one(pool)
+    .execute(pool)
     .await
     .expect("seed work surface");
     sqlx::query(
-        "INSERT INTO git_work_surface_details (work_surface_id, upstream_url)
+        "INSERT INTO git_work_surface_details (id, upstream_url)
          VALUES ($1, 'https://example.test/work-run.git')",
     )
     .bind(surface_id)
@@ -411,19 +413,21 @@ async fn enqueue_enforces_managed_surface_assignment() {
 
     let suffix = Uuid::new_v4().simple().to_string();
     let surface_name = format!("enq-surface-{}", &suffix[..12]);
-    let (surface_id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO work_surfaces (name, upstream_url, created_by_user_id)
-         VALUES ($1, 'https://example.invalid/repo.git', $2) RETURNING id",
+    let surface_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
+         VALUES ($1, $2, 'git_workspace', $3, now(), now())",
     )
+    .bind(surface_id)
     .bind(&surface_name)
     .bind(user_id)
-    .fetch_one(&pool)
+    .execute(&pool)
     .await
     .expect("seed surface");
 
     // Job bound to the surface; bear not assigned -> rejected.
     let (job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
-    sqlx::query("UPDATE bear_jobs SET work_surface_id = $2 WHERE id = $1")
+    sqlx::query("UPDATE job_work_surface_assignments SET work_surface_id = $2 WHERE job_id = $1")
         .bind(job_id)
         .bind(surface_id)
         .execute(&pool)
@@ -710,6 +714,8 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
         .await
         .unwrap();
+    assert_eq!(checkout.prompt_context.job_id, run.job_id);
+    assert_eq!(checkout.prompt_context.current_task_id, task_ids[0]);
     assert_eq!(checkout.prompt_context.tasks.len(), 1);
     assert_eq!(checkout.prompt_context.tasks[0].title, "Alpha work task");
     assert!(checkout.prompt_context.tasks[0]
@@ -991,14 +997,12 @@ async fn publish_wiring_image_branch_and_prompt() {
         .unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].summary, "child completed safely");
-    sqlx::query(
-        "UPDATE bear_task_run_state SET status = 'in_progress' WHERE run_id = $1 AND task_id = $2",
-    )
-    .bind(run.job_run_id)
-    .bind(task_ids[0])
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE bear_work_runs SET executing_task_id = $2 WHERE id = $1")
+        .bind(run.id)
+        .bind(task_ids[0])
+        .execute(&pool)
+        .await
+        .unwrap();
     let context = get_work_run_dispatch_context(&pool, run.id).await.unwrap();
     assert_eq!(context.child_result_rollups.as_array().unwrap().len(), 1);
     assert_eq!(

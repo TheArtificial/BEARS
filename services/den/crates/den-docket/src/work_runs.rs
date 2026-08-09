@@ -1486,9 +1486,13 @@ pub struct WorkRunCheckout {
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct WorkPromptContext {
+    /// The durable sandbox authority. A Work run is always assigned to one Job.
     pub job_id: Uuid,
     pub run_id: Uuid,
     pub goal: String,
+    /// The task currently selected for progress within `job_id`; it is not the
+    /// Work run's sandbox assignment.
+    pub current_task_id: Uuid,
     pub tasks: Vec<WorkPromptTask>,
     pub commit_policy: Option<String>,
     pub notebook_entries: Vec<DocketEntryRow>,
@@ -1520,12 +1524,17 @@ pub async fn checkout_work_run_for_session(
         sqlx::types::Json<Vec<String>>,
         Option<String>,
     );
+    // `job_id` is the durable Work-run assignment. `executing_task_id` is
+    // only the current progress checkpoint inside that Job, so an absent
+    // checkpoint selects the Job's next runnable task rather than changing
+    // the run's assignment.
     let active_task: Option<ActiveTaskRow> = sqlx::query_as(
         "SELECT t.id, t.title, t.body, t.completion_criteria, t.difficulty
          FROM bear_tasks t
-         WHERE t.id = $1",
+         WHERE t.id = $1 AND t.job_id = $2",
     )
     .bind(run.executing_task_id)
+    .bind(run.job_id)
     .fetch_optional(pool)
     .await?;
     let task = match active_task {
@@ -1638,6 +1647,7 @@ pub async fn checkout_work_run_for_session(
             job_id: run.job_id,
             run_id: run.job_run_id,
             goal,
+            current_task_id: task.0,
             tasks: tasks
                 .into_iter()
                 .map(|(id, title, body, criteria)| WorkPromptTask {
