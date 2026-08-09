@@ -12,7 +12,7 @@ Task delegation is deferred. There must be no read-only placeholder, intent-only
 
 When implemented, `delegate_task` means that a parent execution context explicitly asks a child execution to complete one bounded task and later receives a structured result. It is a real execution facility, not a synonym for task creation, task selection, planning, or `dispatch_work`.
 
-This plan narrows the broader stance-scoped delegated-runs roadmap to the task-oriented product contract needed by Pair and Work. It does not replace that roadmap's stance resolution, capability minting, artifacts, or audit requirements. Implement the two plans together where they overlap; do not create competing delegation systems.
+This plan narrows the broader stance-scoped delegated-runs roadmap to the task-oriented product contract needed by Pair and Work. It does not replace that roadmap's stance resolution, capability minting, artifacts, or audit requirements. `delegate_task` is a task-oriented specialization of the broader delegated-run infrastructure: the broader plan may establish non-task-anchored delegation independently, but it must not expose or simulate the task-facing operation before this plan's gates are met.
 
 ## Invariants
 

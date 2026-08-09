@@ -9,6 +9,8 @@
 
 Allow a Bear in any stance to request background or delegated work while keeping stance authority boundaries hard. Delegated runs should use the narrowest capable stance (`work`, `curate`, `watch`, or `pair`), communicate with their parent through structured Den records/events/artifacts, and never inherit the initiating stance's tools, credentials, or side-effect authority.
 
+This plan is the broader delegated-run infrastructure roadmap. The task-facing `delegate_task` product operation is a task-oriented specialization of this infrastructure, governed by the deferred [Task delegation lifecycle plan](TASK_DELEGATION_LIFECYCLE_PLAN.md). That plan is the gate for Pair/Work task delegation: do not expose a dry-run, intent-only, read-only-placeholder, or sandbox-provisioning `delegate_task` surface.
+
 Delegation should not require a Docket Job. Simple background work may be anchored to the current conversation turn or parent run. Jobs are for durable, user-trackable work with task state, acceptance criteria, resumability, commit/work-surface policy, or cross-turn lifecycle management. Conversation-scoped delegated runs may later be promoted into Jobs while preserving run and artifact provenance.
 
 ## Delegation levels and anchors
@@ -98,7 +100,7 @@ This plan fulfills ADR-0053 by implementing:
 - [ ] Reject or ask clarification for mixed-domain tasks in the first version.
 - [ ] Add `ponytail:` comments documenting rule-table resolver ceiling and upgrade path.
 
-**Exit gate:** The platform can accept a delegation request, resolve or reject the stance, and produce an auditable dry-run decision without starting a child loop.
+**Exit gate:** The platform can accept a general delegated-run request, resolve or reject the stance, and produce an auditable dry-run decision without starting a child loop. This broker-only milestone does not expose or simulate the task-facing `delegate_task` operation; that remains deferred until its end-to-end lifecycle gate is met.
 
 ### Phase 2 — Authorization and capability minting
 
@@ -155,14 +157,16 @@ This plan fulfills ADR-0053 by implementing:
 
 ### Phase 5 — Stance-specific loop launch
 
-**Goal:** Start with the smallest real delegated run type.
+**Goal:** Start with the smallest real general delegated run type. This phase does not authorize a task-facing `delegate_task` placeholder; Pair/Work task delegation must wait for the lifecycle, scope, and shared workspace-safety gates in the [Task delegation lifecycle plan](TASK_DELEGATION_LIFECYCLE_PLAN.md).
 
 Recommended order:
 
-1. [ ] `work` read-only or propose-only delegated run against a work surface.
+1. [ ] `watch` read-only monitoring run.
 2. [ ] `curate` propose-only memory/archive review.
-3. [ ] `watch` read-only monitoring run.
-4. [ ] `pair` background reasoning only if a real product need remains.
+3. [ ] `pair` background reasoning only if a real product need remains.
+4. [ ] `work` general delegated run only after its target-surface safety and approval policy is proven.
+
+A future task-facing Pair/Work `delegate_task` is not one of these provisional stance launches. It must be real bounded child-task execution in the parent's existing Pair context or already-running Work Job sandbox; it never provisions another sandbox and follows the deferred task-delegation plan.
 
 For each stance:
 
