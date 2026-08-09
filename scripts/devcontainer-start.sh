@@ -29,47 +29,6 @@ run_logged() {
   "$@" >>"${LOG_FILE}" 2>&1
 }
 
-ensure_devcontainer_network() {
-  local postgres_id network container_id
-  container_id="$(hostname)"
-
-  if ! command -v docker >/dev/null 2>&1; then
-    log "Docker CLI is unavailable; skipping devcontainer network check"
-    return 0
-  fi
-
-  if ! docker info >/dev/null 2>&1; then
-    log "Docker daemon is unavailable; skipping devcontainer network check"
-    return 0
-  fi
-
-  postgres_id="$(docker compose --profile bundled ps -q bears-postgres 2>>"${LOG_FILE}" || true)"
-  if [ -z "${postgres_id}" ]; then
-    log "Bundled Postgres container is not running yet; skipping devcontainer network attachment"
-    return 0
-  fi
-
-  # The Compose project prefix varies by checkout. Get the network that owns
-  # the service alias instead of assuming a `bears-stack_default` network.
-  network="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}' "${postgres_id}" 2>>"${LOG_FILE}" || true)"
-  if [ -z "${network}" ]; then
-    log "Could not determine the bundled Postgres network; tests may not resolve bears-postgres"
-    return 0
-  fi
-
-  if docker inspect "${container_id}" --format "{{json .NetworkSettings.Networks}}" 2>/dev/null | grep -q "\"${network}\""; then
-    log "Devcontainer is already attached to ${network}"
-    return 0
-  fi
-
-  log "Attaching devcontainer ${container_id} to Docker network ${network}"
-  if run_logged docker network connect "${network}" "${container_id}"; then
-    log "Devcontainer attached to ${network}; bears-postgres DNS is available"
-  else
-    log "Could not attach devcontainer to ${network}; tests may not resolve bears-postgres"
-  fi
-}
-
 # shellcheck source=/workspace/scripts/load-env.sh
 . "${ROOT}/scripts/load-env.sh"
 
@@ -82,21 +41,6 @@ export LLM_API_URL="${LLM_API_URL:-http://bears-bifrost:8080/v1}"
 export BIFROST_IMAGE="${BIFROST_IMAGE:-bears-bifrost-dev:latest}"
 export DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}"
 export AGENT_RUNTIME="${AGENT_RUNTIME:-native}"
-
-wait_postgres_service() {
-  service="$1"
-  user="$2"
-  db="$3"
-  label="$4"
-  log "Waiting for ${label} readiness"
-  for _ in $(seq 1 30); do
-    if docker compose --profile bundled exec -T "${service}" pg_isready -U "${user}" -d "${db}" >>"${LOG_FILE}" 2>&1; then
-      return 0
-    fi
-    sleep 2
-  done
-  return 1
-}
 
 set_status "starting"
 log "Starting BEARS devcontainer stack (native runtime)"
@@ -111,22 +55,10 @@ if ! run_logged docker build --build-arg SQLX_OFFLINE=true -t "${DEN_IMAGE}" "${
   log "Den image build failed"
 fi
 
-if ! run_logged docker compose --profile bundled up -d bears-postgres; then
+log "Starting and verifying bundled Postgres via smoke-stack"
+if ! run_logged "${ROOT}/scripts/smoke-stack.sh" --infra; then
   set_status "postgres_start_failed"
   log "Bundled Postgres startup failed; devcontainer remains usable. See ${LOG_FILE}."
-  exit 0
-fi
-
-ensure_devcontainer_network
-
-postgres_ready=1
-if ! wait_postgres_service bears-postgres bears den "Den Postgres"; then
-  postgres_ready=0
-fi
-
-if [ "${postgres_ready}" != "1" ]; then
-  set_status "postgres_unready"
-  log "Den Postgres did not become ready before seeding; devcontainer remains usable. See ${LOG_FILE}."
   exit 0
 fi
 
