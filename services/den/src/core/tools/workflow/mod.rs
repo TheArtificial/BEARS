@@ -1822,7 +1822,7 @@ pub(crate) async fn select_current_task(
                 "select_current_task needs the current client session".to_string(),
             )
         })?;
-    if let Some(task_id) = args.task_id {
+    let selected_title = if let Some(task_id) = args.task_id {
         let task_list =
             session_anchored_task_list_projection(pool, context, role, session_anchor_id)
                 .await?
@@ -1831,21 +1831,26 @@ pub(crate) async fn select_current_task(
                         "the current session has no selectable tasks".to_string(),
                     )
                 })?;
-        let selectable = task_list.items.iter().any(|item| {
-            item.id == task_id.to_string()
-                && matches!(
-                    item.status,
-                    docket::TaskListItemStatus::Pending | docket::TaskListItemStatus::InProgress
-                )
-        });
-        if !selectable {
+        let selected = task_list
+            .items
+            .iter()
+            .find(|item| item.id == task_id.to_string());
+        let Some(selected) = selected.filter(|item| {
+            matches!(
+                item.status,
+                docket::TaskListItemStatus::Pending | docket::TaskListItemStatus::InProgress
+            )
+        }) else {
             return Err(DenError::ValidationError(
                 "selected task must be an actionable task anchored to the current session"
                     .to_string(),
             )
             .into());
-        }
-    }
+        };
+        Some(selected.title.clone())
+    } else {
+        None
+    };
     let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
         DenError::ValidationError(
             "select_current_task needs the current client session".to_string(),
@@ -1859,6 +1864,18 @@ pub(crate) async fn select_current_task(
         args.task_id,
     )
     .await?;
+    if let (Some(title), Some(conversation_id)) = (
+        selected_title.as_deref(),
+        clean_optional(&context.conversation_id),
+    ) {
+        conversation_persistence::set_conversation_title_and_sync_client_sessions(
+            pool,
+            context.bear_id,
+            &conversation_id,
+            title,
+        )
+        .await?;
+    }
     let task_list =
         session_anchored_task_list_projection(pool, context, role, session_anchor_id).await?;
     refresh_runtime_session_activity_plan(context, task_list.clone());
