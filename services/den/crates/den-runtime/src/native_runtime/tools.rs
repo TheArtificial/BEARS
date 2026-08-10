@@ -6,9 +6,9 @@ use den_core::{
         DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_GET_STATUS_PROVIDER, DEN_TASK_LISTS_LIST_PROVIDER,
         DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
         DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC_PROVIDER,
-        DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TASK_UPDATE_PROVIDER,
-        DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_RUN_CANCEL_PROVIDER,
-        DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST_PROVIDER,
+        DEN_TASK_SELECT_PROVIDER, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
+        DEN_TASK_UPDATE_PROVIDER, DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH_PROVIDER,
+        DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST_PROVIDER,
     },
     DenError,
 };
@@ -65,6 +65,7 @@ pub fn is_work_tool_provider_name(name: &str) -> bool {
             | DEN_TASK_CREATE_PROVIDER
             | DEN_TASK_LIST_PROVIDER
             | DEN_TASK_UPDATE_PROVIDER
+            | DEN_TASK_SELECT_PROVIDER
             | DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER
             | DEN_TASK_LIST_SYNC_PROVIDER
             | DEN_TASK_LIST_CHECKOUT_PROVIDER
@@ -288,6 +289,23 @@ mod tests {
 
     fn native_test_config() -> Config {
         Config::test_stub()
+    }
+
+    #[test]
+    fn pair_surface_includes_explicit_current_task_selection() {
+        let config = native_test_config();
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Pair,
+            true,
+            true,
+            None,
+            Some("work on the current task"),
+        )
+        .unwrap();
+        assert!(merged
+            .iter()
+            .any(|tool| tool.name == DEN_TASK_SELECT_PROVIDER));
     }
 
     #[test]

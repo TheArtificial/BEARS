@@ -1004,6 +1004,9 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_TASK_CREATE,
         DEN_TASK_LIST,
         DEN_TASK_UPDATE,
+        // ACP has no client-owned task-picker UI. The Pair agent selects only on
+        // explicit user instruction; task-list visibility is not task authority.
+        DEN_TASK_SELECT,
         DEN_TASK_UPDATE_CURRENT_STATUS,
         DEN_DOCKET_ENTRY_APPEND,
         DEN_DOCKET_ENTRY_LIST,
