@@ -261,8 +261,6 @@ pub(crate) struct DocketTaskCreateArguments {
     #[serde(default)]
     pub(crate) job_id: Option<Uuid>,
     #[serde(default)]
-    pub(crate) session_anchor_id: Option<Uuid>,
-    #[serde(default)]
     pub(crate) parent_task_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) sibling_order: i32,
@@ -1653,22 +1651,17 @@ pub(crate) async fn evaluate_criterion(
     }))
 }
 
-fn should_default_pair_session_task_tree(
-    role: BearProfile,
-    job_id: Option<Uuid>,
-    session_anchor_id: Option<Uuid>,
-) -> bool {
-    role == BearProfile::Pair && job_id.is_none() && session_anchor_id.is_none()
+fn should_default_pair_session_task_tree(role: BearProfile, job_id: Option<Uuid>) -> bool {
+    role == BearProfile::Pair && job_id.is_none()
 }
 
 async fn resolve_task_session_anchor_id(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     job_id: Option<Uuid>,
-    session_anchor_id: Option<Uuid>,
 ) -> Result<Option<Uuid>, CustomError> {
-    if job_id.is_some() || session_anchor_id.is_some() {
-        return Ok(session_anchor_id);
+    if job_id.is_some() {
+        return Ok(None);
     }
 
     let Some(client_session_id) = context.client_session_id.as_deref() else {
@@ -1703,14 +1696,11 @@ pub(crate) async fn create_task(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
-    let defaulted_to_pair_task_tree =
-        should_default_pair_session_task_tree(role, args.job_id, args.session_anchor_id);
+    let defaulted_to_pair_task_tree = should_default_pair_session_task_tree(role, args.job_id);
     let job_id = args.job_id;
-    let session_anchor_id = if job_id.is_some() {
-        args.session_anchor_id
-    } else {
-        resolve_task_session_anchor_id(pool, context, args.job_id, args.session_anchor_id).await?
-    };
+    // ponytail: jobless tasks belong only to the authenticated current session;
+    // delegated work must first become a Job-owned task.
+    let session_anchor_id = resolve_task_session_anchor_id(pool, context, job_id).await?;
     enforce_oriented_task_create_policy(pool, context, &args).await?;
     let task = PgDocketService::from_pool(pool)
         .create_task(DocketTaskCreate {

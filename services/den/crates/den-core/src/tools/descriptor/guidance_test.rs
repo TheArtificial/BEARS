@@ -106,8 +106,13 @@ fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
         .find(|descriptor| descriptor.provider_name == DEN_TASK_CREATE_PROVIDER)
         .expect("create_task descriptor");
     assert!(create_task.description.contains("durable/resumable plans"));
-    assert!(create_task.description.contains("current Pair task tree"));
+    assert!(create_task.description.contains("authenticated current Pair session"));
+    assert!(create_task.description.contains("exactly one owner"));
     assert!(create_task.description.contains("does not execute work"));
+    assert!(create_task
+        .input_schema
+        .get("properties")
+        .is_some_and(|properties| properties.get("session_anchor_id").is_none()));
 
     let list_tasks = descriptors
         .iter()

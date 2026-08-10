@@ -1485,6 +1485,7 @@ pub enum DocketValidationError {
     EmptyTaskCompletionCriteria,
     EmptyTaskCompletionCriterion,
     TaskMissingAnchor,
+    TaskAmbiguousAnchor,
     DuplicateTaskClientKey { client_key: String },
     MissingParentClientKey { client_key: String },
     SupersedeRequiresPredecessor,
@@ -1527,6 +1528,9 @@ impl fmt::Display for DocketValidationError {
             }
             Self::TaskMissingAnchor => {
                 f.write_str("Docket task must be anchored to either a job or an client session")
+            }
+            Self::TaskAmbiguousAnchor => {
+                f.write_str("Docket task must be anchored to exactly one of a job or a client session")
             }
             Self::DuplicateTaskClientKey { client_key } => {
                 write!(f, "Docket task client_key `{client_key}` is duplicated")
@@ -2089,6 +2093,9 @@ pub fn validate_completion_criteria(criteria: &[String]) -> Result<(), DocketVal
 pub fn validate_docket_task_create(create: &DocketTaskCreate) -> Result<(), DocketValidationError> {
     if create.job_id.is_none() && create.session_anchor_id.is_none() {
         return Err(DocketValidationError::TaskMissingAnchor);
+    }
+    if create.job_id.is_some() && create.session_anchor_id.is_some() {
+        return Err(DocketValidationError::TaskAmbiguousAnchor);
     }
     if create.title.trim().is_empty() {
         return Err(DocketValidationError::EmptyTaskTitle);
@@ -2871,6 +2878,39 @@ mod tests {
         assert_eq!(
             validate_docket_task_create(&create),
             Err(DocketValidationError::EmptyTaskCompletionCriteria)
+        );
+    }
+
+    #[test]
+    fn rejects_task_with_both_session_and_job_anchors() {
+        let create = DocketTaskCreate {
+            bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+            job_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap()),
+            session_anchor_id: Some(
+                Uuid::parse_str("00000000-0000-0000-0000-000000000888").unwrap(),
+            ),
+            parent_task_id: None,
+            sibling_order: 0,
+            placement: None,
+            kind: DocketTaskKind::Investigation,
+            scope: DocketTaskScope::Run,
+            title: "Investigate".to_string(),
+            body: "Find the relevant facts.".to_string(),
+            completion_criteria: vec!["Relevant facts are identified".to_string()],
+            difficulty: Some(DocketTaskDifficulty::Unknown),
+            effort_hint: None,
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(42),
+            created_by_agent_id: None,
+            created_in_run_id: None,
+        };
+
+        assert_eq!(
+            validate_docket_task_create(&create),
+            Err(DocketValidationError::TaskAmbiguousAnchor)
         );
     }
 
