@@ -254,15 +254,14 @@ async fn session_state_payload(
     } else {
         None
     };
-    let active_activity_plan = runtime_task_context.as_ref().and_then(|focus| {
-        focus
-            .active_activity_plan()
-            .cloned()
-            .map(|plan| active_activity_plan_projection(plan, focus.source.as_str()))
-    });
     let current_task = runtime_task_context
         .as_ref()
         .and_then(pair_current_task_projection);
+    let active_activity_plan = runtime_task_context.as_ref().and_then(|focus| {
+        focus.active_activity_plan().cloned().map(|plan| {
+            active_activity_plan_projection(plan, focus.source.as_str(), current_task.clone())
+        })
+    });
     let active_docket_execution = if work_enabled {
         PgDocketService::from_pool(&state.sqlx_pool)
             .get_active_execution_session(
@@ -378,7 +377,11 @@ fn active_docket_execution_projection(execution: den_docket::DocketExecutionSess
     })
 }
 
-fn active_activity_plan_projection(plan: den_docket::TaskListProjection, source: &str) -> Value {
+fn active_activity_plan_projection(
+    plan: den_docket::TaskListProjection,
+    source: &str,
+    current_task: Option<Value>,
+) -> Value {
     let current_item_id = plan.current_item.as_ref().map(|item| item.id.clone());
     json!({
         "schema": "den.acp_plan_projection.v1",
@@ -389,6 +392,7 @@ fn active_activity_plan_projection(plan: den_docket::TaskListProjection, source:
         "status": plan.status,
         "version": plan.version,
         "current_item_id": current_item_id,
+        "current_task": current_task,
         "items": plan.items.into_iter().map(|item| {
             let status = acp_plan_item_status(&item, current_item_id.as_deref());
             json!({
@@ -468,9 +472,31 @@ mod tests {
         assert_eq!(projected["id"], task_id.to_string());
         assert_eq!(projected["title"], "Selected task");
 
+        let plan = session_current_task_context(task_id)
+            .active_activity_plan()
+            .cloned()
+            .expect("session task plan");
+        let acp_projection = active_activity_plan_projection(
+            plan,
+            RuntimeTaskSource::SessionCurrentTask.as_str(),
+            Some(projected),
+        );
+        assert_eq!(acp_projection["current_task"]["id"], task_id.to_string());
+
         let mut no_selection = session_current_task_context(task_id);
         no_selection.current_task_id = None;
         assert!(pair_current_task_projection(&no_selection).is_none());
+
+        let no_selection_plan = no_selection
+            .active_activity_plan()
+            .cloned()
+            .expect("session task plan");
+        let acp_without_selection = active_activity_plan_projection(
+            no_selection_plan,
+            RuntimeTaskSource::SessionCurrentTask.as_str(),
+            None,
+        );
+        assert!(acp_without_selection["current_task"].is_null());
 
         let mut legacy_execution = session_current_task_context(task_id);
         legacy_execution.source = RuntimeTaskSource::DurableDocketExecution;
