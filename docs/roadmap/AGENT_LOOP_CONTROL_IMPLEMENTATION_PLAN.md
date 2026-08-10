@@ -60,12 +60,22 @@ Recent slices have moved the plan through the governance/focus/orientation found
 - Keep broad budget enforcement behind the replay/tuning spine. The ledger/replay slices are now in place; next budget/checkpoint changes should either be replayable through the existing summary/comparison helpers or recorded as typed loop-control decisions.
 - Reconcile this plan with the grounding/tuning companion before Phase 3/4 enforcement. Context-pressure and grounding signals now have ledger hooks and enough replay support to compare observed behavior against expected decision/profile shapes. Prefer those small comparisons over building a speculative policy simulator.
 
+### Deployment, defaults, and later tuning
+
+Den's single-user UAT instance is a release/interaction check, not a statistically meaningful tuning corpus. It must not block delivery of the tested control policy or trigger speculative threshold changes. The current profiles and thresholds are therefore the **sensible tested defaults** until production data shows a concrete problem.
+
+The transcript-free `bear_loop_control_ledger` is the production measurement path. It is written for real decisions already—checkpoint requests, context-budget pressure, and grounding-probe outcomes—and stores typed metadata/evidence references rather than user or assistant text. Production deployment must retain that write path and make the existing time-bounded profile summary available to the operator. No UAT-only or additional telemetry pipeline is required.
+
+Tuning is deliberately deferred until a production window contains enough decisions to compare profiles and reason distributions. A later tuning proposal must name its window, sample size, affected profile(s), observed reason/control/orientation distribution, and a bounded reversible profile delta. Do not change a threshold merely because UAT produced too little data.
+
 Recommended next slices:
 
-1. **Evaluate the latest checkpoint/KO tuning against recorded ledger summaries.** Checkpoint responses are authoritative in enforce mode, light/standard exploratory cadence has been relaxed, KO warnings are surfaced to model context, low-budget checkpointing now ignores non-budget warning codes, and checkpoint decisions carry profile fingerprints. Next compare recorded reason distributions/profile summaries after those changes before moving thresholds again.
-2. **Refine context-budget policy with recorded evidence.** Add checkpoint-before-growth only where ledger/replay summaries show emergency compact-first behavior is insufficient; current code review supports deferring another context policy layer.
-3. **Strengthen grounding probes only where attribution-backed runs show the MVP is too weak.** Tool-observation lookup now requires tool-call attribution, so the next probe slice should be surface-specific rather than another generic fallback.
-4. **Only add more replay machinery when a concrete tuning question needs it.** The current no-simulator harness has profile reason counts, turn-level reason comparison, and profile fingerprints. Avoid a full policy simulator unless production traces prove summaries/comparators are too weak.
+1. **Ship and verify production ledger collection.** Confirm deployed normal turns write the existing transcript-free ledger and that an operator can obtain a time-bounded recent profile summary. This is an operational verification, not a request to tune from the sole-user UAT corpus.
+2. **Keep the tested defaults active.** Treat the current light/standard exploratory cadence, careful/strict behavior, failure thresholds, same-signature KO floors, and hard-stop paths as the release defaults. Repair concrete correctness defects found in UAT, but do not retune on anecdote.
+3. **Evaluate production summaries when a meaningful corpus exists.** Compare reason distributions/profile summaries and only then propose the smallest reversible checkpoint/KO profile adjustment supported by the data.
+4. **Refine context-budget policy with recorded production evidence.** Add checkpoint-before-growth only where summaries show emergency compact-first behavior is insufficient.
+5. **Strengthen grounding probes only where attribution-backed production runs show the generic MVP is too weak.** Keep a new probe surface-specific rather than adding another generic fallback.
+6. **Only add replay machinery when a concrete production tuning question needs it.** The current no-simulator harness has profile reason counts, turn-level reason comparison, and profile fingerprints. Avoid a full policy simulator unless those summaries/comparators prove insufficient.
 
 ### Roadmap item — collapse state authority dimensions
 
