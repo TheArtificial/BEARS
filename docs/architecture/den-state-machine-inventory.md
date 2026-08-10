@@ -99,8 +99,7 @@ projection.
 Exit gate for the reduced authority model:
 
 - mutation authority has one owner: `TurnAuthority`;
-- focus-driven continuation has one owner: active `ResolvedFocus` plus current
-  Docket task state;
+- focus-driven continuation has one owner: Pair's validated `ResolvedCurrentTask` or Work's explicit `WorkAssignment`, together with applicable Docket task state;
 - active waits have one owner: `TurnRunState` plus `ObligationSet`;
 - projections, caches, labels, model choice, prompt text, and compaction state
   cannot expand authority or manufacture focus/work.
@@ -111,7 +110,7 @@ Exit gate for the reduced authority model:
 | --- | --- | --- | --- |
 | Bear identity/profile binding | Den registry/control plane | durable Bear | Identifies the Bear and stance template, not the current run's supervision. |
 | User membership/access | Den identity/RBAC | durable + request-scoped | Gates which conversations/surfaces a user can access. |
-| Conversation | Den Postgres | durable user-visible chat container | Owns transcript, archive state, title, model selection, and conversation-scoped focus. |
+| Conversation | Den Postgres | durable user-visible chat container | Owns transcript, archive state, title, model selection, and Pair's persisted current-task reference. |
 | Session/client binding | adapter/BearWire/web edge + Den session store | live client binding | Projects conversation/runtime state to a connected client; not the conversation. |
 | Trust profile | Bear profile registry | per turn/template | `chat`, `pair`, `curate`, `work`, `watch`; memory/tool/default trust contract. |
 | Governance | runtime/workspace session | run-scoped mutable timeline | `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. |
@@ -154,7 +153,7 @@ Representative state:
 - title and title timestamp;
 - archived vs active;
 - transcript and message persistence;
-- conversation-scoped focused Job id, when active;
+- Pair's persisted session current-task reference, when selected;
 - selected model state;
 - compaction and prompt-memory state;
 - review/reflection candidate state.
@@ -189,9 +188,7 @@ Common client modes:
 
 Invariants:
 
-- Client mode is not canonical focus. Changing client mode away from Focused clears conversation focus.
-- Session-local projections can seed prompts/tools only when validated against current conversation/session state.
-- A stale session cache must never resurrect cleared conversation focus.
+- A stale session cache must never resurrect a cleared Pair current task or Work assignment.
 
 ### Trust profile
 
