@@ -44,10 +44,7 @@ use den_service::{
 
 use crate::{
     events::{events_page, EventPageQuery},
-    methods::{
-        conversation::project_focus_title,
-        run::{normalized_workspace_roots, persist_run_failed, RunFailureReason},
-    },
+    methods::run::{normalized_workspace_roots, persist_run_failed, RunFailureReason},
     rpc::rpc,
 };
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
@@ -83,22 +80,6 @@ fn normalized_workspace_roots_rejects_cwd_outside_declared_roots() {
 
     assert!(format!("{error:?}").contains("outside declared workspace_roots"));
 }
-#[test]
-fn project_focus_title_prefix_is_projection_only_and_idempotent() {
-    assert_eq!(
-        project_focus_title(Some("Title".to_string()), true).as_deref(),
-        Some("⌖ Title")
-    );
-    assert_eq!(
-        project_focus_title(Some("⌖ Title".to_string()), true).as_deref(),
-        Some("⌖ Title")
-    );
-    assert_eq!(
-        project_focus_title(Some("⌖ Title".to_string()), false).as_deref(),
-        Some("Title")
-    );
-}
-
 fn test_state(pool: sqlx::PgPool) -> DenState {
     test_state_with_config(pool, den_core::config::Config::test_stub())
 }
@@ -324,107 +305,6 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
     .expect("events page response after cursor")
     .0;
     assert!(replay_after["events"].as_array().unwrap().is_empty());
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn session_open_mode_change_clears_active_focus(pool: sqlx::PgPool) {
-    let user_id = create_test_user(&pool).await;
-    let (bear_id, bear_slug) = create_test_bear(&pool).await;
-    let token = create_token_for_bear(&pool, user_id, bear_id).await;
-    let state = test_state(pool.clone());
-    let session_id = format!("session-{}", Uuid::new_v4().simple());
-    let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
-
-    let initial = rpc_value(
-        state.clone(),
-        &token,
-        "session.open",
-        json!({
-            "bear_slug": bear_slug,
-            "session_id": session_id,
-            "conversation_id": conversation_id,
-            "client": "bearwire-test",
-            "mode": "write"
-        }),
-    )
-    .await;
-    assert_eq!(initial["result"]["ok"], true);
-    assert_eq!(initial["result"]["cleared_focus_count"], 0);
-
-    let docket_job_id: Uuid = sqlx::query_scalar(
-        r"
-        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)
-        VALUES ($1, $2, 'pair', 'Focused job')
-        RETURNING id
-        ",
-    )
-    .bind(bear_id)
-    .bind(user_id)
-    .fetch_one(&pool)
-    .await
-    .expect("insert docket job");
-    let docket_run_id: Uuid = sqlx::query_scalar(
-        r"
-        INSERT INTO bear_job_runs (job_id, state, started_at)
-        VALUES ($1, 'running', NOW())
-        RETURNING id
-        ",
-    )
-    .bind(docket_job_id)
-    .fetch_one(&pool)
-    .await
-    .expect("insert docket run");
-    sqlx::query("UPDATE bear_jobs SET current_run_id = $2 WHERE id = $1")
-        .bind(docket_job_id)
-        .bind(docket_run_id)
-        .execute(&pool)
-        .await
-        .expect("attach docket run");
-    sqlx::query(
-        r"
-        INSERT INTO docket_execution_sessions (
-            bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id, job_id, run_id
-        )
-        VALUES ($1, 'pair', $2, $3, $2, $4, $5)
-        ",
-    )
-    .bind(bear_id)
-    .bind(&session_id)
-    .bind(&conversation_id)
-    .bind(docket_job_id)
-    .bind(docket_run_id)
-    .execute(&pool)
-    .await
-    .expect("insert active docket execution session");
-
-    let changed = rpc_value(
-        state,
-        &token,
-        "session.open",
-        json!({
-            "bear_slug": bear_slug,
-            "session_id": session_id,
-            "conversation_id": conversation_id,
-            "client": "bearwire-test",
-            "mode": "plan"
-        }),
-    )
-    .await;
-    assert_eq!(changed["result"]["ok"], true);
-    assert_eq!(changed["result"]["cleared_focus_count"], 1);
-
-    let execution_state: String = sqlx::query_scalar(
-        r"
-        SELECT state FROM docket_execution_sessions
-        WHERE bear_id = $1 AND source_client_session_id = $2
-        ",
-    )
-    .bind(bear_id)
-    .bind(&session_id)
-    .fetch_one(&pool)
-    .await
-    .expect("fetch docket execution state");
-    assert_eq!(execution_state, "cancelled");
 }
 
 fn start_mock_openai_sse_server() -> String {
@@ -2188,7 +2068,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     assert!(
         surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("session_info_update")
-                && event.get("title").and_then(Value::as_str) == Some("⌖ History replay title")
+                && event.get("title").and_then(Value::as_str) == Some("History replay title")
                 && event.get("current_mode").and_then(Value::as_str) == Some("write")
         }),
         "surface history should expose typed session metadata update from latest session state: {surface_response}"
@@ -2196,7 +2076,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     assert!(
         surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("session_info_update")
-                && event.get("title").and_then(Value::as_str) == Some("⌖ Persisted replay title")
+                && event.get("title").and_then(Value::as_str) == Some("Persisted replay title")
                 && event.get("title_updated_at").and_then(Value::as_str)
                     == Some("2026-07-07T00:00:00Z")
         }),

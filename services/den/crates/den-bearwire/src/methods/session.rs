@@ -1,7 +1,5 @@
 use axum::http::HeaderMap;
-use den_docket::{
-    DocketExecutionLookup, DocketService, PgDocketService, TaskListItem, TaskListItemStatus,
-};
+use den_docket::{DocketService, PgDocketService, TaskListItem, TaskListItemStatus};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -30,7 +28,6 @@ use den_service::{
 };
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
-use crate::methods::conversation::project_focus_title;
 use crate::methods::{parse_params, DEFAULT_CLIENT};
 
 pub async fn reflect_open_sessions_once(state: &DenState) -> Result<usize, CustomError> {
@@ -504,53 +501,6 @@ mod tests {
     }
 }
 
-fn normalized_mode(value: &str) -> &str {
-    value.trim()
-}
-
-fn mode_changed(
-    existing: Option<&den_service::client_sessions::ClientSessionRow>,
-    requested: Option<&str>,
-) -> bool {
-    let Some(requested) = requested
-        .map(normalized_mode)
-        .filter(|mode| !mode.is_empty())
-    else {
-        return false;
-    };
-    existing
-        .map(|session| normalized_mode(&session.current_mode) != requested)
-        .unwrap_or(false)
-}
-
-async fn clear_focus_for_mode_change(
-    state: &DenState,
-    bear_id: uuid::Uuid,
-    existing: Option<&den_service::client_sessions::ClientSessionRow>,
-    requested_mode: Option<&str>,
-) -> Result<u64, CustomError> {
-    if !mode_changed(existing, requested_mode) {
-        return Ok(0);
-    }
-    let Some(existing) = existing else {
-        return Ok(0);
-    };
-    let conversation_id = existing
-        .resolved_conversation_id
-        .clone()
-        .or_else(|| Some(existing.conversation_id.clone()));
-    Ok(PgDocketService::from_pool(&state.sqlx_pool)
-        .clear_active_execution_sessions(
-            bear_id,
-            DocketExecutionLookup {
-                source_conversation_id: conversation_id,
-                session_id: None,
-                source_client_session_id: Some(existing.client_session_id.clone()),
-            },
-        )
-        .await?)
-}
-
 pub(crate) async fn session_open_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -592,13 +542,6 @@ pub(crate) async fn session_open_result(
         .as_deref()
         .map(client_sessions::ClientSessionMode::try_from_storage)
         .transpose()?;
-    let cleared_focus_count = clear_focus_for_mode_change(
-        state,
-        bear.id,
-        existing.as_ref(),
-        current_mode.as_ref().map(|mode| mode.as_str()),
-    )
-    .await?;
     let client_context = request.client_context;
     client_sessions::upsert_session(
         &state.sqlx_pool,
@@ -637,40 +580,11 @@ pub(crate) async fn session_open_result(
         &session_id,
     )
     .await?;
-    if cleared_focus_count > 0 {
-        if let Some(session) = session.as_ref() {
-            let title = project_focus_title(session.conversation_title.clone(), false);
-            if title.is_some() || session.conversation_title_updated_at.is_some() {
-                let mut update = BearWireEvent::ephemeral(
-                    "session_info_update",
-                    json!({
-                        "title": title,
-                        "updated_at": session
-                            .conversation_title_updated_at
-                            .unwrap_or(session.updated_at)
-                            .to_string(),
-                    }),
-                );
-                update.bear_id = Some(bear.id.to_string());
-                update.human_id = Some(user_id.to_string());
-                update.session_id = Some(session_id.clone());
-                let _ = bearwire_events::append_bearwire_event(
-                    &state.sqlx_pool,
-                    &session_id,
-                    Some(bear.id),
-                    Some(user_id),
-                    update,
-                )
-                .await;
-            }
-        }
-    }
     let mut event = BearWireEvent::ephemeral(
         "session.opened",
         json!({
             "session_id": session_id,
             "bear_slug": bear.slug,
-            "cleared_focus_count": cleared_focus_count,
         }),
     );
     event.bear_id = Some(bear.id.to_string());
@@ -688,7 +602,6 @@ pub(crate) async fn session_open_result(
         "ok": true,
         "session": session,
         "event_sequence": persisted.sequence_no,
-        "cleared_focus_count": cleared_focus_count,
         "attached_work_reconnected": reconnected,
     }))
 }

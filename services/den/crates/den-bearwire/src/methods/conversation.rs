@@ -25,8 +25,6 @@ use den_service::{
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
 
-pub(crate) const FOCUS_TITLE_PREFIX: &str = "⌖ ";
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DocketSurfaceEventId(Uuid);
 
@@ -46,46 +44,6 @@ impl DocketSurfaceEventId {
 #[serde(deny_unknown_fields)]
 struct DocketTaskDefinition {
     title: Option<String>,
-}
-
-pub(crate) fn project_focus_title(title: Option<String>, focused: bool) -> Option<String> {
-    title.map(|title| {
-        let bare = title.strip_prefix(FOCUS_TITLE_PREFIX).unwrap_or(&title);
-        if focused {
-            format!("{FOCUS_TITLE_PREFIX}{bare}")
-        } else {
-            bare.to_string()
-        }
-    })
-}
-
-pub(crate) async fn conversation_has_active_focus(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    conversation_id: &str,
-    client_session_id: Option<&str>,
-) -> Result<bool, den_core::DenError> {
-    let focused = sqlx::query_scalar::<_, bool>(
-        r"
-        SELECT EXISTS (
-            SELECT 1
-            FROM docket_execution_sessions
-            WHERE bear_id = $1
-              AND state IN ('active', 'blocked', 'completing', 'paused')
-              AND (
-                source_conversation_id = $2
-                OR ($3::TEXT IS NOT NULL AND source_client_session_id = $3)
-                OR ($3::TEXT IS NOT NULL AND session_id = $3)
-              )
-        )
-        ",
-    )
-    .bind(bear_id)
-    .bind(conversation_id)
-    .bind(client_session_id)
-    .fetch_one(pool)
-    .await?;
-    Ok(focused)
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -503,20 +461,13 @@ async fn conversation_history_like_result(
         )
         .await?
         {
-            let focused = conversation_has_active_focus(
-                &state.sqlx_pool,
-                bear.id,
-                &conversation_id,
-                Some(&session.client_session_id),
-            )
-            .await?;
             messages.insert(
                 0,
                 json!(SurfaceHistoryEvent::SessionInfoUpdate {
                     id: Some(format!("session-info:{}", session.client_session_id)),
                     role: Some("system".to_string()),
                     session_id: Some(session.client_session_id.clone()),
-                    title: project_focus_title(session.conversation_title.clone(), focused),
+                    title: session.conversation_title.clone(),
                     title_updated_at: session
                         .conversation_title_updated_at
                         .map(|value| value.to_string()),
@@ -590,7 +541,7 @@ async fn conversation_history_like_result(
                             id: Some(event_id),
                             role: Some("system".to_string()),
                             session_id: Some(session.client_session_id.clone()),
-                            title: project_focus_title(title.map(str::to_string), focused),
+                            title: title.map(str::to_string),
                             title_updated_at: updated_at.map(str::to_string),
                             current_mode: None,
                             created_at: Some(row.created_at.to_string()),
