@@ -1803,7 +1803,23 @@ pub fn task_list_projection_from_session_tasks_with_current_task(
     selected_task_id: Option<Uuid>,
 ) -> Option<TaskListProjection> {
     let first_task = tasks.first()?;
-    let mut sorted_tasks = tasks.iter().collect::<Vec<_>>();
+    let selected_parent_id = selected_task_id.and_then(|selected_task_id| {
+        tasks
+            .iter()
+            .find(|projection| projection.task.id == selected_task_id)
+            .and_then(|projection| projection.task.parent_task_id)
+    });
+    let mut sorted_tasks = tasks
+        .iter()
+        .filter(|projection| {
+            // ACP's agent plan is scoped to the selected task's current level:
+            // child siblings share a parent; a root task stays a one-item plan.
+            selected_task_id.is_none()
+                || selected_parent_id
+                    .is_some_and(|parent_id| projection.task.parent_task_id == Some(parent_id))
+                || selected_task_id == Some(projection.task.id)
+        })
+        .collect::<Vec<_>>();
     // See task_list_projection_from_docket_job: ACP plan projection must be
     // deterministic even if the caller hands us an unordered task slice.
     sorted_tasks.sort_by_key(|projection| {
@@ -2667,6 +2683,68 @@ mod tests {
         .expect("session projection");
 
         assert_eq!(projection.current_item.unwrap().id, selected_id.to_string());
+        assert_eq!(projection.items.len(), 1);
+        assert_eq!(projection.items[0].id, selected_id.to_string());
+    }
+
+    #[test]
+    fn selected_session_child_projects_its_siblings_in_order() {
+        let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
+        let parent_id = Uuid::parse_str("00000000-0000-0000-0000-000000000010").unwrap();
+        let first_id = Uuid::parse_str("00000000-0000-0000-0000-000000000011").unwrap();
+        let selected_id = Uuid::parse_str("00000000-0000-0000-0000-000000000012").unwrap();
+        let task = |id, parent_task_id, order, title: &str| DocketTaskProjection {
+            task: DocketTaskRow {
+                id,
+                bear_id,
+                job_id: None,
+                session_anchor_id: Some(session_anchor_id),
+                parent_task_id,
+                sibling_order: order,
+                kind: "execution".to_string(),
+                scope: "run".to_string(),
+                title: title.to_string(),
+                body: String::new(),
+                completion_criteria: Json(vec![]),
+                difficulty: None,
+                effort_hint: None,
+                routing_strategy: "auto".to_string(),
+                expected_context_size: None,
+                result_rollup_policy: None,
+                created_by_role: "pair".to_string(),
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                created_in_run_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            run_state: None,
+        };
+
+        let projection = task_list_projection_from_session_tasks_with_current_task(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[
+                task(parent_id, None, 0, "parent"),
+                task(selected_id, Some(parent_id), 1, "selected"),
+                task(first_id, Some(parent_id), 0, "first"),
+            ],
+            Some(selected_id),
+        )
+        .expect("session projection");
+
+        assert_eq!(projection.current_item.unwrap().id, selected_id.to_string());
+        assert_eq!(
+            projection
+                .items
+                .iter()
+                .map(|item| item.id.clone())
+                .collect::<Vec<_>>(),
+            vec![first_id.to_string(), selected_id.to_string()]
+        );
     }
 
     #[test]
