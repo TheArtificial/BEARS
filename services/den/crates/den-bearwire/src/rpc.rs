@@ -43,6 +43,28 @@ pub(crate) async fn rpc(
             methods::session::session_state_result(&state, &headers, &request.params).await,
             "BearWire session.state failed",
         ),
+        "session.current_task.selection_request" => method_response(
+            request.id,
+            methods::session::session_current_task_selection_request_result(
+                &state,
+                &headers,
+                &request.params,
+            )
+            .await,
+            "BearWire session.current_task.selection_request failed",
+        ),
+        "session.current_task.select" => method_response(
+            request.id,
+            methods::session::session_current_task_select_result(&state, &headers, &request.params)
+                .await,
+            "BearWire session.current_task.select failed",
+        ),
+        "session.current_task.clear" => method_response(
+            request.id,
+            methods::session::session_current_task_clear_result(&state, &headers, &request.params)
+                .await,
+            "BearWire session.current_task.clear failed",
+        ),
         "session.model.get" => method_response(
             request.id,
             methods::session::session_model_get_result(&state, &headers, &request.params).await,

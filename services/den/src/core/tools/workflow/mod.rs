@@ -1824,48 +1824,12 @@ pub(crate) async fn select_current_task(
         .into());
     }
     let args: DocketTaskSelectArguments = serde_json::from_value(arguments)?;
-    let session_anchor_id = resolve_task_session_anchor_id(pool, context, None, None)
-        .await?
-        .ok_or_else(|| {
-            DenError::ValidationError(
-                "select_current_task needs the current client session".to_string(),
-            )
-        })?;
-    let selected_title = if let Some(task_id) = args.task_id {
-        let task_list =
-            session_anchored_task_list_projection(pool, context, role, session_anchor_id)
-                .await?
-                .ok_or_else(|| {
-                    DenError::ValidationError(
-                        "the current session has no selectable tasks".to_string(),
-                    )
-                })?;
-        let selected = task_list
-            .items
-            .iter()
-            .find(|item| item.id == task_id.to_string());
-        let Some(selected) = selected.filter(|item| {
-            matches!(
-                item.status,
-                docket::TaskListItemStatus::Pending | docket::TaskListItemStatus::InProgress
-            )
-        }) else {
-            return Err(DenError::ValidationError(
-                "selected task must be an actionable task anchored to the current session"
-                    .to_string(),
-            )
-            .into());
-        };
-        Some(selected.title.clone())
-    } else {
-        None
-    };
     let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
         DenError::ValidationError(
             "select_current_task needs the current client session".to_string(),
         )
     })?;
-    client_sessions::set_current_task(
+    let selection = den_runtime::current_task::select_pair_current_task(
         pool,
         context.user_id,
         context.bear_id,
@@ -1873,25 +1837,10 @@ pub(crate) async fn select_current_task(
         args.task_id,
     )
     .await?;
-    if let (Some(title), Some(conversation_id)) = (
-        selected_title.as_deref(),
-        clean_optional(&context.conversation_id),
-    ) {
-        conversation_persistence::set_conversation_title_and_sync_client_sessions(
-            pool,
-            context.bear_id,
-            &conversation_id,
-            title,
-        )
-        .await?;
-    }
-    let task_list =
-        session_anchored_task_list_projection(pool, context, role, session_anchor_id).await?;
-    refresh_runtime_session_activity_plan(context, task_list.clone());
     Ok(json!({
         "domain": "docket",
         "current_task_id": args.task_id,
-        "task_list": task_list,
+        "task_list": selection.task_list,
         "summary": if args.task_id.is_some() { "Selected the current Pair task." } else { "Cleared the current Pair task." },
     }))
 }

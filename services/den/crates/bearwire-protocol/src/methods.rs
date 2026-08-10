@@ -211,6 +211,20 @@ pub struct SessionModelSetRequest {
     pub model: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SessionCurrentTaskSelectionRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub task_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionCurrentTaskClearRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub session_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecisionInput {
