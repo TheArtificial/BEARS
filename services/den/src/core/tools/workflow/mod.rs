@@ -1843,11 +1843,9 @@ pub(crate) async fn list_tasks(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskListArguments = serde_json::from_value(arguments)?;
-    let defaulted_to_pair_task_tree =
-        should_default_pair_session_task_tree(role, args.job_id, args.session_anchor_id);
+    let defaulted_to_pair_task_tree = should_default_pair_session_task_tree(role, args.job_id);
     let job_id = args.job_id;
-    let session_anchor_id =
-        resolve_task_session_anchor_id(pool, context, args.job_id, args.session_anchor_id).await?;
+    let session_anchor_id = resolve_task_session_anchor_id(pool, context, args.job_id).await?;
     let tasks = PgDocketService::from_pool(pool)
         .list_tasks(
             context.bear_id,
@@ -2202,7 +2200,7 @@ pub(crate) async fn checkout_task_list(
             Some(job_id),
         )
     } else if role == BearProfile::Pair {
-        let session_anchor_id = resolve_task_session_anchor_id(pool, context, None, None)
+        let session_anchor_id = resolve_task_session_anchor_id(pool, context, None)
             .await?
             .ok_or_else(|| {
                 DenError::ValidationError(
@@ -2436,28 +2434,19 @@ mod test {
     }
 
     #[test]
-    fn pair_defaults_only_when_task_tree_scope_is_implicit() {
+    fn pair_defaults_when_task_tree_scope_is_jobless() {
         let explicit_job_id = Uuid::new_v4();
-        let session_anchor_id = Uuid::new_v4();
 
         assert!(should_default_pair_session_task_tree(
             BearProfile::Pair,
-            None,
             None
         ));
         assert!(!should_default_pair_session_task_tree(
             BearProfile::Pair,
-            Some(explicit_job_id),
-            None
-        ));
-        assert!(!should_default_pair_session_task_tree(
-            BearProfile::Pair,
-            None,
-            Some(session_anchor_id)
+            Some(explicit_job_id)
         ));
         assert!(!should_default_pair_session_task_tree(
             BearProfile::Chat,
-            None,
             None
         ));
     }
