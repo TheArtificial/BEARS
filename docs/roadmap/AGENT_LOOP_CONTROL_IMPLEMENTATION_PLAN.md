@@ -18,7 +18,7 @@ Worker run ── explicit Docket Job assignment ──► work-execution behavi
 Docket Job ── optional durable outcome/task-tree container
 ```
 
-- A Pair session has zero or one current task. It may be session-local or reference a task in an explicitly created Docket Job. Having a current task gives the session its objective; it neither creates a worker nor changes trust/permissions.
+- A Pair session has zero or one current task. It is session-owned. Having a current task gives the session its objective; it neither creates a worker nor changes trust/permissions.
 - A Work loop has one bounded, explicit Docket Job assignment. Its authority to execute and settle applies within that Job's approved task tree, not to whichever task Pair happens to have current.
 - A Docket Job is for explicitly requested durable planning/tracking, journals, recovery, delivery contracts, or isolated background execution. Do not create one merely to give Pair ordinary work.
 - **Pair works its current task directly by default.** Task delegation is deferred; do not expose `delegate_task` until its real end-to-end lifecycle, shared Pair/Work execution path, and workspace-safety requirements can ship together. See [Task delegation lifecycle plan](TASK_DELEGATION_LIFECYCLE_PLAN.md).
@@ -27,7 +27,7 @@ Docket Job ── optional durable outcome/task-tree container
 
 Migration requirements:
 
-1. Replace `ConversationSnapshot.durable_focus_pointer` and `ResolvedFocus` with a resolved `current_task` model that can represent a session-local task or a Docket task reference.
+1. Replace `ConversationSnapshot.durable_focus_pointer` and `ResolvedFocus` with a resolved session-owned `current_task` model.
 2. Replace client-facing Focus/Focused UI and `/focus` with current-task projection and task assignment/clear actions. Do not retain a distinct “Focused” permission/mode.
 3. Bind every WorkRun to one explicit Docket Job. Work execution may advance that Job's approved task tree; it does not require or derive a per-task sandbox assignment, and it never follows conversation focus.
 4. Preserve existing focus records only as migration input/compatibility state; they must not remain a second canonical continuation authority.
@@ -366,7 +366,7 @@ When a current task exists:
 | Define current-task projection | **Complete.** BearWire and ACP project only an explicit Pair current task; ACP scopes its plan to the selected task's siblings or the one root task. |
 | Keep Den authoritative | **Complete.** Clients request selection/clear through Den; persistence and validation remain server-owned. |
 | Add current-task affordance | **Complete for BearWire/Armature.** Pair clients use confirmation-first `session.current_task.selection_request`, followed by explicit `select`, or direct `clear`; all operations route through Den's shared Pair/session authority. Web chat is explicitly deferred until it is BearWire-backed. |
-| Preserve session-local tasks | **In progress.** Session-anchored current tasks persist; dedicated session-local creation policy remains part of Phase 2c. |
+| Preserve session-local tasks | **Planned.** A jobless Pair task must be anchored by Den to the authenticated current session, then may become that session's current task under the user's explicit instruction. Pair-facing tools never expose raw session-anchor identifiers; a Job-owned task requires an explicit `job_id`. Task ownership is exclusive: exactly one of session or Job. |
 | Ask before durable escalation | **Complete.** Redirection guidance requires asking; Job creation/dispatch is not implicit. |
 | Update titles | **Complete.** Selecting a Pair current task updates the conversation title through the existing title-sync path; clearing leaves the title intact. |
 | Prevent permission laundering | **Complete.** Selection changes only Pair's objective; it grants neither authority nor Work scope. |
@@ -409,7 +409,7 @@ Resolution is deterministic:
 2. otherwise, a resolved session current task resolves `task_oriented`;
 3. otherwise resolve `freeform` with the run's `FreeformPolicy`.
 
-The freeform task-definition policy controls whether the model may establish a lightweight session task. It does **not** authorize Job creation, durable dispatch, or local delegation without the separate user-request/approval rules described above.
+The freeform task-definition policy controls whether the model may establish a lightweight session task. For Pair, a jobless task is server-anchored to the authenticated current session; the model does not receive or supply a session-anchor identifier. Under explicit user instruction to focus the conversation, the newly created session task may become the current task. It does **not** authorize Job creation, durable dispatch, or local delegation without the separate user-request/approval rules described above.
 
 - `may_define_task: false`: do not expose task-definition or delegation affordances; defensively reject them.
 - `may_define_task: true`: the model may establish a concrete session task with completion criteria when sustained work is needed. It works that task directly by default.
@@ -665,10 +665,13 @@ Bounded delegation is allowed only through approved symbolic model refs. Capable
 
 Pair behavior:
 
-- the optional current task is the session objective and may be session-local or a Docket task reference;
+- the optional current task is a session-owned task and is the session objective; Job-owned Docket tasks remain Job execution state rather than Pair focus;
+- a jobless Pair task is anchored by Den to the authenticated current session; Pair never handles a raw session-anchor identifier;
+- every durable Docket task has exactly one owner: its session or its Job; an unowned or jointly owned task is invalid;
 - Pair works its current task directly by default;
 - establishing a session-local task does not create a Job, dispatch Work, or change permissions;
 - attaching a Docket task, creating a Job, or dispatching durable background work requires the explicit user request/approval boundary from the architecture revision;
+- promotion/delegation creates a new Job-owned task after explicit approval; it does not mutate a session task into a jointly owned task;
 - task delegation is deferred. Do not expose `delegate_task` until its real end-to-end lifecycle can ship as described in the [Task delegation lifecycle plan](TASK_DELEGATION_LIFECYCLE_PLAN.md); do not add a read-only or intent-only placeholder.
 
 Work behavior:
@@ -685,9 +688,9 @@ Checkpoint requests include the relevant current-task or assignment reference wh
 | Task | Done when |
 | --- | --- |
 | Attach objective context | Checkpoint requests include the resolved session current-task or Work-assignment refs when available. |
-| Preserve session-local boundary | Session task creation/replacement/clear never creates a Job or run implicitly. |
+| Preserve session-local boundary | A jobless Pair task is anchored server-side to the authenticated current session; creating, replacing, or clearing a session task never creates a Job or run implicitly. Pair-facing tools do not expose `session_anchor_id`; a Job-owned task requires an explicit `job_id`. |
 | Require explicit Work Job binding | Work cannot continue without an assigned Docket Job. |
-| Keep delegation deferred | Do not expose `delegate_task` until the real shared Pair/Work execution, lifecycle, and workspace-safety requirements in the task delegation lifecycle plan can ship together; do not add a read-only or intent-only placeholder. |
+| Keep delegation deferred | Do not expose `delegate_task` until the real shared Pair/Work execution, lifecycle, and workspace-safety requirements in the task delegation lifecycle plan can ship together. Delegation/promotion must create a new Job-owned task after explicit approval, never give a session task a second owner; do not add a read-only or intent-only placeholder. |
 | Validate task-state intent | Checkpoint reports can recommend update/sync/handoff but cannot mutate task state. |
 | Require tool call for state changes | Runtime requires the relevant task-management tool when a state change is needed. |
 | Add audit correlation | Work checkpoint artifacts can be queried by run/job/assignment refs. |
