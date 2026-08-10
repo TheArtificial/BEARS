@@ -9,10 +9,10 @@ use crate::{
     DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
     DocketEntryScope, DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
-    DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
-    DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher,
-    TaskListSyncRequest, TaskListVisibility,
+    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
+    DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
+    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy,
+    TaskDispatcher, TaskListSyncRequest, TaskListVisibility,
 };
 
 fn primary_output_result_refs() -> Value {
@@ -86,8 +86,8 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     let surface_name = format!("surface-{}", &surface_id.simple().to_string()[..12]);
     sqlx::query(
         r"
-        INSERT INTO work_surfaces (id, name, kind, created_by_user_id)
-        VALUES ($1, $2, 'git_workspace', $3)
+        INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
+        VALUES ($1, $2, 'git_workspace', $3, NOW(), NOW())
         ",
     )
     .bind(surface_id)
@@ -98,7 +98,7 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     .expect("seed work surface");
     sqlx::query(
         r"
-        INSERT INTO git_work_surface_details (work_surface_id, upstream_url)
+        INSERT INTO git_work_surface_details (id, upstream_url)
         VALUES ($1, $2)
         ",
     )
@@ -238,6 +238,54 @@ async fn creates_session_anchored_task_without_job() {
     assert_eq!(task.session_anchor_id, Some(session_anchor_id));
     assert_eq!(task.body, "Confirm jobless task creation works");
     assert_eq!(task.completion_criteria.0, vec!["Task row is inserted"]);
+
+    let settled = service
+        .settle_session_task(DocketSessionTaskSettlement {
+            bear_id,
+            session_anchor_id,
+            task_id: task.id,
+            status: DocketTaskStatus::Done,
+            outcome_disposition: None,
+            result_refs: None,
+            result_summary: Some("Verified session-owned settlement.".to_string()),
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect("settle session-anchored task");
+    let entry_id = settled
+        .task
+        .settled_by_entry_id
+        .expect("task points to its settlement entry");
+    let outcome: (Option<Uuid>, Option<Uuid>, String, String) =
+        sqlx::query_as("SELECT job_id, run_id, scope, kind FROM bear_docket_entries WHERE id = $1")
+            .bind(entry_id)
+            .fetch_one(&pool)
+            .await
+            .expect("read settlement entry");
+    assert_eq!(outcome.0, None);
+    assert_eq!(outcome.1, None);
+    assert_eq!(outcome.2, "task_journal");
+    assert_eq!(outcome.3, "outcome");
+
+    let other_session_id = Uuid::new_v4();
+    let error = service
+        .settle_session_task(DocketSessionTaskSettlement {
+            bear_id,
+            session_anchor_id: other_session_id,
+            task_id: task.id,
+            status: DocketTaskStatus::Cancelled,
+            outcome_disposition: None,
+            result_refs: None,
+            result_summary: Some("Cross-session attempt.".to_string()),
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect_err("cross-session settlement must fail");
+    assert!(error.to_string().contains("current session"));
 }
 
 #[tokio::test]
