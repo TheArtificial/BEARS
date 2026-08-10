@@ -577,14 +577,16 @@ pub async fn assemble_native_turn_for_bear(
         load_cached_activity_plan_projection(&ctx, &docket, active_execution.as_ref()).await?;
     let explicit_pair_current_task_id = if ctx.profile == BearProfile::Pair {
         match (ctx.user_id, ctx.session_id) {
-            (Some(user_id), Some(client_session_id)) => client_sessions::find_for_user_bear_session_id(
-                ctx.pool,
-                user_id,
-                ctx.bear_id,
-                client_session_id,
-            )
-            .await?
-            .and_then(|session| session.current_task_id),
+            (Some(user_id), Some(client_session_id)) => {
+                client_sessions::find_for_user_bear_session_id(
+                    ctx.pool,
+                    user_id,
+                    ctx.bear_id,
+                    client_session_id,
+                )
+                .await?
+                .and_then(|session| session.current_task_id)
+            }
             _ => None,
         }
     } else {
@@ -918,13 +920,7 @@ mod tests {
         );
 
         let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(
-                BearProfile::Pair,
-                Some(&plan),
-                None,
-                Some(task_id),
-                true,
-            ),
+            objective_orientation_input(BearProfile::Pair, Some(&plan), None, Some(task_id), true),
         );
         assert!(matches!(orientation, ObjectiveOrientation::Oriented { .. }));
     }

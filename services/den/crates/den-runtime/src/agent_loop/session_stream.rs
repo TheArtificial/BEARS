@@ -525,6 +525,9 @@ impl SessionTrackingStream {
             .get(&self.session_key)
             .map(|session| session.objective_orientation)?;
         match orientation {
+            ObjectiveOrientation::Freeform { policy } if !policy.may_define_task => {
+                Some("freeform task definition is disabled for this run".to_string())
+            }
             ObjectiveOrientation::DocketExecution { job } if !job.mutable => Some(
                 "objective orientation is immutable focused; task decomposition is not allowed"
                     .to_string(),
@@ -2004,6 +2007,18 @@ mod tests {
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         }
+    }
+
+    #[tokio::test]
+    async fn closed_freeform_orientation_denies_task_definition() {
+        let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let stream = test_tracking_stream_with_session(&session);
+
+        let error = stream
+            .task_definition_policy_error("create_task", &serde_json::json!({}))
+            .expect("closed freeform task creation is rejected");
+
+        assert!(error.contains("freeform task definition is disabled"));
     }
 
     #[tokio::test]
