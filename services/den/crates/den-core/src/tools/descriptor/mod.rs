@@ -1894,12 +1894,13 @@ mod tests {
 
         assert!(descriptor
             .description
-            .contains("ephemeral isolated checkout"));
-        assert!(descriptor.description.contains("enabled commit policy"));
+            .contains("isolated background execution in a sandbox"));
         assert!(descriptor
             .description
-            .contains("not a shared filesystem checkout"));
-        assert!(descriptor.description.contains("preflight rejects"));
+            .contains("never modifies Pair's attached checkout"));
+        assert!(descriptor
+            .description
+            .contains("managed source or sandbox-provider root"));
     }
 
     #[test]

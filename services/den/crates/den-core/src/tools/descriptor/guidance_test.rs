@@ -21,9 +21,9 @@ fn apply_patch_schema_explains_required_diff_and_edit_file_fallback() {
         .as_str()
         .expect("patch description");
 
-    assert!(description.contains("Restricted patch format"));
+    assert!(description.contains("Standard unified diff"));
     assert!(description.contains("--- a/path"));
-    assert!(description.contains("full target content"));
+    assert!(description.contains("@@"));
     assert!(description.contains("Markdown fences"));
     assert!(description.contains("fs_edit_file"));
 }
@@ -95,14 +95,11 @@ fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
         .iter()
         .find(|descriptor| descriptor.provider_name == DEN_JOB_CREATE_PROVIDER)
         .expect("create_job descriptor");
-    assert!(create_job.description.contains("durable Docket job"));
-    assert!(create_job.description.contains("distinct objectives"));
+    assert!(create_job.description.contains("durable Docket work job"));
+    assert!(create_job.description.contains("acceptance criteria"));
     assert!(create_job
         .description
-        .contains("small change that Pair can finish here"));
-    assert!(create_job
-        .description
-        .contains("does not execute or dispatch it"));
+        .contains("Creating a Job does not execute or dispatch it"));
 
     let create_task = descriptors
         .iter()
@@ -116,13 +113,17 @@ fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
         .iter()
         .find(|descriptor| descriptor.provider_name == DEN_TASK_LIST_PROVIDER)
         .expect("list_tasks descriptor");
-    assert!(list_tasks.description.contains("current Pair task tree"));
+    assert!(list_tasks
+        .description
+        .contains("current conversation's implied Docket objective"));
 
     let checkout = descriptors
         .iter()
         .find(|descriptor| descriptor.provider_name == DEN_TASK_LIST_CHECKOUT_PROVIDER)
         .expect("checkout_task_list descriptor");
-    assert!(checkout.description.contains("current Pair task tree"));
+    assert!(checkout
+        .description
+        .contains("current conversation's implied Docket objective"));
     assert!(checkout.description.contains("does not execute tasks"));
     assert!(!checkout
         .input_schema
@@ -232,15 +233,18 @@ fn docket_work_descriptors_keep_execution_evidence_and_surfaces_explicit() {
         .iter()
         .find(|descriptor| descriptor.provider_name == "dispatch_work")
         .expect("dispatch_work descriptor");
-    assert!(dispatch.description.contains("execution surface"));
-    assert!(dispatch.description.contains("sole attached workspace"));
     assert!(dispatch
         .description
-        .contains("multiple attached workspaces"));
+        .contains("isolated background execution in a sandbox"));
+    assert!(dispatch
+        .description
+        .contains("never modifies Pair's attached checkout"));
     assert_eq!(
-        dispatch.input_schema["properties"]["target"]["enum"],
-        serde_json::json!(["sandbox", "local"])
+        dispatch.input_schema["required"],
+        serde_json::json!(["job_id"])
     );
+    assert!(dispatch.input_schema["properties"]["root"].is_object());
+    assert!(dispatch.input_schema["properties"]["image"].is_object());
     assert!(builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
         .iter()
         .any(|descriptor| descriptor.provider_name == "dispatch_work"));
