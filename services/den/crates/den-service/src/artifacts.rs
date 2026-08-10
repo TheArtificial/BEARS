@@ -4,6 +4,12 @@
 //! does not store blob bytes yet; Phase 1 only reserves refs, finalizes
 //! metadata/storage pointers, authorizes reads, and links artifacts to Den
 //! objects.
+//!
+//! Design hint: non-Git external evidence (for example a URL, email message,
+//! ticket, or build result) needs one future home. Choose exactly one: model it
+//! as an external-reference artifact storage kind, or model it as a distinct
+//! Docket work-evidence kind. Do not implement both representations for the
+//! same evidence.
 
 use std::{fmt, str::FromStr};
 

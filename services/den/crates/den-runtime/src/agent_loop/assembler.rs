@@ -295,6 +295,7 @@ fn objective_orientation_input(
     profile: BearProfile,
     cached_activity_plan_projection: Option<&TaskListProjection>,
     active_execution: Option<&DocketExecutionSessionRow>,
+    explicit_pair_current_task_id: Option<Uuid>,
     work_enabled: bool,
 ) -> ObjectiveOrientationResolutionInput {
     let work_execution = matches!(profile, BearProfile::Work)
@@ -303,24 +304,60 @@ fn objective_orientation_input(
     ObjectiveOrientationResolutionInput {
         docket_job_id: work_execution.map(|execution| execution.job_id.to_string()),
         docket_execution_mutable: true,
-        active_task_ref: cached_activity_plan_projection
-            .and_then(active_orientation_task_ref)
-            .or_else(|| {
-                work_execution.and_then(|execution| {
-                    execution
-                        .task_id
-                        .map(|task_id| OrientationTaskRef::DocketTask {
-                            job_id: Some(execution.job_id.to_string()),
-                            task_id: task_id.to_string(),
-                            title: None,
-                        })
+        active_task_ref: if matches!(profile, BearProfile::Pair) {
+            // A session task tree is prompt context, not continuation authority.
+            // Only the persisted explicit selection may orient a Pair loop.
+            cached_activity_plan_projection.and_then(|plan| {
+                explicit_pair_current_task_id.and_then(|current_task_id| {
+                    plan.items
+                        .iter()
+                        .find(|item| item.id == current_task_id.to_string())
+                        .map(|item| orientation_task_ref_from_item(plan, item))
                 })
-            }),
+            })
+        } else {
+            cached_activity_plan_projection
+                .and_then(active_orientation_task_ref)
+                .or_else(|| {
+                    work_execution.and_then(|execution| {
+                        execution
+                            .task_id
+                            .map(|task_id| OrientationTaskRef::DocketTask {
+                                job_id: Some(execution.job_id.to_string()),
+                                task_id: task_id.to_string(),
+                                title: None,
+                            })
+                    })
+                })
+        },
         freeform_policy: if work_enabled {
             FreeformPolicy::task_definition_permitted()
         } else {
             FreeformPolicy::closed()
         },
+    }
+}
+
+fn orientation_task_ref_from_item(
+    plan: &TaskListProjection,
+    item: &den_docket::TaskListItem,
+) -> OrientationTaskRef {
+    if let Some(task_id) = item.source_ref.docket_task_id.clone() {
+        return OrientationTaskRef::DocketTask {
+            job_id: item
+                .source_ref
+                .docket_job_id
+                .clone()
+                .or_else(|| plan.source_ref.docket_job_id.clone()),
+            task_id,
+            title: Some(item.title.clone()),
+        };
+    }
+
+    OrientationTaskRef::TaskListItem {
+        task_list_id: plan.id.to_string(),
+        item_id: item.id.clone(),
+        title: Some(item.title.clone()),
     }
 }
 
@@ -339,23 +376,7 @@ fn active_orientation_task_ref(plan: &TaskListProjection) -> Option<OrientationT
         })
     })?;
 
-    if let Some(task_id) = item.source_ref.docket_task_id.clone() {
-        return Some(OrientationTaskRef::DocketTask {
-            job_id: item
-                .source_ref
-                .docket_job_id
-                .clone()
-                .or_else(|| plan.source_ref.docket_job_id.clone()),
-            task_id,
-            title: Some(item.title.clone()),
-        });
-    }
-
-    Some(OrientationTaskRef::TaskListItem {
-        task_list_id: plan.id.to_string(),
-        item_id: item.id.clone(),
-        title: Some(item.title.clone()),
-    })
+    Some(orientation_task_ref_from_item(plan, item))
 }
 
 /// Best-effort `## Recalled memory` section (ADR-0038 Phase 2). Returns the rendered block and
@@ -554,10 +575,26 @@ pub async fn assemble_native_turn_for_bear(
         .await?;
     let cached_activity_plan_projection =
         load_cached_activity_plan_projection(&ctx, &docket, active_execution.as_ref()).await?;
+    let explicit_pair_current_task_id = if ctx.profile == BearProfile::Pair {
+        match (ctx.user_id, ctx.session_id) {
+            (Some(user_id), Some(client_session_id)) => client_sessions::find_for_user_bear_session_id(
+                ctx.pool,
+                user_id,
+                ctx.bear_id,
+                client_session_id,
+            )
+            .await?
+            .and_then(|session| session.current_task_id),
+            _ => None,
+        }
+    } else {
+        None
+    };
     let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
         ctx.profile,
         cached_activity_plan_projection.as_ref(),
         active_execution.as_ref(),
+        explicit_pair_current_task_id,
         bear.work_enabled,
     ));
     record_objective_orientation_event(&ctx, &objective_orientation).await?;
@@ -780,7 +817,7 @@ mod tests {
         };
 
         let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(BearProfile::Work, None, Some(&execution), true),
+            objective_orientation_input(BearProfile::Work, None, Some(&execution), None, true),
         );
         assert_eq!(
             orientation,
@@ -816,7 +853,7 @@ mod tests {
         };
 
         let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(BearProfile::Pair, None, Some(&execution), true),
+            objective_orientation_input(BearProfile::Pair, None, Some(&execution), None, true),
         );
 
         assert_eq!(
@@ -867,5 +904,28 @@ mod tests {
         };
 
         assert!(active_orientation_task_ref(&plan).is_none());
+
+        // A visible pending session task is context only until Pair explicitly
+        // selects it as the current task.
+        let orientation = crate::agent_loop::resolve_objective_orientation(
+            objective_orientation_input(BearProfile::Pair, Some(&plan), None, None, true),
+        );
+        assert_eq!(
+            orientation,
+            ObjectiveOrientation::Freeform {
+                policy: FreeformPolicy::task_definition_permitted(),
+            }
+        );
+
+        let orientation = crate::agent_loop::resolve_objective_orientation(
+            objective_orientation_input(
+                BearProfile::Pair,
+                Some(&plan),
+                None,
+                Some(task_id),
+                true,
+            ),
+        );
+        assert!(matches!(orientation, ObjectiveOrientation::Oriented { .. }));
     }
 }

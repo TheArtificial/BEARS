@@ -194,6 +194,14 @@ A work-surface path is provenance or a mount location, not an artifact ref.
 
 ### 10a. Docket output evidence
 
+> **Future design hint — choose one representation:** Non-Git external evidence
+> (for example a URL, email message, ticket, or build result) will eventually
+> need first-class support. Decide whether it is an external-reference
+> `ArtifactRef` storage kind **or** a distinct Docket work-evidence kind. Do
+> not implement both as parallel representations of the same evidence. Until
+> that decision, use finalized Git artifacts for Git outputs and do not treat
+> `DbText` or `GarageArtifacts` as an external-reference workaround.
+
 A Docket task records a primary output as structured evidence, rather than relying on worker narrative or an untyped result map. The record names one primary output for the task/run when the task produces a durable deliverable, plus task/job/run/work-surface provenance. Additional artifacts may be linked as `evidence`, `test_report`, or `completion_receipt`.
 
 A primary output may cite either:
