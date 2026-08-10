@@ -1966,18 +1966,6 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .await
     .expect("insert docket execution session");
     sqlx::query(
-        r#"
-        INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_user_id, payload)
-        VALUES ($1, $2, 'focus_selected', 'pair', $3, '{"state":"active"}'::jsonb)
-        "#,
-    )
-    .bind(docket_job_id)
-    .bind(docket_run_id)
-    .bind(user_id)
-    .execute(&pool)
-    .await
-    .expect("insert focus event");
-    sqlx::query(
         r"
         INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
         VALUES ($1, $2, 'created', 'pair', $3, $4::jsonb)
@@ -2130,22 +2118,6 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                 && event
                     .get("text")
                     .and_then(Value::as_str)
-                    .is_some_and(|text| {
-                        text.contains("Docket focus selected")
-                            && text.contains("goal=Surface diagnostics job")
-                            && text.contains("state=active")
-                            && text.contains("task=Diagnostic task")
-                    })
-        }),
-        "surface history should expose Docket focus diagnostics: {surface_response}"
-    );
-    assert!(
-        surface_events.iter().any(|event| {
-            event.get("kind").and_then(Value::as_str) == Some("message")
-                && event.get("role").and_then(Value::as_str) == Some("system")
-                && event
-                    .get("text")
-                    .and_then(Value::as_str)
                     .is_some_and(|text| text.contains("Docket task created: Diagnostic task"))
         }),
         "surface history should expose Docket task definition diagnostics: {surface_response}"
@@ -2159,7 +2131,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                     .and_then(Value::as_str)
                     .is_some_and(|text| {
                         text.contains("Runtime orientation: kind=focused")
-                            && text.contains(&format!("focused_job={docket_job_id}"))
+                            && text.contains(&format!("job={docket_job_id}"))
                             && text.contains(&format!("task={docket_task_id}"))
                     })
         }),

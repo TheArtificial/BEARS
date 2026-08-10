@@ -52,10 +52,7 @@ struct DocketDiagnosticEventRow {
     created_at: OffsetDateTime,
     event_type: String,
     payload: Value,
-    job_id: Option<Uuid>,
-    job_goal: Option<String>,
     task_id: Option<Uuid>,
-    task_title: Option<String>,
 }
 
 async fn list_docket_diagnostic_events(
@@ -66,36 +63,22 @@ async fn list_docket_diagnostic_events(
 ) -> Result<Vec<DocketDiagnosticEventRow>, den_core::DenError> {
     sqlx::query_as::<_, DocketDiagnosticEventRow>(
         r"
-        WITH focused_jobs AS (
-            SELECT DISTINCT ON (job_id) job_id, task_id
+        WITH execution_jobs AS (
+            SELECT DISTINCT ON (job_id) job_id
             FROM docket_execution_sessions
             WHERE bear_id = $1
               AND source_conversation_id = $2
             ORDER BY job_id, updated_at DESC
         ), docket_events AS (
             SELECT events.id, events.created_at, events.event_type, events.payload,
-                   events.job_id, jobs.goal AS job_goal,
-                   focused_jobs.task_id AS task_id,
-                   focus_tasks.title AS task_title
-            FROM bear_job_events events
-            JOIN bear_jobs jobs ON jobs.id = events.job_id
-            JOIN focused_jobs ON focused_jobs.job_id = events.job_id
-            LEFT JOIN bear_tasks focus_tasks ON focus_tasks.id = focused_jobs.task_id
-            WHERE events.job_id IN (SELECT job_id FROM focused_jobs)
-              AND events.event_type = 'focus_selected'
-            UNION ALL
-            SELECT events.id, events.created_at, events.event_type, events.payload,
-                   tasks.job_id, jobs.goal AS job_goal,
-                   events.task_id,
-                   tasks.title AS task_title
+                   events.task_id
             FROM bear_task_events events
             JOIN bear_tasks tasks ON tasks.id = events.task_id
-            JOIN bear_jobs jobs ON jobs.id = tasks.job_id
-            WHERE tasks.job_id IN (SELECT job_id FROM focused_jobs)
+            WHERE tasks.job_id IN (SELECT job_id FROM execution_jobs)
               AND events.event_type IN ('created', 'updated')
               AND events.payload ? 'definition'
         )
-        SELECT id, created_at, event_type, payload, job_id, job_goal, task_id, task_title
+        SELECT id, created_at, event_type, payload, task_id
         FROM docket_events
         ORDER BY created_at ASC
         LIMIT $3
@@ -118,23 +101,6 @@ fn docket_diagnostic_surface_event(
         .map(|artifact_ref| format!("\nArtifact: {artifact_ref}"))
         .collect::<String>();
     match row.event_type.as_str() {
-        "focus_selected" => Some(json!(SurfaceHistoryEvent::Message {
-            id: Some(DocketSurfaceEventId::new(row.id).to_string()),
-            role: "system".to_string(),
-            text: format!(
-                "Docket focus selected: job={} goal={} task={} state={}{}",
-                row.job_id?,
-                row.job_goal.as_deref().unwrap_or("unknown"),
-                row.task_title.as_deref().unwrap_or("unknown task"),
-                row.payload
-                    .get("state")
-                    .and_then(Value::as_str)
-                    .unwrap_or("active"),
-                artifact_suffix
-            ),
-            resources: Vec::<SurfaceResourceRef>::new(),
-            created_at: Some(row.created_at.to_string()),
-        })),
         "created" | "updated" => {
             let definition = serde_json::from_value::<DocketTaskDefinition>(
                 row.payload.get("definition")?.clone(),
@@ -167,7 +133,7 @@ fn orientation_diagnostic_text(data: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let orientation = data.get("orientation").unwrap_or(&Value::Null);
-    let focused_job = orientation
+    let job_id = orientation
         .pointer("/job/job_id")
         .and_then(Value::as_str)
         .unwrap_or("none");
@@ -182,8 +148,8 @@ fn orientation_diagnostic_text(data: &Value) -> String {
         })
         .unwrap_or("none");
     format!(
-        "Runtime orientation: kind={} focused_job={} task={}",
-        kind, focused_job, task
+        "Runtime orientation: kind={} job={} task={}",
+        kind, job_id, task
     )
 }
 
@@ -666,10 +632,7 @@ mod tests {
             created_at: OffsetDateTime::UNIX_EPOCH,
             event_type: "created".to_string(),
             payload: json!({"definition": {"title": "Ship it"}}),
-            job_id: Some(Uuid::from_u128(2)),
-            job_goal: None,
             task_id: Some(Uuid::from_u128(3)),
-            task_title: Some("Ship it".to_string()),
         };
         let event = docket_diagnostic_surface_event(
             row,
