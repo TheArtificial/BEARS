@@ -62,6 +62,7 @@ pub mod turn_runner;
 
 /// The native agent loop: assembly, step streaming, approvals, transcript projection.
 pub mod agent_loop;
+pub use agent_loop::summarize_recent_loop_control_replay_profile;
 
 /// The native runtime provider: profile turns, OpenAI streaming, web-chat loop.
 pub mod native_runtime;

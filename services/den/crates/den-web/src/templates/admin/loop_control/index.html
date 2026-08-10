@@ -1,0 +1,29 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Loop control · Admin{% endblock %}
+
+{% block admin_content %}
+<h3>Loop control</h3>
+<p class="form-hint">Transcript-free decision totals from {{ since }} through {{ until }} (last 30 days).</p>
+
+<p><strong>{{ turn_count }}</strong> turns · <strong>{{ decision_count }}</strong> decisions</p>
+
+{% for section in [
+  { "title": "Decision kinds", "rows": decision_kinds },
+  { "title": "Control levels", "rows": control_levels },
+  { "title": "Orientations", "rows": orientations },
+  { "title": "Reasons", "rows": reasons }
+] %}
+<h4>{{ section.title }}</h4>
+<table>
+  <thead><tr><th>Value</th><th>Count</th></tr></thead>
+  <tbody>
+    {% for row in section.rows %}
+    <tr><td>{{ row.value }}</td><td>{{ row.count }}</td></tr>
+    {% else %}
+    <tr><td colspan="2">No decisions recorded.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+{% endblock %}

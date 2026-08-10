@@ -1,6 +1,7 @@
 // ROUTES: When modifying routes in this file, update /src/web/ROUTES.md if present.
 pub mod api;
 pub mod bears;
+pub mod loop_control;
 pub mod membership;
 pub mod models;
 pub mod oauth_clients;
@@ -25,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .merge(membership::router())
         .merge(models::router())
         .merge(sandbox_images::router())
+        .nest("/loop-control", loop_control::router())
         .nest("/workers", workers::router())
         .nest("/api", api::router())
         .route("/", get(admin_home))
