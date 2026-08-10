@@ -38,10 +38,12 @@ Migration requirements:
 Recent slices have moved the plan through the governance/focus/orientation foundation and through the first replayable measurement spine. We are intentionally stopping short of a full policy simulator; the current replay layer is a transcript-free comparison/summary harness for tuning real recorded decisions. Broad policy-driven enforcement is still future work:
 
 - **Docket dispatch sandbox-only slice complete:** `dispatch_work` no longer accepts a local target, attached-workspace inputs, or dirty-worktree reporting. It always creates an isolated sandbox run and no longer emits the attached-armature dispatch event. Local subagent delegation remains a separate future capability.
-- **Current-task migration is in progress (preparatory runtime slice, not final architecture):** product-facing runtime terminology has moved from `Focused`/`ResolvedFocus` toward `DocketExecution` and task context. Pair can now obtain task-oriented runtime context from its existing session-anchored task tree when no durable Docket execution is active; an active Docket execution still takes precedence. This does **not** yet provide a persisted identity for one selected session task, a session-local task representation, or an explicit Work assignment. Do not treat the rename or fallback as completion of the architecture revision.
-- **Legacy Docket-execution persistence remains compatibility state:** the conversation-linked `docket_execution_sessions` record is still restored by live session id, ACP/client session id, then conversation id. It may supply the active durable execution context during migration, but it must not remain a second canonical continuation authority once `current_task` is persisted.
+- **Pair current-task authority is implemented:** `client_sessions.current_task_id` persists Pair's optional selected session task. Runtime resolution gives a valid session-anchored selection precedence over legacy Docket execution compatibility state. Pair exposes explicit `select_current_task` / `den.task.select` controls to select an actionable session task or clear the selection; invalid, foreign, blocked, cancelled, and terminal task selections are rejected. Apparent conversational redirection is confirmation-first: Pair must propose and ask rather than silently select, clear, replace, complete, or create a task.
+- **Current-task client projection is implemented for BearWire:** BearWire projects an optional `current_task` only for an explicit valid Pair selection; it never infers one from the next pending task, legacy execution, or Work state. ACP projection/title behavior remains to be completed.
+- **Work Job binding is implemented:** every Work run is durably scoped to one Docket Job, and its optional `executing_task_id` is an in-run progress checkpoint constrained to that Job's task tree. Work task choice never replaces the Job assignment and Pair task selection never affects an active Work run.
+- **Legacy Docket-execution persistence remains compatibility-only:** the conversation-linked `docket_execution_sessions` record may supply context only when Pair has no valid selected current task. It is not a canonical continuation authority.
 - **Legacy `/focus` UX is migration-only:** armature's exact-UUID `/focus <job_id>` path and focus-shaped diagnostics remain only until current-task projection and explicit assignment/clear actions replace them. Do not add matching, elicitation, or new product affordances to `/focus`.
-- **Orientation/control migration is incomplete:** runtime diagnostics and prompt context now describe Docket execution/task context in the migrated paths, and session-anchored tasks can make Pair task-oriented. The old focus-derived Work admission and task derivation still need to be replaced by explicit Job-scoped Work binding. Closed freeform continues to suppress task-definition/delegation tools when `may_define_task = false`; existing child-count/depth and immutable-execution decomposition limits remain in force.
+- **Orientation/control migration is incomplete:** runtime diagnostics and prompt context now distinguish Pair task context from Work assignment/progress in the migrated paths. Closed freeform continues to suppress task-definition/delegation tools when `may_define_task = false`; existing child-count/depth and immutable-execution decomposition limits remain in force.
 - **Diagnostics/history need terminology and authority cleanup:** existing Docket events and conversation history may continue to explain legacy execution/focus transitions during migration, but new projections must report current task, Work assigned Job, and any Work in-run progress task separately. Do not introduce a new heavy diagnostics table merely to preserve focus history.
 - **Checkpoint protocol is enforced enough for normal development:** runtime can request structured `checkpoint` tool calls with typed next-action fields, and enforce mode now requires a pending checkpoint to be answered through the checkpoint tool before another non-checkpoint tool call or final answer. The assistant-text/fenced-JSON fallback path has been removed. Artifact retention is still future work.
 - **Replay/measurement spine landed at the useful-minimum level:** the companion plan's transcript-free `bear_loop_control_ledger` exists and records checkpoint requests, context-budget pressure decisions, and grounding-probe results with typed metadata/evidence refs. Runtime now has pure replay helpers for typed decision observations, per-turn aggregates, expected-turn/profile comparisons, profile summaries, DB-backed `run_id -> profile summary` loading, profile-level reason counts, turn-level reason comparison, and checkpoint profile fingerprints. No full policy simulator is planned unless real tuning needs outgrow these comparisons.
@@ -323,14 +325,14 @@ A Pair session's current task is session-scoped and may be local or Docket-backe
 
 | Task | Done when |
 | --- | --- |
-| Persist current session task | The conversation can durably store a current session-local task or Docket task reference and clear/replace it across turns and reconnects. |
-| Project current task | Live sessions show the active task/objective, not a special Focused mode. |
-| Snapshot task into Pair runs | Each Pair run receives governance and its resolved current task as `LoopControlContext`. |
-| Bind Work Job | Each WorkRun persists one explicit Docket Job assignment; no Work run starts without one. |
-| Enforce Work Job binding | A `work` run without an assigned Job is rejected before model-driving continuation begins. |
-| Derive task behavior | Completion/orientation consume only the resolved current task or Work assignment, as appropriate. |
-| Add diagnostics | Run diagnostics include governance, current-task or assignment refs, and derived next-action refs without hidden gate internals. |
-| Add tests | Pair with no task remains freeform; Pair with a task remains Pair; a Work run without an assigned Job is rejected; Work resolves its assigned Job and only its approved task tree. |
+| Persist current session task | **Complete.** `client_sessions.current_task_id` persists Pair's optional selected session task across turns/reconnects; a valid session-anchored selection is canonical. |
+| Project current task | **Partially complete.** BearWire projects an optional explicit selected task; ACP projection/title work remains. |
+| Snapshot task into Pair runs | **Complete.** Pair runtime resolves the persisted selected task before legacy compatibility state. |
+| Bind Work Job | **Complete.** Each WorkRun persists one explicit durable Docket Job assignment. |
+| Enforce Work Job binding | **Complete.** A Work run without an assigned Job is rejected before model-driving continuation begins. |
+| Derive task behavior | **In progress.** Pair and Work context are separated; remaining orientation/diagnostic cleanup follows Phase 2c. |
+| Add diagnostics | **In progress.** New paths distinguish current task from Work assignment/progress; legacy focus diagnostics still need retirement. |
+| Add tests | **Partially complete.** Pair selection/clear, legacy precedence, Work Job scope, and BearWire projection are covered; ACP and complete orientation coverage remain. |
 
 **Exit gate:** loop control has explicit governance and session-task/worker-assignment inputs, with no client-facing focus mode.
 
@@ -351,14 +353,14 @@ When a current task exists:
 
 | Task | Done when |
 | --- | --- |
-| Define current-task projection | BearWire/ACP can project an optional session current task. |
-| Keep Den authoritative | Clients request assignment/clear; Den validates Docket references and owns persistence/projection. |
-| Add current-task affordance | Chat/pair can assign, replace, or clear the current task without a slash-command focus workflow. |
-| Preserve session-local tasks | Ordinary task-shaped work can persist across turns without creating a Job. |
-| Ask before durable escalation | Job creation/attachment and Docket dispatch require an explicit user request or approval. |
-| Update titles | Task-bearing conversations/sessions reflect the task title with blocked/done fallbacks. |
-| Prevent permission laundering | A current task does not grant tools, approvals, memory access, or outbound auth beyond effective policy. |
-| Add projection tests | Current task appears/clears/replaces consistently and never changes the permission mode. |
+| Define current-task projection | **Partially complete.** BearWire projects an optional explicit Pair current task; ACP remains. |
+| Keep Den authoritative | **Complete.** Clients request selection/clear through Den; persistence and validation remain server-owned. |
+| Add current-task affordance | **Partially complete.** Pair has explicit select/clear with confirmation-first redirection guidance; client affordance wiring remains. |
+| Preserve session-local tasks | **In progress.** Session-anchored current tasks persist; dedicated session-local creation policy remains part of Phase 2c. |
+| Ask before durable escalation | **Complete.** Redirection guidance requires asking; Job creation/dispatch is not implicit. |
+| Update titles | **Not started.** Do not add automatic renaming without an explicit title-policy decision. |
+| Prevent permission laundering | **Complete.** Selection changes only Pair's objective; it grants neither authority nor Work scope. |
+| Add projection tests | **Partially complete.** BearWire explicit-selection/no-inference coverage exists; ACP coverage remains. |
 
 **Exit gate:** clients can show and manage a current task without a Focused mode or implicit durable Job creation.
 
