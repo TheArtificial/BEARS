@@ -365,7 +365,7 @@ When a current task exists:
 | --- | --- |
 | Define current-task projection | **Complete.** BearWire and ACP project only an explicit Pair current task; ACP scopes its plan to the selected task's siblings or the one root task. |
 | Keep Den authoritative | **Complete.** Clients request selection/clear through Den; persistence and validation remain server-owned. |
-| Add current-task affordance | **Partially complete.** Pair has explicit select/clear with confirmation-first redirection guidance; client affordance wiring remains. |
+| Add current-task affordance | **Complete for BearWire/Armature.** Pair clients use confirmation-first `session.current_task.selection_request`, followed by explicit `select`, or direct `clear`; all operations route through Den's shared Pair/session authority. Web chat is explicitly deferred until it is BearWire-backed. |
 | Preserve session-local tasks | **In progress.** Session-anchored current tasks persist; dedicated session-local creation policy remains part of Phase 2c. |
 | Ask before durable escalation | **Complete.** Redirection guidance requires asking; Job creation/dispatch is not implicit. |
 | Update titles | **Complete.** Selecting a Pair current task updates the conversation title through the existing title-sync path; clearing leaves the title intact. |
