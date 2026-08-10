@@ -1925,7 +1925,7 @@ async fn list_tasks_with_descendants(
                    child.parent_task_id, child.sibling_order, child.kind, child.scope,
                    child.title, child.body, child.completion_criteria, child.difficulty, child.effort_hint,
                    child.routing_strategy, child.expected_context_size, child.result_rollup_policy, child.created_by_role, child.created_by_user_id,
-                   child.created_by_agent_id, child.created_in_run_id, child.created_at,
+                   child.created_by_agent_id, child.created_in_run_id, child.settled_by_entry_id, child.created_at,
                    child.updated_at
             FROM bear_tasks child
             JOIN task_tree parent ON child.parent_task_id = parent.id
@@ -1933,7 +1933,7 @@ async fn list_tasks_with_descendants(
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
                result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
-               created_at, updated_at
+               settled_by_entry_id, created_at, updated_at
         FROM task_tree
         ORDER BY COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), sibling_order, created_at
         LIMIT $5

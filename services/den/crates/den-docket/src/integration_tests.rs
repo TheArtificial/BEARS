@@ -373,11 +373,12 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             bear_id,
             DocketTaskListFilter {
                 session_anchor_id: Some(session_anchor_id),
+                include_descendants: true,
                 ..DocketTaskListFilter::default()
             },
         )
         .await
-        .expect("list session tasks");
+        .expect("list session task tree");
 
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].task.id, task.id);
