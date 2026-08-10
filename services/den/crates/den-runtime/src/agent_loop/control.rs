@@ -898,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn objective_orientation_resolver_prefers_focused_job_over_task() {
+    fn objective_orientation_resolver_prefers_work_assignment_over_task() {
         let task_ref = OrientationTaskRef::DocketTask {
             job_id: Some("job-from-task".to_string()),
             task_id: "task-1".to_string(),

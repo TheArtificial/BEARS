@@ -1996,21 +1996,6 @@ pub async fn continue_native_client_turn_event_stream(
             }
         }
     }
-    if let Some(refreshed_plan) = refresh_cached_activity_plan_projection_from_docket(
-        request.sqlx_pool,
-        &conversation_id,
-        client_session_id,
-        session.bear_id,
-        session.user_id,
-        profile,
-    )
-    .await?
-    {
-        SESSION_STORE.update(&session_key, |session| {
-            session.cached_activity_plan_projection = Some(refreshed_plan.clone());
-        });
-        session.cached_activity_plan_projection = Some(refreshed_plan);
-    }
     if let Some(reason) = evaluation.stop_reason {
         tracing::warn!(
             event = "native_turn_budget_fuse",
@@ -2025,6 +2010,21 @@ pub async fn continue_native_client_turn_event_stream(
         );
         SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
         return Ok(continuation_budget_stop(reason));
+    }
+    if let Some(refreshed_plan) = refresh_cached_activity_plan_projection_from_docket(
+        request.sqlx_pool,
+        &conversation_id,
+        client_session_id,
+        session.bear_id,
+        session.user_id,
+        profile,
+    )
+    .await?
+    {
+        SESSION_STORE.update(&session_key, |session| {
+            session.cached_activity_plan_projection = Some(refreshed_plan.clone());
+        });
+        session.cached_activity_plan_projection = Some(refreshed_plan);
     }
     let llm = LlmClient::new(request.config);
     let config = Arc::new(request.config.clone());
@@ -2675,11 +2675,11 @@ mod tests {
             .expect("terminal event")
             .expect("event ok");
         match event {
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
-                assert!(message.contains("emergency continuation fuse"));
-                assert!(message.contains("step=8/emergency_hard_steps=8"));
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }) => {
+                assert!(text.contains("emergency continuation fuse"));
+                assert!(text.contains("step=8/emergency_hard_steps=8"));
             }
-            other => panic!("expected TurnFailed, got {other:?}"),
+            other => panic!("expected terminal stop message, got {other:?}"),
         }
         SESSION_STORE.remove(&session_key);
     }

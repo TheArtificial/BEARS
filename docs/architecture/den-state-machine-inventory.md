@@ -29,8 +29,8 @@ TurnStateInventory =
 × SessionBinding
 × TrustProfile
 × Governance
-× FocusState
-× WorkflowState
+× CurrentTaskState
+× WorkAssignmentState
 × PermissionPolicy
 × TurnRunLifecycle
 × ObligationSet
@@ -45,7 +45,8 @@ surface is intentionally smaller:
 ```text
 RuntimeAuthorityState =
   TurnAuthority
-× ResolvedFocus
+× ResolvedCurrentTask
+× WorkAssignment
 × DocketTaskState
 × TurnRunState
 × ObligationSet
@@ -56,7 +57,7 @@ The three authority owners that must stay singular are:
 
 ```text
 MutationAuthority = TurnAuthority
-FocusDrivenContinuation = ResolvedFocus × DocketTaskState
+FocusDrivenContinuation = ResolvedCurrentTask × WorkAssignment × DocketTaskState
 ActiveObligations = TurnRunState × ObligationSet
 TerminalOutcome = TurnRunState × ObligationSet × TurnStepState × BearWireTerminalEvent
 ```
@@ -65,12 +66,13 @@ TerminalOutcome = TurnRunState × ObligationSet × TurnStepState × BearWireTerm
 mode/plan policy determine tool routing, prompt authority blocks, and client
 permission projection. Governance is a separate run-supervision context and is
 not a mutation-permission input; prompt or client labels cannot feed authority
-back into either seam. `ResolvedFocus` is the only
-focus input that may let completion policy force continuation for unfinished
-focused work. `TurnRunState` owns lifecycle and active wait reason. Terminal
-closure is committed through one atomic finish operation that transitions the
-run, settles obligations and active steps, and appends exactly one run terminal
-BearWire event before exposing the terminal state.
+back into either seam. `ResolvedCurrentTask` is Pair's validated persisted
+session current task; `WorkAssignment` is Work's explicit Job assignment. Only
+the applicable owner may supply task-driven continuation. `TurnRunState` owns
+lifecycle and active wait reason. Terminal closure is committed through one
+atomic finish operation that transitions the run, settles obligations and active
+steps, and appends exactly one run terminal BearWire event before exposing the
+terminal state.
 
 The remaining axes feed compilation, execution, or projection. They are not peer
 authority owners unless a typed implementation seam consumes them into one of
@@ -81,7 +83,7 @@ EffectivePolicyProjection = TurnAuthority × Armature × RunAuthContext
 
 RunSupervisionProjection = Governance × HumanPresence
 
-CompletionProjection = ResolvedFocus × DocketTaskState × Governance × BudgetState × ObligationSet
+CompletionProjection = ResolvedCurrentTask × WorkAssignment × DocketTaskState × Governance × BudgetState × ObligationSet
 
 DerivedViews = ModelRequest × PromptContext × MemoryProjection × CompactionProjection × SurfaceProjection
 ```

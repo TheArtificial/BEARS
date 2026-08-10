@@ -292,19 +292,21 @@ async fn record_objective_orientation_event(
 }
 
 fn objective_orientation_input(
+    profile: BearProfile,
     cached_activity_plan_projection: Option<&TaskListProjection>,
     active_execution: Option<&DocketExecutionSessionRow>,
     work_enabled: bool,
 ) -> ObjectiveOrientationResolutionInput {
+    let work_execution = matches!(profile, BearProfile::Work)
+        .then_some(active_execution)
+        .flatten();
     ObjectiveOrientationResolutionInput {
-        docket_job_id: cached_activity_plan_projection
-            .and_then(|plan| plan.source_ref.docket_job_id.clone())
-            .or_else(|| active_execution.map(|execution| execution.job_id.to_string())),
+        docket_job_id: work_execution.map(|execution| execution.job_id.to_string()),
         docket_execution_mutable: true,
         active_task_ref: cached_activity_plan_projection
             .and_then(active_orientation_task_ref)
             .or_else(|| {
-                active_execution.and_then(|execution| {
+                work_execution.and_then(|execution| {
                     execution
                         .task_id
                         .map(|task_id| OrientationTaskRef::DocketTask {
@@ -553,6 +555,7 @@ pub async fn assemble_native_turn_for_bear(
     let cached_activity_plan_projection =
         load_cached_activity_plan_projection(&ctx, &docket, active_execution.as_ref()).await?;
     let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
+        ctx.profile,
         cached_activity_plan_projection.as_ref(),
         active_execution.as_ref(),
         bear.work_enabled,
@@ -777,7 +780,7 @@ mod tests {
         };
 
         let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(None, Some(&execution), true),
+            objective_orientation_input(BearProfile::Work, None, Some(&execution), true),
         );
         assert_eq!(
             orientation,
@@ -791,6 +794,35 @@ mod tests {
                     }),
                     mutable: true,
                 }
+            }
+        );
+    }
+
+    #[test]
+    fn pair_does_not_treat_legacy_execution_as_work_assignment() {
+        let execution = DocketExecutionSessionRow {
+            id: Uuid::nil(),
+            bear_id: Uuid::nil(),
+            owner_profile: "pair".to_string(),
+            session_id: "pair-session".to_string(),
+            source_conversation_id: Some("conversation-1".to_string()),
+            source_client_session_id: Some("pair-session".to_string()),
+            job_id: Uuid::new_v4(),
+            run_id: Uuid::nil(),
+            task_id: None,
+            state: "active".to_string(),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+
+        let orientation = crate::agent_loop::resolve_objective_orientation(
+            objective_orientation_input(BearProfile::Pair, None, Some(&execution), true),
+        );
+
+        assert_eq!(
+            orientation,
+            ObjectiveOrientation::Freeform {
+                policy: FreeformPolicy::task_definition_permitted(),
             }
         );
     }

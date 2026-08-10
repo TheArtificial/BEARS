@@ -579,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn docket_task_status_summary_uses_title_status_and_assignment() {
+    fn docket_task_status_summary_uses_title_and_status() {
         let content = serde_json::json!({
             "task": { "title": "Patch summary" },
             "run_state": { "status": "done" }
@@ -592,7 +592,7 @@ mod tests {
                 ToolCallFinishStatus::Ok,
                 Some(&content)
             ),
-            "Updated Docket task status: `Patch summary`, status: done, assigned: pair"
+            "Updated Docket task status: `Patch summary`, status: done"
         );
     }
 }
