@@ -1750,6 +1750,15 @@ pub(crate) async fn create_task(
             Some(task.id),
         )
         .await?;
+        if let Some(conversation_id) = clean_optional(&context.conversation_id) {
+            conversation_persistence::set_conversation_title_and_sync_client_sessions(
+                pool,
+                context.bear_id,
+                &conversation_id,
+                &task.title,
+            )
+            .await?;
+        }
     }
     let task_list = if job_id.is_none() {
         if let Some(session_anchor_id) = session_anchor_id {
