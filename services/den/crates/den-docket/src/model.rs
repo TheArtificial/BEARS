@@ -997,6 +997,7 @@ pub struct DocketTaskRow {
     pub created_by_user_id: Option<i32>,
     pub created_by_agent_id: Option<String>,
     pub created_in_run_id: Option<Uuid>,
+    pub settled_by_entry_id: Option<Uuid>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }
@@ -1469,6 +1470,22 @@ pub struct DocketTaskUpdate {
 pub struct DocketTaskProjection {
     pub task: DocketTaskRow,
     pub run_state: Option<DocketTaskRunStateRow>,
+}
+
+/// Settles a session-owned task without fabricating a Job run. The settlement
+/// is represented by its authoritative task-journal outcome entry.
+#[derive(Debug, Clone)]
+pub struct DocketSessionTaskSettlement {
+    pub bear_id: Uuid,
+    pub session_anchor_id: Uuid,
+    pub task_id: Uuid,
+    pub status: DocketTaskStatus,
+    pub outcome_disposition: Option<DocketOutcomeDisposition>,
+    pub result_refs: Option<serde_json::Value>,
+    pub result_summary: Option<String>,
+    pub actor_role: BearProfile,
+    pub actor_user_id: Option<i32>,
+    pub actor_agent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2577,6 +2594,7 @@ mod tests {
             created_by_user_id: None,
             created_by_agent_id: None,
             created_in_run_id: None,
+            settled_by_entry_id: None,
             created_at: OffsetDateTime::UNIX_EPOCH,
             updated_at: OffsetDateTime::UNIX_EPOCH,
         };
@@ -2673,6 +2691,7 @@ mod tests {
                 created_by_user_id: None,
                 created_by_agent_id: None,
                 created_in_run_id: None,
+                settled_by_entry_id: None,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             },
@@ -2723,6 +2742,7 @@ mod tests {
                 created_by_user_id: None,
                 created_by_agent_id: None,
                 created_in_run_id: None,
+                settled_by_entry_id: None,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             },
@@ -3013,6 +3033,7 @@ mod tests {
                 created_by_user_id: Some(42),
                 created_by_agent_id: None,
                 created_in_run_id: None,
+                settled_by_entry_id: None,
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             }],
@@ -3111,6 +3132,7 @@ mod tests {
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
                     created_in_run_id: None,
+                    settled_by_entry_id: None,
                     created_at: OffsetDateTime::UNIX_EPOCH,
                     updated_at: OffsetDateTime::UNIX_EPOCH,
                 },
@@ -3135,6 +3157,7 @@ mod tests {
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
                     created_in_run_id: None,
+                    settled_by_entry_id: None,
                     created_at: OffsetDateTime::UNIX_EPOCH,
                     updated_at: OffsetDateTime::UNIX_EPOCH,
                 },
@@ -3159,6 +3182,7 @@ mod tests {
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
                     created_in_run_id: None,
+                    settled_by_entry_id: None,
                     created_at: OffsetDateTime::UNIX_EPOCH,
                     updated_at: OffsetDateTime::UNIX_EPOCH,
                 },

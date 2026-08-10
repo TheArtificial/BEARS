@@ -21,11 +21,11 @@ use super::model::{
     DocketExecutionLookup, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
     DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
-    DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput,
-    DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection, DocketTaskRow,
-    DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, TaskListItemStatus,
-    TaskListProjection, TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest,
-    TaskListSyncState,
+    DocketJobUpdate, DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection,
+    DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError,
+    TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncOutcome,
+    TaskListSyncRequest, TaskListSyncState,
 };
 
 // `work_surface_id` remains a compatibility projection for callers that only
@@ -1641,7 +1641,7 @@ pub(super) async fn list_tasks(
             r"
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                    kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
-                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id,
                    created_at, updated_at
             FROM bear_tasks
             WHERE bear_id = $1
@@ -1910,7 +1910,7 @@ async fn list_tasks_with_descendants(
         WITH RECURSIVE task_tree AS (
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                    kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
-                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id,
                    created_at, updated_at
             FROM bear_tasks
             WHERE bear_id = $1
@@ -2047,6 +2047,86 @@ pub(super) async fn update_task(
     Ok(DocketTaskProjection {
         task: patched,
         run_state,
+    })
+}
+
+pub(super) async fn settle_session_task(
+    pool: &PgPool,
+    settlement: DocketSessionTaskSettlement,
+) -> Result<DocketTaskProjection, DenError> {
+    let status = settlement.status.as_str();
+    if !matches!(status, "done" | "blocked" | "cancelled") {
+        return Err(DenError::ValidationError(
+            "session task settlement requires a terminal status".to_string(),
+        ));
+    }
+    let summary = settlement
+        .result_summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .ok_or_else(|| {
+            DenError::ValidationError(
+                "Docket terminal task settlement requires non-empty result_summary".to_string(),
+            )
+        })?;
+    let disposition = settlement
+        .outcome_disposition
+        .unwrap_or(match settlement.status {
+            super::model::DocketTaskStatus::Done => {
+                super::model::DocketOutcomeDisposition::Completed
+            }
+            super::model::DocketTaskStatus::Blocked => {
+                super::model::DocketOutcomeDisposition::Blocked
+            }
+            super::model::DocketTaskStatus::Cancelled => {
+                super::model::DocketOutcomeDisposition::Cancelled
+            }
+            super::model::DocketTaskStatus::Pending => unreachable!("validated terminal status"),
+        });
+    if !disposition.is_valid_for(settlement.status) {
+        return Err(DenError::ValidationError(
+            "Docket outcome disposition contradicts task status".to_string(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    let task = select_task(&mut tx, settlement.bear_id, settlement.task_id).await?;
+    if task.job_id.is_some() || task.session_anchor_id != Some(settlement.session_anchor_id) {
+        return Err(DenError::ValidationError(
+            "session task settlement requires a task owned by the current session".to_string(),
+        ));
+    }
+    if task.settled_by_entry_id.is_some() {
+        return Err(DenError::ValidationError(
+            "Docket terminal settlement is append-only; reopen task before replacing its outcome"
+                .to_string(),
+        ));
+    }
+    let entry_id = sqlx::query_scalar::<_, Uuid>(
+        r"INSERT INTO bear_docket_entries (job_id, task_id, run_id, scope, kind, summary, disposition, evidence_refs, by_role, by_agent_id, by_user_id)
+           VALUES (NULL, $1, NULL, 'task_journal', 'outcome', $2, $3, $4::jsonb, $5, $6, $7)
+           RETURNING id",
+    )
+    .bind(task.id)
+    .bind(summary)
+    .bind(disposition.as_str())
+    .bind(terminal_evidence_refs(settlement.result_refs.as_ref()))
+    .bind(settlement.actor_role.as_str())
+    .bind(settlement.actor_agent_id.as_deref())
+    .bind(settlement.actor_user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let task = sqlx::query_as::<_, DocketTaskRow>(
+        "UPDATE bear_tasks SET settled_by_entry_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size, result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id, created_at, updated_at",
+    )
+    .bind(task.id)
+    .bind(entry_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(DocketTaskProjection {
+        task,
+        run_state: None,
     })
 }
 
@@ -2515,7 +2595,7 @@ async fn update_task_definition(
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
-                  created_at, updated_at
+                  settled_by_entry_id, created_at, updated_at
         ",
     )
     .bind(current.bear_id)
@@ -2797,13 +2877,14 @@ async fn append_terminal_outcome(
         })?;
     let evidence_refs = terminal_evidence_refs(run_state.result_refs.as_ref());
 
-    sqlx::query(
+    let entry_id = sqlx::query_scalar::<_, Uuid>(
         r"
         INSERT INTO bear_docket_entries (
             job_id, task_id, run_id, scope, kind, summary, disposition,
             evidence_refs, by_role, by_agent_id, by_user_id
         )
         VALUES ($1, $2, $3, 'task_journal', 'outcome', $4, $5, $6::jsonb, $7, $8, $9)
+        RETURNING id
         ",
     )
     .bind(task.job_id)
@@ -2815,8 +2896,13 @@ async fn append_terminal_outcome(
     .bind(update.actor_role.as_str())
     .bind(update.actor_agent_id.as_deref())
     .bind(update.actor_user_id)
-    .execute(&mut **tx)
+    .fetch_one(&mut **tx)
     .await?;
+    sqlx::query("UPDATE bear_tasks SET settled_by_entry_id = $2, updated_at = NOW() WHERE id = $1")
+        .bind(task.id)
+        .bind(entry_id)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 

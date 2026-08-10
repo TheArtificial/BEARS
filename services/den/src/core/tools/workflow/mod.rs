@@ -18,12 +18,12 @@ use den_docket::{
     DocketEntryListFilter, DocketEntryPromotion, DocketEntryScope, DocketExecutionLookup,
     DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobOverlapResolution, DocketJobProjection, DocketJobStatus, DocketJobStatusReport,
-    DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketService, DocketTaskCreate,
-    DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
-    DocketTaskListFilter, DocketTaskPlacement, DocketTaskRunStateUpdate, DocketTaskScope,
-    DocketTaskStatus, DocketTaskUpdate, DocketValidationError, MutationPolicy, PgDocketService,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
-    TaskListVisibility,
+    DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketService, DocketSessionTaskSettlement,
+    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
+    DocketTaskKind, DocketTaskListFilter, DocketTaskPlacement, DocketTaskRunStateUpdate,
+    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, DocketValidationError, MutationPolicy,
+    PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection,
+    TaskListSyncRequest, TaskListVisibility,
 };
 
 use crate::{
@@ -1994,6 +1994,50 @@ pub(crate) async fn update_current_task_status(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketCurrentTaskStatusArguments = serde_json::from_value(arguments)?;
+    if args.job_id.is_none() && args.run_id.is_none() {
+        let session_anchor_id = resolve_task_session_anchor_id(pool, context, None).await?;
+        let session_tasks = PgDocketService::from_pool(pool)
+            .list_tasks(
+                context.bear_id,
+                DocketTaskListFilter {
+                    session_anchor_id,
+                    limit: 500,
+                    ..DocketTaskListFilter::default()
+                },
+            )
+            .await?;
+        if session_tasks
+            .iter()
+            .any(|task| task.task.id == args.task_id)
+        {
+            let task = PgDocketService::from_pool(pool)
+                .settle_session_task(DocketSessionTaskSettlement {
+                    bear_id: context.bear_id,
+                    session_anchor_id: session_anchor_id
+                        .expect("jobless task scope resolves session"),
+                    task_id: args.task_id,
+                    status: args.status,
+                    outcome_disposition: args.outcome_disposition,
+                    result_refs: args.result_refs,
+                    result_summary: args.result_summary.clone(),
+                    actor_role: role,
+                    actor_user_id: Some(context.user_id),
+                    actor_agent_id: clean_optional(&context.binding_id),
+                })
+                .await?;
+            let status = args.status.as_str();
+            return Ok(json!({
+                "domain": "docket",
+                "bear_id": context.bear_id,
+                "summary": format!("Task '{}' is now {}.", task.task.title, human_task_status_label(status)),
+                "task_title": task.task.title,
+                "task_status": status,
+                "result_summary": args.result_summary,
+                "task": task,
+                "docket": { "active_task_id": args.task_id, "source": "session_task_settlement" },
+            }));
+        }
+    }
     if args.job_id.is_some() != args.run_id.is_some() {
         return Err(DenError::ValidationError(
             "update_current_task_status requires job_id and run_id together; pass both for explicit scope or neither to use the active Docket run"
