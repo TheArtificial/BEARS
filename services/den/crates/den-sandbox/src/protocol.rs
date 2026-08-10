@@ -621,9 +621,6 @@ pub struct EngineImage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImageStoreResponse {
     pub images: Vec<EngineImage>,
-    /// Raw `docker system df` summary, when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disk_usage: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

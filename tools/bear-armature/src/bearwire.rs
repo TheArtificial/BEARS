@@ -19,7 +19,8 @@ use crate::{
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
-const BEARWIRE_EVENT_FETCH_MAX_CONSECUTIVE_ERRORS: usize = 5;
+const BEARWIRE_EVENT_FETCH_FAILURE_GRACE: Duration = Duration::from_secs(10);
+const BEARWIRE_EVENT_FETCH_MAX_BACKOFF: Duration = Duration::from_secs(5);
 const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
 const BEARWIRE_OBLIGATION_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(5);
@@ -434,7 +435,7 @@ pub(crate) async fn handle_prompt(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
-    response_id: Value,
+    response: crate::PromptResponseGuard,
     session_id: &str,
     prompt: &str,
     prompt_context: Value,
@@ -529,16 +530,27 @@ pub(crate) async fn handle_prompt(
     let mut last_run_state_summary: Option<String> = None;
     let mut logged_initial_wait = false;
     let mut consecutive_fetch_errors = 0usize;
+    let mut first_fetch_error_at: Option<Instant> = None;
 
-    while started.elapsed() < BEARWIRE_PROMPT_TIMEOUT {
+    'poll: loop {
+        if started.elapsed() >= BEARWIRE_PROMPT_TIMEOUT
+            && !shared_state
+                .tool_tasks
+                .has_active_execution(session_id)
+                .await
+        {
+            break;
+        }
         let replay = match fetch_events(http, config, session_id, after).await {
             Ok(replay) => {
                 consecutive_fetch_errors = 0;
+                first_fetch_error_at = None;
                 replay
             }
             Err(err) => {
                 consecutive_fetch_errors += 1;
                 diagnostics.fetch_errors += 1;
+                let failure_started = *first_fetch_error_at.get_or_insert_with(Instant::now);
                 tracing::warn!(
                     target: "bear_armature::lifecycle",
                     session_id,
@@ -546,14 +558,34 @@ pub(crate) async fn handle_prompt(
                     after = ?after,
                     consecutive_fetch_errors,
                     error = %err,
-                    "BearWire event fetch failed; retrying before aborting prompt loop"
+                    "BearWire event fetch failed; reconciling canonical run state"
                 );
-                if consecutive_fetch_errors >= BEARWIRE_EVENT_FETCH_MAX_CONSECUTIVE_ERRORS {
-                    return Err(err).context("BearWire event fetch failed repeatedly");
-                }
+
+                let mut state_reachable = false;
                 if run_id != "<unknown>" {
                     match fetch_run_state(http, config, session_id, run_id).await {
                         Ok(state) => {
+                            state_reachable = true;
+                            if let Some(event) = latest_terminal_event_from_run_state(&state) {
+                                let outcome = handle_bearwire_event(
+                                    config,
+                                    adapter_state,
+                                    shared_state,
+                                    session_id,
+                                    run_id,
+                                    event,
+                                    &mut diagnostics,
+                                    turn_token,
+                                )
+                                .await?;
+                                saw_done |= outcome.saw_done;
+                                saw_visible_output |= outcome.saw_visible_output;
+                                saw_tool_activity |= outcome.saw_tool_activity;
+                                saw_error |= outcome.saw_error;
+                                if saw_done {
+                                    break 'poll;
+                                }
+                            }
                             service_run_state_tool_obligations(
                                 config,
                                 shared_state,
@@ -570,12 +602,35 @@ pub(crate) async fn handle_prompt(
                                 session_id,
                                 run_id,
                                 error = %state_err,
-                                "BearWire run.state obligation sync failed after event fetch error"
+                                "BearWire run.state reconciliation failed after event fetch error"
                             );
                         }
                     }
                 }
-                sleep(BEARWIRE_POLL_INTERVAL).await;
+
+                let command_active = shared_state
+                    .tool_tasks
+                    .has_active_execution(session_id)
+                    .await;
+                if !command_active
+                    && !state_reachable
+                    && failure_started.elapsed() >= BEARWIRE_EVENT_FETCH_FAILURE_GRACE
+                {
+                    tracing::error!(
+                        target: "bear_armature::lifecycle",
+                        session_id,
+                        run_id,
+                        after = ?after,
+                        consecutive_fetch_errors,
+                        outage_duration_ms = failure_started.elapsed().as_millis(),
+                        event_fetch_error = %err,
+                        "Den API is unavailable; event delivery and run-state reconciliation could not recover"
+                    );
+                    return Err(err).context(
+                        "Den API connectivity failure: BearWire event delivery and run.state reconciliation both failed during the recovery grace period",
+                    );
+                }
+                sleep(event_fetch_retry_delay(consecutive_fetch_errors)).await;
                 continue;
             }
         };
@@ -681,7 +736,7 @@ pub(crate) async fn handle_prompt(
                                 >= BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL;
                         if should_log_summary {
                             last_run_state_diagnostic_log = Instant::now();
-                            tracing::warn!(
+                            tracing::trace!(
                                 target: "bear_armature::lifecycle",
                                 session_id,
                                 run_id,
@@ -723,21 +778,57 @@ pub(crate) async fn handle_prompt(
         sleep(BEARWIRE_POLL_INTERVAL).await;
     }
 
+    // See docs/architecture/bearwire-run-stream-completion.md. Stream observations
+    // are transport diagnostics; a missing terminal event must be reconciled against
+    // canonical run state before changing this prompt-end decision.
+    let canonical_run_state_allows_end = if saw_done || run_id == "<unknown>" {
+        false
+    } else {
+        match fetch_run_state(http, config, session_id, run_id).await {
+            Ok(state) => {
+                service_run_state_tool_obligations(
+                    config,
+                    shared_state,
+                    session_id,
+                    run_id,
+                    &state,
+                    turn_token,
+                )
+                .await?;
+                canonical_run_state_allows_prompt_end(&state)
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    error = %err,
+                    "BearWire final run.state reconciliation failed"
+                );
+                false
+            }
+        }
+    };
     if !stream_allows_prompt_end_response(
         saw_visible_output,
         saw_error,
         saw_done,
         saw_tool_activity,
+        canonical_run_state_allows_end,
     ) {
-        let reason = if saw_tool_activity {
-            "BEARS BearWire stream ended after tool activity but before a terminal run event or assistant output"
+        let reason = if saw_visible_output || saw_tool_activity {
+            "Den BearWire delivery ended before a terminal run event"
         } else {
-            "BEARS BearWire stream ended without visible output, tool activity, or an error"
+            "Den BearWire delivery ended without visible output, tool activity, or a terminal run event"
         };
         return Err(anyhow!("{reason}. Diagnostics: {}", diagnostics.summary()));
     }
 
-    crate::write_prompt_end_turn_response(response_id).await
+    if let Some(response_id) = response.claim() {
+        crate::write_prompt_end_turn_response(response_id).await
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) async fn post_session_close(config: &Config, session_id: &str) -> Result<Value> {
@@ -807,6 +898,7 @@ pub(crate) fn tool_result_rpc_params(
     run_id: &str,
     tool_call_id: &str,
     payload: &Value,
+    attempt_token: Option<&str>,
 ) -> Value {
     let status = payload
         .get("status")
@@ -831,6 +923,7 @@ pub(crate) fn tool_result_rpc_params(
         "structured_content": payload.get("structured_content").cloned().unwrap_or(Value::Null),
         "diagnostic": payload.get("diagnostic").cloned().unwrap_or(Value::Null),
         "error": error,
+        "attempt_token": attempt_token,
         "adapter_contract": adapter_contract_context(),
     })
 }
@@ -841,12 +934,68 @@ pub(crate) async fn post_tool_result(
     run_id: &str,
     tool_call_id: &str,
     payload: Value,
+    attempt_token: Option<&str>,
 ) -> Result<Value> {
     rpc_call(
         &reqwest::Client::new(),
         config,
         "client.tool.result",
-        tool_result_rpc_params(config, session_id, run_id, tool_call_id, &payload),
+        tool_result_rpc_params(
+            config,
+            session_id,
+            run_id,
+            tool_call_id,
+            &payload,
+            attempt_token,
+        ),
+    )
+    .await
+}
+
+pub(crate) async fn claim_tool_execution(
+    config: &Config,
+    session_id: &str,
+    run_id: &str,
+    obligation_id: &str,
+    tool_call_id: &str,
+) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "client.tool.claim",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "run_id": run_id,
+            "obligation_id": obligation_id,
+            "tool_call_id": tool_call_id,
+            "adapter_contract": adapter_contract_context(),
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn renew_tool_execution(
+    config: &Config,
+    session_id: &str,
+    run_id: &str,
+    obligation_id: &str,
+    tool_call_id: &str,
+    attempt_token: &str,
+) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "client.tool.renew",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "run_id": run_id,
+            "obligation_id": obligation_id,
+            "tool_call_id": tool_call_id,
+            "attempt_token": attempt_token,
+            "adapter_contract": adapter_contract_context(),
+        }),
     )
     .await
 }
@@ -869,6 +1018,38 @@ async fn fetch_run_state(
         }),
     )
     .await
+}
+
+fn latest_terminal_event_from_run_state(state: &Value) -> Option<&Value> {
+    state
+        .get("recent_events")?
+        .as_array()?
+        .iter()
+        .rev()
+        .filter_map(|entry| entry.get("event"))
+        .find(|event| {
+            matches!(
+                event.get("type").and_then(Value::as_str),
+                Some("run.completed" | "run.failed" | "run.cancelled")
+            )
+        })
+}
+
+fn event_fetch_retry_delay(consecutive_errors: usize) -> Duration {
+    let exponent = consecutive_errors.saturating_sub(1).min(5) as u32;
+    BEARWIRE_POLL_INTERVAL
+        .saturating_mul(1_u32 << exponent)
+        .min(BEARWIRE_EVENT_FETCH_MAX_BACKOFF)
+}
+
+fn canonical_run_state_allows_prompt_end(state: &Value) -> bool {
+    let run_state = state.pointer("/run/state").and_then(Value::as_str);
+    let has_open_obligations = state
+        .get("open_obligations")
+        .and_then(Value::as_array)
+        .is_some_and(|obligations| !obligations.is_empty());
+
+    matches!(run_state, Some("completed" | "paused")) && !has_open_obligations
 }
 
 fn run_state_obligation_summary(state: &Value) -> Option<String> {
@@ -1066,13 +1247,18 @@ fn actionable_tool_request_event_from_obligation(
     {
         return None;
     }
-    if !policy_allows_approval_free_obligation_service(request, tool_name) {
+    let permission_granted = request
+        .get("permission_granted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !permission_granted && !policy_allows_approval_free_obligation_service(request, tool_name) {
         return None;
     }
     Some(json!({
         "type": "tool_call.requested",
         "run_id": run_id,
         "data": {
+            "obligation_id": obligation_id(obligation)?,
             "tool_call": {
                 "id": tool_call_id,
                 "name": tool_name,
@@ -1118,6 +1304,17 @@ fn unsupported_required_client_obligation_error(obligation: &Value) -> Option<an
         .unwrap_or("<none>");
     let sample = truncate_for_log(&obligation.to_string(), 1000);
 
+    if (expected == "tool_result" || kind == "tool_result")
+        && request
+            .get("approval_required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Some(anyhow!(
+            "BearWire invariant violation: tool_result obligation remains approval_required after permission settlement: id={id} tool_call={tool_call_id} permission={permission_id} sample={sample}"
+        ));
+    }
+
     Some(anyhow!(
         "unsupported required BearWire client obligation: id={id} kind={kind} expected={expected} tool_call={tool_call_id} permission={permission_id} sample={sample}"
     ))
@@ -1137,7 +1334,17 @@ async fn service_run_state_tool_obligations(
     for obligation in open {
         let Some(event) = actionable_tool_request_event_from_obligation(run_id, obligation) else {
             if let Some(err) = unsupported_required_client_obligation_error(obligation) {
-                return Err(err);
+                // A run.state snapshot can race permission/result settlement. Treat an
+                // obligation this client cannot service as a reconciliation warning;
+                // the next state poll can observe the settled obligation. Ending the
+                // model turn here turns an approval redirect into a sandbox failure.
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    error = %err,
+                    "cannot service BearWire obligation from this run.state snapshot"
+                );
             }
             continue;
         };
@@ -1157,7 +1364,7 @@ async fn service_run_state_tool_obligations(
         {
             continue;
         }
-        tracing::warn!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -1176,9 +1383,9 @@ async fn service_run_state_tool_obligations(
                 config,
                 &mut task_state,
                 shared_state,
-                &shared_state.mcp_registry,
                 session_id,
                 &event,
+                turn_token,
             )
             .await
             {
@@ -1237,7 +1444,7 @@ pub(crate) async fn try_handle_prompt(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
-    response_id: Value,
+    response: crate::PromptResponseGuard,
     session_id: &str,
     prompt: &str,
     prompt_context: Value,
@@ -1256,7 +1463,7 @@ pub(crate) async fn try_handle_prompt(
         config,
         adapter_state,
         shared_state,
-        response_id,
+        response,
         session_id,
         prompt,
         prompt_context,
@@ -1466,6 +1673,22 @@ impl BearWireToolCallFinishedData {
     }
 }
 
+fn tool_call_finished_presentation(
+    tool_call_id: &str,
+    tool_name: &str,
+    cached_input_args: Option<Value>,
+    cached_display: Option<Value>,
+    event_input_args: Option<Value>,
+    event_display: Option<Value>,
+) -> crate::ToolRequestPresentation {
+    crate::ToolRequestPresentation {
+        tool_call_id: tool_call_id.to_string(),
+        tool_name: tool_name.to_string(),
+        arguments: cached_input_args.or(event_input_args),
+        display: event_display.or(cached_display),
+    }
+}
+
 async fn handle_bearwire_tool_call_finished_event(
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -1481,6 +1704,7 @@ async fn handle_bearwire_tool_call_finished_event(
         .get(session_id, lookup_tool_call_id)
         .await;
     let cached_input_args = cached.as_ref().and_then(|record| record.input_args.clone());
+    let cached_display = cached.as_ref().and_then(|record| record.display.clone());
     let had_cached_start = cached.is_some();
     let tool_call_id = canonical.tool_call.id;
     let tool_name = canonical
@@ -1493,21 +1717,14 @@ async fn handle_bearwire_tool_call_finished_event(
         .ok_or_else(|| anyhow!("canonical BearWire tool completion missing tool_call.name"))?;
     let summary = tool_call_finished_summary(data, &tool_name, failed);
     let status = if failed { "failed" } else { "completed" };
-    let mut projection_event = json!({
-        "run_id": event.get("run_id").and_then(Value::as_str),
-        "data": {
-            "tool_call": {
-                "id": tool_call_id,
-                "name": tool_name.clone(),
-            }
-        }
-    });
-    if let Some(args) = cached_input_args.or(canonical.tool_call.arguments) {
-        projection_event["data"]["tool_call"]["arguments"] = args;
-    }
-    if let Some(display) = canonical.tool_call.display {
-        projection_event["data"]["tool_call"]["display"] = display;
-    }
+    let presentation = tool_call_finished_presentation(
+        &tool_call_id,
+        &tool_name,
+        cached_input_args,
+        cached_display,
+        canonical.tool_call.arguments,
+        canonical.tool_call.display,
+    );
     send_tool_call_update_for_turn(
         shared_state,
         session_id,
@@ -1517,7 +1734,7 @@ async fn handle_bearwire_tool_call_finished_event(
         ToolCallUpdatePayload {
             status,
             text: &summary,
-            event: Some(&projection_event),
+            request: Some(presentation),
             raw_output: Some(compact_json_preview(
                 data,
                 BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS,
@@ -1648,7 +1865,7 @@ async fn handle_bearwire_event(
     if current_run_id != "<unknown>" && event_is_run_scoped(ty) {
         if let Some(event_run_id) = event_run_id(event) {
             if event_run_id != current_run_id {
-                tracing::debug!(
+                tracing::trace!(
                     target: "bear_armature::lifecycle",
                     session_id,
                     current_run_id,
@@ -1798,7 +2015,7 @@ async fn handle_bearwire_event(
             }
         }
         "run.completed" => {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id,
                 run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
@@ -1807,13 +2024,70 @@ async fn handle_bearwire_event(
             outcome.saw_done = true;
         }
         "run.failed" => {
-            tracing::warn!(
-                target: "bear_armature::lifecycle",
-                session_id,
-                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
-                reason = event.pointer("/data/reason").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
-                "BearWire run.failed received"
-            );
+            let run_id = event
+                .get("run_id")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let reason = event
+                .pointer("/data/reason")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let timed_out_permission = event
+                .pointer("/data/context/affected_obligations")
+                .or_else(|| event.pointer("/data/affected_obligations"))
+                .and_then(Value::as_array)
+                .and_then(|obligations| {
+                    obligations.iter().find(|obligation| {
+                        obligation
+                            .get("expected_responder_action")
+                            .and_then(Value::as_str)
+                            == Some("permission_decision")
+                            || obligation.get("kind").and_then(Value::as_str)
+                                == Some("permission_decision")
+                    })
+                });
+            if reason == "client_obligation_timeout" {
+                let obligation_id = timed_out_permission
+                    .and_then(|value| value.get("obligation_id"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let permission_id = timed_out_permission
+                    .and_then(|value| value.get("permission_id"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let tool_call_id = timed_out_permission
+                    .and_then(|value| value.get("tool_call_id"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let tool_name = timed_out_permission
+                    .and_then(|value| value.get("tool_name"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                let claimed = timed_out_permission
+                    .and_then(|value| value.get("claimed"))
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                tracing::error!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    reason,
+                    obligation_id,
+                    permission_id,
+                    tool_call_id,
+                    tool_name,
+                    claimed,
+                    "run failed because a permission obligation timed out; check prior permission obligation projection and ACP dispatch events"
+                );
+            } else {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    reason,
+                    "BearWire run.failed received"
+                );
+            }
             let message = bearwire_run_failed_user_message(event);
             eprintln!(
                 "bear-armature: BearWire run failed session_id={} message={}",
@@ -1834,7 +2108,7 @@ async fn handle_bearwire_event(
             outcome.saw_visible_output = true;
             diagnostics.saw_error = true;
             diagnostics.saw_visible_output = true;
-            let message = "BEARS request was cancelled.";
+            let message = "Den request was cancelled.";
             eprintln!(
                 "bear-armature: BearWire run cancelled session_id={} run_id={}",
                 session_id,
@@ -1847,7 +2121,7 @@ async fn handle_bearwire_event(
                 .await?;
         }
         "tool_call.requested" => {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id,
                 run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
@@ -1870,7 +2144,7 @@ async fn handle_bearwire_event(
             }
         }
         "tool_call.completed" | "tool_call.warning" | "tool_call.cancelled" => {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id,
                 run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
@@ -1911,7 +2185,7 @@ async fn handle_bearwire_event(
             .await?;
         }
         "client.waiting" => {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id,
                 run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
@@ -1928,9 +2202,9 @@ async fn handle_bearwire_event(
                 config,
                 adapter_state,
                 shared_state,
-                &shared_state.mcp_registry,
                 session_id,
                 event,
+                turn_token,
             )
             .await?;
         }
@@ -1962,6 +2236,9 @@ async fn handle_bearwire_event(
             // as `client.waiting` with a persisted obligation. Keep this out of normal
             // stderr so stale pause status cannot look like a fresh permission request
             // after the armature already answered the matching obligation.
+            // See docs/architecture/bearwire-run-stream-completion.md: an EOF after
+            // this boundary is not a failed completion; reconcile canonical run state
+            // and obligations before deciding whether the prompt may end.
             if crate::bear_debug_verbose() {
                 let reason = event
                     .pointer("/data/reason")
@@ -2023,6 +2300,34 @@ mod tests {
             "runtime.objective_orientation"
         ));
         assert!(!is_optional_runtime_metadata_event("runtime.unknown"));
+    }
+
+    #[test]
+    fn terminal_projection_prefers_live_request_presentation() {
+        let presentation = tool_call_finished_presentation(
+            "call-read",
+            "fs_read_text_file",
+            Some(json!({ "path": "/workspace/README.md" })),
+            Some(json!({ "title": "Read file: /workspace/README.md" })),
+            None,
+            None,
+        );
+        assert_eq!(
+            presentation
+                .arguments
+                .as_ref()
+                .and_then(|arguments| arguments.get("path"))
+                .and_then(Value::as_str),
+            Some("/workspace/README.md")
+        );
+        assert_eq!(
+            presentation
+                .display
+                .as_ref()
+                .and_then(|display| display.get("title"))
+                .and_then(Value::as_str),
+            Some("Read file: /workspace/README.md")
+        );
     }
 
     #[test]
@@ -2167,6 +2472,57 @@ mod tests {
     }
 
     #[test]
+    fn event_fetch_retry_uses_capped_exponential_backoff() {
+        assert_eq!(event_fetch_retry_delay(1), Duration::from_millis(250));
+        assert_eq!(event_fetch_retry_delay(2), Duration::from_millis(500));
+        assert_eq!(event_fetch_retry_delay(5), Duration::from_secs(4));
+        assert_eq!(
+            event_fetch_retry_delay(20),
+            BEARWIRE_EVENT_FETCH_MAX_BACKOFF
+        );
+    }
+
+    #[test]
+    fn terminal_event_is_recovered_from_canonical_run_state() {
+        let state = json!({
+            "recent_events": [
+                { "event": { "type": "run.started" } },
+                { "event": { "type": "run.failed", "run_id": "run-1" } }
+            ]
+        });
+        assert_eq!(
+            latest_terminal_event_from_run_state(&state)
+                .and_then(|event| event.get("type"))
+                .and_then(Value::as_str),
+            Some("run.failed")
+        );
+    }
+
+    #[test]
+    fn canonical_run_state_allows_clean_paused_or_completed_prompt_end() {
+        assert!(canonical_run_state_allows_prompt_end(&json!({
+            "run": { "state": "paused" },
+            "open_obligations": []
+        })));
+        assert!(canonical_run_state_allows_prompt_end(&json!({
+            "run": { "state": "completed" },
+            "open_obligations": []
+        })));
+    }
+
+    #[test]
+    fn canonical_run_state_does_not_end_with_open_obligation_or_running_run() {
+        assert!(!canonical_run_state_allows_prompt_end(&json!({
+            "run": { "state": "paused" },
+            "open_obligations": [{ "id": "obl-1" }]
+        })));
+        assert!(!canonical_run_state_allows_prompt_end(&json!({
+            "run": { "state": "running" },
+            "open_obligations": []
+        })));
+    }
+
+    #[test]
     fn run_state_obligation_summary_reports_open_obligations() {
         let state = json!({
             "run": { "state": "waiting_for_tool_result" },
@@ -2247,6 +2603,43 @@ mod tests {
         assert_eq!(event["data"]["tool_call"]["name"], "fs_search_files");
         assert_eq!(event["data"]["tool_call"]["arguments"]["query"], "BearWire");
         assert_eq!(event["data"]["serviced_from_run_state"], true);
+    }
+
+    #[test]
+    fn reconstructs_permission_granted_tool_request_from_run_state() {
+        let obligation = json!({
+            "id": "obl-granted",
+            "kind": "tool_result",
+            "expected_responder_action": "tool_result",
+            "state": "waiting_for_client",
+            "tool_call_id": "call-edit",
+            "permission_id": "perm-edit",
+            "request_payload": {
+                "tool_call_id": "call-edit",
+                "tool_name": "fs_edit_file",
+                "arguments": { "path": "README.md", "old_text": "a", "new_text": "b" },
+                "approval_required": false,
+                "approval_request_id": "perm-edit",
+                "permission_granted": true,
+                "execution_target": "armature_local",
+                "policy": {
+                    "execution_target": "armature_local",
+                    "approval_required": true,
+                    "approval_policy": "required",
+                    "risk": "writes_workspace"
+                }
+            }
+        });
+
+        let event = actionable_tool_request_event_from_obligation("run-1", &obligation)
+            .expect("actionable permission-granted tool");
+
+        assert_eq!(event["type"], "tool_call.requested");
+        assert_eq!(event["data"]["obligation_id"], "obl-granted");
+        assert_eq!(event["data"]["tool_call"]["id"], "call-edit");
+        assert_eq!(event["data"]["tool_call"]["name"], "fs_edit_file");
+        assert_eq!(event["data"]["tool_call"]["arguments"]["new_text"], "b");
+        assert_eq!(event["data"]["approval_required"], false);
     }
 
     #[test]
@@ -2345,6 +2738,34 @@ mod tests {
     }
 
     #[test]
+    fn approval_required_tool_result_reports_server_invariant_violation() {
+        let obligation = json!({
+            "id": "obl-stale-approval",
+            "kind": "tool_result",
+            "expected_responder_action": "tool_result",
+            "state": "waiting_for_client",
+            "request_payload": {
+                "tool_call_id": "call-edit",
+                "tool_name": "fs_edit_file",
+                "arguments": { "path": "README.md" },
+                "approval_required": true,
+                "approval_request_id": "perm-edit",
+                "execution_target": "armature_local"
+            }
+        });
+
+        let err = unsupported_required_client_obligation_error(&obligation)
+            .expect("inconsistent tool obligation should fail the prompt");
+        let message = err.to_string();
+
+        assert!(message.contains("BearWire invariant violation"));
+        assert!(message.contains(
+            "tool_result obligation remains approval_required after permission settlement"
+        ));
+        assert!(!message.contains("unsupported required BearWire client obligation"));
+    }
+
+    #[test]
     fn does_not_service_den_owned_obligations_from_run_state() {
         let obligation = json!({
             "kind": "tool_result",
@@ -2362,7 +2783,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_open_client_obligation_becomes_prompt_error() {
+    fn unsupported_open_client_obligation_is_classified_for_reconciliation() {
         let obligation = json!({
             "id": "obl-context",
             "kind": "added_context",
@@ -2500,6 +2921,21 @@ mod tests {
         assert!(message.contains("run-timeout"));
         assert!(context.contains("continuation_request_id"));
         assert!(context.contains("req-123"));
+    }
+
+    #[test]
+    fn terminal_projection_reuses_requested_display_when_completion_omits_it() {
+        let requested_display = json!({
+            "title": "Search for \"tool_call\" in this workspace",
+            "kind": "search"
+        });
+        let cached_display = Some(requested_display.clone());
+        let completion_display: Option<Value> = None;
+
+        assert_eq!(
+            completion_display.or(cached_display),
+            Some(requested_display)
+        );
     }
 
     #[test]
@@ -2664,6 +3100,7 @@ mod tests {
                 "structured_content": { "content": "hello" },
                 "diagnostic": { "phase": "permission_local_tool_completed" }
             }),
+            None,
         );
 
         assert_eq!(params["tool_name"], "fs_read_text_file");
@@ -2693,8 +3130,10 @@ mod tests {
                 "content": "failed",
                 "diagnostic": { "phase": "permission_local_tool_failed" }
             }),
+            Some("attempt-1"),
         );
 
+        assert_eq!(params["attempt_token"], "attempt-1");
         assert_eq!(params["error"]["phase"], "permission_local_tool_failed");
     }
 

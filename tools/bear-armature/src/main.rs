@@ -69,7 +69,10 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, OnceLock, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock, RwLock,
+    },
 };
 use tokio::{
     io::{self, AsyncBufReadExt, BufReader},
@@ -87,9 +90,9 @@ use tower_service::Service;
 use tools::adapter_env::{collect_bear_environment, fetch_den_runtime_state};
 use tools::fs::{
     handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
-    handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
-    handle_read_text_file, handle_replace_text, handle_search_files, handle_stat, ReplaceTextArgs,
-    ReplaceTextPlan,
+    handle_delete_path, handle_find_paths_blocking, handle_list_directory_blocking,
+    handle_move_path, handle_read_text_file, handle_replace_text, handle_search_files_blocking,
+    handle_stat, ReplaceTextArgs, ReplaceTextPlan,
 };
 use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
@@ -169,6 +172,26 @@ struct CancellationNotice {
 struct ActivePromptTurn {
     token: Uuid,
     conversation_id: Option<String>,
+    response: PromptResponseGuard,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PromptResponseGuard {
+    id: Value,
+    sent: Arc<AtomicBool>,
+}
+
+impl PromptResponseGuard {
+    fn new(id: Value) -> Self {
+        Self {
+            id,
+            sent: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn claim(&self) -> Option<Value> {
+        (!self.sent.swap(true, Ordering::AcqRel)).then(|| self.id.clone())
+    }
 }
 
 #[allow(dead_code)]
@@ -1268,8 +1291,9 @@ fn stream_allows_prompt_end_response(
     _saw_error: bool,
     saw_done: bool,
     _saw_tool_activity: bool,
+    canonical_run_state_allows_prompt_end: bool,
 ) -> bool {
-    saw_done
+    saw_done || canonical_run_state_allows_prompt_end
 }
 
 #[derive(Clone, Default)]
@@ -1703,6 +1727,14 @@ async fn run() -> Result<()> {
             }
         };
 
+        let request_method = request.method.clone();
+        let request_id = request.id.clone();
+        let request_session_id = request
+            .params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .filter(|session_id| !session_id.trim().is_empty())
+            .map(str::to_owned);
         if let Err(err) = handle_request(
             &http,
             &mut runtime,
@@ -1712,6 +1744,14 @@ async fn run() -> Result<()> {
         )
         .await
         {
+            tracing::error!(
+                target: "bear_armature::lifecycle",
+                request_method,
+                request_id = ?request_id,
+                session_id = ?request_session_id,
+                error = %format!("{err:#}"),
+                "ACP request handling failed before a response could be confirmed"
+            );
             eprintln!("bear-armature: request handling failed: {err:#}");
         }
     }
@@ -2958,14 +2998,19 @@ async fn handle_request(
                 };
                 let turn_token = Uuid::new_v4();
                 let conversation_id_for_turn = prompt_conversation_id_from_params(&request.params);
+                let response = PromptResponseGuard::new(id.clone());
                 let previous = register_prompt_turn_for_session(
                     shared_state,
                     &session_id,
                     turn_token,
                     conversation_id_for_turn.clone(),
+                    response.clone(),
                 )
                 .await;
                 if let Some(previous) = previous {
+                    if let Some(previous_id) = previous.response.claim() {
+                        write_prompt_end_turn_response(previous_id).await?;
+                    }
                     let same_conversation = prompt_conversations_overlap(
                         previous.conversation_id.as_deref(),
                         conversation_id_for_turn.as_deref(),
@@ -3001,7 +3046,7 @@ async fn handle_request(
                         &config,
                         &mut prompt_state,
                         &shared_state,
-                        id.clone(),
+                        response.clone(),
                         request.params,
                         turn_token,
                     )
@@ -3009,21 +3054,58 @@ async fn handle_request(
                     {
                         Ok(()) => {}
                         Err(err) => {
+                            let user_message = if err.chain().any(|cause| {
+                                cause
+                                    .to_string()
+                                    .starts_with("Den API connectivity failure:")
+                            }) {
+                                "Den could not continue this turn because its API is unavailable. Check your connection or try again shortly."
+                            } else {
+                                "Den could not complete this turn. Please try again or start a fresh turn."
+                            };
                             let server_version = fetch_server_version(&http, &config).await.ok();
-                            let mut message = format!("{err:#}");
-                            if let Some(server_version) = &server_version {
-                                message.push_str("\n\n");
-                                message.push_str(&server_version.summary());
+                            tracing::error!(
+                                session_id,
+                                turn_token = %turn_token,
+                                conversation_id = ?conversation_id_for_turn,
+                                error = %format!("{err:#}"),
+                                user_message,
+                                server_version = ?server_version.as_ref().map(ServerVersion::summary),
+                                armature_version = adapter_version(),
+                                "session/prompt failed"
+                            );
+                            let user_message = if err.chain().any(|cause| {
+                                cause
+                                    .to_string()
+                                    .starts_with("Den API connectivity failure:")
+                            }) {
+                                "Den could not continue this turn because its API is unavailable. Check your connection or try again shortly."
+                            } else {
+                                "Den could not complete this turn. Please try again or start a fresh turn."
+                            };
+                            if let Some(response_id) = response.claim() {
+                                if let Err(write_err) = write_response(
+                                    response_id,
+                                    Err(json_rpc_error(-32003, user_message, None)),
+                                )
+                                .await
+                                {
+                                    tracing::error!(
+                                        session_id,
+                                        turn_token = %turn_token,
+                                        conversation_id = ?conversation_id_for_turn,
+                                        error = %format!("{write_err:#}"),
+                                        "failed to write terminal session/prompt error response"
+                                    );
+                                } else {
+                                    tracing::debug!(
+                                        session_id,
+                                        turn_token = %turn_token,
+                                        conversation_id = ?conversation_id_for_turn,
+                                        "terminal session/prompt error response written"
+                                    );
+                                }
                             }
-                            let _ = write_response(
-                                id,
-                                Err(json_rpc_error(
-                                    -32003,
-                                    &format!("BEARS prompt failed: {message}"),
-                                    None,
-                                )),
-                            )
-                            .await;
                         }
                     }
                 });
@@ -3061,7 +3143,7 @@ async fn handle_request(
                             id,
                             Err(json_rpc_error(
                                 -32003,
-                                "BEARS session close failed",
+                                "Den session close failed",
                                 Some(json!({ "message": format!("{err:#}") })),
                             )),
                         )
@@ -3242,6 +3324,26 @@ fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
     })
 }
 
+fn workspace_git_remote_origins(roots: &[String]) -> Vec<String> {
+    let mut origins = roots
+        .iter()
+        .filter_map(|root| {
+            Command::new("git")
+                .args(["config", "--get", "remote.origin.url"])
+                .current_dir(root)
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .map(|origin| origin.trim().to_string())
+                .filter(|origin| !origin.is_empty())
+        })
+        .collect::<Vec<_>>();
+    origins.sort();
+    origins.dedup();
+    origins
+}
+
 fn ensure_session_context_capabilities(context: &mut SessionContext) {
     if !context.raw.is_object() {
         context.raw = json!({});
@@ -3287,6 +3389,7 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
     }
     if !context.roots.is_empty() {
         context.raw["workspace_roots"] = json!(context.roots.clone());
+        context.raw["git_remote_origins"] = json!(workspace_git_remote_origins(&context.roots));
     }
 }
 
@@ -3856,8 +3959,15 @@ async fn handle_direct_list_directory(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let context = session_context(adapter_state, session_id)?;
-    handle_list_directory(context, session_id, args, policy).await
+    let context = session_context(adapter_state, session_id)?.clone();
+    let session_id = session_id.to_string();
+    let args = args.clone();
+    let policy = policy.clone();
+    tokio::task::spawn_blocking(move || {
+        handle_list_directory_blocking(&context, &session_id, &args, &policy)
+    })
+    .await
+    .context("fs_list_directory blocking task failed")?
 }
 
 async fn handle_direct_find_paths(
@@ -3866,8 +3976,15 @@ async fn handle_direct_find_paths(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let context = session_context(adapter_state, session_id)?;
-    handle_find_paths(context, session_id, args, policy).await
+    let context = session_context(adapter_state, session_id)?.clone();
+    let session_id = session_id.to_string();
+    let args = args.clone();
+    let policy = policy.clone();
+    tokio::task::spawn_blocking(move || {
+        handle_find_paths_blocking(&context, &session_id, &args, &policy)
+    })
+    .await
+    .context("fs_find_paths blocking task failed")?
 }
 
 async fn handle_direct_search_files(
@@ -3876,8 +3993,15 @@ async fn handle_direct_search_files(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let context = session_context(adapter_state, session_id)?;
-    handle_search_files(context, session_id, args, policy).await
+    let context = session_context(adapter_state, session_id)?.clone();
+    let session_id = session_id.to_string();
+    let args = args.clone();
+    let policy = policy.clone();
+    tokio::task::spawn_blocking(move || {
+        handle_search_files_blocking(&context, &session_id, &args, &policy)
+    })
+    .await
+    .context("fs_search_files blocking task failed")?
 }
 
 async fn handle_direct_stat(
@@ -4392,7 +4516,7 @@ async fn den_get_acp_session(
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ReloadHistoryMessage {
     id: Option<String>,
     kind: String,
@@ -4653,6 +4777,33 @@ async fn fetch_conversation_surface_history_chronological(
     Ok(flatten_history_pages_chronological(pages_newest_first))
 }
 
+fn replay_tool_request(
+    requests: &mut std::collections::HashMap<String, ToolRequestPresentation>,
+    message: &ReloadHistoryMessage,
+    tool_call_id: &str,
+    tool_name: &str,
+) -> ToolRequestPresentation {
+    if message.kind == "tool_call" {
+        let request = ToolRequestPresentation {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments: (!message.arguments.is_null()).then(|| message.arguments.clone()),
+            display: None,
+        };
+        requests.insert(tool_call_id.to_string(), request.clone());
+        request
+    } else {
+        requests
+            .remove(tool_call_id)
+            .unwrap_or_else(|| ToolRequestPresentation {
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                arguments: None,
+                display: None,
+            })
+    }
+}
+
 async fn replay_history_for_den_session(
     http: &reqwest::Client,
     config: &Config,
@@ -4672,6 +4823,9 @@ async fn replay_history_for_den_session(
                 conv
             );
         }
+        // Tool results intentionally do not duplicate request arguments in canonical history.
+        // Keep them only for this replay pass so terminal ACP updates preserve the request card.
+        let mut tool_requests = std::collections::HashMap::<String, ToolRequestPresentation>::new();
         for message in history_replay_chunks_with_boundaries(messages) {
             match message.kind.as_str() {
                 "tool_call" | "tool_result" => {
@@ -4683,17 +4837,8 @@ async fn replay_history_for_den_session(
                     let Some(tool_name) = message.tool_name.as_deref() else {
                         continue;
                     };
-                    let event = json!({
-                        "type": if message.kind == "tool_call" { "tool_call.requested" } else { "tool_call.completed" },
-                        "data": {
-                            "tool_call": {
-                                "id": tool_call_id,
-                                "name": tool_name,
-                                "arguments": message.arguments,
-                            },
-                            "summary": message.text,
-                        },
-                    });
+                    let request =
+                        replay_tool_request(&mut tool_requests, &message, tool_call_id, tool_name);
                     send_tool_call_update(
                         session_id,
                         tool_call_id,
@@ -4707,7 +4852,7 @@ async fn replay_history_for_den_session(
                                 },
                             ),
                             text: &message.text,
-                            event: Some(&event),
+                            request: Some(request),
                             raw_output: if message.raw_output.is_null() {
                                 None
                             } else {
@@ -5130,7 +5275,7 @@ async fn handle_prompt(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
-    response_id: Value,
+    response: PromptResponseGuard,
     params: Value,
     turn_token: Uuid,
 ) -> Result<()> {
@@ -5145,7 +5290,7 @@ async fn handle_prompt(
         adapter_state,
         shared_state,
         PromptRetryContext {
-            response_id,
+            response,
             params,
             turn_token,
         },
@@ -5162,7 +5307,7 @@ async fn handle_prompt(
 }
 
 struct PromptRetryContext {
-    response_id: Value,
+    response: PromptResponseGuard,
     params: Value,
     turn_token: Uuid,
 }
@@ -5175,7 +5320,7 @@ async fn handle_prompt_with_retry(
     retry: PromptRetryContext,
 ) -> Result<()> {
     let PromptRetryContext {
-        response_id,
+        response,
         params,
         turn_token,
     } = retry;
@@ -5227,7 +5372,9 @@ async fn handle_prompt_with_retry(
         )
         .await;
         send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &report).await?;
-        write_prompt_end_turn_response(response_id).await?;
+        if let Some(response_id) = response.claim() {
+            write_prompt_end_turn_response(response_id).await?;
+        }
         return Ok(());
     }
     let mut client_context = shared_state
@@ -5314,7 +5461,7 @@ async fn handle_prompt_with_retry(
         config,
         adapter_state,
         shared_state,
-        response_id.clone(),
+        response,
         session_id,
         &prompt,
         den_payload
@@ -7079,6 +7226,7 @@ async fn register_prompt_turn_for_session(
     session_id: &str,
     turn_token: Uuid,
     conversation_id_for_turn: Option<String>,
+    response: PromptResponseGuard,
 ) -> Option<ActivePromptTurn> {
     let previous = {
         let mut active = shared_state.active_prompts.lock().await;
@@ -7087,6 +7235,7 @@ async fn register_prompt_turn_for_session(
             ActivePromptTurn {
                 token: turn_token,
                 conversation_id: conversation_id_for_turn.clone(),
+                response,
             },
         )
     };
@@ -7308,9 +7457,136 @@ fn cancellation_matches_turn(
     true
 }
 
+enum LeasedToolTaskWaitOutcome<T> {
+    ToolFinished(T),
+    Cancelled(CancellationNotice),
+    LeaseLost(anyhow::Error),
+}
+
 enum ToolTaskWaitOutcome<T> {
     ToolFinished(T),
     Cancelled(CancellationNotice),
+}
+
+#[derive(Debug)]
+struct ToolExecutionLease {
+    attempt_token: String,
+    renew_after: Duration,
+}
+
+fn is_tool_execution_claim_rejection(response: &Value) -> bool {
+    response.get("status").and_then(|value| value.as_str()) == Some("claim_rejected")
+}
+
+fn parse_tool_execution_lease(response: &Value) -> Result<ToolExecutionLease> {
+    if response.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err(anyhow!(
+            "tool execution claim was rejected: {}",
+            response
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        ));
+    }
+    let attempt_token = response
+        .get("attempt_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("tool execution claim omitted attempt_token"))?
+        .to_string();
+    let renew_after_ms = response
+        .get("renew_after_ms")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .ok_or_else(|| anyhow!("tool execution claim omitted renew_after_ms"))?;
+    Ok(ToolExecutionLease {
+        attempt_token,
+        renew_after: Duration::from_millis(renew_after_ms),
+    })
+}
+
+async fn wait_for_leased_tool_future_or_matching_cancellation<F>(
+    mut cancellation_rx: broadcast::Receiver<CancellationNotice>,
+    session_id: &str,
+    turn_token: Uuid,
+    conversation_id: Option<&str>,
+    config: &Config,
+    run_id: &str,
+    obligation_id: &str,
+    tool_call_id: &str,
+    lease: &ToolExecutionLease,
+    tool_future: F,
+) -> LeasedToolTaskWaitOutcome<F::Output>
+where
+    F: std::future::Future,
+{
+    let mut cancellation_closed = false;
+    let mut renewal = tokio::time::interval(lease.renew_after);
+    renewal.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    renewal.tick().await;
+    tokio::pin!(tool_future);
+    loop {
+        tokio::select! {
+            result = &mut tool_future => return LeasedToolTaskWaitOutcome::ToolFinished(result),
+            _ = renewal.tick() => {
+                match crate::bearwire::renew_tool_execution(
+                    config,
+                    session_id,
+                    run_id,
+                    obligation_id,
+                    tool_call_id,
+                    &lease.attempt_token,
+                ).await {
+                    Ok(response) if response.get("ok").and_then(Value::as_bool) == Some(true) => {}
+                    Ok(response) => return LeasedToolTaskWaitOutcome::LeaseLost(anyhow!(
+                        "tool execution lease was lost: {}",
+                        response.get("status").and_then(Value::as_str).unwrap_or("unknown")
+                    )),
+                    Err(err) => {
+                        // ponytail: retry transient renewal failures at Den's fixed interval; a prolonged
+                        // outage can still expire the lease, at which point renewal/result settlement is
+                        // rejected. Upgrade by scheduling against lease_expires_at if tighter timing is needed.
+                        tracing::warn!(
+                            target: "bear_armature::lifecycle",
+                            session_id,
+                            run_id,
+                            obligation_id,
+                            tool_call_id,
+                            error = %err,
+                            "tool execution lease renewal failed transiently; continuing local wait"
+                        );
+                    }
+                }
+            }
+            cancelled = cancellation_rx.recv(), if !cancellation_closed => {
+                match cancelled {
+                    Ok(notice) if cancellation_matches_turn(&notice, session_id, turn_token, conversation_id) => {
+                        return LeasedToolTaskWaitOutcome::Cancelled(notice);
+                    }
+                    Ok(notice) => {
+                        eprintln!(
+                            "bear-armature: ignored unrelated cancellation notice while local tool was running session_id={} turn_token={} notice_session_id={} notice_turn_token={:?}",
+                            session_id,
+                            turn_token,
+                            notice.session_id,
+                            notice.turn_token,
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        eprintln!(
+                            "bear-armature: local tool cancellation receiver lagged session_id={} turn_token={} skipped={}",
+                            session_id,
+                            turn_token,
+                            skipped,
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        cancellation_closed = true;
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn wait_for_tool_future_or_matching_cancellation<F>(
@@ -7333,26 +7609,8 @@ where
                     Ok(notice) if cancellation_matches_turn(&notice, session_id, turn_token, conversation_id) => {
                         return ToolTaskWaitOutcome::Cancelled(notice);
                     }
-                    Ok(notice) => {
-                        eprintln!(
-                            "bear-armature: ignored unrelated cancellation notice while local tool was running session_id={} turn_token={} notice_session_id={} notice_turn_token={:?}",
-                            session_id,
-                            turn_token,
-                            notice.session_id,
-                            notice.turn_token,
-                        );
-                    }
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        eprintln!(
-                            "bear-armature: local tool cancellation receiver lagged session_id={} turn_token={} skipped={}",
-                            session_id,
-                            turn_token,
-                            skipped,
-                        );
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        cancellation_closed = true;
-                    }
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => cancellation_closed = true,
                 }
             }
         }
@@ -7414,6 +7672,7 @@ pub(crate) fn spawn_tool_request_task(
                         run_id,
                         tool_call_id,
                         payload,
+                        None,
                     )
                     .await
                     {
@@ -7435,7 +7694,7 @@ pub(crate) fn spawn_tool_request_task(
             .try_register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
             .await
         {
-            tracing::debug!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id = session_id.as_str(),
                 tool_call_id = tool_call_id.as_str(),
@@ -7446,7 +7705,118 @@ pub(crate) fn spawn_tool_request_task(
             return;
         }
         let den_owned_display_only = is_den_server_tool_request(&event);
-        tracing::info!(
+        if !den_owned_display_only && canonical.client_obligation_id().is_err() {
+            tracing::warn!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                "armature-local tool request missing obligation_id; local execution suppressed"
+            );
+            let _ = shared_state
+                .tool_tasks
+                .remove(&session_id, &tool_call_id)
+                .await;
+            return;
+        }
+        let mut event = event;
+        let lease = if den_owned_display_only {
+            None
+        } else {
+            let run_id = event
+                .get("run_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("canonical tool request omitted run_id"));
+            let claim = match run_id {
+                Ok(run_id) => {
+                    crate::bearwire::claim_tool_execution(
+                        &config,
+                        &session_id,
+                        run_id,
+                        canonical
+                            .client_obligation_id()
+                            .expect("armature-local tool request was validated above"),
+                        &tool_call_id,
+                    )
+                    .await
+                }
+                Err(err) => Err(err),
+            };
+            match claim {
+                Ok(response) if response.get("ok").and_then(Value::as_bool) == Some(true) => {
+                    match parse_tool_execution_lease(&response) {
+                        Ok(lease) => {
+                            event["data"]["attempt_token"] = json!(lease.attempt_token);
+                            Some(lease)
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                target: "bear_armature::lifecycle",
+                                session_id = session_id.as_str(),
+                                tool_call_id = tool_call_id.as_str(),
+                                tool_name = tool_name.as_str(),
+                                error = %err,
+                                "tool execution claim response was invalid; local execution suppressed"
+                            );
+                            let _ = shared_state
+                                .tool_tasks
+                                .remove(&session_id, &tool_call_id)
+                                .await;
+                            return;
+                        }
+                    }
+                }
+                Ok(response) if is_tool_execution_claim_rejection(&response) => {
+                    tracing::debug!(
+                        target: "bear_armature::lifecycle",
+                        session_id = session_id.as_str(),
+                        tool_call_id = tool_call_id.as_str(),
+                        tool_name = tool_name.as_str(),
+                        claim_status = "claim_rejected",
+                        "tool execution claim rejected; local execution suppressed"
+                    );
+                    let _ = shared_state
+                        .tool_tasks
+                        .remove(&session_id, &tool_call_id)
+                        .await;
+                    return;
+                }
+                Ok(response) => {
+                    tracing::warn!(
+                        target: "bear_armature::lifecycle",
+                        session_id = session_id.as_str(),
+                        tool_call_id = tool_call_id.as_str(),
+                        tool_name = tool_name.as_str(),
+                        claim_status = response
+                            .get("status")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("unknown"),
+                        "tool execution claim returned an unexpected rejection; local execution suppressed"
+                    );
+                    let _ = shared_state
+                        .tool_tasks
+                        .remove(&session_id, &tool_call_id)
+                        .await;
+                    return;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        target: "bear_armature::lifecycle",
+                        session_id = session_id.as_str(),
+                        tool_call_id = tool_call_id.as_str(),
+                        tool_name = tool_name.as_str(),
+                        error = %err,
+                        "tool execution claim failed; local execution suppressed"
+                    );
+                    let _ = shared_state
+                        .tool_tasks
+                        .remove(&session_id, &tool_call_id)
+                        .await;
+                    return;
+                }
+            }
+        };
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id = session_id.as_str(),
             tool_call_id = tool_call_id.as_str(),
@@ -7471,17 +7841,47 @@ pub(crate) fn spawn_tool_request_task(
             &event,
             turn_token,
         );
-        let result = match wait_for_tool_future_or_matching_cancellation(
-            cancellation_rx,
-            &session_id,
-            turn_token,
-            None,
-            tool_future,
-        )
-        .await
-        {
-            ToolTaskWaitOutcome::ToolFinished(result) => result,
-            ToolTaskWaitOutcome::Cancelled(_notice) => {
+        let result = if let Some(lease) = lease.as_ref() {
+            let run_id = event
+                .get("run_id")
+                .and_then(Value::as_str)
+                .expect("claimed canonical tool request has run_id");
+            wait_for_leased_tool_future_or_matching_cancellation(
+                cancellation_rx,
+                &session_id,
+                turn_token,
+                None,
+                &config,
+                run_id,
+                canonical
+                    .client_obligation_id()
+                    .expect("armature-local tool request was validated above"),
+                &tool_call_id,
+                lease,
+                tool_future,
+            )
+            .await
+        } else {
+            LeasedToolTaskWaitOutcome::ToolFinished(tool_future.await)
+        };
+        let result = match result {
+            LeasedToolTaskWaitOutcome::ToolFinished(result) => result,
+            LeasedToolTaskWaitOutcome::LeaseLost(err) => {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id = session_id.as_str(),
+                    tool_call_id = tool_call_id.as_str(),
+                    tool_name = tool_name.as_str(),
+                    error = %err,
+                    "stopped waiting for local tool after losing execution lease"
+                );
+                let _ = shared_state
+                    .tool_tasks
+                    .remove(&session_id, &tool_call_id)
+                    .await;
+                return;
+            }
+            LeasedToolTaskWaitOutcome::Cancelled(_notice) => {
                 shared_state
                     .tool_tasks
                     .set_phase(
@@ -7510,7 +7910,7 @@ pub(crate) fn spawn_tool_request_task(
                     std::time::Instant::now(),
                 )
                 .await;
-                tracing::info!(
+                tracing::trace!(
                     target: "bear_armature::lifecycle",
                     session_id = session_id.as_str(),
                     tool_call_id = tool_call_id.as_str(),
@@ -7553,7 +7953,7 @@ pub(crate) fn spawn_tool_request_task(
                 .remove(&session_id, &tool_call_id)
                 .await;
         } else if den_owned_display_only {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id = session_id.as_str(),
                 tool_call_id = tool_call_id.as_str(),
@@ -7574,17 +7974,13 @@ pub(crate) fn spawn_tool_request_task(
                 .remove(&session_id, &tool_call_id)
                 .await;
         } else {
-            tracing::info!(
+            tracing::trace!(
                 target: "bear_armature::lifecycle",
                 session_id = session_id.as_str(),
                 tool_call_id = tool_call_id.as_str(),
                 tool_name = tool_name.as_str(),
-                "local tool task finished"
+                "local tool task finished; retaining request presentation for canonical terminal projection"
             );
-            let _ = shared_state
-                .tool_tasks
-                .remove(&session_id, &tool_call_id)
-                .await;
         }
     });
 }
@@ -7602,7 +7998,7 @@ pub(crate) async fn project_den_owned_tool_request(
         .await
         .is_some_and(SurfaceToolStatus::is_terminal)
     {
-        tracing::debug!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             tool_call_id,
@@ -7633,11 +8029,12 @@ pub(crate) async fn project_den_owned_tool_request(
         log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
         shared_state
             .tool_tasks
-            .remember_input(
+            .remember_presentation(
                 session_id,
                 tool_call_id,
                 tool_name,
                 canonical.tool_call.arguments.clone(),
+                canonical.tool_call.display.clone(),
             )
             .await;
     }
@@ -7651,7 +8048,11 @@ pub(crate) async fn project_den_owned_tool_request(
         ToolCallUpdatePayload {
             status: "pending",
             text: &preparing,
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -7667,7 +8068,11 @@ pub(crate) async fn project_den_owned_tool_request(
         ToolCallUpdatePayload {
             status: "in_progress",
             text: &running,
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -7711,7 +8116,13 @@ async fn handle_tool_request_event(
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
     let args = canonical.tool_call.arguments.clone();
     task_registry
-        .remember_input(session_id, tool_call_id, tool_name, args.clone())
+        .remember_presentation(
+            session_id,
+            tool_call_id,
+            tool_name,
+            args.clone(),
+            canonical.tool_call.display.clone(),
+        )
         .await;
     if is_den_server_tool_request(event) {
         project_den_owned_tool_request(shared_state, session_id, event, turn_token).await?;
@@ -7733,7 +8144,11 @@ async fn handle_tool_request_event(
         ToolCallUpdatePayload {
             status: "pending",
             text: &preparing,
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -7813,7 +8228,11 @@ async fn handle_tool_request_event(
             ToolCallUpdatePayload {
                 status: "pending",
                 text: &permission,
-                event: Some(event),
+                request: Some(ToolRequestPresentation::from_event(
+                    tool_call_id,
+                    tool_name,
+                    event,
+                )),
                 raw_output: None,
                 extra_content: replace_plan
                     .as_ref()
@@ -7939,7 +8358,11 @@ async fn handle_tool_request_event(
         ToolCallUpdatePayload {
             status: "pending",
             text: &running,
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -8079,6 +8502,7 @@ async fn handle_tool_request_event(
         "run_id": event.get("run_id").and_then(Value::as_str),
         "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
+        "attempt_token": event.pointer("/data/attempt_token").and_then(Value::as_str),
         "diagnostic": {
             "component": "bear-armature",
             "adapter_version": adapter_version(),
@@ -8192,7 +8616,11 @@ async fn handle_tool_request_event(
             ToolCallUpdatePayload {
                 status: "failed",
                 text: &message,
-                event: Some(event),
+                request: Some(ToolRequestPresentation::from_event(
+                    tool_call_id,
+                    tool_name,
+                    event,
+                )),
                 raw_output: Some(json!({
                     "component": "bear-armature",
                     "phase": "result_post_failed",
@@ -8226,7 +8654,11 @@ async fn handle_tool_request_event(
             ToolCallUpdatePayload {
                 status: &status,
                 text: &text,
-                event: Some(event),
+                request: Some(ToolRequestPresentation::from_event(
+                    tool_call_id,
+                    tool_name,
+                    event,
+                )),
                 raw_output,
                 extra_content,
             },
@@ -8267,14 +8699,26 @@ struct BearWireToolCallRequestCard {
     id: String,
     name: String,
     arguments: Value,
+    #[serde(default)]
+    display: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct BearWireToolCallRequestData {
+    #[serde(default)]
+    obligation_id: Option<String>,
     tool_call: BearWireToolCallRequestCard,
 }
 
 impl BearWireToolCallRequestData {
+    fn client_obligation_id(&self) -> Result<&str> {
+        self.obligation_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| anyhow!("armature-local tool request missing obligation_id"))
+    }
+
     fn parse(event: &Value) -> Result<Self> {
         let data = event
             .get("data")
@@ -8646,6 +9090,7 @@ async fn post_local_tool_error_result(
         "run_id": event.get("run_id").and_then(Value::as_str),
         "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
+        "attempt_token": event.pointer("/data/attempt_token").and_then(Value::as_str),
         "status": local_err.status_str(),
         "content": local_err.message,
         "structured_content": {},
@@ -8667,7 +9112,11 @@ async fn post_local_tool_error_result(
         ToolCallUpdatePayload {
             status: "failed",
             text: payload["content"].as_str().unwrap_or("Local tool failed"),
-            event: Some(event),
+            request: Some(ToolRequestPresentation::from_event(
+                tool_call_id,
+                tool_name,
+                event,
+            )),
             raw_output: None,
             extra_content: Vec::new(),
         },
@@ -8785,7 +9234,7 @@ async fn request_tool_permission(
     let request =
         RequestPermissionRequest::new(session_id.to_string(), tool_call, options).meta(Some(meta));
     let permission_timeout_ms = policy.permission_timeout_ms.unwrap_or(120_000);
-    tracing::info!(
+    tracing::trace!(
         target: "bear_armature::lifecycle",
         session_id,
         tool_call_id,
@@ -8799,7 +9248,7 @@ async fn request_tool_permission(
         std::time::Duration::from_millis(permission_timeout_ms),
     )
     .await?;
-    tracing::info!(
+    tracing::trace!(
         target: "bear_armature::lifecycle",
         session_id,
         tool_call_id,
@@ -8846,7 +9295,7 @@ async fn post_permission_result(
     payload: Value,
 ) -> Result<Value> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
-        tracing::info!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -8861,7 +9310,7 @@ async fn post_permission_result(
             payload.clone(),
         )
         .await?;
-        tracing::info!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -8928,7 +9377,7 @@ async fn post_tool_result(
 ) -> Result<()> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
         let started = std::time::Instant::now();
-        tracing::info!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -8947,7 +9396,14 @@ async fn post_tool_result(
         }
         let result = timeout(
             Duration::from_secs(TOOL_RESULT_POST_TIMEOUT_SECS),
-            bearwire::post_tool_result(config, session_id, run_id, tool_call_id, payload.clone()),
+            bearwire::post_tool_result(
+                config,
+                session_id,
+                run_id,
+                tool_call_id,
+                payload.clone(),
+                payload.get("attempt_token").and_then(Value::as_str),
+            ),
         )
         .await
         .map_err(|_| {
@@ -8969,7 +9425,7 @@ async fn post_tool_result(
                 duration_ms
             );
         }
-        tracing::info!(
+        tracing::trace!(
             target: "bear_armature::lifecycle",
             session_id,
             run_id,
@@ -9245,19 +9701,82 @@ pub(crate) async fn handle_conversation_resolved_projection(
     Ok(())
 }
 
+fn approved_local_tool_request_event(
+    permission_event: &Value,
+    local_tool: &Value,
+) -> Result<Value> {
+    let run_id = permission_event
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("approved local tool request missing run_id"))?;
+    let obligation_id = local_tool
+        .get("obligation_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("approved local tool request missing obligation_id"))?;
+    let tool_call_id = local_tool
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("approved local tool request missing tool_call_id"))?;
+    let tool_name = local_tool
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("approved local tool request missing tool_name"))?;
+
+    Ok(json!({
+        "type": "tool_call.requested",
+        "run_id": run_id,
+        "data": {
+            "expected_responder_action": "tool_result",
+            "obligation_id": obligation_id,
+            "tool_call": {
+                "id": tool_call_id,
+                "name": tool_name,
+                "kind": "function",
+                "arguments": local_tool.get("args").cloned().unwrap_or_else(|| json!({})),
+            },
+            "approval_required": false,
+            "approval_request_id": local_tool.get("permission_id").cloned().unwrap_or(Value::Null),
+            "execution_target": "armature_local",
+            "policy": local_tool.get("policy").cloned().unwrap_or(Value::Null),
+        }
+    }))
+}
+
 pub(crate) async fn handle_permission_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
-    mcp_registry: &McpRegistry,
     session_id: &str,
     event: &Value,
+    turn_token: Uuid,
 ) -> Result<()> {
     let canonical = BearWireClientWaitingData::parse(event)?;
     let permission_id = canonical.permission.id.trim();
     let obligation_id = Some(canonical.obligation_id.trim());
     let tool_call_id = canonical.tool_call.id.trim();
     let tool_name = canonical.tool_call.name.trim();
+    let run_id = event
+        .get("run_id")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    tracing::debug!(
+        target: "bear_armature::lifecycle",
+        session_id,
+        run_id,
+        obligation_id = canonical.obligation_id.trim(),
+        permission_id,
+        tool_call_id,
+        tool_name,
+        "permission obligation accepted for ACP projection"
+    );
     if tool_request_execution_target(event) == Some("den") {
         eprintln!(
             "bear-armature: BearWire invariant violation: Den-owned tool arrived as client.waiting session_id={} tool_call_id={} tool_name={} permission_id={}",
@@ -9280,7 +9799,7 @@ pub(crate) async fn handle_permission_request_event(
         .as_deref()
         .map(str::trim)
         .filter(|reason| !reason.is_empty())
-        .unwrap_or("BEARS requests permission.");
+        .unwrap_or("Den requests permission.");
     let target = canonical
         .permission
         .target
@@ -9570,23 +10089,62 @@ pub(crate) async fn handle_permission_request_event(
         false
     };
     let decision = if auto_allowed {
-        if bear_debug_verbose() {
-            eprintln!(
-                "bear-armature: permission_auto_allowed session_id={} tool_name={} target={}",
-                session_id, tool_name, target_label
-            );
-        }
+        tracing::debug!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            obligation_id = canonical.obligation_id.trim(),
+            permission_id,
+            tool_call_id,
+            tool_name,
+            "permission obligation auto-approved; ACP request not dispatched"
+        );
         PermissionDecision {
             approved: true,
             remember: false,
             scope: ApprovalScope::Workspace,
         }
     } else {
+        tracing::debug!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            obligation_id = canonical.obligation_id.trim(),
+            permission_id,
+            tool_call_id,
+            tool_name,
+            "dispatching ACP permission request"
+        );
         match send_permission_request(adapter_state, request, std::time::Duration::from_secs(120))
             .await
         {
-            Ok(decision) => decision,
+            Ok(decision) => {
+                tracing::debug!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    obligation_id = canonical.obligation_id.trim(),
+                    permission_id,
+                    tool_call_id,
+                    tool_name,
+                    approved = decision.approved,
+                    remember = decision.remember,
+                    "ACP permission request completed"
+                );
+                decision
+            }
             Err(err) => {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    obligation_id = canonical.obligation_id.trim(),
+                    permission_id,
+                    tool_call_id,
+                    tool_name,
+                    error = %format!("{err:#}"),
+                    "ACP permission request failed before a decision"
+                );
                 let message = format!("Permission request timed out or failed: {err:#}");
                 let _ = post_permission_result(
                     config,
@@ -9610,7 +10168,11 @@ pub(crate) async fn handle_permission_request_event(
                     ToolCallUpdatePayload {
                         status: "failed",
                         text: &message,
-                        event: Some(event),
+                        request: Some(ToolRequestPresentation::from_event(
+                            tool_call_id,
+                            tool_name,
+                            event,
+                        )),
                         raw_output: Some(json!({
                             "component": "bear-armature",
                             "phase": "permission_request_failed",
@@ -9705,157 +10267,14 @@ pub(crate) async fn handle_permission_request_event(
         }
     }
     if let Some(local_tool) = response.get("local_tool_request") {
-        let tool_call_id = local_tool
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            .unwrap_or(tool_call_id);
-        let tool_name = local_tool
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .unwrap_or("local_web_fetch");
-        let result_tool_name = local_tool
-            .get("result_tool_name")
-            .and_then(Value::as_str)
-            .unwrap_or(tool_name);
-        let args = local_tool.get("args").cloned().unwrap_or_else(|| json!({}));
-        if !shared_state
-            .tool_tasks
-            .try_register(session_id, tool_call_id, tool_name, None)
-            .await
-        {
-            tracing::debug!(
-                target: "bear_armature::lifecycle",
-                session_id,
-                tool_call_id,
-                tool_name,
-                "duplicate permission-local tool task ignored"
-            );
-            return Ok(());
-        }
-        shared_state
-            .tool_tasks
-            .remember_input(session_id, tool_call_id, tool_name, args.clone())
-            .await;
-        let policy = policy_from_event(local_tool);
-        let result = execute_local_tool(
-            adapter_state,
-            mcp_registry,
-            session_id,
-            tool_name,
-            args.clone(),
-            &policy,
-        )
-        .await;
-        let started = std::time::Instant::now();
-        match result {
-            Ok(value) => {
-                if matches!(tool_name, "update_task_list" | "update_plan") {
-                    let entries = value
-                        .get("plan")
-                        .map(plan_entries_from_work_plan_args)
-                        .unwrap_or_default();
-                    send_plan_update(session_id, entries).await?;
-                }
-                if let Some(mode) = value.get("mode_update").and_then(Value::as_str) {
-                    if matches!(mode, MODE_ASK | MODE_PLAN | MODE_WRITE) {
-                        notify_mode_state(session_id, mode).await?;
-                    }
-                }
-                let preview = tool_completion_preview(tool_name, &value);
-                let local_event = json!({
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "data": {
-                        "tool_call": {
-                            "id": tool_call_id,
-                            "name": tool_name,
-                            "arguments": args,
-                        }
-                    }
-                });
-                let payload = json!({
-                    "tool_call_id": tool_call_id,
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "tool_name": result_tool_name,
-                    "status": "ok",
-                    "content": "",
-                    "structured_content": value.clone(),
-                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_completed", "duration_ms": started.elapsed().as_millis() }
-                });
-                post_tool_result(config, session_id, tool_call_id, payload).await?;
-                if let Err(err) = send_tool_call_update(
-                    session_id,
-                    tool_call_id,
-                    tool_name,
-                    ToolCallUpdatePayload {
-                        status: "completed",
-                        text: &preview,
-                        event: Some(&local_event),
-                        raw_output: Some(value.clone()),
-                        extra_content: Vec::new(),
-                    },
-                )
-                .await
-                {
-                    eprintln!(
-                        "bear-armature: ACP tool-card update failed after Den accepted permission-local result session_id={} tool_call_id={} tool_name={} error={:#}",
-                        session_id,
-                        tool_call_id,
-                        tool_name,
-                        err
-                    );
-                }
-            }
-            Err(err) => {
-                let message = format!("{err:#}");
-                let local_event = json!({
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "data": {
-                        "tool_call": {
-                            "id": tool_call_id,
-                            "name": tool_name,
-                            "arguments": args,
-                        }
-                    }
-                });
-                let payload = json!({
-                    "tool_call_id": tool_call_id,
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "tool_name": result_tool_name,
-                    "status": "error",
-                    "content": message,
-                    "structured_content": {},
-                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_failed", "duration_ms": started.elapsed().as_millis() }
-                });
-                post_tool_result(config, session_id, tool_call_id, payload).await?;
-                if let Err(err) = send_tool_call_update(
-                    session_id,
-                    tool_call_id,
-                    tool_name,
-                    ToolCallUpdatePayload {
-                        status: "failed",
-                        text: &message,
-                        event: Some(&local_event),
-                        raw_output: Some(json!({
-                            "component": "bear-armature",
-                            "phase": "permission_local_tool_failed",
-                            "error": message,
-                            "duration_ms": started.elapsed().as_millis(),
-                        })),
-                        extra_content: Vec::new(),
-                    },
-                )
-                .await
-                {
-                    eprintln!(
-                        "bear-armature: ACP tool-card failure update failed after Den accepted permission-local result session_id={} tool_call_id={} tool_name={} error={:#}",
-                        session_id,
-                        tool_call_id,
-                        tool_name,
-                        err
-                    );
-                }
-            }
-        }
+        let request_event = approved_local_tool_request_event(event, local_tool)?;
+        spawn_tool_request_task(
+            config.clone(),
+            shared_state.clone(),
+            session_id.to_string(),
+            request_event,
+            turn_token,
+        );
     }
     Ok(())
 }
@@ -10629,6 +11048,25 @@ fn friendly_tool_status(tool_name: &str, event: &Value, phase: &str) -> String {
     }
 }
 
+fn is_generic_completion_text(text: &str) -> bool {
+    let normalized = text.trim().trim_end_matches('.').to_ascii_lowercase();
+    normalized == "completed" || normalized.ends_with(" completed")
+}
+
+fn is_meaningful_terminal_tool_text(tool_name: &str, text: &str) -> bool {
+    let normalized = text.trim().trim_end_matches('.').to_ascii_lowercase();
+    if normalized.is_empty() || is_generic_completion_text(&normalized) {
+        return false;
+    }
+
+    // ACP replaces a tool card rather than patching it. These bare result-kind labels carry no
+    // outcome, and must not replace the useful request/running summary retained for the card.
+    let tool_label = tool_name.replace(['_', '.'], " ").to_ascii_lowercase();
+    !matches!(
+        normalized.as_str(),
+        "file" | "files" | "directory" | "directories" | "result" | "results"
+    ) && normalized != tool_label
+}
 fn tool_status_from_str(status: &str) -> ToolCallStatus {
     match status {
         "pending" => ToolCallStatus::Pending,
@@ -10747,24 +11185,11 @@ async fn record_surface_tool_status(
 }
 
 fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay) -> String {
-    if matches!(
-        tool_name,
-        "set_conversation_title"
-            | "run_command"
-            | "process_run"
-            | "terminal_run_command"
-            | "update_task"
-    ) {
-        return event
-            .map(|event| tool_call_title(tool_name, event))
-            .unwrap_or_else(|| display.title.clone());
-    }
-    if event.is_some_and(|event| event_display_from_event(event).is_some()) {
-        display.title.clone()
-    } else {
-        event
-            .map(|event| tool_call_title(tool_name, event))
-            .unwrap_or_else(|| display.title.clone())
+    match event {
+        Some(event) if event_display_from_event(event).is_none() => {
+            tool_call_title(tool_name, event)
+        }
+        _ => display.title.clone(),
     }
 }
 
@@ -10794,10 +11219,47 @@ pub(crate) async fn send_terminal_tool_call_update(
     .await
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ToolRequestPresentation {
+    pub(crate) tool_call_id: String,
+    pub(crate) tool_name: String,
+    pub(crate) arguments: Option<Value>,
+    pub(crate) display: Option<Value>,
+}
+
+impl ToolRequestPresentation {
+    fn from_event(tool_call_id: &str, tool_name: &str, event: &Value) -> Self {
+        Self {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments: tool_args_from_event(event).cloned(),
+            display: event_display_from_event(event).cloned(),
+        }
+    }
+
+    pub(crate) fn projection_event(&self) -> Value {
+        let mut event = json!({
+            "data": {
+                "tool_call": {
+                    "id": self.tool_call_id,
+                    "name": self.tool_name,
+                }
+            }
+        });
+        if let Some(arguments) = self.arguments.as_ref() {
+            event["data"]["tool_call"]["arguments"] = arguments.clone();
+        }
+        if let Some(display) = self.display.as_ref() {
+            event["data"]["tool_call"]["display"] = display.clone();
+        }
+        event
+    }
+}
+
 struct ToolCallUpdatePayload<'a> {
     status: &'a str,
     text: &'a str,
-    event: Option<&'a Value>,
+    request: Option<ToolRequestPresentation>,
     raw_output: Option<Value>,
     extra_content: Vec<ToolCallContent>,
 }
@@ -10816,10 +11278,82 @@ pub(crate) async fn send_tool_call_update_for_turn(
         {
             return Ok(());
         }
+        let text = if surface_status.is_terminal()
+            && !is_meaningful_terminal_tool_text(tool_name, payload.text)
+        {
+            shared_state
+                .tool_tasks
+                .get(session_id, tool_call_id)
+                .await
+                .and_then(|record| record.visible_summary)
+                .unwrap_or(payload.text.to_string())
+        } else {
+            payload.text.to_string()
+        };
+        if !surface_status.is_terminal() {
+            shared_state
+                .tool_tasks
+                .remember_visible_summary(session_id, tool_call_id, &text)
+                .await;
+        }
+        let payload = ToolCallUpdatePayload {
+            text: &text,
+            ..payload
+        };
         send_tool_call_update(session_id, tool_call_id, tool_name, payload).await
     } else {
         Ok(())
     }
+}
+
+#[derive(Debug)]
+struct ToolOutcome {
+    status: ToolCallStatus,
+    text: String,
+    raw_output: Option<Value>,
+    extra_content: Vec<ToolCallContent>,
+}
+
+impl ToolOutcome {
+    fn new(
+        status: &str,
+        text: &str,
+        raw_output: Option<Value>,
+        extra_content: Vec<ToolCallContent>,
+    ) -> Self {
+        Self {
+            status: tool_status_from_str(status),
+            text: text.to_string(),
+            raw_output,
+            extra_content,
+        }
+    }
+}
+
+fn project_tool_call(request: &ToolRequestPresentation, outcome: ToolOutcome) -> ToolCall {
+    let event = request.projection_event();
+    let display = ToolDisplay::from_event(&request.tool_name, &event);
+    let mut content = Vec::new();
+    let trimmed_text = outcome.text.trim();
+    if !trimmed_text.is_empty() && trimmed_text != "Completed." {
+        content.push(ToolCallContent::from(trimmed_text.to_string()));
+    }
+    content.extend(outcome.extra_content);
+    let title = tool_card_title(&request.tool_name, Some(&event), &display);
+    let mut tool_call = ToolCall::new(request.tool_call_id.clone(), title)
+        .kind(display.kind)
+        .status(outcome.status)
+        .content(content);
+    if let Some(locations) = tool_locations_from_event(&request.tool_name, &event) {
+        tool_call = tool_call.locations(locations);
+    }
+    if let Some(args) = request.arguments.as_ref() {
+        tool_call = tool_call.raw_input(Some(compact_tool_card_json_value(args.clone())));
+    }
+    if let Some(raw_output) = outcome.raw_output {
+        tool_call = tool_call.raw_output(Some(compact_tool_card_json_value(raw_output)));
+    }
+    tool_call
 }
 
 async fn send_tool_call_update(
@@ -10831,35 +11365,18 @@ async fn send_tool_call_update(
     let ToolCallUpdatePayload {
         status,
         text,
-        event,
+        request,
         raw_output,
         extra_content,
     } = payload;
-    let display = event
-        .map(|event| ToolDisplay::from_event(tool_name, event))
-        .unwrap_or_else(|| tool_display(tool_name));
-    let mut content = Vec::new();
-    let trimmed_text = text.trim();
-    if !trimmed_text.is_empty() && trimmed_text != "Completed." {
-        content.push(ToolCallContent::from(trimmed_text.to_string()));
-    }
-    content.extend(extra_content);
-    let title = tool_card_title(tool_name, event, &display);
-    let mut tool_call = ToolCall::new(tool_call_id.to_string(), title)
-        .kind(display.kind)
-        .status(tool_status_from_str(status))
-        .content(content);
-    if let Some(event) = event {
-        if let Some(locations) = tool_locations_from_event(tool_name, event) {
-            tool_call = tool_call.locations(locations);
-        }
-        if let Some(args) = tool_args_from_event(event) {
-            tool_call = tool_call.raw_input(Some(compact_tool_card_json_value(args.clone())));
-        }
-    }
-    if let Some(raw_output) = raw_output {
-        tool_call = tool_call.raw_output(Some(compact_tool_card_json_value(raw_output)));
-    }
+    let request = request.unwrap_or_else(|| ToolRequestPresentation {
+        tool_call_id: tool_call_id.to_string(),
+        tool_name: tool_name.to_string(),
+        arguments: None,
+        display: None,
+    });
+    let outcome = ToolOutcome::new(status, text, raw_output, extra_content);
+    let tool_call = project_tool_call(&request, outcome);
     write_notification(
         "session/update",
         json!({
@@ -11150,10 +11667,56 @@ mod tests {
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
     #[test]
+    fn terminal_tool_card_text_keeps_prior_summary_when_completion_is_a_bare_result_kind() {
+        assert!(!is_meaningful_terminal_tool_text(
+            "fs_search_files",
+            "files"
+        ));
+        assert!(!is_meaningful_terminal_tool_text(
+            "fs_search_files",
+            "Completed."
+        ));
+        assert!(is_meaningful_terminal_tool_text(
+            "fs_search_files",
+            "Found 3 matches in 2 files."
+        ));
+    }
+
+    #[test]
+    fn workspace_git_remote_origins_reads_and_deduplicates_origins() {
+        let root = std::env::temp_dir().join(format!("bear-armature-origin-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/bears-ai/bear-den.git",
+            ])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        let root = root.to_string_lossy().to_string();
+        assert_eq!(
+            workspace_git_remote_origins(&[root.clone(), root.clone()]),
+            vec!["https://github.com/bears-ai/bear-den.git"]
+        );
+        fs::remove_dir_all(std::path::Path::new(&root)).unwrap();
+    }
+
+    #[test]
     fn truncate_for_log_preserves_utf8_boundaries() {
         let input = format!("{}§tail", "x".repeat(239));
 
-        assert_eq!(truncate_for_log(&input, 240), format!("{}...", "x".repeat(239)));
+        assert_eq!(
+            truncate_for_log(&input, 240),
+            format!("{}...", "x".repeat(239))
+        );
     }
 
     #[test]
@@ -12110,6 +12673,7 @@ mod tests {
             "acp-session".to_string(),
             ActivePromptTurn {
                 token: turn_token,
+                response: PromptResponseGuard::new(json!("test")),
                 conversation_id: Some("conv-1".to_string()),
             },
         );
@@ -12210,6 +12774,7 @@ mod tests {
             "acp-session".to_string(),
             ActivePromptTurn {
                 token: turn_token,
+                response: PromptResponseGuard::new(json!("test")),
                 conversation_id: Some("conv-1".to_string()),
             },
         );
@@ -12312,6 +12877,7 @@ mod tests {
             "acp-session".to_string(),
             ActivePromptTurn {
                 token: turn_token,
+                response: PromptResponseGuard::new(json!("test")),
                 conversation_id: Some("conv-1".to_string()),
             },
         );
@@ -12369,6 +12935,7 @@ mod tests {
             "acp-session",
             previous_token,
             Some("conv-1".to_string()),
+            PromptResponseGuard::new(json!(1)),
         )
         .await;
         let mut cancel_rx = shared.cancellation_tx.subscribe();
@@ -12377,12 +12944,19 @@ mod tests {
             "acp-session",
             next_token,
             Some("conv-1".to_string()),
+            PromptResponseGuard::new(json!(2)),
         )
         .await
         .expect("previous turn returned");
         let notice = cancel_rx.recv().await.expect("cancellation notice");
 
         assert_eq!(previous.token, previous_token);
+        assert_eq!(previous.response.claim(), Some(json!(1)));
+        assert_eq!(
+            previous.response.claim(),
+            None,
+            "superseded prompt handler must not send a second response"
+        );
         assert_eq!(notice.session_id, "acp-session");
         assert_eq!(notice.turn_token, Some(previous_token));
         assert_eq!(notice.conversation_id.as_deref(), Some("conv-1"));
@@ -12404,6 +12978,7 @@ mod tests {
             "acp-session",
             previous_token,
             Some("conv-1".to_string()),
+            PromptResponseGuard::new(json!(1)),
         )
         .await;
         let mut cancel_rx = shared.cancellation_tx.subscribe();
@@ -12412,17 +12987,62 @@ mod tests {
             "acp-session",
             next_token,
             Some("conv-2".to_string()),
+            PromptResponseGuard::new(json!(2)),
         )
         .await
         .expect("previous turn returned");
 
         assert_eq!(previous.token, previous_token);
+        assert_eq!(previous.response.claim(), Some(json!(1)));
+        assert_eq!(
+            previous.response.claim(),
+            None,
+            "superseded prompt handler must not send a second response"
+        );
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(50), cancel_rx.recv())
                 .await
                 .is_err(),
             "different-conversation overlap should not send cancellation"
         );
+    }
+
+    #[test]
+    fn adapter_identifies_only_expected_tool_execution_claim_rejections() {
+        assert!(is_tool_execution_claim_rejection(&json!({
+            "ok": false,
+            "status": "claim_rejected"
+        })));
+        assert!(!is_tool_execution_claim_rejection(&json!({
+            "ok": false,
+            "status": "invalid_obligation"
+        })));
+        assert!(!is_tool_execution_claim_rejection(&json!({ "ok": true })));
+    }
+
+    #[test]
+    fn adapter_parses_tool_execution_lease() {
+        let lease = parse_tool_execution_lease(&json!({
+            "ok": true,
+            "attempt_token": "attempt-1",
+            "renew_after_ms": 10_000,
+        }))
+        .expect("valid lease");
+
+        assert_eq!(lease.attempt_token, "attempt-1");
+        assert_eq!(lease.renew_after, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn adapter_rejects_incomplete_or_rejected_tool_execution_lease() {
+        for response in [
+            json!({"ok": false, "status": "claim_rejected"}),
+            json!({"ok": true, "renew_after_ms": 10_000}),
+            json!({"ok": true, "attempt_token": "attempt-1"}),
+            json!({"ok": true, "attempt_token": "attempt-1", "renew_after_ms": 0}),
+        ] {
+            assert!(parse_tool_execution_lease(&response).is_err(), "{response}");
+        }
     }
 
     #[tokio::test]
@@ -13114,26 +13734,35 @@ mod tests {
     #[test]
     fn error_without_run_terminal_does_not_allow_prompt_end_response() {
         assert!(!stream_allows_prompt_end_response(
-            false, true, false, false
+            false, true, false, false, false
         ));
     }
 
     #[test]
     fn visible_output_without_terminal_does_not_allow_prompt_end_response() {
         assert!(!stream_allows_prompt_end_response(
-            true, false, false, false
+            true, false, false, false, false
         ));
     }
 
     #[test]
     fn run_done_allows_prompt_end_response_without_output_or_tool_activity() {
-        assert!(stream_allows_prompt_end_response(false, false, true, false));
+        assert!(stream_allows_prompt_end_response(
+            false, false, true, false, false
+        ));
     }
 
     #[test]
     fn tool_activity_alone_does_not_allow_prompt_end_response() {
         assert!(!stream_allows_prompt_end_response(
-            false, false, false, true
+            false, false, false, true, false
+        ));
+    }
+
+    #[test]
+    fn canonical_run_state_allows_prompt_end_after_a_missed_terminal_event() {
+        assert!(stream_allows_prompt_end_response(
+            true, false, false, true, true
         ));
     }
 
@@ -13168,6 +13797,7 @@ mod tests {
             "type": "tool_call.requested",
             "run_id": "run-1",
             "data": {
+                "obligation_id": "obl-call-1",
                 "tool_call": {
                     "id": "call-1",
                     "name": "fs_read_text_file",
@@ -13190,6 +13820,29 @@ mod tests {
             ToolDisplay::from_event("fs_read_text_file", &event).title,
             "Read workspace README"
         );
+    }
+
+    #[test]
+    fn den_owned_checkpoint_request_can_omit_client_obligation() {
+        let event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-1",
+            "data": {
+                "execution_target": "den",
+                "policy": { "execution_target": "den" },
+                "tool_call": {
+                    "id": "call-checkpoint-1",
+                    "name": "checkpoint",
+                    "arguments": { "checkpoint_id": "ckpt-1" }
+                }
+            }
+        });
+
+        let parsed = BearWireToolCallRequestData::parse(&event).expect("parse Den-owned request");
+        assert_eq!(parsed.obligation_id, None);
+        assert_eq!(parsed.tool_call.name, "checkpoint");
+        assert!(parsed.client_obligation_id().is_err());
+        assert!(is_den_server_tool_request(&event));
     }
 
     #[test]
@@ -13229,6 +13882,41 @@ mod tests {
             parsed.permission.target.unwrap()["url"],
             "https://example.com/"
         );
+    }
+
+    #[test]
+    fn approved_local_tool_response_becomes_claimable_tool_request() {
+        let permission_event = json!({
+            "type": "client.waiting",
+            "run_id": "run-git-1",
+        });
+        let local_tool = json!({
+            "tool_call_id": "call-git-1",
+            "tool_name": "git_status",
+            "result_tool_name": "git_status",
+            "args": { "path": "." },
+            "permission_id": "perm-git-1",
+            "obligation_id": "obl-git-1",
+            "policy": {
+                "execution_target": "armature_local",
+                "total_timeout_ms": 150000,
+            },
+        });
+
+        let event = approved_local_tool_request_event(&permission_event, &local_tool)
+            .expect("canonical approved tool request");
+        let parsed = BearWireToolCallRequestData::parse(&event).expect("parse tool request");
+
+        assert_eq!(event["type"], "tool_call.requested");
+        assert_eq!(event["run_id"], "run-git-1");
+        assert_eq!(event["data"]["expected_responder_action"], "tool_result");
+        assert_eq!(event["data"]["approval_required"], false);
+        assert_eq!(event["data"]["approval_request_id"], "perm-git-1");
+        assert_eq!(event["data"]["policy"]["total_timeout_ms"], 150000);
+        assert_eq!(parsed.obligation_id.as_deref(), Some("obl-git-1"));
+        assert_eq!(parsed.tool_call.id, "call-git-1");
+        assert_eq!(parsed.tool_call.name, "git_status");
+        assert_eq!(parsed.tool_call.arguments["path"], ".");
     }
 
     #[test]
@@ -13366,6 +14054,19 @@ mod tests {
                 .and_then(Value::as_str),
             Some("Actual ACP card title")
         );
+        let stale_file_display_event = json!({
+            "display": { "title": "Read file: file" },
+            "arguments": { "path": "/workspace/README.md" }
+        });
+        let display = ToolDisplay::from_event("fs_read_text_file", &stale_file_display_event);
+        assert_eq!(
+            tool_card_title(
+                "fs_read_text_file",
+                Some(&stale_file_display_event),
+                &display
+            ),
+            "Read file: /workspace/README.md"
+        );
         assert_eq!(
             tool_call_title(
                 "create_job",
@@ -13470,6 +14171,7 @@ mod tests {
         let canonical_event = json!({
             "type": "tool_call.requested",
             "data": {
+                "obligation_id": "obl-call-den",
                 "policy": { "execution_target": "den" },
                 "tool_call": {
                     "id": "call-den",
@@ -13763,7 +14465,10 @@ mod tests {
             json!({
                 "type": "tool_call.requested",
                 "run_id": "run-test-title",
-                "data": { "tool_call": tool_call.clone() },
+                "data": {
+                    "obligation_id": format!("obl-{call_id}"),
+                    "tool_call": tool_call.clone()
+                },
                 "policy": { "execution_target": "den" }
             }),
             json!({
@@ -14175,6 +14880,7 @@ mod tests {
                     "type": "tool_call.requested",
                     "run_id": "run-test-title",
                     "data": {
+                        "obligation_id": "obl-den-owned-title",
                         "policy": { "execution_target": "den" },
                         "tool_call": {
                             "id": "call-den-owned-title",
@@ -15587,7 +16293,7 @@ mod tests {
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", invalid.unwrap_err()).contains("did not contain"));
+        assert!(format!("{:#}", invalid.unwrap_err()).contains("found no file diff headers"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -16206,6 +16912,34 @@ mod tests {
         let result = plan.apply(context, &policy);
         assert!(format!("{:#}", result.unwrap_err()).contains("stale preflight"));
         assert_eq!(fs::read_to_string(&file).unwrap(), "hello changed world\n");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn edit_file_replace_all_replaces_every_match_when_policy_allows_it() {
+        let root = unique_test_dir("edit-replace-all");
+        let file = root.join("a.txt");
+        fs::write(&file, "old old old\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let result = handle_direct_replace_text(
+            &state,
+            "session-1",
+            &json!({
+                "path": file.to_string_lossy(),
+                "old_text": "old",
+                "new_text": "new",
+                "replace_all": true
+            }),
+            &ToolPolicy {
+                max_replacements: Some(3),
+                allow_multiple: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["replacements"], 3);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new new new\n");
         let _ = fs::remove_dir_all(root);
     }
 
@@ -16919,6 +17653,90 @@ mod tests {
         assert!(late.needs_attention());
     }
 
+    #[test]
+    fn replay_tool_result_inherits_request_arguments_without_persisting_them() {
+        let mut requests = std::collections::HashMap::new();
+        let request_message = ReloadHistoryMessage {
+            kind: "tool_call".to_string(),
+            arguments: json!({ "path": "/workspace/README.md" }),
+            ..Default::default()
+        };
+        let request = replay_tool_request(
+            &mut requests,
+            &request_message,
+            "call-read",
+            "fs_read_text_file",
+        );
+        let result_message = ReloadHistoryMessage {
+            kind: "tool_result".to_string(),
+            ..Default::default()
+        };
+        let terminal = replay_tool_request(
+            &mut requests,
+            &result_message,
+            "call-read",
+            "fs_read_text_file",
+        );
+        assert_eq!(terminal.arguments, request.arguments);
+        assert!(requests.is_empty());
+        assert_eq!(
+            tool_call_title("fs_read_text_file", &terminal.projection_event()),
+            "Read file: /workspace/README.md"
+        );
+    }
+
+    #[test]
+    fn live_and_replay_file_results_share_the_same_projection() {
+        let tool_call_id = "call-read";
+        let tool_name = "fs_read_text_file";
+        let arguments = json!({ "path": "/workspace/README.md" });
+        let live_event = json!({
+            "data": {
+                "tool_call": {
+                    "id": tool_call_id,
+                    "name": tool_name,
+                    "arguments": arguments,
+                }
+            }
+        });
+        let live_request =
+            ToolRequestPresentation::from_event(tool_call_id, tool_name, &live_event);
+
+        let mut replay_requests = std::collections::HashMap::new();
+        let replay_start = ReloadHistoryMessage {
+            kind: "tool_call".to_string(),
+            arguments: json!({ "path": "/workspace/README.md" }),
+            ..Default::default()
+        };
+        replay_tool_request(&mut replay_requests, &replay_start, tool_call_id, tool_name);
+        let replay_result = ReloadHistoryMessage {
+            kind: "tool_result".to_string(),
+            ..Default::default()
+        };
+        let replay_request = replay_tool_request(
+            &mut replay_requests,
+            &replay_result,
+            tool_call_id,
+            tool_name,
+        );
+
+        let live = project_tool_call(
+            &live_request,
+            ToolOutcome::new("completed", "Read complete.", None, Vec::new()),
+        );
+        let replay = project_tool_call(
+            &replay_request,
+            ToolOutcome::new("completed", "Read complete.", None, Vec::new()),
+        );
+        let live = serde_json::to_value(live).unwrap();
+        let replay = serde_json::to_value(replay).unwrap();
+
+        assert_eq!(live, replay);
+        assert_eq!(live["title"], "Read file: /workspace/README.md");
+        assert!(live.to_string().contains("/workspace/README.md"));
+        assert!(replay_requests.is_empty());
+    }
+
     #[tokio::test]
     async fn surface_tool_status_cache_is_session_scoped_and_clearable() {
         let shared = test_shared_state();
@@ -17008,6 +17826,7 @@ mod tests {
             session_id.clone(),
             ActivePromptTurn {
                 token: turn_token,
+                response: PromptResponseGuard::new(json!("test")),
                 conversation_id: None,
             },
         );
@@ -17045,7 +17864,11 @@ mod tests {
                 ToolCallUpdatePayload {
                     status: "completed",
                     text: "Checkpoint accepted.",
-                    event: Some(&completed_event),
+                    request: Some(ToolRequestPresentation::from_event(
+                        &tool_call_id,
+                        "checkpoint",
+                        &completed_event,
+                    )),
                     raw_output: None,
                     extra_content: Vec::new(),
                 },
@@ -17088,6 +17911,7 @@ mod tests {
             ActivePromptTurn {
                 token: current_turn,
                 conversation_id: Some("conv-current".to_string()),
+                response: PromptResponseGuard::new(json!("test")),
             },
         );
         let mut adapter_state = AdapterState {
@@ -17145,6 +17969,7 @@ mod tests {
             "type": "tool_call.requested",
             "run_id": "run-stale-den-owned",
             "data": {
+                "obligation_id": "obl-stale-den-owned",
                 "policy": { "execution_target": "den" },
                 "tool_call": {
                     "id": format!("call-{}", Uuid::new_v4()),
@@ -17879,6 +18704,7 @@ mod bearwire_tool_request_parser_tests {
         let event = json!({
             "type": "tool_call.requested",
             "data": {
+                "obligation_id": "obl-call-req-1",
                 "tool_call": {
                     "id": "call-req-1",
                     "name": "fs_read_text_file",

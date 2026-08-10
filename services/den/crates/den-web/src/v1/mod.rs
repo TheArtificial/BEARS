@@ -141,8 +141,23 @@ pub struct ChatConversationPatchResponse {
 
 #[derive(Serialize)]
 pub struct ChatHistoryMessage {
+    #[serde(default = "chat_history_message_kind")]
+    pub kind: String,
     pub role: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+}
+
+fn chat_history_message_kind() -> String {
+    "message".to_string()
 }
 
 #[derive(Serialize)]
@@ -441,7 +456,43 @@ async fn chat_history(
         conversation_persistence::ConversationHistoryProjection::UserHistory,
     )
     .await?;
-    let (messages, has_more, next_before) = map_persisted_history_page(&rows, limit as usize);
+    let (mut messages, has_more, next_before) = map_persisted_history_page(&rows, limit as usize);
+
+    if before_sequence_no.is_none() {
+        if let Some(session) = den_service::client_sessions::find_latest_for_bear_conversation(
+            state.sqlx_pool(),
+            bear.id,
+            &conv_id,
+        )
+        .await?
+        {
+            let is_work_session = den_docket::work_runs::get_work_run_by_session(
+                state.sqlx_pool(),
+                &session.client_session_id,
+            )
+            .await?
+            .is_some();
+            if is_work_session {
+                // ponytail: conversation rows and BearWire events have independent cursors. Keep
+                // the bounded activity record on the newest page; use a unified cursor if a run
+                // can exceed the store's 501-event replay ceiling.
+                let event_rows = den_runtime::bearwire_events::list_bearwire_events_after(
+                    state.sqlx_pool(),
+                    &session.client_session_id,
+                    None,
+                    501,
+                )
+                .await?;
+                messages.extend(
+                    den_runtime::work_activity::project_work_activity(event_rows)
+                        .into_iter()
+                        .filter_map(chat_history_work_activity),
+                );
+                messages.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+            }
+        }
+    }
+
     Ok(Json(ChatHistoryResponse {
         messages,
         has_more,
@@ -502,8 +553,13 @@ fn map_persisted_history_page(
         coalesced_desc.push((
             message.sequence_no,
             ChatHistoryMessage {
+                kind: chat_history_message_kind(),
                 role: client_chat_history_role(&storage_role),
                 text,
+                tool_call_id: None,
+                tool_name: None,
+                status: None,
+                created_at: Some(message.created_at.to_string()),
             },
         ));
     }
@@ -520,6 +576,70 @@ fn map_persisted_history_page(
         .map(|(_, message)| message)
         .collect::<Vec<_>>();
     (messages, has_more, next_before)
+}
+
+fn chat_history_work_activity(
+    entry: den_runtime::work_activity::WorkActivityEntry,
+) -> Option<ChatHistoryMessage> {
+    use den_runtime::work_activity::WorkActivityKind;
+
+    let created_at = Some(entry.created_at.to_string());
+    let text = if entry.truncated {
+        format!("{} [truncated]", entry.text)
+    } else {
+        entry.text
+    };
+    let message = match entry.kind {
+        WorkActivityKind::AssistantMessage => ChatHistoryMessage {
+            kind: chat_history_message_kind(),
+            role: "ai".to_string(),
+            text,
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            created_at,
+        },
+        WorkActivityKind::ReasoningSummary => ChatHistoryMessage {
+            kind: "reasoning_delta".to_string(),
+            role: "ai".to_string(),
+            text,
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            created_at,
+        },
+        WorkActivityKind::ToolCall | WorkActivityKind::ToolResult => ChatHistoryMessage {
+            kind: if entry.kind == WorkActivityKind::ToolCall {
+                "tool_call"
+            } else {
+                "tool_result"
+            }
+            .to_string(),
+            role: "system".to_string(),
+            text,
+            tool_call_id: entry.tool_call_id,
+            tool_name: entry.tool_name,
+            status: Some(
+                if entry.kind == WorkActivityKind::ToolCall {
+                    "requested"
+                } else {
+                    "completed"
+                }
+                .to_string(),
+            ),
+            created_at,
+        },
+        WorkActivityKind::Approval | WorkActivityKind::Lifecycle => ChatHistoryMessage {
+            kind: chat_history_message_kind(),
+            role: "system".to_string(),
+            text,
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            created_at,
+        },
+    };
+    Some(message)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1081,6 +1201,32 @@ mod chat_history_map_tests {
             provider_message_id: None,
             created_at: time::OffsetDateTime::now_utc(),
         }
+    }
+
+    #[test]
+    fn work_activity_maps_to_typed_deep_chat_history() {
+        use den_runtime::work_activity::{WorkActivityEntry, WorkActivityKind};
+
+        let message = chat_history_work_activity(WorkActivityEntry {
+            id: Uuid::from_u128(7),
+            first_sequence: 1,
+            last_sequence: 1,
+            kind: WorkActivityKind::ReasoningSummary,
+            text: "Checking the implementation.".to_string(),
+            tool_call_id: None,
+            tool_name: None,
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            truncated: false,
+        })
+        .expect("mapped activity");
+
+        assert_eq!(message.kind, "reasoning_delta");
+        assert_eq!(message.role, "ai");
+        assert_eq!(message.text, "Checking the implementation.");
+        assert_eq!(
+            message.created_at.as_deref(),
+            Some("1970-01-01 0:00:00.0 +00:00:00")
+        );
     }
 
     #[test]

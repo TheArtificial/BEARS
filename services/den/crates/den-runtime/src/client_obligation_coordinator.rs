@@ -126,34 +126,35 @@ async fn existing_client_result_or_late(
     obligation_id: &str,
     result_payload: &Value,
 ) -> Result<Option<ExistingClientResultOutcome>, DenError> {
-    if !run_is_terminal(run) && turn_obligations::obligation_is_open(obligation) {
-        return Ok(None);
-    }
-    Ok(Some(
-        match turn_runs::existing_client_result_for_payload(
-            pool,
-            &run.run_id,
-            obligation_kind,
-            obligation_id,
-            result_payload,
-        )
-        .await?
-        {
-            Some(turn_runs::TurnObligationResultRecord::DuplicateIdentical { row }) => {
+    if let Some(record) = turn_runs::existing_client_result_for_payload(
+        pool,
+        &run.run_id,
+        obligation_kind,
+        obligation_id,
+        result_payload,
+    )
+    .await?
+    {
+        return Ok(Some(match record {
+            turn_runs::TurnObligationResultRecord::DuplicateIdentical { row } => {
                 ExistingClientResultOutcome::DuplicateIdentical {
                     result: row,
                     run_state: run.state.clone(),
                 }
             }
-            Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
+            turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash } => {
                 ExistingClientResultOutcome::DuplicateConflict { existing_hash }
             }
-            _ => ExistingClientResultOutcome::IgnoredLateResult {
-                run_state: run.state.clone(),
-                obligation_state: obligation.state.clone(),
-            },
-        },
-    ))
+            turn_runs::TurnObligationResultRecord::Inserted { .. } => unreachable!(),
+        }));
+    }
+    if !run_is_terminal(run) && turn_obligations::obligation_is_open(obligation) {
+        return Ok(None);
+    }
+    Ok(Some(ExistingClientResultOutcome::IgnoredLateResult {
+        run_state: run.state.clone(),
+        obligation_state: obligation.state.clone(),
+    }))
 }
 
 async fn existing_tool_result_or_late(
@@ -282,6 +283,7 @@ pub async fn record_and_settle_tool_result(
     pool: &PgPool,
     run: &turn_runs::TurnRunRow,
     obligation: &turn_obligations::TurnObligationRow,
+    attempt_token_hash: &str,
     obligation_kind: &str,
     obligation_id: &str,
     result_payload: Value,
@@ -291,6 +293,7 @@ pub async fn record_and_settle_tool_result(
         run,
         obligation,
         obligation.turn_step_id,
+        attempt_token_hash,
         obligation_kind,
         obligation_id,
         result_payload,
@@ -303,6 +306,7 @@ pub async fn record_and_settle_tool_result_for_step(
     run: &turn_runs::TurnRunRow,
     obligation: &turn_obligations::TurnObligationRow,
     result_turn_step_id: Option<uuid::Uuid>,
+    attempt_token_hash: &str,
     obligation_kind: &str,
     obligation_id: &str,
     result_payload: Value,
@@ -320,29 +324,38 @@ pub async fn record_and_settle_tool_result_for_step(
     {
         return Ok(outcome);
     }
-    match turn_runs::record_client_result_for_step(
+    match turn_runs::record_claimed_tool_result_for_step(
         pool,
         run.run_id.as_str(),
         obligation.turn_step_id,
-        obligation_kind,
+        obligation.id,
         obligation_id,
+        attempt_token_hash,
         result_payload.clone(),
     )
     .await?
     {
-        turn_runs::TurnObligationResultRecord::Inserted { row } => {
-            let outcome = settle_tool_result(pool, run, obligation, result_payload).await?;
-            Ok(attach_tool_result(outcome, row))
-        }
-        turn_runs::TurnObligationResultRecord::DuplicateIdentical { row } => {
-            Ok(ToolResultCoordinatorOutcome::DuplicateIdentical {
-                result: row,
+        turn_runs::ClaimedToolResultRecord::ClaimRejected => {
+            Ok(ToolResultCoordinatorOutcome::IgnoredLateResult {
                 run_state: run.state.clone(),
+                obligation_state: obligation.state.clone(),
             })
         }
-        turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash } => {
-            Ok(ToolResultCoordinatorOutcome::DuplicateConflict { existing_hash })
+        turn_runs::ClaimedToolResultRecord::Recorded(
+            turn_runs::TurnObligationResultRecord::Inserted { row },
+        ) => {
+            let outcome = settle_recorded_tool_result(pool, run, obligation).await?;
+            Ok(attach_tool_result(outcome, row))
         }
+        turn_runs::ClaimedToolResultRecord::Recorded(
+            turn_runs::TurnObligationResultRecord::DuplicateIdentical { row },
+        ) => Ok(ToolResultCoordinatorOutcome::DuplicateIdentical {
+            result: row,
+            run_state: run.state.clone(),
+        }),
+        turn_runs::ClaimedToolResultRecord::Recorded(
+            turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash },
+        ) => Ok(ToolResultCoordinatorOutcome::DuplicateConflict { existing_hash }),
     }
 }
 
@@ -428,10 +441,16 @@ pub async fn settle_tool_result(
     pool: &PgPool,
     run: &turn_runs::TurnRunRow,
     obligation: &turn_obligations::TurnObligationRow,
+    attempt_token_hash: &str,
     result_payload: Value,
 ) -> Result<ToolResultCoordinatorOutcome, DenError> {
-    let Some(_received_obligation) =
-        turn_obligations::mark_result_received(pool, obligation.id, result_payload).await?
+    let Some(_received_obligation) = turn_obligations::mark_claimed_result_received(
+        pool,
+        obligation.id,
+        attempt_token_hash,
+        result_payload,
+    )
+    .await?
     else {
         return Ok(ToolResultCoordinatorOutcome::IgnoredLateResult {
             run_state: run.state.clone(),
@@ -439,6 +458,14 @@ pub async fn settle_tool_result(
         });
     };
 
+    settle_recorded_tool_result(pool, run, obligation).await
+}
+
+async fn settle_recorded_tool_result(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+) -> Result<ToolResultCoordinatorOutcome, DenError> {
     let open_obligations = if let Some(step_id) = obligation.turn_step_id {
         turn_obligations::open_client_obligations_for_step(pool, step_id).await?
     } else {

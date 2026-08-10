@@ -84,16 +84,21 @@ Recommended dev setup (bare-metal provider, host docker):
    inside containers (e.g. `http://host.docker.internal:3001`; must be
    plain http in the default restricted network mode).
 5. Create a Docket job with tasks assigned to `work` — conversationally via
-   `create_job`, or at `/work/new` — and dispatch with the `dispatch_work`
-   tool or the job page's dispatch form (root + image selects). Watch
-   progress and results at `/work`.
+   `create_job`, or at `/work/new` — and dispatch it with the `dispatch_work`
+   tool or the job page's dispatch form. A Docket dispatch always uses an
+   isolated sandbox checkout: it cannot see uncommitted files in Pair's
+   attached workspace or modify that checkout. Dispatch is for explicitly
+   requested durable/background work; normal Pair work stays in the current
+   conversation. The dispatch tool is not exposed to the Work stance, so a
+   Work run cannot recursively dispatch another run. Dispatch selects a
+   catalog image by name. Watch progress and results at `/work`.
 
 Publishing: with job `commit_policy` `per_task` or `per_job`, each successful
 run's commits are pushed **host-side with the root's credentials** to the
 job's upstream work branch (caller-specified; generated `den/job-<short-id>`
 by default; the default ref is refused). Later runs of the same job provision
-from that branch, so tasks build on each other. `propose_only` (the default)
-keeps runs diff-only.
+from that branch, so tasks build on each other. With `none`, no source changes
+are expected and runs are not published.
 
 Network: sandboxes default to `restricted` egress — a per-sandbox internal
 network whose only way out is a socat relay to the Den callback endpoint, so

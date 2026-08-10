@@ -1,5 +1,5 @@
 use serde_json::json;
-
+use uuid::Uuid;
 fn pair_context() -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
@@ -11,10 +11,12 @@ fn pair_context() -> DenToolInvocationContext {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,
@@ -26,21 +28,18 @@ fn pair_context() -> DenToolInvocationContext {
     }
 }
 
-use crate::core::{
-    tools::{
-        activity_payloads::{
-            activity_payload, no_active_workplan_payload, plan_mode_workplan_payload,
-        },
-        descriptor::builtin_den_tool_descriptor_for_provider_name,
-        memory_write::MemoryWriteEntryArguments,
-        session::{DenToolInvocationContext, invoke_den_tool},
-        support::validate_memory_write_entry_semantics,
-    },
+use crate::core::tools::{
+    activity_payloads::{activity_payload, no_active_workplan_payload, plan_mode_workplan_payload},
+    descriptor::builtin_den_tool_descriptor_for_provider_name,
+    memory_write::MemoryWriteEntryArguments,
+    session::{invoke_den_tool, DenToolInvocationContext},
+    support::validate_memory_write_entry_semantics,
 };
-use den_core::client_tools::{ClientToolName, provider_tool_descriptor};
-use den_core::tools::preflight::{ToolSemanticWarning, tool_warning_payload};
-use den_docket::{TaskListUpdateItem, TaskListItemStatus, TaskListLocalProjection};
-use den_runtime::{plan_mode::PlanModeSessionRow};
+use den_core::client_tools::{provider_tool_descriptor, ClientToolName};
+use den_service::bears::BearProfile;
+use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
+use den_docket::{TaskListItemStatus, TaskListLocalProjection, TaskListUpdateItem};
+use den_runtime::plan_mode::PlanModeSessionRow;
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {
@@ -61,7 +60,9 @@ fn descriptor_exposes_turn_state_domain_metadata() {
 fn armature_client_descriptors_expose_execution_domain_metadata() {
     let descriptor = provider_tool_descriptor(ClientToolName::ReadTextFile);
     assert_eq!(descriptor["name"], "fs_read_text_file");
-    assert!(descriptor["description"].as_str().is_some_and(|text| text.contains("armature.fs.read_text_file")));
+    assert!(descriptor["description"]
+        .as_str()
+        .is_some_and(|text| text.contains("armature.fs.read_text_file")));
 }
 
 #[test]
@@ -270,6 +271,44 @@ async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memo
 }
 
 #[tokio::test]
+async fn confirm_work_surface_requires_pair_before_database_access() {
+    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
+    let mut context = pair_context();
+    context.profile = Some(BearProfile::Chat);
+
+    let err = super::super::confirm_work_surface(
+        &pool,
+        &context,
+        BearProfile::Chat,
+        json!({"work_surface_id": Uuid::new_v4()}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("only to Pair"), "got: {err}");
+}
+
+#[tokio::test]
+async fn confirm_work_surface_requires_client_session_before_database_access() {
+    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
+    let mut context = pair_context();
+    context.client_session_id = None;
+
+    let err = super::super::confirm_work_surface(
+        &pool,
+        &context,
+        BearProfile::Pair,
+        json!({"work_surface_id": Uuid::new_v4()}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("active client session"), "got: {err}");
+}
+
+#[tokio::test]
 async fn create_task_preserves_explicit_session_anchor_without_current_session_lookup() {
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let anchor = uuid::Uuid::new_v4();
@@ -281,9 +320,14 @@ async fn create_task_preserves_explicit_session_anchor_without_current_session_l
     }))
     .unwrap();
 
-    let resolved = super::super::default_task_session_anchor_id(&pool, &pair_context(), &args)
-        .await
-        .unwrap();
+    let resolved = super::super::resolve_task_session_anchor_id(
+        &pool,
+        &pair_context(),
+        args.job_id,
+        args.session_anchor_id,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resolved, Some(anchor));
 }
@@ -300,12 +344,32 @@ async fn create_task_without_job_defaults_to_current_session_or_fails_before_db(
     }))
     .unwrap();
 
-    let err = super::super::default_task_session_anchor_id(&pool, &context, &args)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = super::super::resolve_task_session_anchor_id(
+        &pool,
+        &context,
+        args.job_id,
+        args.session_anchor_id,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
 
     assert!(err.contains("current client session"));
+}
+
+#[test]
+fn work_run_surface_projection_keeps_pair_report_only() {
+    assert_eq!(
+        super::super::execution_surface_kind("sandbox"),
+        "work_sandbox"
+    );
+    assert!(super::super::work_run_may_contain_partial_changes(
+        "blocked"
+    ));
+    assert!(super::super::work_run_may_contain_partial_changes("failed"));
+    assert!(!super::super::work_run_may_contain_partial_changes(
+        "succeeded"
+    ));
 }
 
 #[test]
@@ -336,10 +400,12 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: Vec::new(),
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,
@@ -400,10 +466,12 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: Vec::new(),
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,

@@ -82,9 +82,9 @@ For a concise list of **Letta runtime knobs that Den’s bear UI does not yet dr
 
 **Web** chat is **not** Den → Letta HTTP for the **streaming agent loop**: **Web → Den → `services/codepool/` → Letta**. Den still uses **Letta’s REST API** (`LETTA_BASE_URL`) for **provisioning**, **conversation list**, and **message history**. **Slack** may attach via **channel listener** workers **colocated** in **`services/codepool/`** (same image / process supervision as **conversation handlers**) so one deployment owns SDK version, pool TTL, and **`~/.letta/`** state—see **Letta Code (harness layer)** below for risks of colocation. Den may call Bifrost separately for **metrics/health** on the **bear inference** path. Letta remains the persistence API the harness calls.
 
-### Cabinet (Outline)
+### Cabinet
 
-Long-lived shared knowledge: **bears** via **Den** Cabinet tools; humans in **Outline**. See [PLAN.md](../planning/PLAN.md). **Tool shape:** Cabinet access for agents follows the **Den meta tools** pattern ([Den-controlled facade](#den-meta-tools-bears-control-plane-tools), **Letta Code–brokered**), not a separate MCP requirement by default.
+Cabinet is Den-governed, shared, human-editable knowledge. Humans use a Cabinet surface; authorized Bears use Den's Cabinet facade. Den owns agent-facing authorization and policy; a backing provider and source-ingestion systems remain behind that boundary. See the [Cabinet implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md) and [Cabinet research ingestion plan](../roadmap/CABINET_RESEARCH_INGESTION_PLAN.md).
 
 ---
 
@@ -131,7 +131,7 @@ Cabinet tool endpoints are internal or agent-facing per PLAN.
 
 **Routines (Phase 1):** **Den** stores **first-class** scheduled work (**routines**) each **bound to one bear**; execution is delegated to the harness/Letta per [routines-automation.md](adr/routines-automation.md). **File outputs** go to **Garage** (artifacts bucket), not Letta — [artifacts-garage.md](adr/artifacts-garage.md). **no** automatic skill-learning from unattended runs by default ([PHASE1_DECISIONS.md](../planning/PHASE1_DECISIONS.md) decision **10**).
 
-**Artifacts (Garage):** Agent outputs, uploads, and routine files use **S3** in a dedicated **artifacts** bucket; **Cabinet** attachments use a **separate** bucket (Outline). See [artifacts-garage.md](adr/artifacts-garage.md).
+**Artifacts (Garage):** Agent outputs, uploads, and routine files use S3 in a dedicated artifacts bucket. Cabinet attachment payloads are durable and may use a separate storage policy; Cabinet item authorization and retention remain separate from artifact lifecycle. See [ADR-0004](../decisions/adr-0004-artifacts-garage.md) and the [Cabinet implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
 
 - **Letta Code → Letta:** The harness uses the self-hosted **Letta HTTP API** for persistence. **Den** uses **`LETTA_BASE_URL`** (and **`LETTA_API_KEY`**) for **provisioning**, **conversation list**, and **history** (`LettaClient` in `services/den/`).
 - **Den → `services/codepool/`:** Den bridges **browser** traffic for the **streaming send** path only: **`CODEPOOL_BASE_URL`** points at the internal **Codepool** HTTP listener. When **`RUN_WEB=true`**, Den requires a non-empty Codepool URL (production **release** images default to **`http://bears-codepool:3030`** when unset; override for local dev). This replaces treating a remote **`letta server`** process as the **HTTP façade** for web chat.
@@ -231,7 +231,7 @@ See [PLAN.md](../planning/PLAN.md) Phase 1 for the phased implementation checkli
 
 - **[Den-managed skills](#den-managed-skills)** and **[Den-managed MCP servers](#den-managed-mcp-servers-phase-1)** stay the right patterns for **filesystem skills** and **optional third-party** tool hosts (Exa, Composio, org MCP). Letta/Letta Code remain the runtime that loads skills and opens MCP sessions where applicable.
 - **Den meta tools** are **tightly coupled** to Bear Den identity and policy. They are **not** “must be MCP”—use MCP when you **deliberately** want a portable or vendor-hosted server.
-- **Cabinet** follows the **same** Den-facade pattern: **Den** is the policy and API boundary to Outline; **Letta Code** brokers calls into Den. A separate “Cabinet MCP” is unnecessary unless you integrate an external MCP Den does not own—**Den still fronts policy** on every call.
+- **Cabinet** follows the same Den-facade pattern: **Den** is the policy and API boundary, and the active native runtime invokes that facade under the same authorization rules. A separate “Cabinet MCP” is unnecessary unless an external MCP integration specifically needs one. See the [Cabinet implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
 
 **Contract (conceptual).**
 

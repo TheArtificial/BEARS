@@ -1,6 +1,8 @@
-# Cabinet: Reading & Knowledge Pipeline — Architecture Decision Record
+# Research ingestion uses Cabinet — Architecture Decision Record
 
-## Status: Accepted
+## Status: Accepted (scope clarified 2026-08)
+
+> **Scope clarification.** Cabinet is Den's shared, human-editable, policy-controlled knowledge layer; it is not the reading, bookmarking, or highlight system. This ADR selects the research-ingestion stack that may publish reviewed material to Cabinet through its Den facade. The current implementation work is split between the [Cabinet implementation plan](../roadmap/CABINET_IMPLEMENTATION_PLAN.md) and the [Cabinet research ingestion plan](../roadmap/CABINET_RESEARCH_INGESTION_PLAN.md). Provider/API, ACL, review, and Cabinet data-model decisions belong to the former plan.
 
 ## Date: 2026-04-10
 
@@ -29,7 +31,7 @@ We need a self-hosted reading and bookmarking pipeline that satisfies these requ
 | **E-ink reader** | **KOReader** (on Boox via Android APK) | Purpose-built for e-ink. Excellent pagination, deep typography controls. Has a built-in Wallabag plugin that syncs articles as ePubs and marks them archived on completion. Exports highlights to markdown, JSON, HTML, or Kindle clippings format. |
 | **Bookmark manager / content archive / highlight store** | **Karakeep** (self-hosted, Docker) | Archives full pages via Monolith (single-file HTML). Full-text search via Meilisearch. REST API for bookmarks, lists, tags, highlights, assets. Publishes per-list RSS feeds. Optional AI tagging via Ollama. Good mobile apps (iOS, Android) and browser extensions. Serves as the **canonical store for all highlights** from every source — Cabinet collectors normalize and push highlights here via the Karakeep highlights API. |
 | **Semantic search** | **Qdrant** | Vector database for embedding-based retrieval across archived content and highlights. Uses Den **platform embedding standard** [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) (`bears-embed-v1`) — shared with Bear memory derived recall so Cabinet and Bear passages are comparable in the same semantic space. |
-| **Glue layer + source metadata** | **Cabinet** (custom) | Custom services for pipeline orchestration, highlight collection from all sources, embedding generation, Qdrant indexing, and **source metadata store** (author, work title, source type — structured fields that Karakeep doesn't model). See Integration Services and Source Metadata below. |
+| **Glue layer + source metadata** | **Research-ingestion service** | Custom services for pipeline orchestration, highlight collection from all sources, embedding generation, Qdrant indexing, and **source metadata store** (author, work title, source type — structured fields that Karakeep doesn't model). The service publishes selected material through the Cabinet facade; it is not Cabinet. See the implementation plans linked above. |
 
 ### Components Evaluated and Rejected
 
@@ -57,7 +59,7 @@ We need a self-hosted reading and bookmarking pipeline that satisfies these requ
 │  Share sheet ───────┘      │              │                      │
 │                            │              │ RSS feed             │
 │                            ▼              ▼                      │
-│                     Monolith archive   Cabinet: RSS→Wallabag     │
+│                     Monolith archive   Ingestion: RSS→Wallabag   │
 │                     Meilisearch index  (cron, polls RSS feed)    │
 │                            │              │                      │
 │                            │              ▼                      │
@@ -87,7 +89,7 @@ We need a self-hosted reading and bookmarking pipeline that satisfies these requ
 ┌────────────────────────────┼────────────────────────────────────┐
 │                     STATUS WRITEBACK                            │
 │                                                                 │
-│  Cabinet: Wallabag→Karakeep sync (cron)                        │
+│  Ingestion service: Wallabag→Karakeep sync (cron)              │
 │    - Polls Wallabag API for recently archived entries           │
 │    - Matches by URL to Karakeep bookmarks                      │
 │    - Tags as "read" / moves to "Finished" list in Karakeep     │
@@ -155,8 +157,8 @@ Karakeep is the canonical store for all highlights. Cabinet collectors are respo
 
 | Source | Capture mechanism | Bespoke code required? |
 |---|---|---|
-| **KOReader** (Boox) | HighlightSync plugin exports highlights as JSON via WebDAV → `cabinet-highlight-collector` parses JSON, resolves source URL from ePub metadata, finds/creates Karakeep bookmark, POSTs highlight. Fallback: Syncthing + `.lua` sidecar parsing. | Yes — Cabinet service |
-| **Wallabag web UI** (macOS Safari) | `cabinet-highlight-collector` polls Wallabag annotation API (`/api/annotations/{entry_id}`), resolves URL, finds/creates Karakeep bookmark, POSTs highlight | Yes — Cabinet service |
+| **KOReader** (Boox) | HighlightSync plugin exports highlights as JSON via WebDAV → `cabinet-highlight-collector` parses JSON, resolves source URL from ePub metadata, finds/creates Karakeep bookmark, POSTs highlight. Fallback: Syncthing + `.lua` sidecar parsing. | Yes — ingestion service |
+| **Wallabag web UI** (macOS Safari) | `cabinet-highlight-collector` polls Wallabag annotation API (`/api/annotations/{entry_id}`), resolves URL, finds/creates Karakeep bookmark, POSTs highlight | Yes — ingestion service |
 | **Safari macOS** | Apple Shortcut (macOS Service): select text → right-click → Shortcut extracts selected text + page URL + title → POSTs to Cabinet highlight intake API → Cabinet ensures bookmark exists in Karakeep, attaches highlight | No bespoke extension — Apple Shortcut (~6 actions) + Cabinet API endpoint |
 | **Safari iOS / app webviews** | Apple Shortcut (Share Sheet): select text → Share → "Save Highlight" → Shortcut extracts selected text + page URL + title → POSTs to Cabinet highlight intake API → Cabinet ensures bookmark exists in Karakeep, attaches highlight | No bespoke extension — same Apple Shortcut + Cabinet API endpoint |
 | **Offline sources** (books, podcasts, conversations) | Manual or agent-assisted entry via Cabinet UI/API. Source identified by synthetic URL scheme (e.g. `book://isbn/9780262046305`, `offline://podcast/episode-name`). Cabinet creates a Karakeep bookmark with the synthetic URL and attaches highlights. | Cabinet UI/API feature |

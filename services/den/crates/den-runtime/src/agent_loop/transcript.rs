@@ -243,6 +243,55 @@ pub fn spawn_persist_web_chat_interrupted_turn(
     );
 }
 
+pub fn spawn_persist_abandoned_native_tool_results(
+    pool: PgPool,
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    conversation_id: String,
+    client_session_id: String,
+    request_id: Option<String>,
+    tool_calls: &[ChatToolCall],
+    reason: &str,
+) {
+    if tool_calls.is_empty() {
+        return;
+    }
+    let provenance = ConversationEventProvenance::client_session(client_session_id.clone());
+    let context = canonical_persistence_context(
+        pool,
+        bear_id,
+        user_id,
+        conversation_id,
+        Some(client_session_id.clone()),
+        request_id.clone(),
+        client_session_id,
+        false,
+    );
+    for call in tool_calls {
+        spawn_persist_tool_result(
+            context.clone(),
+            CanonicalToolResultRecord::new(
+                Some(call.function.name.clone()),
+                call.id.clone(),
+                None,
+                den_core::tools::result_compaction::ToolResultStatus::Error,
+                Some(format!(
+                    "error: native turn ended before tool execution ({reason})"
+                )),
+                Value::Null,
+                serde_json::json!({
+                    "component": "den.agent_loop",
+                    "phase": "native_turn_terminal_settlement",
+                    "reason": reason,
+                    "tool_name": call.function.name,
+                }),
+                request_id.clone(),
+            ),
+            &provenance,
+        );
+    }
+}
+
 pub fn spawn_persist_incomplete_acp_tool_results(
     pool: PgPool,
     bear_id: Uuid,

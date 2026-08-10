@@ -28,7 +28,8 @@ use super::{
         KeyMemoryProjectionInput, KeyMemoryProjectionResult,
     },
     runtime_context::{
-        assemble_den_owned_runtime_supplement, runtime_context_already_includes_den_owned_blocks,
+        assemble_den_owned_runtime_supplement, render_capability_discovery_guidance,
+        runtime_context_already_includes_den_owned_blocks,
     },
     FreeformPolicy, ObjectiveOrientation, ObjectiveOrientationResolutionInput, OrientationTaskRef,
 };
@@ -36,7 +37,7 @@ use crate::context_budget::AssembledTurnBudgetComponents;
 use crate::runtime::compaction::{
     on_turn_assemble_compaction, render_compaction_prompt_context, CompactionMode,
 };
-use crate::runtime::focus_context::active_docket_execution_lookup;
+use crate::runtime::task_context::active_docket_execution_lookup;
 
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
@@ -218,6 +219,9 @@ pub fn recalled_memory_session_diagnostic(recall: Option<&Value>) -> Value {
                 "count": count,
                 "query": value.get("query_text").cloned().unwrap_or(Value::Null),
                 "top_paths": top_paths,
+                // Read-time conflict presence (ADR-0041 §8): pair count + record ids, when
+                // the recall projection detected contradictory live records.
+                "conflicts": value.get("conflicts").cloned().unwrap_or(Value::Null),
                 "reason": Value::Null,
                 "next_surface": "memory_search for canonical follow-up reads",
             })
@@ -288,19 +292,21 @@ async fn record_objective_orientation_event(
 }
 
 fn objective_orientation_input(
+    profile: BearProfile,
     cached_activity_plan_projection: Option<&TaskListProjection>,
     active_execution: Option<&DocketExecutionSessionRow>,
     work_enabled: bool,
 ) -> ObjectiveOrientationResolutionInput {
+    let work_execution = matches!(profile, BearProfile::Work)
+        .then_some(active_execution)
+        .flatten();
     ObjectiveOrientationResolutionInput {
-        focused_job_id: cached_activity_plan_projection
-            .and_then(|plan| plan.source_ref.docket_job_id.clone())
-            .or_else(|| active_execution.map(|execution| execution.job_id.to_string())),
-        focused_job_mutable: true,
+        docket_job_id: work_execution.map(|execution| execution.job_id.to_string()),
+        docket_execution_mutable: true,
         active_task_ref: cached_activity_plan_projection
             .and_then(active_orientation_task_ref)
             .or_else(|| {
-                active_execution.and_then(|execution| {
+                work_execution.and_then(|execution| {
                     execution
                         .task_id
                         .map(|task_id| OrientationTaskRef::DocketTask {
@@ -366,7 +372,7 @@ async fn build_recall_section(
     if !embedder.is_enabled() {
         return None;
     }
-    let projection = match crate::recall::recall_for_turn_scoped(
+    let mut projection = match crate::recall::recall_for_turn_scoped(
         &qdrant,
         &embedder,
         &ctx.config.embedding_standard,
@@ -387,8 +393,55 @@ async fn build_recall_section(
             return None;
         }
     };
-    let block = crate::recall::render_recall_block(&projection, anchor_text)?;
+    // Read-time contradiction surfacing (ADR-0041 §8): detect over the retrieved passages,
+    // mark counterparts, and emit best-effort `memory_conflict` observations.
+    let memory_ids: Vec<String> = projection
+        .passages
+        .iter()
+        .map(|p| p.memory_id.clone())
+        .collect();
+    let conflicts =
+        crate::recall::surface_recall_conflicts(ctx.stores, ctx.bear_id, &memory_ids).await;
+    crate::recall::mark_projection_conflicts(&mut projection, &conflicts);
+
+    let mut block = crate::recall::render_recall_block(&projection, anchor_text)?;
+    // Recall watermark turn annotation (ADR-0038 §8 Phase A3): one line, best-effort —
+    // degraded recall must not read as absent memory. Errors mean no annotation, never a
+    // failed turn.
+    if let Some(lag_count) = recall_lag_count(ctx).await {
+        if lag_count > 0 {
+            block.push_str(&format!("\nrecall index {lag_count} records behind\n"));
+        }
+    }
     Some((block, projection.diagnostic))
+}
+
+/// Best-effort recall watermark lag for the turn annotation (ADR-0038 §8 Phase A3): `None`
+/// when recall is unconfigured or the watermark cannot be computed (errors are logged at
+/// debug and swallowed — the annotation is advisory only).
+async fn recall_lag_count(ctx: &AssembleTurnContext<'_>) -> Option<i64> {
+    let store = match ctx.stores.store_for_bear(ctx.bear_id).await {
+        Ok(store) => store,
+        Err(err) => {
+            tracing::debug!(
+                bear_id = %ctx.bear_id,
+                error = %err,
+                "recall watermark annotation skipped: store unavailable"
+            );
+            return None;
+        }
+    };
+    match crate::recall::recall_watermark(ctx.pool, ctx.config, &store).await {
+        Ok(watermark) => watermark.map(|wm| wm.lag_count),
+        Err(err) => {
+            tracing::debug!(
+                bear_id = %ctx.bear_id,
+                error = %err,
+                "recall watermark annotation skipped: watermark unavailable"
+            );
+            None
+        }
+    }
 }
 
 pub async fn assemble_native_turn_messages(
@@ -502,6 +555,7 @@ pub async fn assemble_native_turn_for_bear(
     let cached_activity_plan_projection =
         load_cached_activity_plan_projection(&ctx, &docket, active_execution.as_ref()).await?;
     let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
+        ctx.profile,
         cached_activity_plan_projection.as_ref(),
         active_execution.as_ref(),
         bear.work_enabled,
@@ -552,6 +606,12 @@ pub async fn assemble_native_turn_for_bear(
             system_text.push_str("\n\n");
             system_text.push_str(&supplement);
         }
+    }
+    let capability_discovery = render_capability_discovery_guidance()?;
+    if !capability_discovery.trim().is_empty() {
+        budget_components.capability_discovery_chars = capability_discovery.chars().count() as u32;
+        system_text.push_str("\n\n");
+        system_text.push_str(&capability_discovery);
     }
     if ctx.profile == BearProfile::Chat {
         let tool_surface_blurb =
@@ -657,6 +717,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recalled_memory_session_diagnostic_surfaces_conflict_presence() {
+        let diagnostic = json!({
+            "source": "recall_query",
+            "status": "ok",
+            "hits": [],
+            "conflicts": { "pairs": 1, "records": ["m1", "m2"] },
+        });
+        let session = recalled_memory_session_diagnostic(Some(&diagnostic));
+        assert_eq!(session["conflicts"]["pairs"], 1);
+        assert_eq!(session["conflicts"]["records"], json!(["m1", "m2"]));
+
+        // No conflict info stays null rather than fabricating an empty object.
+        let plain = recalled_memory_session_diagnostic(Some(&json!({ "hits": [] })));
+        assert!(plain["conflicts"].is_null());
+    }
+
+    #[test]
     fn active_docket_execution_lookup_keeps_conversation_restore_path() {
         let lookup = active_docket_execution_lookup(Some("session-1"), "conversation-1");
 
@@ -703,12 +780,12 @@ mod tests {
         };
 
         let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(None, Some(&execution), true),
+            objective_orientation_input(BearProfile::Work, None, Some(&execution), true),
         );
         assert_eq!(
             orientation,
-            ObjectiveOrientation::Focused {
-                job: crate::agent_loop::JobOrientation {
+            ObjectiveOrientation::DocketExecution {
+                job: crate::agent_loop::DocketExecutionOrientation {
                     job_id: job_id.to_string(),
                     active_task_ref: Some(OrientationTaskRef::DocketTask {
                         job_id: Some(job_id.to_string()),
@@ -717,6 +794,35 @@ mod tests {
                     }),
                     mutable: true,
                 }
+            }
+        );
+    }
+
+    #[test]
+    fn pair_does_not_treat_legacy_execution_as_work_assignment() {
+        let execution = DocketExecutionSessionRow {
+            id: Uuid::nil(),
+            bear_id: Uuid::nil(),
+            owner_profile: "pair".to_string(),
+            session_id: "pair-session".to_string(),
+            source_conversation_id: Some("conversation-1".to_string()),
+            source_client_session_id: Some("pair-session".to_string()),
+            job_id: Uuid::new_v4(),
+            run_id: Uuid::nil(),
+            task_id: None,
+            state: "active".to_string(),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+
+        let orientation = crate::agent_loop::resolve_objective_orientation(
+            objective_orientation_input(BearProfile::Pair, None, Some(&execution), true),
+        );
+
+        assert_eq!(
+            orientation,
+            ObjectiveOrientation::Freeform {
+                policy: FreeformPolicy::task_definition_permitted(),
             }
         );
     }

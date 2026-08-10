@@ -1,12 +1,12 @@
 //! Turn completion policy.
 //!
-//! This module owns the behavioral question "may this focused turn end now?".
+//! This module owns the behavioral question "may this current-task turn end now?".
 //! Runtime budget code may report pressure or steer the model to checkpoint, but
 //! budget pressure is not task completion. Session streaming, diagnostics, and
 //! prompt classification should feed inputs here rather than independently
 //! interpreting `may_stop`, final-response text, or budget flags.
 //!
-//! Invariant: while resolved focused task-list work has incomplete, unblocked
+//! Invariant: while a resolved current task-list has incomplete, unblocked
 //! items, a runtime-limit final response is not accepted as completion. The
 //! runtime must either continue the next actionable slice or, in a future
 //! upgrade, record an explicit pause/resume state.
@@ -53,7 +53,7 @@ pub enum TurnCompletionContinueReason {
 #[derive(Debug, Clone, Copy)]
 pub struct TurnCompletionPolicyInput<'a> {
     pub profile: BearProfile,
-    pub focused_task_list: Option<&'a TaskListProjection>,
+    pub current_task_list: Option<&'a TaskListProjection>,
     pub assistant_text: &'a str,
     pub recent_texts: &'a [String],
 }
@@ -62,7 +62,7 @@ pub fn decide_turn_completion(input: TurnCompletionPolicyInput<'_>) -> TurnCompl
     let final_response_kind = classify_autonomous_final_response(input.assistant_text);
     let gate = autonomous_execution_gate_for_task_list(
         input.profile,
-        input.focused_task_list,
+        input.current_task_list,
         final_response_kind,
     );
 
@@ -188,7 +188,7 @@ mod tests {
         // focus resolver boundary.
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: BearProfile::Pair,
-            focused_task_list: None,
+            current_task_list: None,
             assistant_text: "Done.",
             recent_texts: &[],
         });
@@ -215,7 +215,7 @@ mod tests {
 
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: BearProfile::Pair,
-            focused_task_list: Some(&focused),
+            current_task_list: Some(&focused),
             assistant_text: "Progress made; stopping here.",
             recent_texts: &[],
         });
@@ -242,7 +242,7 @@ mod tests {
 
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: BearProfile::Pair,
-            focused_task_list: Some(&focused),
+            current_task_list: Some(&focused),
             assistant_text: "Job completed. Final answer follows.",
             recent_texts: &[],
         });
@@ -271,7 +271,7 @@ mod tests {
         // replay test if focus resolution grows persistence side effects.
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: BearProfile::Pair,
-            focused_task_list: None,
+            current_task_list: None,
             assistant_text: "Mode changed back to ordinary chat.",
             recent_texts: &[],
         });
@@ -302,7 +302,7 @@ mod tests {
 
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: BearProfile::Pair,
-            focused_task_list: Some(&focused),
+            current_task_list: Some(&focused),
             assistant_text:
                 "Hit the wall-clock runtime limit finalization warning after rechecking Docket and advancing the job.",
             recent_texts: &recent_texts,
@@ -340,7 +340,7 @@ mod tests {
         );
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: BearProfile::Pair,
-            focused_task_list: Some(&focused),
+            current_task_list: Some(&focused),
             assistant_text: "Job completed. Working tree clean.",
             recent_texts: &[],
         });
@@ -372,7 +372,7 @@ mod tests {
 
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: BearProfile::Pair,
-            focused_task_list: Some(&focused),
+            current_task_list: Some(&focused),
             assistant_text: recent_texts.last().unwrap(),
             recent_texts: &recent_texts,
         });

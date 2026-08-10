@@ -78,6 +78,10 @@ This page is **not** a substitute for **`GET /healthcheck`** (process liveness) 
 
 When `RUN_WORKERS=true`, long-running and periodic tasks run in-process. See [`src/lib.rs`](../src/lib.rs) for the worker slot; this slim starter keeps workers idle until shutdown.
 
+### Memory write topology
+
+Workers must run **in the same process** that serves turns: they share the per-process memory write path (one `MemoryStoreManager` per process) per the [ADR-0031 write-topology amendment](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md). Running a second `den` process — with or without workers — against the same `BEAR_SQLITE_DATA_DIR` is unsupported. `den import-legacy-memory` writes those databases directly, so stop the Bear's runtime before importing.
+
 ## Graceful shutdown
 
 On **Unix**, the process handles **SIGTERM** and **Ctrl+C**. On other platforms, **Ctrl+C** only.

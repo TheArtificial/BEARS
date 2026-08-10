@@ -17,8 +17,24 @@ const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../prompts/fragments/stances/work.md"),
     ),
     (
-        "fragments/stances/job_dispatch.md",
-        include_str!("../../../../../prompts/fragments/stances/job_dispatch.md"),
+        "fragments/stances/docket_coordination.md",
+        include_str!("../../../../../prompts/fragments/stances/docket_coordination.md"),
+    ),
+    (
+        "fragments/stances/docket_execution.md",
+        include_str!("../../../../../prompts/fragments/stances/docket_execution.md"),
+    ),
+    (
+        "fragments/runtime/read_only_authority.md",
+        include_str!("../../../../../prompts/fragments/runtime/read_only_authority.md"),
+    ),
+    (
+        "fragments/runtime/capability_discovery.md",
+        include_str!("../../../../../prompts/fragments/runtime/capability_discovery.md"),
+    ),
+    (
+        "fragments/runtime/work_checkout.md",
+        include_str!("../../../../../prompts/fragments/runtime/work_checkout.md"),
     ),
     (
         "fragments/runtime/docket_execution_active.md",
@@ -33,8 +49,8 @@ const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../prompts/fragments/runtime/objective_oriented.md"),
     ),
     (
-        "fragments/runtime/objective_focused.md",
-        include_str!("../../../../../prompts/fragments/runtime/objective_focused.md"),
+        "fragments/runtime/objective_docket_execution.md",
+        include_str!("../../../../../prompts/fragments/runtime/objective_docket_execution.md"),
     ),
     (
         "fragments/runtime/budget_warning.md",

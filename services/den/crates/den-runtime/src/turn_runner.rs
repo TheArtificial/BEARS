@@ -102,33 +102,6 @@ pub struct TurnStreamContext {
     pub run_recovery: RunRecoveryDisposition,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn interrupted_run_recovery_is_one_shot() {
-        assert_eq!(
-            RunRecoveryDisposition::for_interrupted_run(0),
-            RunRecoveryDisposition::ResumeEligible { attempts: 0 }
-        );
-        assert_eq!(
-            RunRecoveryDisposition::for_interrupted_run(1),
-            RunRecoveryDisposition::Exhausted { attempts: 1 }
-        );
-        assert!(RunRecoveryDisposition::for_interrupted_run(0).emits_recovery_context());
-        assert!(!RunRecoveryDisposition::for_interrupted_run(1).emits_recovery_context());
-    }
-
-    #[test]
-    fn default_tool_continuation_has_no_run_recovery_prompt() {
-        assert_eq!(
-            default_tool_continue_stream_context().run_recovery,
-            RunRecoveryDisposition::None
-        );
-    }
-}
-
 pub fn looks_like_runtime_waiting_for_approval_error(err: &DenError) -> bool {
     den_protocol::runtime_error_is_conflict_pending_approval(err)
 }
@@ -187,4 +160,31 @@ pub async fn materialize_runtime_conversation_if_needed<B: RuntimeConversationBa
         conversation_id: conv_id,
         created: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interrupted_run_recovery_is_one_shot() {
+        assert_eq!(
+            RunRecoveryDisposition::for_interrupted_run(0),
+            RunRecoveryDisposition::ResumeEligible { attempts: 0 }
+        );
+        assert_eq!(
+            RunRecoveryDisposition::for_interrupted_run(1),
+            RunRecoveryDisposition::Exhausted { attempts: 1 }
+        );
+        assert!(RunRecoveryDisposition::for_interrupted_run(0).emits_recovery_context());
+        assert!(!RunRecoveryDisposition::for_interrupted_run(1).emits_recovery_context());
+    }
+
+    #[test]
+    fn default_tool_continuation_has_no_run_recovery_prompt() {
+        assert_eq!(
+            default_tool_continue_stream_context().run_recovery,
+            RunRecoveryDisposition::None
+        );
+    }
 }

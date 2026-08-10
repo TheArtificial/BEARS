@@ -85,7 +85,7 @@ Properties:
 
 ### 2. Activity
 
-Activity is the live tactical progress lane.
+Activity is the live tactical progress lane. Its status views, including Docket job status, are derived projections over canonical work evidence rather than independent mutable state.
 
 Examples:
 
@@ -98,6 +98,7 @@ Properties:
 
 - short-horizon and operational;
 - visible/projection-based;
+- Docket operational job status is derived from explicit lifecycle intent plus canonical run, task, and criterion evidence; a materialized status is rebuildable cache, not authority;
 - not the approval artifact;
 - not semantic memory.
 

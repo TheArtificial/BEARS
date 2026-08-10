@@ -208,7 +208,7 @@ impl ModelDetailsEntry {
             return Ok(None);
         }
         let handle = if model.contains('/') {
-            model.clone()
+            model
         } else {
             format!("{provider}/{model}")
         };

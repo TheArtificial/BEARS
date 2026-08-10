@@ -8,6 +8,7 @@ pub mod artifacts;
 pub mod bears;
 pub mod bifrost;
 pub mod bifrost_governance;
+pub mod client_session_work_surface_resolutions;
 pub mod client_sessions;
 pub mod conversation;
 pub mod memory_proposals;

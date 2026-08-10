@@ -9,28 +9,29 @@ use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent}
 use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
-use futures::Stream;
+use futures::{stream, Stream};
 
 use crate::runtime::completion_policy::{
     decide_turn_completion, TurnCompletionCompleteReason, TurnCompletionDecision,
     TurnCompletionPolicyInput,
 };
-use crate::runtime::focus_context::{
-    resolve_runtime_focus_context, RuntimeFocusContext, RuntimeFocusResolveRequest,
+use crate::runtime::task_context::{
+    resolve_runtime_task_context, RuntimeTaskContext, RuntimeTaskResolveRequest,
 };
 use crate::runtime_error_ux::{
     checkpoint_follow_through_required_policy, RuntimeIssueDisposition, RuntimeIssueSeverity,
 };
 use crate::{
     agent_loop::{
-        approvals::create_native_approval,
-        record_checkpoint_response, run_agent_step_stream,
-        session_store::AgentLoopSessionStore,
+        evaluate_turn_budget, record_checkpoint_response, run_agent_step_stream,
+        session_store::{
+            discovered_capability_entries, retain_recent_capability_entries, AgentLoopSessionStore,
+        },
         step::RUNTIME_CHECKPOINT_TOOL_NAME,
         tool_call_finished_event_for_content,
         tool_policy::{
-            maybe_pause_for_tool_approval, provider_tool_is_den_web_fetch,
-            provider_tool_requires_approval, provider_tool_supports_unilateral_execution,
+            maybe_pause_for_tool_approval, provider_tool_requires_approval,
+            provider_tool_supports_unilateral_execution,
         },
         validate_checkpoint_response, AgentStepOverflowContext, CheckpointResponseInput,
         CheckpointValidationStatus, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
@@ -55,7 +56,7 @@ use den_core::{config::Config, governance::Governance, profile::BearProfile, Den
 use den_docket::TaskListProjection;
 
 use super::transcript::{
-    spawn_persist_incomplete_acp_tool_results, spawn_persist_native_agent_step,
+    spawn_persist_abandoned_native_tool_results, spawn_persist_native_agent_step,
 };
 use super::{session_store::AgentLoopSession, ObjectiveOrientation, OrientationTaskRef};
 
@@ -88,7 +89,7 @@ type FinalGateContinuationFuture =
     Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 type FinalGateFocusFuture = Pin<
     Box<
-        dyn Future<Output = Result<crate::runtime::focus_context::RuntimeFocusContext, DenError>>
+        dyn Future<Output = Result<crate::runtime::task_context::RuntimeTaskContext, DenError>>
             + Send,
     >,
 >;
@@ -170,12 +171,12 @@ async fn oriented_child_count_policy_error(
         DenError::ValidationError("parent_task_id must be a valid UUID".to_string())
     })?;
     let child_count: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)
         FROM bear_tasks
         WHERE bear_id = $1
           AND parent_task_id = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(parent_task_id)
@@ -282,7 +283,7 @@ impl SessionTrackingStream {
         let may_define_task = match &session.objective_orientation {
             crate::agent_loop::ObjectiveOrientation::Freeform { policy } => policy.may_define_task,
             crate::agent_loop::ObjectiveOrientation::Oriented { .. }
-            | crate::agent_loop::ObjectiveOrientation::Focused { .. } => true,
+            | crate::agent_loop::ObjectiveOrientation::DocketExecution { .. } => true,
         };
         Self {
             inner,
@@ -369,12 +370,37 @@ impl SessionTrackingStream {
         );
     }
 
-    fn persist_outstanding_tools_as_incomplete(&self, reason: &str) {
+    fn outstanding_tool_details(&self) -> Vec<serde_json::Value> {
+        self.tool_calls
+            .iter()
+            .map(|(tool_call_id, (tool_name, _))| {
+                serde_json::json!({
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "execution_owner": if builtin_den_tool_descriptor_for_provider_name(tool_name)
+                        .is_some()
+                    {
+                        "server"
+                    } else {
+                        "client"
+                    },
+                })
+            })
+            .collect()
+    }
+
+    fn has_outstanding_server_tool(&self) -> bool {
+        self.tool_calls.values().any(|(tool_name, _)| {
+            builtin_den_tool_descriptor_for_provider_name(tool_name).is_some()
+        })
+    }
+
+    fn persist_outstanding_tools_as_errors(&self, reason: &str) {
         if self.tool_calls.is_empty() {
             return;
         }
         let calls = self.accumulated_tool_calls();
-        spawn_persist_incomplete_acp_tool_results(
+        spawn_persist_abandoned_native_tool_results(
             self.pool.clone(),
             self.bear_id,
             self.user_id,
@@ -384,6 +410,44 @@ impl SessionTrackingStream {
             &calls,
             reason,
         );
+    }
+
+    fn finalize_outstanding_tools_at_stream_end(
+        &mut self,
+        reason: &str,
+        stream_drop_reason: &str,
+        failure_message: &str,
+    ) -> Option<RuntimeStreamEvent> {
+        self.persist_assistant_tool_step();
+        self.finished = true;
+        let outstanding_tools = self.outstanding_tool_details();
+        if !self.has_outstanding_server_tool() {
+            tracing::info!(
+                event = "native_turn_awaiting_client_tool_results",
+                stream_drop_reason,
+                request_id = ?self.request_id,
+                conversation_id = %self.conversation_id,
+                client_session_id = %self.client_session_id,
+                tool_call_count = outstanding_tools.len(),
+                outstanding_tools = ?outstanding_tools,
+                "native runtime ended its stream while awaiting client-owned tool results"
+            );
+            return None;
+        }
+
+        self.persist_outstanding_tools_as_errors(reason);
+        tracing::warn!(
+            event = "native_turn_terminal_settlement",
+            terminal_event = "turn_failed",
+            stream_drop_reason,
+            request_id = ?self.request_id,
+            conversation_id = %self.conversation_id,
+            client_session_id = %self.client_session_id,
+            tool_call_count = outstanding_tools.len(),
+            outstanding_tools = ?outstanding_tools,
+            "native runtime settled outstanding tools after server-owned work was abandoned"
+        );
+        Some(Self::checkpoint_failure_event(failure_message.to_string()))
     }
 
     fn server_tool_context(&self) -> DenToolInvocationContext {
@@ -402,6 +466,10 @@ impl SessionTrackingStream {
         let recalled_memory = session
             .as_ref()
             .and_then(|session| session.latest_recalled_memory.clone());
+        let session_capabilities = session
+            .as_ref()
+            .map(|session| session.session_capabilities.clone())
+            .unwrap_or_default();
         DenToolInvocationContext {
             bear_id: self.bear_id,
             bear_slug: self.bear_slug.clone(),
@@ -417,6 +485,7 @@ impl SessionTrackingStream {
             conversation_selection: Some(self.conversation_id.clone()),
             runtime_target: Some(self.conversation_id.clone()),
             workspace_roots,
+            session_capabilities,
             session_policy: None,
             activity: None,
             runtime: None,
@@ -432,16 +501,10 @@ impl SessionTrackingStream {
         }
     }
 
-    fn should_request_den_tool_permission(&self, tool_name: &str) -> bool {
-        self.dispatch_mode == NativeToolDispatchMode::DeferToClient
-            && provider_tool_is_den_web_fetch(tool_name)
-    }
-
     fn should_execute_den_tool_server_side(&self, tool_name: &str) -> bool {
         self.dispatch_mode == NativeToolDispatchMode::DeferToClient
             && builtin_den_tool_descriptor_for_provider_name(tool_name).is_some()
             && provider_tool_supports_unilateral_execution(tool_name)
-            && !self.should_request_den_tool_permission(tool_name)
             && (self.may_define_task
                 || !is_task_definition_or_delegation_tool_provider_name(tool_name))
     }
@@ -462,17 +525,14 @@ impl SessionTrackingStream {
             .get(&self.session_key)
             .map(|session| session.objective_orientation)?;
         match orientation {
-            ObjectiveOrientation::Focused { job } if !job.mutable => Some(
+            ObjectiveOrientation::DocketExecution { job } if !job.mutable => Some(
                 "objective orientation is immutable focused; task decomposition is not allowed"
                     .to_string(),
             ),
             ObjectiveOrientation::Oriented { task } => {
                 let parent_task_id = args
                     .get("parent_task_id")
-                    .and_then(serde_json::Value::as_str);
-                let Some(parent_task_id) = parent_task_id else {
-                    return None;
-                };
+                    .and_then(serde_json::Value::as_str)?;
                 let OrientationTaskRef::DocketTask {
                     task_id: oriented_task_id,
                     ..
@@ -509,31 +569,6 @@ impl SessionTrackingStream {
     fn started_tool_title(tool_name: &str) -> Option<String> {
         builtin_den_tool_descriptor_for_provider_name(tool_name)
             .map(|descriptor| descriptor.label.to_string())
-    }
-
-    fn web_fetch_permission_target(arguments: &serde_json::Value) -> serde_json::Value {
-        let mut target = arguments.clone();
-        if !target.is_object() {
-            target = serde_json::json!({});
-        }
-        target["kind"] = serde_json::json!("web_fetch");
-        if let Some(url) = target.get("url").and_then(|value| value.as_str()) {
-            if let Ok(parsed) = url::Url::parse(url.trim()) {
-                if let Some(host) = parsed.host_str() {
-                    let host = match parsed.port() {
-                        Some(port)
-                            if !((parsed.scheme() == "https" && port == 443)
-                                || (parsed.scheme() == "http" && port == 80)) =>
-                        {
-                            format!("{}:{port}", host.trim_end_matches('.').to_ascii_lowercase())
-                        }
-                        _ => host.trim_end_matches('.').to_ascii_lowercase(),
-                    };
-                    target["host"] = serde_json::json!(host);
-                }
-            }
-        }
-        target
     }
 
     fn plan_update_event_from_tool_message(message: &ChatMessage) -> Option<RuntimeSemanticEvent> {
@@ -684,6 +719,15 @@ impl SessionTrackingStream {
             };
             let content = match result {
                 Ok(value) => {
+                    let discovered = discovered_capability_entries(&canonical, &value);
+                    if !discovered.is_empty() {
+                        store.update(&session_key, |session| {
+                            retain_recent_capability_entries(
+                                &mut session.recently_discovered_capabilities,
+                                discovered,
+                            );
+                        });
+                    }
                     let compacted = compact_json_tool_result(value.clone());
                     if compacted.truncated {
                         match create_tool_output_artifact(
@@ -729,10 +773,68 @@ impl SessionTrackingStream {
             store.update(&session_key, |session| {
                 session.messages.push(message.clone());
             });
+            let observation = crate::agent_loop::ToolContinuationObservation {
+                tool_name: call.function.name.clone(),
+                signature: crate::agent_loop::tool_signature_from_call(&call),
+                class: crate::agent_loop::classify_tool_budget_class(&call.function.name),
+                failed: crate::agent_loop::tool_result_content_indicates_error(
+                    message.content.as_deref(),
+                ),
+                grounding_probe_signal: None,
+            };
             let continuation = Box::pin(async move {
-                let session = store.get(&session_key).ok_or_else(|| {
+                let mut session = store.get(&session_key).ok_or_else(|| {
                     DenError::System("native agent loop session not found".to_string())
                 })?;
+                let evaluation = evaluate_turn_budget(
+                    session.turn_budget,
+                    session.step,
+                    session.turn_budget_state.started_at.elapsed().as_millis() as u64,
+                    &session.turn_budget_state,
+                    &[observation],
+                );
+                store.update(&session_key, |session| {
+                    session.turn_budget_state = evaluation.next_state.clone();
+                });
+                if let Some(reason) = evaluation.stop_reason {
+                    tracing::warn!(
+                        event = "native_turn_budget_fuse",
+                        session_key = %session_key,
+                        conversation_id = %session.conversation_id,
+                        client_session_id = %session.client_session_id,
+                        request_id = ?session.request_id,
+                        run_id = ?session.run_id,
+                        step = session.step,
+                        limit = session.turn_budget.emergency_hard_steps,
+                        "server-side continuation stopped by turn budget"
+                    );
+                    store.update(&session_key, |session| {
+                        session.turn_budget_state = Default::default();
+                    });
+                    return Ok(Box::pin(stream::iter(vec![
+                        Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::AssistantTextDelta {
+                                text: reason.user_message(),
+                            },
+                        )),
+                        Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::TurnCompleted { turn: None },
+                        )),
+                    ])) as RuntimeEventStream);
+                }
+                session = store.get(&session_key).ok_or_else(|| {
+                    DenError::System("native agent loop session not found".to_string())
+                })?;
+                tracing::warn!(
+                    event = "native_server_tool_continuation",
+                    session_key = %session_key,
+                    conversation_id = %session.conversation_id,
+                    client_session_id = %session.client_session_id,
+                    request_id = ?session.request_id,
+                    run_id = ?session.run_id,
+                    step = session.step,
+                    "continuing after server-side tool result"
+                );
                 let llm = LlmClient::new(config.as_ref());
                 let overflow = AgentStepOverflowContext {
                     pool,
@@ -906,33 +1008,52 @@ impl SessionTrackingStream {
     }
 
     #[allow(clippy::result_large_err)]
-    fn enforce_required_checkpoint_task_action(
-        &self,
-        tool_name: &str,
+    fn block_or_recover_if_checkpoint_task_action_pending(
+        &mut self,
+        attempted_action: &str,
     ) -> Result<(), RuntimeStreamEvent> {
         let Some(action) = self.pending_checkpoint_task_action() else {
             return Ok(());
         };
-        if Self::required_task_action_satisfied(&action, tool_name) {
+        if Self::required_task_action_satisfied(&action, attempted_action) {
             self.store.update(&self.session_key, |session| {
                 session.pending_checkpoint_task_action = None;
                 session.pending_checkpoint_recovery_attempts = 0;
             });
             return Ok(());
         }
-        Err(Self::checkpoint_failure_event(format!(
-            "Den needs task-state follow-through with `{action:?}` before continuing, but the assistant next called `{tool_name}`. Use the task-management tool indicated by the checkpoint response before other actions. No blocked tool was executed."
-        )))
-    }
 
-    #[allow(clippy::result_large_err)]
-    fn fail_if_checkpoint_task_action_pending(&self) -> Result<(), RuntimeStreamEvent> {
-        if let Some(action) = self.pending_checkpoint_task_action() {
+        let mut attempts = 0;
+        self.store.update(&self.session_key, |session| {
+            session.pending_checkpoint_recovery_attempts = session
+                .pending_checkpoint_recovery_attempts
+                .saturating_add(1);
+            attempts = session.pending_checkpoint_recovery_attempts;
+        });
+        if attempts > MAX_CHECKPOINT_RECOVERY_ATTEMPTS {
             return Err(Self::checkpoint_failure_event(format!(
-                "Den needs task-state follow-through with `{action:?}` before stopping, but the assistant attempted to stop before using the required task-management tool. No blocked tool was executed."
+                "Den could not complete required task-state follow-through after {MAX_CHECKPOINT_RECOVERY_ATTEMPTS} correction attempts."
             )));
         }
-        Ok(())
+
+        let message = format!(
+            "Your attempted action `{attempted_action}` was blocked before execution because task-state follow-through is pending. Call the task-management tool required by the checkpoint before any other action."
+        );
+        self.push_checkpoint_recovery_guidance_for_task_action(&message);
+        self.begin_checkpoint_continuation();
+        Err(Self::checkpoint_recovery_event(message))
+    }
+
+    fn push_checkpoint_recovery_guidance_for_task_action(&self, message: &str) {
+        self.store.update(&self.session_key, |session| {
+            session.messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: Some(message.to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            });
+        });
     }
 
     fn apply_valid_checkpoint_response(
@@ -1060,6 +1181,9 @@ impl SessionTrackingStream {
         RuntimeStreamEvent::Semantic(tool_call_finished_event_for_content(&call, Some(&content)))
     }
 
+    // The Err carries the full runtime event to emit; boxing it would ripple
+    // through every `?` call site for no runtime win on this cold path.
+    #[allow(clippy::result_large_err)]
     fn block_or_recover_if_checkpoint_pending(
         &mut self,
         attempted_action: &str,
@@ -1122,12 +1246,14 @@ impl SessionTrackingStream {
         });
     }
 
-    fn prepare_autonomous_final_gate(&mut self, focus: RuntimeFocusContext) {
-        let focused_task_list = focus.active_activity_plan().cloned();
+    fn prepare_autonomous_final_gate(&mut self, focus: RuntimeTaskContext) {
+        let current_task_list = focus.active_activity_plan().cloned();
         self.store.update(&self.session_key, |session| {
-            session.cached_activity_plan_projection = focused_task_list.clone();
+            session
+                .cached_activity_plan_projection
+                .clone_from(&current_task_list);
         });
-        self.evaluate_final_gate_or_complete(focused_task_list);
+        self.evaluate_final_gate_or_complete(current_task_list);
     }
 
     fn evaluate_final_gate_or_complete(
@@ -1150,7 +1276,7 @@ impl SessionTrackingStream {
             .unwrap_or_default();
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: self.profile,
-            focused_task_list: cached_activity_plan_projection.as_ref(),
+            current_task_list: cached_activity_plan_projection.as_ref(),
             assistant_text: &self.assistant_text,
             recent_texts: &recent_texts,
         });
@@ -1245,9 +1371,9 @@ impl SessionTrackingStream {
             .get(&self.session_key)
             .and_then(|session| session.cached_activity_plan_projection);
         self.pending_final_gate_focus = Some(Box::pin(async move {
-            resolve_runtime_focus_context(
+            resolve_runtime_task_context(
                 &pool,
-                RuntimeFocusResolveRequest {
+                RuntimeTaskResolveRequest {
                     bear_id,
                     profile,
                     user_id,
@@ -1544,8 +1670,15 @@ impl Stream for SessionTrackingStream {
                     }
                     return Poll::Ready(Some(Ok(event)));
                 }
-                if let Err(event) = self.enforce_required_checkpoint_task_action(&tool_name) {
-                    self.finished = true;
+                if let Err(event) =
+                    self.block_or_recover_if_checkpoint_task_action_pending(&tool_name)
+                {
+                    if matches!(
+                        event,
+                        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
+                    ) {
+                        self.finished = true;
+                    }
                     return Poll::Ready(Some(Ok(event)));
                 }
                 self.pending_server_tool_continuation = None;
@@ -1554,50 +1687,6 @@ impl Stream for SessionTrackingStream {
                     (tool_name.clone(), arguments.to_string()),
                 );
                 self.sync_assistant_tool_step_to_session();
-                if self.should_request_den_tool_permission(&tool_name) {
-                    let pool = self.pool.clone();
-                    let bear_id = self.bear_id;
-                    let conversation_id = self.conversation_id.clone();
-                    let client_session_id = self.client_session_id.clone();
-                    let permission_target = Self::web_fetch_permission_target(&arguments);
-                    let arguments_value = permission_target.clone();
-                    let approval_tool_call_id = tool_call_id.clone();
-                    let approval_tool_name = tool_name.clone();
-                    self.pending_tool_event = Some(RuntimeStreamEvent::Semantic(
-                        RuntimeSemanticEvent::ToolCallRequested {
-                            tool_call_id,
-                            tool_name: tool_name.clone(),
-                            title: Self::started_tool_title(&tool_name),
-                            kind: Some("function".to_string()),
-                            arguments: permission_target,
-                            approval_request_id: None,
-                            approval_required: true,
-                            approval_reason: Some(
-                                "web_fetch requires approval for this URL".to_string(),
-                            ),
-                            run_id: None,
-                        },
-                    ));
-                    self.pending_approval = Some(Box::pin(async move {
-                        let approval_id = create_native_approval(
-                            &pool,
-                            bear_id,
-                            &conversation_id,
-                            &client_session_id,
-                            &approval_tool_call_id,
-                            &approval_tool_name,
-                            &arguments_value,
-                        )
-                        .await?;
-                        Ok(Some(RuntimeSemanticEvent::RunPaused {
-                            reason: "requires_approval".to_string(),
-                            resume_token: Some(approval_id),
-                            expires_at: None,
-                        }))
-                    }));
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
                 let approval_required = provider_tool_requires_approval(&tool_name);
                 let event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
                     tool_call_id: tool_call_id.clone(),
@@ -1664,16 +1753,16 @@ impl Stream for SessionTrackingStream {
                 if !self.tool_calls.is_empty() {
                     // Tool-call finishes must not emit TurnCompleted: client stream parks for adapter-local
                     // tool results and continues via /tool-results (same class of bug as
-                    // openai_stream synthetic TurnCompleted).
-                    self.persist_assistant_tool_step();
-                    self.persist_outstanding_tools_as_incomplete("turn_ended_before_tool_results");
-                    self.finished = true;
-                    tracing::debug!(
-                        client_session_id = %self.client_session_id,
-                        tool_call_count = self.tool_calls.len(),
-                        "native runtime suppressing TurnCompleted while tool calls are outstanding"
-                    );
-                    return Poll::Ready(None);
+                    // openai_stream synthetic TurnCompleted). Den-owned work, however, cannot
+                    // be left for the client to complete.
+                    return match self.finalize_outstanding_tools_at_stream_end(
+                        "turn_ended_before_tool_results",
+                        "turn_completed_with_outstanding_tool_results",
+                        "Native turn ended before all requested tools produced results.",
+                    ) {
+                        Some(event) => Poll::Ready(Some(Ok(event))),
+                        None => Poll::Ready(None),
+                    };
                 }
                 if let Err(event) = self.block_or_recover_if_checkpoint_pending("final_answer") {
                     if matches!(
@@ -1684,8 +1773,15 @@ impl Stream for SessionTrackingStream {
                     }
                     return Poll::Ready(Some(Ok(event)));
                 }
-                if let Err(event) = self.fail_if_checkpoint_task_action_pending() {
-                    self.finished = true;
+                if let Err(event) =
+                    self.block_or_recover_if_checkpoint_task_action_pending("final_answer")
+                {
+                    if matches!(
+                        event,
+                        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
+                    ) {
+                        self.finished = true;
+                    }
                     return Poll::Ready(Some(Ok(event)));
                 }
                 if self.assistant_text.trim().is_empty() {
@@ -1718,17 +1814,14 @@ impl Stream for SessionTrackingStream {
             }
             Poll::Ready(other) => {
                 if other.is_none() && !self.tool_calls.is_empty() {
-                    self.persist_assistant_tool_step();
-                    self.persist_outstanding_tools_as_incomplete(
+                    return match self.finalize_outstanding_tools_at_stream_end(
                         "llm_stream_ended_before_tool_results",
-                    );
-                    self.finished = true;
-                    tracing::debug!(
-                        client_session_id = %self.client_session_id,
-                        tool_call_count = self.tool_calls.len(),
-                        "native runtime ended LLM stream with outstanding tool calls; deferring TurnCompleted"
-                    );
-                    return Poll::Ready(None);
+                        "llm_eof_with_outstanding_tool_results",
+                        "Model stream ended before all requested tools produced results.",
+                    ) {
+                        Some(event) => Poll::Ready(Some(Ok(event))),
+                        None => Poll::Ready(None),
+                    };
                 }
                 if other.is_none() {
                     if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
@@ -1847,6 +1940,8 @@ mod tests {
             client_session_id: "client-test".to_string(),
             work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),
             messages: Vec::new(),
@@ -1855,6 +1950,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
@@ -1913,8 +2009,8 @@ mod tests {
     #[tokio::test]
     async fn immutable_focused_orientation_denies_task_decomposition() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
-        session.objective_orientation = crate::agent_loop::ObjectiveOrientation::Focused {
-            job: crate::agent_loop::JobOrientation {
+        session.objective_orientation = crate::agent_loop::ObjectiveOrientation::DocketExecution {
+            job: crate::agent_loop::DocketExecutionOrientation {
                 job_id: uuid::Uuid::new_v4().to_string(),
                 active_task_ref: None,
                 mutable: false,
@@ -2160,6 +2256,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn eof_with_client_owned_tool_keeps_session_pending_for_result_submission() {
+        let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let mut stream = test_tracking_stream_with_session(&session);
+        stream.inner = Box::pin(futures::stream::iter(vec![Ok(
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-client".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                title: None,
+                kind: Some("function".to_string()),
+                arguments: serde_json::json!({"path": "README.md"}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            }),
+        )]));
+
+        let requested = stream
+            .next()
+            .await
+            .expect("tool request")
+            .expect("ok event");
+        assert!(matches!(
+            requested,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. })
+        ));
+        assert!(
+            stream.next().await.is_none(),
+            "client tool EOF is not a failure"
+        );
+        let stored = stream
+            .store
+            .get(&stream.session_key)
+            .expect("pending session");
+        assert!(stored.find_pending_tool_call("call-client").is_some());
+    }
+
+    #[tokio::test]
+    async fn eof_with_server_owned_tool_emits_terminal_failure() {
+        let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let mut stream = test_tracking_stream_with_session(&session);
+        stream.tool_calls.insert(
+            "call-server".to_string(),
+            ("list_task_lists".to_string(), "{}".to_string()),
+        );
+        stream.sync_assistant_tool_step_to_session();
+
+        let event = stream
+            .next()
+            .await
+            .expect("terminal failure event")
+            .expect("ok event");
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { ref message, .. })
+                if message.contains("before all requested tools")
+        ));
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
     async fn final_gate_continuation_marks_session_autonomous() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         session.governance = Governance::Interactive;
@@ -2234,8 +2391,9 @@ mod tests {
         session.cached_activity_plan_projection = Some(completed_task_list_projection());
         let mut stream = test_tracking_stream_with_session(&session);
 
-        stream.prepare_autonomous_final_gate(RuntimeFocusContext {
-            source: crate::runtime::focus_context::RuntimeFocusSource::None,
+        stream.prepare_autonomous_final_gate(RuntimeTaskContext {
+            source: crate::runtime::task_context::RuntimeTaskSource::None,
+            current_task_id: None,
             cached_activity_plan_projection: Some(completed_task_list_projection()),
         });
 
@@ -2308,9 +2466,16 @@ mod tests {
             Some(RuntimeSemanticEvent::ReasoningTextDelta { ref text })
                 if text.contains("Checkpoint says the run should reconcile task state")
         ));
+        let event = stream
+            .block_or_recover_if_checkpoint_task_action_pending("tool_call:memory_read")
+            .expect_err("non-task tool should be redirected to task-state follow-through");
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { .. })
+        ));
         assert!(stream
-            .enforce_required_checkpoint_task_action("memory_read")
-            .is_err());
+            .block_or_recover_if_checkpoint_task_action_pending(DEN_TASK_LISTS_UPDATE_PROVIDER)
+            .is_ok());
         let stored = stream
             .store
             .get(&stream.session_key)
@@ -2319,9 +2484,6 @@ mod tests {
         assert_eq!(stored.checkpoint_state.consecutive_failures, 0);
         assert_eq!(stored.checkpoint_state.same_signature_repeat_count, 0);
         assert_eq!(stored.checkpoint_state.last_signature, None);
-        assert!(stream
-            .enforce_required_checkpoint_task_action(DEN_TASK_LISTS_UPDATE_PROVIDER)
-            .is_ok());
         assert!(stream.pending_checkpoint_task_action().is_none());
     }
 
@@ -2348,7 +2510,6 @@ mod tests {
         ));
         assert!(stream.pending_checkpoint_request().is_none());
         assert!(stream.pending_checkpoint_task_action().is_none());
-        assert!(stream.fail_if_checkpoint_task_action_pending().is_ok());
     }
 
     #[tokio::test]
@@ -2972,7 +3133,6 @@ mod tests {
         assert!(stream.should_execute_den_tool_server_side("create_job"));
         assert!(!stream.should_execute_den_tool_server_side("list_plans"));
         assert!(stream.should_execute_den_tool_server_side("session_info"));
-        assert!(stream.should_request_den_tool_permission("web_fetch"));
         assert!(!stream.should_execute_den_tool_server_side("web_fetch"));
         assert!(!stream.should_execute_den_tool_server_side("fs_read_text_file"));
         assert!(!stream.should_execute_den_tool_server_side("mcp__chrome_devtools_custom__click"));

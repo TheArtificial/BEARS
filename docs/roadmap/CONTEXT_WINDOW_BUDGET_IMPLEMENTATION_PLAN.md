@@ -2,7 +2,9 @@
 
 ## Status
 
-Planned. Implements [ADR-0047 — Context Window Budget and Token Estimation](../decisions/adr-0047-context-window-budget-and-token-estimation.md).
+Landed (audited 2026-07-31). Implements [ADR-0047 — Context Window Budget and Token Estimation](../decisions/adr-0047-context-window-budget-and-token-estimation.md).
+
+Landed: `ContextBudgetReport` DTO (`den-protocol/src/context_budget.rs`), per-component estimation including distinct `key_memory_projection` and `recall` buckets (`den-runtime/src/context_budget.rs`), turn enforcement (`agent_loop/budget.rs`), per-turn persistence and admin surfacing, and Phase 4 calibration. Bifrost-reported prompt usage from both streaming APIs is folded atomically into a bounded EMA chars→tokens ratio on the canonical model-registry row. After five samples, the final-request estimator applies that ratio and labels the snapshot `calibrated_approximate`; otherwise it explicitly retains the chars/4 fallback. The observed character total is the serialized assembled request, so it includes key-memory projection and derived-recall content alongside the transcript and tool surface. Calibration remains advisory: a failed read or write never delays or fails inference. The persisted ratios are the evidence for periodic memory character-cap review; they do not create a tokenizer in the memory selection path.
 
 ## Goal
 
@@ -69,10 +71,13 @@ Required buckets:
 - compiled base prompt,
 - transcript replay,
 - prompt-memory blocks,
-- retrieved memory,
+- **key memory projection** (path anchors — distinct bucket per the 2026-07-30 ADR-0047 amendment),
+- **derived recall** (injected recall passages — distinct bucket, same amendment),
 - tool schemas/tool surface,
 - runtime notes/compaction supplements,
 - output reserve.
+
+Key memory projection and derived recall must be attributed separately (not merged as "retrieved memory"): their char caps are tuned independently ([den-runtime v1 budgets](../architecture/den-runtime.md#v1-budgets)) and the calibration loop in Phase 4 feeds back into those caps.
 
 Exact model-aware tokenization is preferred where practical. Fallback approximation is acceptable if clearly labeled.
 
@@ -117,6 +122,15 @@ Suggested stored fields:
 
 ### Phase 4 — Calibration against actual usage
 
+**Complete (2026-07-31).** Den captures provider-reported prompt usage from
+OpenAI-compatible Chat Completions usage chunks and Responses `response.completed`
+events. It atomically folds each usable observation into the resolved canonical
+model-registry entry, avoiding lost updates from concurrent streams. The stored ratio
+is applied only after the minimum sample threshold and is exposed as calibration
+provenance on the resulting budget snapshot. Unknown models, absent usage, and all
+calibration persistence failures retain the safe uncalibrated estimate and do not
+block a turn.
+
 When provider/Bifrost usage data is available, compare:
 
 - estimated prompt tokens,
@@ -124,6 +138,18 @@ When provider/Bifrost usage data is available, compare:
 - actual prompt/completion usage.
 
 Use this to tune fallback estimators per model family. Do not block runtime checks on this phase.
+
+**Calibration home and memory-cap feedback (ADR-0047 amendment, 2026-07-30):**
+
+- Persist per-model-family **chars→tokens correction ratios** in the model registry (alongside resolved model metadata), computed from observed Bifrost prompt-token usage against assembled character counts. Bifrost stays the usage authority; Den mirrors ratios for estimation.
+- The ratios feed two consumers: the approximate estimator (Phase 2 fallback path) and **periodic re-tuning of the memory char caps** in [den-runtime v1 budgets](../architecture/den-runtime.md#v1-budgets). The memory subsystem never grows its own token estimator — char caps remain selection heuristics recalibrated from this measured loop.
+- Include the key-memory-projection and derived-recall buckets in calibration comparisons so their ratios reflect memory-content character density (prose-heavy anchors vs code-heavy work-surface docs), not just transcript averages.
+
+**Operating cadence:** periodically review calibrated ratios together with the
+persisted component breakdowns, then adjust the static key-memory and derived-recall
+character caps through their normal reviewed configuration/code path. The memory hot
+path continues to use only characters; it neither calls a tokenizer nor makes a
+per-request calibration lookup.
 
 ### Phase 5 — Policy integration
 

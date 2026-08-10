@@ -31,7 +31,7 @@ It does not fully define:
 
 ## Transport binding
 
-BearWire v1 supports an HTTP profile for JSON-RPC control methods and server-owned JSON event pages. A future WebSocket profile may add a long-lived push binding.
+BearWire v1 supports an HTTP profile for JSON-RPC control methods, durable server-owned event pages, and a bounded best-effort livestream feed. A future WebSocket profile may combine durable replay and live delivery on a long-lived push binding.
 
 ### v1 HTTP profile
 
@@ -70,7 +70,9 @@ Response:
 }
 ```
 
-`next_after` is authoritative. Polling clients must feed it back as the next `after` cursor instead of deriving a cursor from the maximum sequence they successfully processed. If a page is empty, `next_after` remains the previous cursor; clients should not advance merely because an HTTP response was received.
+`next_after` is authoritative for the durable event sequence. Polling clients must feed it back as the next `after` cursor instead of deriving a cursor from the maximum sequence they successfully processed. If a page is empty, `next_after` remains the previous cursor; clients should not advance merely because an HTTP response was received.
+
+The page contains **persistent** events only. Events whose envelope scope is `ephemeral` are delivered on the livestream feed and are neither assigned a durable sequence nor replayed from this endpoint. A livestream client must obtain a derived current snapshot when it connects or reconnects, then treat subsequent ephemeral updates as best-effort replaceable observations.
 
 ### WebSocket profile (preferred future binding)
 
@@ -1068,11 +1070,107 @@ event.replay
 ### Tool and permission methods
 
 ```text
+client.tool.claim
+client.tool.renew
 client.tool.result
 client.permission.result
 ```
 
-`client.tool.result` answers an open `tool_result` obligation for an armature-local tool. `client.permission.result` answers an open `permission_decision` obligation emitted via `client.waiting`.
+`client.tool.claim` transactionally claims an open `tool_result` obligation for armature-local execution. Only after claim succeeds may the armature invoke the tool. The request identifies the session, run, obligation, and tool call:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "claim_123",
+  "method": "client.tool.claim",
+  "params": {
+    "session_id": "ses_123",
+    "run_id": "run_123",
+    "obligation_id": "0191d6cc-6e92-7aa0-a738-29f92354baf1",
+    "tool_call_id": "call_123"
+  }
+}
+```
+
+A successful response returns an opaque attempt token and server-selected timing:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "claim_123",
+  "result": {
+    "ok": true,
+    "status": "claimed",
+    "attempt_token": "opaque-bearer-token",
+    "lease_expires_at": "2026-07-30T10:33:00Z",
+    "renew_after_ms": 10000
+  }
+}
+```
+
+A concurrent or stale claim returns `{"ok":false,"status":"claim_rejected"}` and does not authorize execution. The caller must reconcile through `run.state`; it must not invoke or retry the tool.
+
+`client.tool.renew` conditionally extends the claimed obligation using the same durable identity plus the attempt token:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "renew_123",
+  "method": "client.tool.renew",
+  "params": {
+    "session_id": "ses_123",
+    "run_id": "run_123",
+    "obligation_id": "0191d6cc-6e92-7aa0-a738-29f92354baf1",
+    "tool_call_id": "call_123",
+    "attempt_token": "opaque-bearer-token"
+  }
+}
+```
+
+Successful renewal returns `ok: true`, `status: "renewed"`, a new `lease_expires_at`, and the next `renew_after_ms`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "renew_123",
+  "result": {
+    "ok": true,
+    "status": "renewed",
+    "lease_expires_at": "2026-07-30T10:33:10Z",
+    "renew_after_ms": 10000
+  }
+}
+```
+
+A stale, expired, or otherwise lost claim returns `{"ok":false,"status":"lease_lost"}`. `lease_lost` is definitive: the armature stops treating itself as execution owner and reconciles `run.state`; it never launches a replacement command.
+
+Den's database clock determines lease deadlines. The current server policy grants 30-second leases and asks for renewal after 10 seconds. These are defaults, not client protocol constants: clients must schedule from each successful response's `renew_after_ms` and treat `lease_expires_at` as diagnostic/server authority rather than derive it locally. A transient renewal transport error is not the same as `lease_lost`; clients may retry while preserving the same attempt identity, but cannot assume ownership beyond Den's last confirmed deadline.
+
+`client.tool.result` answers a claimed `tool_result` obligation and includes its attempt token:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "result_123",
+  "method": "client.tool.result",
+  "params": {
+    "session_id": "ses_123",
+    "run_id": "run_123",
+    "tool_call_id": "call_123",
+    "attempt_token": "opaque-bearer-token",
+    "status": "ok",
+    "tool_name": "run_command",
+    "content": "tests passed",
+    "structured_content": {"exit_code": 0}
+  }
+}
+```
+
+Identical duplicate submissions are idempotent; conflicting or stale submissions are rejected without starting continuation. Result, expiry, cancellation, and renewal are compare-and-set transitions with one canonical winner.
+
+The attempt token is a bearer capability for one execution attempt. It must be transmitted only in claim-dependent requests and must not be returned by `run.state`, event history, snapshots, logs, or user-visible diagnostics. `run.state` may expose typed lease status and expiry so reconnecting clients can inspect safely without acquiring execution authority.
+
+`client.permission.result` answers an open `permission_decision` obligation emitted via `client.waiting`. Permission approval does not itself claim or execute the tool; a subsequent armature-local tool obligation must still be claimed before execution.
 
 ### Resource methods
 
@@ -1131,7 +1229,9 @@ BearWire uses:
 - lifecycle events for terminal run and tool failures; and
 - warning/diagnostic events for recoverable issues.
 
-Client obligations that remain unanswered past their deadline fail the run with `reason`/`error_type` such as `client_obligation_timeout`. The failure event should include enough context for the armature and user to identify the open obligation without inspecting Den internals; `run.state` remains the structured recovery endpoint for full obligation/result/event details.
+Unclaimed client obligations that remain unanswered past their deadline fail the run with `reason`/`error_type` such as `client_obligation_timeout`. A claimed armature-local command is different: while its lease is current it remains an open running obligation, and expiry after execution was claimed fails with `outcome_unknown` because the command may still be running or may already have made changes. That outcome prohibits automatic re-execution and directs recovery through `run.state` plus process/workspace inspection. Failure to fetch event pages alone is not a run outcome; clients reconcile `run.state` before synthesizing a terminal transport error.
+
+Failure events should include enough context for the armature and user to identify the affected obligation without inspecting Den internals; `run.state` remains the structured recovery endpoint for full obligation/result/event details.
 
 After Den accepts `client.tool.result` or `client.permission.result` and starts model continuation, continuation liveness is phase-aware. Before the first resumed runtime event, the watchdog must allow the native LLM handshake window plus the continuation idle window; after the first runtime event, the shorter continuation idle window applies between events. `continuation_watchdog_timeout` context may include `watchdog_phase`, `handshake_timeout_ms`, `idle_watchdog_timeout_ms`, `first_event_watchdog_timeout_ms`, `runtime_event_count`, and `last_event_kind`.
 
@@ -1156,7 +1256,6 @@ Compatibility rule: if an older or malformed stream sends reasoning/thinking con
 
 ## Open design questions
 
-- Which event types require durable persistence versus ephemeral delivery only?
 - Whether `run.accepted` should always precede `run.started` or remain optional.
 - Which resource kinds deserve stronger first-class schemas in v1.
 - Whether `session.bound` and `resource.bound` need additional normalization rules in multi-binding flows.

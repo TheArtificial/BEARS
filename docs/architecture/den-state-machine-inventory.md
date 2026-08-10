@@ -2,9 +2,9 @@
 
 **Status:** Living architecture reference.
 
-This document inventories the state dimensions that apply to a Den conversation, session, turn, run, and Docket-focused unit of work. It is intentionally a matrix of orthogonal axes, not a proposal for one giant enum.
+This document inventories the state dimensions that apply to a Den conversation, session, turn, run, and Docket task unit of work. It is intentionally a matrix of orthogonal axes, not a proposal for one giant enum.
 
-Use this document when adding or changing runtime state, mode labels, continuation policy, approvals, task focus, model selection, or client projection. If a new state dimension can affect what the model may do, whether a turn may stop, what a client shows, or how a run resumes, update this inventory in the same change.
+Use this document when adding or changing runtime state, mode labels, continuation policy, approvals, current-task selection, model selection, or client projection. If a new state dimension can affect what the model may do, whether a turn may stop, what a client shows, or how a run resumes, update this inventory in the same change.
 
 ## Maintenance rule
 
@@ -29,8 +29,8 @@ TurnStateInventory =
 × SessionBinding
 × TrustProfile
 × Governance
-× FocusState
-× WorkflowState
+× CurrentTaskState
+× WorkAssignmentState
 × PermissionPolicy
 × TurnRunLifecycle
 × ObligationSet
@@ -45,7 +45,8 @@ surface is intentionally smaller:
 ```text
 RuntimeAuthorityState =
   TurnAuthority
-× ResolvedFocus
+× ResolvedCurrentTask
+× WorkAssignment
 × DocketTaskState
 × TurnRunState
 × ObligationSet
@@ -56,7 +57,7 @@ The three authority owners that must stay singular are:
 
 ```text
 MutationAuthority = TurnAuthority
-FocusDrivenContinuation = ResolvedFocus × DocketTaskState
+FocusDrivenContinuation = ResolvedCurrentTask × WorkAssignment × DocketTaskState
 ActiveObligations = TurnRunState × ObligationSet
 TerminalOutcome = TurnRunState × ObligationSet × TurnStepState × BearWireTerminalEvent
 ```
@@ -65,12 +66,13 @@ TerminalOutcome = TurnRunState × ObligationSet × TurnStepState × BearWireTerm
 mode/plan policy determine tool routing, prompt authority blocks, and client
 permission projection. Governance is a separate run-supervision context and is
 not a mutation-permission input; prompt or client labels cannot feed authority
-back into either seam. `ResolvedFocus` is the only
-focus input that may let completion policy force continuation for unfinished
-focused work. `TurnRunState` owns lifecycle and active wait reason. Terminal
-closure is committed through one atomic finish operation that transitions the
-run, settles obligations and active steps, and appends exactly one run terminal
-BearWire event before exposing the terminal state.
+back into either seam. `ResolvedCurrentTask` is Pair's validated persisted
+session current task; `WorkAssignment` is Work's explicit Job assignment. Only
+the applicable owner may supply task-driven continuation. `TurnRunState` owns
+lifecycle and active wait reason. Terminal closure is committed through one
+atomic finish operation that transitions the run, settles obligations and active
+steps, and appends exactly one run terminal BearWire event before exposing the
+terminal state.
 
 The remaining axes feed compilation, execution, or projection. They are not peer
 authority owners unless a typed implementation seam consumes them into one of
@@ -81,14 +83,14 @@ EffectivePolicyProjection = TurnAuthority × Armature × RunAuthContext
 
 RunSupervisionProjection = Governance × HumanPresence
 
-CompletionProjection = ResolvedFocus × DocketTaskState × Governance × BudgetState × ObligationSet
+CompletionProjection = ResolvedCurrentTask × WorkAssignment × DocketTaskState × Governance × BudgetState × ObligationSet
 
 DerivedViews = ModelRequest × PromptContext × MemoryProjection × CompactionProjection × SurfaceProjection
 ```
 
 `DerivedViews` are explicitly non-authoritative. They may cache or render canonical
-state, but cannot expand mutation permission, manufacture focus/obligations, choose
-a terminal outcome, or override current-turn ordering.
+state, but cannot expand mutation permission, manufacture task selection or
+obligations, choose a terminal outcome, or override current-turn ordering.
 
 Do not let a derived view become a peer source of truth. If two axes disagree,
 resolve the conflict into canonical state before prompt rendering or client
@@ -97,11 +99,10 @@ projection.
 Exit gate for the reduced authority model:
 
 - mutation authority has one owner: `TurnAuthority`;
-- focus-driven continuation has one owner: active `ResolvedFocus` plus current
-  Docket task state;
+- task-driven continuation has one owner: Pair's validated `ResolvedCurrentTask` or Work's explicit `WorkAssignment`, together with applicable Docket task state;
 - active waits have one owner: `TurnRunState` plus `ObligationSet`;
 - projections, caches, labels, model choice, prompt text, and compaction state
-  cannot expand authority or manufacture focus/work.
+  cannot expand authority or manufacture task selection/Work assignment.
 
 ## Ownership summary
 
@@ -109,20 +110,20 @@ Exit gate for the reduced authority model:
 | --- | --- | --- | --- |
 | Bear identity/profile binding | Den registry/control plane | durable Bear | Identifies the Bear and stance template, not the current run's supervision. |
 | User membership/access | Den identity/RBAC | durable + request-scoped | Gates which conversations/surfaces a user can access. |
-| Conversation | Den Postgres | durable user-visible chat container | Owns transcript, archive state, title, model selection, and conversation-scoped focus. |
+| Conversation | Den Postgres | durable user-visible chat container | Owns transcript, archive state, title, model selection, and Pair's persisted current-task reference. |
 | Session/client binding | adapter/BearWire/web edge + Den session store | live client binding | Projects conversation/runtime state to a connected client; not the conversation. |
 | Trust profile | Bear profile registry | per turn/template | `chat`, `pair`, `curate`, `work`, `watch`; memory/tool/default trust contract. |
 | Governance | runtime/workspace session | run-scoped mutable timeline | `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. |
-| Focused Job | Docket + conversation focus resolver | conversation-scoped durable objective | Only active focus may drive focused completion behavior. |
-| Task focus | runtime derivation | ephemeral per run/turn | Next actionable Docket/task-list item derived from active focus and task state. |
-| Workflow state | current-turn state compiler | current turn | Inputs compiled into `TurnAuthority`; derived operational focus is advisory. |
+| Pair current task | conversation + client-session binding | durable conversation/session selection, resolved per run | A validated persisted `client_sessions.current_task_id` is Pair's optional objective; it may reference a session-local or Docket task. |
+| Work assignment | WorkRun + Docket | durable Work-run Job boundary, resolved per run | An explicit assigned Job is Work's execution boundary; optional in-run task progress remains constrained to that Job. |
+| Workflow state | current-turn state compiler | current turn | Inputs compiled into `TurnAuthority`; derived operational context is advisory. |
 | Permission policy | Den policy resolver + descriptors | current turn/tool call | Resolves Ask/Plan/Write, tool classes, approvals, and armature routes before `TurnAuthority`/routing consume them. |
 | Turn/run lifecycle | runtime turn controller + atomic run finisher | run/turn | Accepted/running/waiting states use ordinary transitions. Completed/failed/cancelled state, obligation/step settlement, and the terminal BearWire event are one atomic finish operation. |
 | Obligations | obligation coordinator | per tool/permission/human wait | Client/tool/approval waits; blocks only while open. |
 | Loop control/budgets | agent loop controller | run/turn | Budgets, checkpoints, KO/failure signals, context pressure. |
 | Recovery/error | runtime recovery logic | run/turn/session | Retry, resume, terminal outcome, late-result handling. |
-| Derived views: model request, prompt/context, memory, compaction, UI/surface caches | projection/assembler owners | request/turn/session bounded | Non-authoritative views only; cannot create permissions, focus, obligations, lifecycle, or completion. |
-| Work surface/sandbox | Docket/work execution | job/run/workspace | Execution materialization; not conversation focus by itself. |
+| Derived views: model request, prompt/context, memory, compaction, UI/surface caches | projection/assembler owners | request/turn/session bounded | Non-authoritative views only; cannot create permissions, task selection, obligations, lifecycle, or completion. |
+| Work surface/sandbox | Docket/work execution | job/run/workspace | Execution materialization; not a Pair task selection by itself. |
 
 ## Axis inventory
 
@@ -139,7 +140,7 @@ Representative state:
 
 Invariants:
 
-- Bear identity is durable and not changed by governance, focus, or client reconnects.
+- Bear identity is durable and not changed by governance, task selection, or client reconnects.
 - User access is resolved structurally, not by parsing rendered labels.
 - Trust-profile changes apply to new turns/templates; they do not silently launder memory/tool scope mid-run.
 
@@ -152,7 +153,7 @@ Representative state:
 - title and title timestamp;
 - archived vs active;
 - transcript and message persistence;
-- conversation-scoped focused Job id, when active;
+- Pair's persisted session current-task reference, when selected;
 - selected model state;
 - compaction and prompt-memory state;
 - review/reflection candidate state.
@@ -162,7 +163,7 @@ Invariants:
 - A conversation is the durable user-visible chat container. A session is only a live binding to it.
 - Archived conversations should not accept ordinary new turns unless explicitly restored or unarchived.
 - Title updates are non-blocking structured updates; they must not create model-visible obligations or force continuation.
-- Conversation focus must be cleared or restored through canonical focus state, not stale prompt text or session cache.
+- Conversation task selection must be changed through the canonical persisted current-task reference, not stale prompt text or session cache.
 
 ### Session and client binding
 
@@ -182,14 +183,13 @@ Common client modes:
 
 - `ask`;
 - `plan`;
-- `write`;
-- Focused as a projection when conversation focus is active, not an ordinary permission preset.
+- `write`.
+
+A current task is a separate projection, not a permission preset or client mode.
 
 Invariants:
 
-- Client mode is not canonical focus. Changing client mode away from Focused clears conversation focus.
-- Session-local projections can seed prompts/tools only when validated against current conversation/session state.
-- A stale session cache must never resurrect cleared conversation focus.
+- A stale session cache must never resurrect a cleared Pair current task or Work assignment.
 
 ### Trust profile
 
@@ -221,7 +221,7 @@ Values:
 
 - `interactive` — human present, live collaboration;
 - `grace` — client recently disconnected, bounded continuation/cleanup;
-- `autonomous_continuation` — human absent, runtime drives approved/focused work;
+- `autonomous_continuation` — human absent, runtime drives approved task-oriented or assigned Work execution;
 - `observational` — human present read-only inspection;
 - `frozen` — panic, handoff, or cancelled checkpoint awaiting disposition.
 
@@ -241,18 +241,51 @@ Invariants:
 - Governance changes continuation pressure, not memory or trust scope.
 - `observational` cannot own mutation or continuation.
 - `frozen` cannot continue the model/tool loop.
-- Autonomous continuation without an explicit focused objective is invalid for `work` and suspicious for interactive profiles.
+- Autonomous continuation without a resolved Pair current task is suspicious for interactive profiles; Work autonomous continuation requires its explicit Job assignment.
 
-### Focus, Docket, and task orientation
+### Current task, Work assignment, Docket, and task orientation
+
+The current architecture separates Pair's optional objective from Work's explicit execution boundary:
+
+```text
+Pair session -> validated persisted current task -> task-oriented behavior
+Work run     -> assigned Docket Job              -> work-execution behavior
+```
+
+- `client_sessions.current_task_id` is the sole Pair selection authority. It may identify a session-local task or a Docket task reference. A valid explicit selection has precedence over legacy Docket-execution compatibility context; no cached task list or implicit next task may manufacture it.
+- A Work run's explicit assigned Job is the sole Work execution boundary. Its optional `executing_task_id` is in-run progress within that Job, never a replacement assignment and never sourced from Pair.
+- Legacy `docket_execution_sessions` may supply compatibility context only when Pair has no valid current task. It is not a continuation authority, client current-task projection, or title source.
+- Pair task orientation is `freeform` without a resolved current task and task-oriented with one. A Docket-backed Pair task remains task-oriented; it does not acquire Work execution authority. Work derives execution orientation only from its assigned Job.
+
+Task selection and creation are explicit mutations. Apparent user objective redirection is confirmation-first: Pair proposes the change and waits for confirmation rather than silently select, clear, replace, complete, or create a task. Selecting or creating a Pair session task updates the conversation title; clearing it does not erase the title.
+
+Docket supplies durable task trees, job state, journals, recovery, and isolated background execution when explicitly requested. It is not required for ordinary Pair work. `dispatch_work` is isolated-sandbox execution, and dispatch/delegation does not change Pair's current task.
+
+ADR-0056 execution records remain relevant to Work and durable Docket runs:
+
+- `docket_cursors` are per-client browsing viewports (`job_id`, optional `task_id`). They never select, claim, resume, or complete work.
+- `bear_task_run_state` is the sole execution-position authority. A partial unique index permits at most one `in_progress` task per run.
+- `docket_conversation_bindings` owns the preferred durable transcript container for a task; `docket_conversation_binding_runs` preserves which conversation each run used.
+- `docket_routing_decisions` records immutable, idempotent placement decisions. Durable turn attempts and result rollups reference those decisions/run-task identities.
+- Symbolic execution profiles (`economy`, `balanced`, `advanced`) are selected deterministically from typed task difficulty. Normalized eligible failures may advance one tier at a time, with an explicit three-attempt ceiling; concrete provider/model selection remains outside task state.
+- `docket_turn_attempts` records profile provenance, normalized terminal outcome, evidence, latency, and optional cost attribution. The supervisor—not the model—derives retry, escalation, or handoff.
+- The canonical run-diagnostics projection combines authoritative run/task state, routing decisions, attempts, rollups, and attention into one semantic model rendered by the work-run UI. Browsing cursors are never consulted for execution position.
+- Paused work runs remain active and non-terminal. Pause/resume transitions use compare-and-set semantics, and task mutation at an active execution boundary requires the run to be paused.
+- Work dispatch provisions an isolated sandbox. It does not select or mutate an attached local workspace as part of Docket dispatch.
+- BearWire permission obligations remain the sole command-approval authority for attached unattended work. Approval-required work is projected as a durable wait; only a current accepted outcome may clear it, and stale or duplicate outcomes cannot resume a run.
+- Attached-session disconnect uses compare-and-set lifecycle transitions: an affected active run auto-pauses and records a bounded deadline; reconnect clears disconnect state but does not implicitly resume. An overdue disconnect terminalizes exactly once with normalized `armature_disconnect_timeout` evidence and a failure rollup.
+- Recovery eligibility derives from that typed persisted timeout outcome. One authorized action creates at most one replacement active run from durable incomplete task state, preserves source evidence, and leaves the terminal source run immutable.
+- The canonical diagnostics projection owns attachment, permission, disconnect, timeout, and recovery semantics for conversation and work-run UI projections; labels and UI text are not recovery authority.
+- Job completion is criteria-gated: no actionable task is not evidence of completion. If required work remains and nothing is actionable, the derived job state is `blocked`, with one open attention record per run.
 
 Representative state:
 
-- conversation-focused Docket Job id;
-- active Docket execution session;
+- Pair persisted current-task reference and resolved current task;
+- Work assigned Job and optional in-run executing task;
 - session task-list projection;
-- task orientation (`freeform`, task-oriented, Job-focused);
+- task orientation (`freeform`, task-oriented, work-execution);
 - Job and task status;
-- next actionable task;
+- ordered sibling/current-task ACP plan projection;
 - handoff/sync state.
 
 Job statuses:
@@ -263,22 +296,132 @@ Task statuses:
 
 - `pending`, `in_progress`, `done`, `blocked`, `cancelled`.
 
-Focus sources should be treated as:
+Continuation inputs should be treated as:
 
-| Source | Completion authority? | Notes |
+| Source | May affect continuation? | Notes |
 | --- | --- | --- |
-| Active conversation/Docket focus | yes | May force continuation while incomplete actionable work remains. |
-| Current-turn explicit focus selection | yes after persisted/resolved | Must be typed and current, not prompt-only. |
-| Runtime/session cached task list | no by default | Prompt/tool seed only unless validated as current active focus. |
-| None | no | Completion must be allowed when no obligations/budgets block. |
+| Pair resolved current task | yes, for Pair task-oriented behavior | Must originate in a valid persisted explicit selection. |
+| Work assigned Job | yes, for Work execution behavior | The WorkRun assignment bounds the task tree; in-run task progress stays within it. |
+| Legacy execution record | compatibility context only | May be rendered only when Pair has no valid current task; never selects continuation. |
+| Runtime/session cached task list or client/prompt projection | no | Display/context only; cannot manufacture selection, assignment, or continuation. |
+| None | no | Completion is allowed when no obligations/budgets block. |
 
 Critical invariant:
 
 ```text
-FocusState=None => completion policy must not return Continue(FocusedWorkRemains)
+Pair.ResolvedCurrentTask=None && Work.WorkAssignment=None
+  => task state must not by itself force continuation
 ```
 
-Do not let task orientation or stale activity projection force continuation. Only active focused work may do that.
+Do not let task orientation, legacy execution context, or stale activity projection force continuation. Only the applicable resolved current task or explicit Work assignment may do so.
+
+### Docket routed-turn contract
+
+Every autonomous dispatch, continuation, rollup, and routed user turn follows the
+same durable claim-and-commit protocol. This is the execution contract for
+ADR-0056 and is deliberately separate from cursor and UI state.
+
+#### Typed records and ownership
+
+| Record / state | Owner | Required contents | Rule |
+| --- | --- | --- | --- |
+| Routing decision | router transaction | intent, policy version, matched rule, normalized policy inputs, execution surface and source, profile provenance, stable turn idempotency key | Immutable and created or reused before invocation. |
+| Claim / reservation | dispatcher transaction | expected job/run/task versions, owner, lease expiry, turn key, decision and binding references | The sole authority to invoke work for an eligible task position. |
+| Turn attempt | attempt ledger | reservation identity, lifecycle, timestamps, observed boundary/cause/code, normalized outcome when known, evidence, last successful activity, failing boundary, criteria evidence, disposition, recovery action, synthetic provenance | Created before provider/model work; append-only after settlement except lifecycle timestamps and lease heartbeat. |
+| Replay activity | canonical transcript stream | attempt and task correlation, sequence/idempotency key, model/provider/tool event payload | Incremental events share the canonical replay stream; no second raw-log format. |
+| Task/run projection | Docket task/run reducer | execution state and derived job status | Derived only from settled attempt/disposition, task events, and explicit run control; it cannot infer a new failure cause. |
+| Notification outbox | same finalization transaction | attention event, authorized recipient/resource scope, delivery dedupe key, delivery state and acknowledgement | Delivery workers present and retry it; they do not decide failure semantics. |
+
+`AttemptLifecycle = reserved | executing | settled | abandoned` is not an
+outcome. `ObservedBoundary` records where progress stopped; `NormalizedOutcome`
+records a known classified result (or is absent); `SupervisorDisposition` selects
+what happens next; and task/run state is the reduction of those records. A
+provider disconnect, watchdog expiry, process loss, or continuation loss must
+append synthetic provenance rather than fabricate model text or a provider
+terminal result.
+
+The pre-v1 Phase 0/1 tables are an incomplete predecessor, not a competing
+contract: their `running | terminal` attempt state, unleased routing decision,
+and untyped JSON evidence do not satisfy the contract above. Increment 1 must
+replace or migrate those shapes without losing readable history.
+
+| Current predecessor | v1 contract gap | Required migration direction |
+| --- | --- | --- |
+| `docket_routing_decisions` | No claim owner/lease, expected versions, policy-input snapshot, or surface/profile provenance source | Add a reservation keyed by the stable turn key; preserve decisions as immutable forensic records. |
+| `docket_turn_attempts` | `running | terminal` conflates lifecycle and settlement; it lacks observed boundary, last successful activity, failing boundary, criteria evidence, recovery action, and synthetic provenance | Introduce typed lifecycle and distinct outcome/disposition/evidence fields; backfill legacy terminal rows as settled history. |
+| `docket_attention` | No transactional outbox, recipient/resource authorization, delivery dedupe, retry, or acknowledgement | Keep attention as domain event and add an outbox owned by the finalization transaction. |
+| direct work-run terminal transitions | May bypass a reserved attempt and shared failure projection | Route through claim and supervisor finalization; retain compatibility projections only. |
+
+#### Claim, invocation, and finalization
+
+1. The dispatcher selects an eligible serialized task and supplies expected
+   job/run/task versions plus an owner and stable turn idempotency key.
+2. In one transaction it compares those versions, claims the position, reserves
+   or reuses the key, and creates or reuses the routing decision and scoped
+   conversation binding. A loser performs no model or tool invocation.
+3. The claimant records the `reserved` attempt, then moves it to `executing` and
+   renews its lease while appending replay activity.
+4. Finalization compares the live claim owner, lease, attempt identity, and
+   expected versions. On success it atomically settles the attempt, appends the
+   task event/rollup, updates task/run projection, and writes any attention
+   outbox item. A late or stale result remains forensic history but cannot settle
+   a replacement attempt.
+5. A recovery worker may abandon only an expired claim with positive absence of
+   liveness. Uncertain continuation loss is `stalled`/`await_recovery`, not a
+   provider failure. Concurrent sweepers converge through the same compare-and-
+   set finalization.
+
+Legal lifecycle edges are:
+
+```text
+claim absent -> reserved -> executing -> settled
+                         \-> abandoned
+reserved/executing -> abandoned          expired lease + no liveness proof
+abandoned -> reserved                    fresh router claim for a new attempt
+settled/abandoned -/-> executing         terminal attempt is immutable
+```
+
+Only the claim transaction may create a reservation; only its current claimant
+may append execution activity; only the supervisor finalizer may settle an
+attempt and change task/run execution state; only the reducer derives job state;
+and only the delivery worker changes notification delivery/acknowledgement. UI,
+cursors, and model-authored fields may supply evidence or requests but own none
+of these transitions.
+
+#### Supervisor reduction and failure truth
+
+The supervisor validates task completion against criteria. Model text, including
+“cannot continue” or a requested stop, is evidence only. Its bounded
+`SupervisorDisposition` is one of `complete`, `retry`, `escalate_profile`,
+`handoff`, `pause`, `await_recovery`, or `terminal_failure`; retries return to
+step 1 and always create a new attempt.
+
+The job reducer must use this table rather than treating “no actionable task” as
+success:
+
+| Required task condition | Job projection |
+| --- | --- |
+| all required tasks criteria-complete | completed |
+| one task executing or eligible pending | running / ready |
+| blocked, handoff, paused, or awaiting recovery | blocked / waiting |
+| stalled or exhausted terminal failure | failed |
+| run explicitly stopped with incomplete required work | stopped / cancelled, never completed |
+
+The same normalized outcome/evidence record is projected into conversation,
+task activity, job workspace, notifications, and forensic diagnostics. Concise
+views may summarize it but must retain or link the last successful activity,
+failing boundary, cause/code, disposition, recovery action, and authorized
+resources. Clients do not independently classify an error.
+
+#### Notification outbox invariants
+
+Finalization writes the durable attention event and outbox entry in the same
+transaction as the failure rollup and task/run transition. The outbox owns a
+stable per-channel dedupe key, retry state, recipient and referenced-resource
+authorization snapshot, and acknowledgement state. Presentation may coalesce
+entries but must retain the durable event link and enforce current resource
+authorization before rendering any transcript, tool output, work surface, or
+run-control reference.
 
 ### Current-turn workflow state
 
@@ -302,7 +445,7 @@ Representative fields:
 - `execution.execution_unlocked`;
 - `memory.active_plan_write_allowed`.
 
-Derived `operational_focus` values may include:
+Derived `operational_context` values may include:
 
 - `clarify`;
 - `plan`;
@@ -316,8 +459,8 @@ Invariants:
 
 - Current-turn workflow state contributes typed inputs to `TurnAuthority`; it is
   not a separate mutation authority after compilation.
-- `operational_focus` is advisory.
-- If execution is locked, no derived focus may imply mutation is allowed.
+- `operational_context` is advisory.
+- If execution is locked, no derived context may imply mutation is allowed.
 - Prior-turn state and prompt reminders must not override current-turn authority.
 
 ### Workplan and plan-mode gate
@@ -396,18 +539,35 @@ Obligation kinds:
 Obligation states:
 
 - requested/waiting;
+- claimed/running with a current renewable lease (armature-local `ToolResult` only);
 - result received;
 - continued;
 - failed;
 - timed out;
+- expired with `outcome_unknown` after execution was claimed;
 - cancelled;
 - late ignored.
+
+Lease transitions for armature-local tool execution:
+
+```text
+waiting --claim--> claimed/running
+claimed/running --renew--> claimed/running
+claimed/running --result--> result received
+claimed/running --lease expiry--> failed/outcome_unknown
+```
 
 Invariants:
 
 - Open obligations block turn completion/continuation decisions; settled obligations do not.
 - Terminal turns cannot be reopened by late client/tool/permission results.
 - Waiting states require a matching open obligation.
+- Exactly one claimant may acquire execution authority for an obligation; local task registries are not authority.
+- Claim, renewal, result, cancellation, and expiry match run, session, obligation, tool call, attempt token, responder, and open state; `turn_step_id` joins the fence once available.
+- Den's database clock owns lease expiry. Renewal is idempotent and cannot revive a settled or expired obligation.
+- Conditional transitions give result, cancellation, renewal, and expiry races one canonical winner.
+- A stale or reconnecting armature without the current attempt token may inspect `run.state` but cannot renew, submit, or re-execute.
+- A claimed command whose result is not confirmed expires as `outcome_unknown`; recovery never automatically retries it.
 
 ### Turn and run lifecycle
 
@@ -450,20 +610,20 @@ lifecycle authority. Its variants are:
 
 Representative complete reasons:
 
-- no active focused task;
-- focused work complete finalization drain;
-- focused work complete or terminally blocked;
+- no applicable current task or Work assignment;
+- Pair current task complete finalization drain;
+- Pair current task or Work-assigned work complete or terminally blocked;
 - repeated terminal objection.
 
 Representative continue reasons:
 
-- focused work remains;
-- runtime limit is not focused completion.
+- Pair current task or Work-assigned work remains;
+- runtime limit is not proof of task completion.
 
 Invariants:
 
-- No active focus means normal final answers may complete the turn when no obligations block.
-- Focused incomplete actionable work may force continuation only while focus is active.
+- With neither a resolved Pair current task nor a Work assignment, normal final answers may complete the turn when no obligations block.
+- Incomplete actionable work may force continuation only through the applicable resolved Pair current task or explicit Work assignment.
 - `TurnCompletionDecision` may select continuation or emit an internal turn-completed semantic event, but the only durable outcome is the atomic `finish_run_with_bearwire_event` transition and matching BearWire terminal event.
 - Runtime limits, budget pressure, progress reports, tool failure, assistant text, and stream EOF are not run completion.
 - ACP ends a turn only after a durable run terminal event; tool-level terminal updates are not run terminal events.
@@ -498,7 +658,7 @@ Invariants:
 
 - Loop control may checkpoint, warn, stop, or nudge; it does not mutate task state by itself.
 - Checkpoint prose cannot satisfy Docket/task-list gates.
-- Budget exhaustion can stop a run, but it is not proof that focused work is complete.
+- Budget exhaustion can stop a run, but it is not proof that a Pair current task or Work-assigned work is complete.
 
 ### Error and recovery
 
@@ -516,7 +676,7 @@ Representative state:
 
 Invariants:
 
-- Recovery may add context or retry delivery, but it must not mutate focus, task, or permission state except through explicit typed transitions.
+- Recovery may add context or retry delivery, but it must not mutate Pair task selection, Work assignment, task, or permission state except through explicit typed transitions.
 - Needs-new-session and frozen states are explicit terminal/recovery outcomes, not hidden active waits.
 
 ### Model selection
@@ -533,7 +693,7 @@ Representative state:
 Invariants:
 
 - Model selection affects provider request and model capability defaults.
-- Model selection must not directly change focus, governance, or permission mode.
+- Model selection must not directly change task selection, Work assignment, governance, or permission mode.
 - Mid-active-turn model changes apply at a clear turn boundary unless explicitly designed otherwise.
 
 ### Prompt, context, memory projection, and compaction
@@ -551,8 +711,8 @@ Representative state:
 Invariants:
 
 - Prompt/context projection is not authority.
-- Compaction must preserve unresolved obligations and active focus accurately, but must not create either.
-- Old prompt text cannot preserve focus, permission, or governance after canonical state changes.
+- Compaction must preserve unresolved obligations and resolved current-task/Work-assignment context accurately, but must not create either.
+- Old prompt text cannot preserve task selection, Work assignment, permission, or governance after canonical state changes.
 
 ### Work surface, sandbox, and external execution
 
@@ -572,32 +732,33 @@ Work run states:
 
 Invariants:
 
-- Work surface state is not conversation focus by itself.
-- A run may have a workspace without the current conversation being focused on that Job.
+- Work surface state is not a Pair current task by itself.
+- A run may have a workspace without changing the Pair conversation's current task.
 - Outbound auth follows `RunAuthContext`, never client labels or trust-profile names alone.
 
 ## High-value validity matrices
 
-### Trust profile × governance × focused Job
+### Trust profile × governance × task/execution authority
 
-| Trust profile | Governance | Focused Job requirement | Notes |
+| Trust profile | Governance | Required task/execution authority | Notes |
 | --- | --- | --- | --- |
 | `chat` | `interactive` | none | ordinary chat |
-| `pair` | `interactive` | none unless explicitly focused | normal pair collaboration |
-| `pair` | `autonomous_continuation` | explicit focused objective required | no silent profile flip to `work` |
-| `work` | `autonomous_continuation` | required | normal work execution |
-| `watch` | `observational` | optional | inspect/observe only |
+| `pair` | `interactive` | optional resolved current task | normal Pair collaboration |
+| `pair` | `autonomous_continuation` | resolved current task required for task-driven continuation | no silent profile flip to `work` |
+| `work` | `autonomous_continuation` | explicit assigned Job required | normal Work execution |
+| `watch` | `observational` | none | inspect/observe only |
 | any | `frozen` | none active | no continuation/mutation |
 
 Invalid or suspicious combinations should be rejected before prompt assembly or surfaced as explicit diagnostics.
 
-### Focus source × completion policy
+### Continuation input × completion policy
 
-| Focus source | May pass focused task list to completion policy? | May force continuation? |
+| Input | May pass task state to completion policy? | May force continuation? |
 | --- | --- | --- |
-| active durable conversation/Docket focus | yes | yes |
-| explicit current-turn focus selection after resolution | yes | yes |
-| stale session cache / cached task list only | no | no |
+| Pair resolved current task | yes, for Pair | yes, within Pair task-oriented behavior |
+| Work explicit assigned Job | yes, for Work | yes, within the assigned Job tree |
+| legacy execution record | no | no |
+| stale session cache / cached task list / client projection | no | no |
 | none | no | no |
 
 ### Run state × obligations
@@ -605,8 +766,8 @@ Invalid or suspicious combinations should be rejected before prompt assembly or 
 | Run state | Required obligation condition |
 | --- | --- |
 | Running | no blocking awaited obligation |
-| WaitingForClient | at least one open client obligation; blocking reason derived from obligation responder actions |
-| Completed/Failed/Cancelled | no open obligations or active steps; exactly one matching terminal BearWire event committed atomically; late results ignored |
+| WaitingForClient | at least one open client obligation; blocking reason derived from obligation responder actions; a claimed/running tool obligation remains open while its lease is current |
+| Completed/Failed/Cancelled | no open obligations or active steps; exactly one matching terminal BearWire event committed atomically; late results and renewals ignored |
 
 ## Test obligations
 
@@ -617,24 +778,26 @@ Add or update tests whenever behavior crosses axes. Keep these seam checks perma
 | submitted/drafting plan cannot unlock mutation | `den-core` `submitted_plan_keeps_write_tools_locked`; `turn_authority_is_single_derived_permission_surface` |
 | prompt/client projection labels cannot expand authority | `den-core` `turn_authority_ignores_client_policy_projection_labels`; `turn_authority_has_no_prompt_or_compaction_authority_input` |
 | model choice is not an authority source | `den-core` `turn_authority_has_no_model_choice_authority_input`; loop-control tests may still cover model-default budget/checkpoint behavior |
-| stale cached task list cannot manufacture focus/continuation | `den-runtime` `no_focus_allows_final_even_with_cached_task_list`; `final_gate_ignores_and_clears_cache_without_durable_focus` |
+| stale cached task list/client projection cannot manufacture selection, assignment, or continuation | `den-runtime` current-task and Work-assignment resolver tests; completion-policy cache-clearing tests |
+| Pair Docket-backed current task remains task-oriented | `den-runtime` `pair_does_not_treat_legacy_execution_as_work_assignment` |
 | terminal transitions atomically own run state, obligation/step closure, and terminal event | `den-bearwire` completion/cancellation/expiry/failure persistence tests; `den-runtime` `terminal_turn_run_cannot_be_reopened_or_overwritten`; `client_obligation_coordinator_contract` late-result tests |
 | Job-scoped Work Run owns one sandbox/workspace/session for its task tree | Job-dispatch contract tests plus provisioning root checks; task progress remains in `bear_task_run_state` |
 
 Baseline scenarios to preserve:
 
-1. no focus allows final answers, even with a stale cached task list;
-2. changing mode away from Focused clears focus before completion policy runs;
-3. active durable focus with incomplete actionable work may force continuation;
-4. completed or terminally blocked focused work allows finalization;
-5. `work` + autonomous continuation without focused Job is invalid;
-6. submitted/drafting plan keeps mutation tools locked;
-7. terminal run with open obligation is invalid;
-8. late tool/permission result after terminal run is ignored;
-9. model selection changes do not mutate focus/governance/permissions;
-10. prompt/compaction projection cannot create focus or obligations;
-11. Den-owned tool requests do not stop initial or continuation stream consumption unless a typed approval obligation waits on the client;
-12. terminal run state, settled obligations/steps, and one terminal BearWire event commit or roll back together.
+1. Pair with no resolved current task allows final answers even with a stale cached task list;
+2. changing client mode does not silently select, clear, or replace Pair's current task;
+3. a valid Pair current task with incomplete actionable work may drive Pair task-oriented continuation;
+4. a completed, terminally blocked, invalid, or cleared Pair task allows normal finalization;
+5. `work` + autonomous continuation without an explicit assigned Job is invalid;
+6. a Docket-backed Pair current task remains task-oriented and never becomes a Work assignment;
+7. submitted/drafting plan keeps mutation tools locked;
+8. terminal run with open obligation is invalid;
+9. late tool/permission result after terminal run is ignored;
+10. model selection changes do not mutate task selection, Work assignment, governance, or permissions;
+11. prompt/compaction/client projection cannot create task selection, Work assignment, or obligations;
+12. Den-owned tool requests do not stop initial or continuation stream consumption unless a typed approval obligation waits on the client;
+13. terminal run state, settled obligations/steps, and one terminal BearWire event commit or roll back together.
 
 Prefer pure derivation/validation tests first, then narrow persistence/replay tests at state seams.
 

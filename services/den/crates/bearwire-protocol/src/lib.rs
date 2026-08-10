@@ -1,3 +1,4 @@
+pub mod compatibility;
 pub mod methods;
 pub mod rpc;
 pub mod surface;

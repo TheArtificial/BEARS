@@ -62,6 +62,7 @@ async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, St
 /// * `sqlx_pool` - Database connection pool.
 /// * `session_store` - PostgreSQL session store for axum-login.
 /// * `config` - Shared process configuration used for URLs, cookies, Bifrost, and memory stores.
+/// * `memory_stores` - Clone of the process-wide per-Bear memory store manager.
 /// * `peer_routers` - Sibling edge routers mounted by the binary composition root.
 ///
 /// # Returns
@@ -93,8 +94,9 @@ pub async fn create_api_app(
     sqlx_pool: PgPool,
     session_store: PostgresStore,
     config: Arc<Config>,
+    memory_stores: MemoryStoreManager,
     peer_routers: Vec<(&'static str, Router<DenState>)>,
-) -> Result<Router, Box<dyn std::error::Error>> {
+) -> Result<(Router, DenState), Box<dyn std::error::Error>> {
     // Extract URLs before moving config
     let web_server_url = config.web_server_url.clone();
     let api_server_url = config.api_server_url.clone();
@@ -104,7 +106,7 @@ pub async fn create_api_app(
         sqlx_pool.clone(),
         config.clone(),
         Arc::new(BifrostClient::new(config.as_ref())),
-        MemoryStoreManager::new(config.as_ref()),
+        memory_stores,
     );
     den_service::bifrost::spawn_managed_catalog_refresh(
         api_state.bifrost.clone(),
@@ -141,7 +143,7 @@ pub async fn create_api_app(
 
     let router = main_router
         // Set main API state BEFORE adding middleware layers
-        .with_state(api_state)
+        .with_state(api_state.clone())
         // Add CORS middleware for cross-origin API requests
         .layer(create_api_cors_layer(config.as_ref()))
         // Add request tracing
@@ -154,7 +156,7 @@ pub async fn create_api_app(
                 .layer(auth_layer),
         );
 
-    Ok(router)
+    Ok((router, api_state))
 }
 
 /// Create session management layer

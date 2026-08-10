@@ -2,6 +2,29 @@
 set -euo pipefail
 
 ROOT="/workspace"
+INFRA_ONLY=0
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/smoke-stack.sh [--infra]
+
+Build and run the local smoke stack, seed it, and run smoke tests.
+
+  --infra  Start and verify bundled Postgres only. This skips image builds,
+           application startup, seeding, and smoke tests; use it before
+           `cargo sqlx prepare`.
+EOF
+}
+
+case "${1:-}" in
+  "") ;;
+  --infra) INFRA_ONLY=1 ;;
+  -h|--help) usage; exit 0 ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
 
 # shellcheck source=/workspace/scripts/load-env.sh
 . "${ROOT}/scripts/load-env.sh"
@@ -70,6 +93,22 @@ wait_postgres_service() {
   return 1
 }
 
+attach_caller_to_postgres_network() {
+  # `bears-postgres` is a Compose service alias, not a Docker container name.
+  # Derive its actual project network rather than assuming a project prefix.
+  local postgres_id network caller_id
+  postgres_id="$(compose_with_env ps -q bears-postgres)"
+  network="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}' "${postgres_id}")"
+  caller_id="$(hostname)"
+
+  if docker inspect "${caller_id}" --format '{{json .NetworkSettings.Networks}}' | grep -Fq "\"${network}\""; then
+    return 0
+  fi
+
+  echo "Attaching this workspace container to ${network} so bears-postgres resolves..."
+  docker network connect "${network}" "${caller_id}"
+}
+
 wait_compose_service_ready() {
   service="$1"
   for _ in $(seq 1 60); do
@@ -124,15 +163,22 @@ apply_smoke_seed_until_pair_ready() {
   return 1
 }
 
+echo "Starting bundled Postgres..."
+compose_with_env up -d bears-postgres
+wait_postgres_service bears-postgres bears den
+
+if [ "${INFRA_ONLY}" -eq 1 ]; then
+  attach_caller_to_postgres_network
+  echo "Bundled Postgres is ready."
+  echo "SQLx connection: postgres://bears:bears@bears-postgres:5432/den?sslmode=disable"
+  exit 0
+fi
+
 echo "Building local Bifrost image (${BIFROST_IMAGE})..."
 docker build -t "${BIFROST_IMAGE}" "${ROOT}/services/bifrost"
 
 echo "Building local Den image (${DEN_IMAGE})..."
 docker build --build-arg SQLX_OFFLINE=true -t "${DEN_IMAGE}" "${ROOT}/services/den"
-
-echo "Starting bundled Postgres..."
-compose_with_env up -d bears-postgres
-wait_postgres_service bears-postgres bears den
 
 if recall_enabled; then
   echo "Starting Qdrant (recall profile)..."

@@ -44,30 +44,42 @@ use den_service::{
 
 use crate::{
     events::{events_page, EventPageQuery},
-    methods::{
-        conversation::project_focus_title,
-        run::{persist_run_failed, RunFailureReason},
-    },
+    methods::run::{normalized_workspace_roots, persist_run_failed, RunFailureReason},
     rpc::rpc,
 };
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
 
 #[test]
-fn project_focus_title_prefix_is_projection_only_and_idempotent() {
+fn normalized_workspace_roots_uses_cwd_when_roots_are_not_declared() {
     assert_eq!(
-        project_focus_title(Some("Title".to_string()), true).as_deref(),
-        Some("⌖ Title")
-    );
-    assert_eq!(
-        project_focus_title(Some("⌖ Title".to_string()), true).as_deref(),
-        Some("⌖ Title")
-    );
-    assert_eq!(
-        project_focus_title(Some("⌖ Title".to_string()), false).as_deref(),
-        Some("Title")
+        normalized_workspace_roots(None, Some("/workspace"))
+            .expect("cwd fallback should be accepted"),
+        vec!["/workspace"]
     );
 }
 
+#[test]
+fn normalized_workspace_roots_accepts_cwd_inside_a_declared_root() {
+    assert_eq!(
+        normalized_workspace_roots(
+            Some(&json!({ "workspace_roots": ["/workspace"] })),
+            Some("/workspace/services/den"),
+        )
+        .expect("containing root should be accepted"),
+        vec!["/workspace"]
+    );
+}
+
+#[test]
+fn normalized_workspace_roots_rejects_cwd_outside_declared_roots() {
+    let error = normalized_workspace_roots(
+        Some(&json!({ "workspace_roots": ["/workspace"] })),
+        Some("/other-workspace"),
+    )
+    .expect_err("outside cwd must not become a workspace root");
+
+    assert!(format!("{error:?}").contains("outside declared workspace_roots"));
+}
 fn test_state(pool: sqlx::PgPool) -> DenState {
     test_state_with_config(pool, den_core::config::Config::test_stub())
 }
@@ -293,107 +305,6 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
     .expect("events page response after cursor")
     .0;
     assert!(replay_after["events"].as_array().unwrap().is_empty());
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn session_open_mode_change_clears_active_focus(pool: sqlx::PgPool) {
-    let user_id = create_test_user(&pool).await;
-    let (bear_id, bear_slug) = create_test_bear(&pool).await;
-    let token = create_token_for_bear(&pool, user_id, bear_id).await;
-    let state = test_state(pool.clone());
-    let session_id = format!("session-{}", Uuid::new_v4().simple());
-    let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
-
-    let initial = rpc_value(
-        state.clone(),
-        &token,
-        "session.open",
-        json!({
-            "bear_slug": bear_slug,
-            "session_id": session_id,
-            "conversation_id": conversation_id,
-            "client": "bearwire-test",
-            "mode": "write"
-        }),
-    )
-    .await;
-    assert_eq!(initial["result"]["ok"], true);
-    assert_eq!(initial["result"]["cleared_focus_count"], 0);
-
-    let docket_job_id: Uuid = sqlx::query_scalar(
-        r#"
-        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, status)
-        VALUES ($1, $2, 'pair', 'Focused job', 'running')
-        RETURNING id
-        "#,
-    )
-    .bind(bear_id)
-    .bind(user_id)
-    .fetch_one(&pool)
-    .await
-    .expect("insert docket job");
-    let docket_run_id: Uuid = sqlx::query_scalar(
-        r#"
-        INSERT INTO bear_job_runs (job_id, state, started_at)
-        VALUES ($1, 'running', NOW())
-        RETURNING id
-        "#,
-    )
-    .bind(docket_job_id)
-    .fetch_one(&pool)
-    .await
-    .expect("insert docket run");
-    sqlx::query("UPDATE bear_jobs SET current_run_id = $2 WHERE id = $1")
-        .bind(docket_job_id)
-        .bind(docket_run_id)
-        .execute(&pool)
-        .await
-        .expect("attach docket run");
-    sqlx::query(
-        r#"
-        INSERT INTO docket_execution_sessions (
-            bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id, job_id, run_id
-        )
-        VALUES ($1, 'pair', $2, $3, $2, $4, $5)
-        "#,
-    )
-    .bind(bear_id)
-    .bind(&session_id)
-    .bind(&conversation_id)
-    .bind(docket_job_id)
-    .bind(docket_run_id)
-    .execute(&pool)
-    .await
-    .expect("insert active docket execution session");
-
-    let changed = rpc_value(
-        state,
-        &token,
-        "session.open",
-        json!({
-            "bear_slug": bear_slug,
-            "session_id": session_id,
-            "conversation_id": conversation_id,
-            "client": "bearwire-test",
-            "mode": "plan"
-        }),
-    )
-    .await;
-    assert_eq!(changed["result"]["ok"], true);
-    assert_eq!(changed["result"]["cleared_focus_count"], 1);
-
-    let execution_state: String = sqlx::query_scalar(
-        r#"
-        SELECT state FROM docket_execution_sessions
-        WHERE bear_id = $1 AND source_client_session_id = $2
-        "#,
-    )
-    .bind(bear_id)
-    .bind(&session_id)
-    .fetch_one(&pool)
-    .await
-    .expect("fetch docket execution state");
-    assert_eq!(execution_state, "cancelled");
 }
 
 fn start_mock_openai_sse_server() -> String {
@@ -1362,6 +1273,7 @@ async fn session_state_includes_latest_context_budget_for_resolved_conversation(
         estimate_precision: ContextBudgetEstimatePrecision::Approximate,
         near_budget: false,
         over_budget: false,
+        calibration: None,
         components: vec![ContextBudgetComponentReport {
             key: "history".to_string(),
             label: "Conversation history".to_string(),
@@ -1993,11 +1905,11 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .expect("persist unsupported reasoning replay policy event");
 
     let docket_job_id: Uuid = sqlx::query_scalar(
-        r#"
-        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, status)
-        VALUES ($1, $2, 'pair', 'Surface diagnostics job', 'running')
+        r"
+        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)
+        VALUES ($1, $2, 'pair', 'Surface diagnostics job')
         RETURNING id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(user_id)
@@ -2005,11 +1917,11 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .await
     .expect("insert docket job");
     let docket_run_id: Uuid = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO bear_job_runs (job_id, state, started_at)
         VALUES ($1, 'running', NOW())
         RETURNING id
-        "#,
+        ",
     )
     .bind(docket_job_id)
     .fetch_one(&pool)
@@ -2037,12 +1949,12 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .await
     .expect("insert docket task");
     sqlx::query(
-        r#"
+        r"
         INSERT INTO docket_execution_sessions (
             bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id, job_id, run_id, task_id
         )
         VALUES ($1, 'pair', $2, $3, $2, $4, $5, $6)
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(&session_id)
@@ -2054,33 +1966,17 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .await
     .expect("insert docket execution session");
     sqlx::query(
-        r#"
-        INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_user_id, payload)
-        VALUES ($1, $2, 'focus_selected', 'pair', $3, '{"state":"active"}'::jsonb)
-        "#,
-    )
-    .bind(docket_job_id)
-    .bind(docket_run_id)
-    .bind(user_id)
-    .execute(&pool)
-    .await
-    .expect("insert focus event");
-    sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
         VALUES ($1, $2, 'created', 'pair', $3, $4::jsonb)
-        "#,
+        ",
     )
     .bind(docket_task_id)
     .bind(docket_run_id)
     .bind(user_id)
     .bind(json!({
         "definition": {
-            "task_id": docket_task_id,
-            "job_id": docket_job_id,
-            "title": "Diagnostic task",
-            "body": "Check projection",
-            "completion_criteria": ["projection includes task"]
+            "title": "Diagnostic task"
         }
     }))
     .execute(&pool)
@@ -2160,7 +2056,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     assert!(
         surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("session_info_update")
-                && event.get("title").and_then(Value::as_str) == Some("⌖ History replay title")
+                && event.get("title").and_then(Value::as_str) == Some("History replay title")
                 && event.get("current_mode").and_then(Value::as_str) == Some("write")
         }),
         "surface history should expose typed session metadata update from latest session state: {surface_response}"
@@ -2182,12 +2078,11 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         "surface history should omit reasoning with replay_policy=none: {surface_response}"
     );
     assert!(
-        surface_events.iter().any(|event| {
+        !surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("reasoning_delta")
                 && event.get("text").and_then(Value::as_str) == Some("replayable thought")
-                && event.get("replay_policy").and_then(Value::as_str) == Some("thought")
         }),
-        "surface history should expose only replayable typed reasoning with replay policy: {surface_response}"
+        "conversation surface history should omit transient reasoning events: {surface_response}"
     );
     assert!(
         !surface_events.iter().any(|event| {
@@ -2223,22 +2118,6 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                 && event
                     .get("text")
                     .and_then(Value::as_str)
-                    .is_some_and(|text| {
-                        text.contains("Docket focus selected")
-                            && text.contains("goal=Surface diagnostics job")
-                            && text.contains("status=running")
-                            && text.contains("task=Diagnostic task")
-                    })
-        }),
-        "surface history should expose Docket focus diagnostics: {surface_response}"
-    );
-    assert!(
-        surface_events.iter().any(|event| {
-            event.get("kind").and_then(Value::as_str) == Some("message")
-                && event.get("role").and_then(Value::as_str) == Some("system")
-                && event
-                    .get("text")
-                    .and_then(Value::as_str)
                     .is_some_and(|text| text.contains("Docket task created: Diagnostic task"))
         }),
         "surface history should expose Docket task definition diagnostics: {surface_response}"
@@ -2252,7 +2131,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                     .and_then(Value::as_str)
                     .is_some_and(|text| {
                         text.contains("Runtime orientation: kind=focused")
-                            && text.contains(&format!("focused_job={docket_job_id}"))
+                            && text.contains(&format!("job={docket_job_id}"))
                             && text.contains(&format!("task={docket_task_id}"))
                     })
         }),
@@ -2326,7 +2205,9 @@ async fn approval_required_tool_request_creates_permission_obligation(pool: sqlx
         .await
         .expect("create active run");
 
+    let state = test_state(pool.clone());
     crate::methods::run::persist_runtime_event_as_bearwire(
+        &state,
         &pool,
         &session_id,
         &run_id,
@@ -2449,6 +2330,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) {
+    let state = test_state(pool.clone());
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
@@ -2467,6 +2349,11 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
     )
     .await
     .expect("insert tool obligation");
+    let request_id = Uuid::new_v4();
+    let active_turn = state
+        .tool_turns
+        .acquire_active_turn(&session_id, request_id, None)
+        .expect("register active session turn");
     sqlx::query(
         "UPDATE turn_obligations SET created_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
     )
@@ -2475,10 +2362,21 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
     .await
     .expect("age obligation");
 
-    let expired_runs = crate::expire_client_obligations_once(&pool, 100)
+    let expired_runs = crate::expire_client_obligations_once(&state, 100)
         .await
         .expect("expire obligations");
     assert_eq!(expired_runs, 1);
+    assert!(state
+        .tool_turns
+        .active_turn_for_session(&session_id)
+        .is_none());
+    // The active-turn guard may outlive cancellation, but must not restore it.
+    drop(active_turn);
+    let recovered_turn = state
+        .tool_turns
+        .acquire_active_turn(&session_id, Uuid::new_v4(), None)
+        .expect("accept a new turn after expiry");
+    drop(recovered_turn);
 
     let run = turn_runs::get_run(&pool, &run_id)
         .await
@@ -2497,6 +2395,151 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
             && row.event.data["reason"] == "client_obligation_timeout"
             && row.event.data["context"]["source"] == "bearwire_client_obligation_expiry_loop"
     }));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn prior_process_obligation_is_reported_as_den_restart(pool: sqlx::PgPool) {
+    let state = test_state(pool.clone());
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let prior_process_epoch_id = Uuid::new_v4();
+    assert_ne!(prior_process_epoch_id, state.process_epoch_id);
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    turn_obligations::upsert_tool_result_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-restart",
+        None,
+        json!({
+            "tool_name": "fs_list_directory",
+            "den_process_epoch_id": prior_process_epoch_id,
+        }),
+    )
+    .await
+    .expect("insert prior-process obligation");
+
+    assert_eq!(
+        crate::expire_client_obligations_once(&state, 100)
+            .await
+            .expect("reconcile obligations"),
+        1
+    );
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "failed");
+    assert_eq!(
+        run.terminal_reason.as_deref(),
+        Some("server_restart_interrupted")
+    );
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list events");
+    let failed = events
+        .iter()
+        .find(|row| row.event_type == "run.failed")
+        .expect("run.failed event");
+    assert_eq!(failed.event.data["reason"], "server_restart_interrupted");
+    assert_eq!(
+        failed.event.data["context"]["source"],
+        "bearwire_client_obligation_restart_reconciliation"
+    );
+    assert!(failed.event.data["user_message"]
+        .as_str()
+        .is_some_and(|message| message.contains("Den restarted")));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn command_obligation_expiry_blocks_automatic_retry_as_outcome_unknown(pool: sqlx::PgPool) {
+    let state = test_state(pool.clone());
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    let obligation = turn_obligations::upsert_tool_result_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-command-timeout",
+        None,
+        json!({
+            "tool_name": "run_command",
+            "den_process_epoch_id": Uuid::new_v4(),
+        }),
+    )
+    .await
+    .expect("insert command obligation");
+    turn_obligations::claim_tool_execution(
+        &pool,
+        obligation.id,
+        &run_id,
+        &session_id,
+        "call-command-timeout",
+        &turn_obligations::lease_attempt_token_hash("command-attempt"),
+    )
+    .await
+    .expect("claim command obligation")
+    .expect("command obligation was claimable");
+    sqlx::query(
+        "UPDATE turn_obligations SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1",
+    )
+    .bind(obligation.id)
+    .execute(&pool)
+    .await
+    .expect("expire command lease");
+
+    assert_eq!(
+        crate::expire_client_obligations_once(&state, 100)
+            .await
+            .expect("expire obligations"),
+        1
+    );
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "failed");
+    assert_eq!(
+        run.terminal_reason.as_deref(),
+        Some("command_outcome_unknown")
+    );
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list events");
+    let failed = events
+        .iter()
+        .find(|row| row.event_type == "run.failed")
+        .expect("run.failed event");
+    assert_eq!(failed.event.data["reason"], "command_outcome_unknown");
+    assert_eq!(
+        failed.event.data["message"],
+        "Command result couldn't be confirmed. The connection ended before Builder Bear could report whether the command completed. To avoid duplicate changes, the command was not retried automatically."
+    );
+    assert_eq!(
+        failed.event.data["context"]["recovery"]["automatic_retry_allowed"],
+        false
+    );
+    assert_eq!(
+        failed.event.data["context"]["recovery"]["next_action"],
+        "run_state"
+    );
+    assert_eq!(
+        failed.event.data["context"]["recovery"]["next_action_params"]["run_id"],
+        run_id
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

@@ -48,6 +48,7 @@ pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearPro
         }));
     }
     let active_work_surface_roles = matches!(role, BearProfile::Pair | BearProfile::Work);
+    let has_candidates = !candidates.is_empty();
     json!({
         "workplace": {
             "profile": role.as_str(),
@@ -55,8 +56,12 @@ pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearPro
         },
         "work_surface": {
             "mode": if active_work_surface_roles { "active" } else { "reference_only" },
-            "status": if candidates.is_empty() { "unresolved" } else { "candidate" },
-            "note": if candidates.is_empty() {
+            // ponytail: Session metadata is only evidence, never canonical identity.
+            // Upgrade this to resolved/confirmed only through the session-resolution record.
+            "status": if has_candidates { "candidate" } else { "unresolved" },
+            "confidence": if has_candidates { "medium" } else { "none" },
+            "needs_user_confirmation": false,
+            "note": if !has_candidates {
                 if active_work_surface_roles {
                     "No trusted work-surface hint is available yet from this session. Use workspace roots, runtime target, user references, and memory anchors to resolve what the agent may be acting on."
                 } else {
@@ -68,6 +73,26 @@ pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearPro
                 "Trusted session metadata provides work-surface reference candidates that may help the agent answer about relevant Bear work surfaces. Treat these as hints, not canonical identity, until confirmed by anchors or explicit user intent."
             },
             "reference_candidates": candidates,
+            "agent_guidance": {
+                "may_state_assumption": has_candidates,
+                "should_ask_user_when": [
+                    "multiple plausible work surfaces",
+                    "memory or action depends on work-surface scope",
+                    "the user asks to continue prior work but the current surface is unclear"
+                ],
+                "confirmation_examples": [
+                    "Should I treat this as the current work surface?",
+                    "Which work surface should this work job use?"
+                ]
+            },
+            "recommended_grounding_order": [
+                "current conversation",
+                "session_info",
+                "current work-surface anchors",
+                "role-local memory",
+                "core memory",
+                "workspace artifacts"
+            ]
         }
     })
 }
@@ -129,6 +154,29 @@ impl WorkSurfaceSessionHints {
     }
 }
 
+/// A durable, canonical work-surface identity supplied by a trusted armature
+/// session. Candidate strings are intentionally not accepted here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkSurfaceSessionAnchor {
+    pub surface_id: uuid::Uuid,
+    pub status: WorkSurfaceProjectionStatus,
+}
+
+impl WorkSurfaceSessionAnchor {
+    /// Read only the typed anchor written into trusted adapter session context.
+    /// Unknown/malformed values remain unanchored rather than becoming hints.
+    pub fn from_adapter_environment(value: Option<&Value>) -> Option<Self> {
+        let anchor = value?.get("work_surface_anchor")?;
+        let surface_id = anchor.get("surface_id")?.as_str()?.parse().ok()?;
+        let status = match anchor.get("status")?.as_str()? {
+            "resolved" => WorkSurfaceProjectionStatus::Resolved,
+            "confirmed" => WorkSurfaceProjectionStatus::Confirmed,
+            _ => return None,
+        };
+        Some(Self { surface_id, status })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkSurfaceProjectionStatus {
     Unresolved,
@@ -176,6 +224,23 @@ pub fn work_surface_projection_status(
 
 pub fn work_surface_candidate_slug(context: &DenToolInvocationContext) -> Option<String> {
     work_surface_candidate_slug_from_hints(&WorkSurfaceSessionHints::from_invocation(context))
+}
+
+/// Resolves a trusted session candidate only when it identifies exactly one
+/// assigned managed surface after applying the canonical slug normalization.
+/// A non-match and a normalized-name collision are intentionally unbound.
+pub fn resolve_assigned_work_surface_slug_from_hints(
+    hints: &WorkSurfaceSessionHints,
+    assigned_surface_names: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<String> {
+    let candidate = work_surface_candidate_slug_from_hints(hints)?;
+    let mut matches = assigned_surface_names.into_iter().filter_map(|name| {
+        let name = name.as_ref();
+        (normalize_work_surface_slug(name).ok().as_deref() == Some(candidate.as_str()))
+            .then(|| name.to_string())
+    });
+    let resolved = matches.next()?;
+    matches.next().is_none().then_some(resolved)
 }
 
 pub fn work_surface_candidate_slug_from_hints(hints: &WorkSurfaceSessionHints) -> Option<String> {

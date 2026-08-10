@@ -1626,7 +1626,7 @@ async fn clear_review_queue_post(
         cleared += 1;
     }
 
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     if let Ok(store) = manager.store_for_bear(bear.id).await {
         for proposal in list_reviewable_memory_proposals(&store).await? {
             let source_refs = proposal
@@ -1685,7 +1685,7 @@ async fn import_staged_bundle(
     bear_id: Uuid,
     bundle_path: &FsPath,
 ) -> Result<den_memory::LegacyMemoryImportReport, CustomError> {
-    let stores = MemoryStoreManager::new(state.config.as_ref());
+    let stores = state.memory_stores.clone();
     let store = stores.store_for_bear(bear_id).await?;
     let record_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
@@ -1732,7 +1732,7 @@ async fn dashboard_view(
     };
     let id = bear.id;
     let config = state.config.as_ref();
-    let manager = MemoryStoreManager::new(config);
+    let manager = state.memory_stores.clone();
 
     let stats = bear_memory_admin_stats(&manager, config, id).await.ok();
     let legacy_import_locked = stats.as_ref().map(|s| s.record_count > 0).unwrap_or(true);
@@ -1750,7 +1750,26 @@ async fn dashboard_view(
             recall_registry::passage_stats(state.sqlx_pool(), id, &config.embedding_standard)
                 .await
                 .unwrap_or((0, 0));
-        Some(json!({ "enabled": true, "passages": passages, "memories": memories }))
+        // Recall consistency watermark (ADR-0038 §8): lag + last-run failure summary.
+        let watermark = match den_service::recall::recall_watermark_for_bear(
+            state.sqlx_pool(),
+            config,
+            &manager,
+            id,
+        )
+        .await
+        {
+            Ok(watermark) => den_service::recall::recall_status_json(watermark.as_ref()),
+            Err(err) => {
+                json!({ "available": false, "reason": format!("watermark unavailable: {err}") })
+            }
+        };
+        Some(json!({
+            "enabled": true,
+            "passages": passages,
+            "memories": memories,
+            "watermark": watermark,
+        }))
     } else {
         None
     };
@@ -1880,7 +1899,7 @@ async fn recent_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     let records: Vec<RecordListItem> = list_recent_memory_records(&manager, bear.id, 50)
         .await
         .unwrap_or_default()
@@ -1916,7 +1935,7 @@ async fn search_view(
         Err(r) => return Ok(r.into_response()),
     };
     let config = state.config.as_ref();
-    let manager = MemoryStoreManager::new(config);
+    let manager = state.memory_stores.clone();
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let semantic_available = config.qdrant_url.is_some() && !config.llm_api_url.trim().is_empty();
     let want_semantic = query.mode.as_deref() == Some("semantic") && semantic_available;
@@ -2002,7 +2021,7 @@ async fn browse_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     let summaries = list_path_summaries(&manager, bear.id)
         .await
         .unwrap_or_default();
@@ -2132,7 +2151,7 @@ async fn import_legacy_memory_post(
         ));
     }
 
-    let stores = MemoryStoreManager::new(state.config.as_ref());
+    let stores = state.memory_stores.clone();
     let store = stores.store_for_bear(bear.id).await?;
     let record_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
@@ -2288,7 +2307,7 @@ async fn browse_delete_post(
         ))
         .into_response());
     }
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     let store = manager.store_for_bear(bear.id).await?;
     let mut deleted = 0usize;
     for path in &paths {
@@ -2322,7 +2341,7 @@ async fn record_view(
         Err(r) => return Ok(r.into_response()),
     };
     let config = state.config.as_ref();
-    let manager = MemoryStoreManager::new(config);
+    let manager = state.memory_stores.clone();
     let record = get_memory_record_detail(&manager, bear.id, &memory_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("memory record not found".to_string()))?;
@@ -2420,7 +2439,7 @@ async fn entities_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     let store = manager.store_for_bear(bear.id).await?;
     let type_filter = query
         .r#type
@@ -2478,7 +2497,7 @@ async fn entity_detail_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     let store = manager.store_for_bear(bear.id).await?;
     let row = store::get_entity(&store, &entity_id)
         .await?
@@ -2555,7 +2574,7 @@ async fn reflection_run_get(
     }
     let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
     let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     let detail = get_reflection_run_detail(state.sqlx_pool(), &manager, bear.id, run_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("reflection run not found".to_string()))?;
@@ -2586,7 +2605,7 @@ async fn reflection_evidence_get(
     }
     let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
     let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     let evidence =
         get_reflection_evidence(state.sqlx_pool(), &manager, bear.id, &bear.slug, run_id)
             .await?
@@ -2627,7 +2646,7 @@ async fn proposal_get(
     {
         proposal_view_from_postgres(proposal)
     } else {
-        let manager = MemoryStoreManager::new(state.config.as_ref());
+        let manager = state.memory_stores.clone();
         let store = manager.store_for_bear(bear.id).await?;
         get_sqlite_memory_proposal(&store, &proposal_id.to_string())
             .await?
@@ -2695,7 +2714,7 @@ async fn proposal_post(
         )
         .await?;
     } else {
-        let manager = MemoryStoreManager::new(state.config.as_ref());
+        let manager = state.memory_stores.clone();
         let store = manager.store_for_bear(bear.id).await?;
         let review_payload = json!({
             "reviewer_profile": BearProfile::Curate.as_str(),
@@ -2709,7 +2728,7 @@ async fn proposal_post(
             .await?;
     }
     if form.after_save.as_deref() == Some("next") {
-        let manager = MemoryStoreManager::new(state.config.as_ref());
+        let manager = state.memory_stores.clone();
         if let Some(next) = next_review_proposal(&state, &manager, bear.id, proposal_id).await {
             return Ok(
                 Redirect::to(&format!("/bear/{}/memory/proposals/{}", bear.slug, next.id))

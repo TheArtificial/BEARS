@@ -124,8 +124,18 @@ pub fn run_failure_projection(
     RuntimeOperationalOutcomeProjection {
         model_summary,
         content,
-        user_message: run_failed_user_message(reason, message, bear_name),
-        history_marker: run_failed_history_marker(reason, message, bear_name),
+        user_message: run_failed_user_message(
+            reason,
+            message,
+            bear_name,
+            diagnostic_context.as_ref(),
+        ),
+        history_marker: run_failed_history_marker(
+            reason,
+            message,
+            bear_name,
+            diagnostic_context.as_ref(),
+        ),
         diagnostic_context,
     }
 }
@@ -142,6 +152,7 @@ pub fn normalized_operational_outcome(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let (kind, retryable, subsystem) = match reason {
+        "command_outcome_unknown" => ("command_outcome_unknown", false, "client_command"),
         "continuation_stream_error" => ("provider_stream_error", true, "llm_stream_transport"),
         "continuation_watchdog_timeout" => ("continuation_timeout", true, "continuation_runtime"),
         "continuation_start_failed" => ("continuation_start_failed", true, "continuation_runtime"),
@@ -193,7 +204,86 @@ pub fn is_budget_or_loop_failure(reason: &str, message: &str) -> bool {
     reason == "runtime_internal" && (message.contains("budget") || message.contains("rule of ko"))
 }
 
-pub fn run_failed_user_message(reason: &str, message: &str, bear_name: &str) -> Option<String> {
+pub fn run_failed_user_message(
+    reason: &str,
+    message: &str,
+    bear_name: &str,
+    context: Option<&Value>,
+) -> Option<String> {
+    if reason == "command_outcome_unknown" {
+        return Some(format!(
+            "{} could not confirm the command's final status after the connected client stopped responding. The command may still be running or may already have made changes. Reconnect, call `run_state` with run ID `{}`, then inspect the reported command result and workspace before retrying it.",
+            display_bear_name(bear_name),
+            context
+                .and_then(|value| value.get("recovery"))
+                .and_then(|value| value.get("next_action_params"))
+                .and_then(|value| value.get("run_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("the failed run"),
+        ));
+    }
+    if reason == "server_restart_interrupted" {
+        return Some(format!(
+            "{} was interrupted because Den restarted while waiting for the connected work surface to complete a local step. Reconnect and send another message to continue.",
+            display_bear_name(bear_name),
+        ));
+    }
+    if reason == "client_obligation_timeout" {
+        let obligations = context
+            .and_then(|context| {
+                context
+                    .get("affected_obligations")
+                    .or_else(|| context.get("expired_obligations"))
+            })
+            .and_then(Value::as_array);
+        let permission_ids = obligations
+            .into_iter()
+            .flatten()
+            .filter(|obligation| {
+                obligation
+                    .get("expected_responder_action")
+                    .and_then(Value::as_str)
+                    == Some("permission_decision")
+            })
+            .filter_map(|obligation| obligation.get("permission_id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        if !permission_ids.is_empty() {
+            let detail = match permission_ids.as_slice() {
+                [permission_id] => format!("Permission request {permission_id} timed out."),
+                permission_ids => format!(
+                    "Permission requests {} timed out.",
+                    permission_ids.join(", ")
+                ),
+            };
+            return Some(format!(
+                "{} stopped because {detail} Reconnect the work surface and send another message to retry.",
+                display_bear_name(bear_name),
+            ));
+        }
+
+        if let Some(obligation) = obligations.and_then(|obligations| obligations.first()) {
+            let tool_name = obligation
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .unwrap_or("local tool");
+            if obligation.get("claimed").and_then(Value::as_bool) == Some(true) {
+                return Some(format!(
+                    "{} stopped because the work surface claimed `{tool_name}`, but Den did not receive its result before the execution lease expired. The local step may have completed; inspect the workspace before retrying.",
+                    display_bear_name(bear_name),
+                ));
+            }
+            return Some(format!(
+                "{} stopped because the work surface did not claim `{tool_name}` before the local-step wait expired. Send another message to retry.",
+                display_bear_name(bear_name),
+            ));
+        }
+
+        return Some(format!(
+            "{} stopped while waiting for the work surface to complete a local step. Send another message to retry.",
+            display_bear_name(bear_name),
+        ));
+    }
     if is_incomplete_stream(reason) {
         return Some(format!(
             "{} was interrupted before finishing. Your conversation and any completed tool results were preserved. Send another message to retry.",
@@ -239,8 +329,13 @@ fn is_llm_stream_idle_timeout(reason: &str, message: &str) -> bool {
         && message.contains("LLM byte stream produced no data for 30s")
 }
 
-pub fn run_failed_history_marker(reason: &str, message: &str, bear_name: &str) -> Option<String> {
-    run_failed_user_message(reason, message, bear_name)
+pub fn run_failed_history_marker(
+    reason: &str,
+    message: &str,
+    bear_name: &str,
+    context: Option<&Value>,
+) -> Option<String> {
+    run_failed_user_message(reason, message, bear_name, context)
 }
 
 pub fn numeric_message_field(message: &str, field: &str) -> Option<u64> {
@@ -460,6 +555,27 @@ mod tests {
     }
 
     #[test]
+    fn command_outcome_unknown_tells_the_client_how_to_inspect_the_run() {
+        let projection = run_failure_projection(
+            "command_outcome_unknown",
+            "Command result couldn't be confirmed.",
+            "run-1",
+            "Builder Bear",
+            Some(json!({
+                "recovery": {
+                    "next_action": "run_state",
+                    "next_action_params": { "run_id": "run-1" },
+                },
+            })),
+        );
+
+        assert_eq!(
+            projection.user_message.as_deref(),
+            Some("Builder Bear could not confirm the command's final status after the connected client stopped responding. The command may still be running or may already have made changes. Reconnect, call `run_state` with run ID `run-1`, then inspect the reported command result and workspace before retrying it."),
+        );
+    }
+
+    #[test]
     fn generic_operational_outcome_tells_model_to_verify_persisted_state() {
         let projection = run_failure_projection(
             "runtime_internal_unknown",
@@ -539,6 +655,106 @@ mod tests {
             "wait_for_user_retry_after_reporting_stream_timeout"
         );
         assert_eq!(context["diagnostic"]["idle_timeout_seconds"], 30);
+    }
+
+    #[test]
+    fn client_obligation_timeout_names_the_timed_out_permission_request() {
+        let projection = run_failure_projection(
+            "client_obligation_timeout",
+            "Permission request req-123 timed out waiting for a client response.",
+            "run-1",
+            "Builder Bear",
+            Some(json!({
+                "expired_obligations": [{
+                    "expected_responder_action": "permission_decision",
+                    "permission_id": "req-123",
+                }],
+            })),
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("Permission request req-123 timed out."));
+        assert!(user_message.contains("Reconnect the work surface"));
+        assert_eq!(projection.content["reason"], "client_obligation_timeout");
+        assert_eq!(
+            projection.diagnostic_context.expect("diagnostic context")["expired_obligations"][0]
+                ["permission_id"],
+            "req-123"
+        );
+    }
+
+    #[test]
+    fn generic_client_obligation_timeout_does_not_blame_the_client() {
+        let projection = run_failure_projection(
+            "client_obligation_timeout",
+            "required step timed out",
+            "run-1",
+            "Builder Bear",
+            Some(json!({ "expired_obligations": [] })),
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("waiting for the work surface"));
+        assert!(!user_message.contains("connection was interrupted"));
+        assert!(!user_message.contains("client did not respond"));
+    }
+
+    #[test]
+    fn client_obligation_timeout_reports_unclaimed_tool() {
+        let projection = run_failure_projection(
+            "client_obligation_timeout",
+            "required step timed out",
+            "run-1",
+            "Builder Bear",
+            Some(json!({
+                "affected_obligations": [{
+                    "expected_responder_action": "tool_result",
+                    "tool_name": "git_status",
+                    "claimed": false,
+                }],
+            })),
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("did not claim `git_status`"));
+        assert!(!user_message.contains("connection"));
+    }
+
+    #[test]
+    fn client_obligation_timeout_reports_claimed_tool_lease_expiry() {
+        let projection = run_failure_projection(
+            "client_obligation_timeout",
+            "required step timed out",
+            "run-1",
+            "Builder Bear",
+            Some(json!({
+                "affected_obligations": [{
+                    "expected_responder_action": "tool_result",
+                    "tool_name": "git_status",
+                    "claimed": true,
+                }],
+            })),
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("claimed `git_status`"));
+        assert!(user_message.contains("execution lease expired"));
+        assert!(user_message.contains("may have completed"));
+    }
+
+    #[test]
+    fn server_restart_interruption_names_den_as_the_cause() {
+        let projection = run_failure_projection(
+            "server_restart_interrupted",
+            "process-local continuation unavailable",
+            "run-1",
+            "Builder Bear",
+            None,
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("Den restarted"));
+        assert!(user_message.contains("connected work surface"));
     }
 
     #[test]

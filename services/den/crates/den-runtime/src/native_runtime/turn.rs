@@ -1,6 +1,7 @@
 use den_core::config::Config;
 use den_core::tools::{
     arguments::DenToolChannelContext,
+    capability_catalog::SessionCapabilityDescriptor,
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
@@ -71,6 +72,53 @@ use den_service::conversation::persistence::PersistedTranscriptRecord;
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> =
     LazyLock::new(AgentLoopSessionStore::default);
+
+fn session_capabilities_from_client_tools(
+    client_tools: Option<&serde_json::Value>,
+    client_session_id: &str,
+    workspace_roots: Option<&[String]>,
+) -> Vec<SessionCapabilityDescriptor> {
+    let surface = workspace_roots
+        .filter(|roots| !roots.is_empty())
+        .map(|roots| format!("workspace roots: {}", roots.join(", ")))
+        .unwrap_or_else(|| "current client session".to_string());
+    client_tools
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| {
+            let name = tool.get("name")?.as_str()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let is_mcp = name.starts_with("mcp__");
+            Some(SessionCapabilityDescriptor {
+                instance_id: format!("{client_session_id}:{name}"),
+                name: name.to_string(),
+                summary: tool
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|description| !description.trim().is_empty())
+                    .unwrap_or("Connected client provider tool")
+                    .to_string(),
+                kind: "tool".to_string(),
+                provider: if is_mcp { "mcp" } else { "armature" }.to_string(),
+                execution_locality: if is_mcp {
+                    "connected MCP provider".to_string()
+                } else {
+                    "armature-local client workspace".to_string()
+                },
+                authority: "current client connection and turn policy".to_string(),
+                surface: surface.clone(),
+                availability: "available".to_string(),
+                tags: vec![
+                    "session-bound".to_string(),
+                    if is_mcp { "mcp" } else { "armature" }.to_string(),
+                ],
+            })
+        })
+        .collect()
+}
 
 fn render_host_context_for_model(prompt_context: Option<&serde_json::Value>) -> Option<String> {
     let host_context = prompt_context?.get("host_context")?;
@@ -205,7 +253,7 @@ pub fn update_native_client_session_cached_activity_plan_projection(
     let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.update(&key, |session| {
         session.cached_activity_plan_projection = cached_activity_plan_projection;
-    })
+    });
 }
 
 fn active_docket_execution_lookup_for_session(
@@ -214,8 +262,8 @@ fn active_docket_execution_lookup_for_session(
 ) -> DocketExecutionLookup {
     DocketExecutionLookup {
         session_id: Some(client_session_id.to_string()),
-        // ponytail: conversation-scoped focus is the durable restore path for now; upgrade to an
-        // explicit conversation focus record if focus needs history, labels, or multi-job stacks.
+        // ponytail: conversation-scoped Docket execution is the durable restore path for now;
+        // upgrade to an explicit session current-task record when session-local tasks land.
         source_conversation_id: Some(conversation_id.to_string()),
         source_client_session_id: Some(client_session_id.to_string()),
     }
@@ -778,7 +826,9 @@ async fn build_session(
     }
     let may_define_task = match &objective_orientation {
         ObjectiveOrientation::Freeform { policy } => policy.may_define_task,
-        ObjectiveOrientation::Oriented { .. } | ObjectiveOrientation::Focused { .. } => true,
+        ObjectiveOrientation::Oriented { .. } | ObjectiveOrientation::DocketExecution { .. } => {
+            true
+        }
     };
     let tools = merge_den_and_client_tools(
         deps.config,
@@ -824,6 +874,19 @@ async fn build_session(
     let profile = profile.with_tool_budget_multiplier(tool_budget_multiplier);
     let model_option =
         den_service::model_selection::resolve_model_option(deps.pool, &model).await?;
+    // Best-effort: calibration only improves the approximate estimator, so a
+    // failed lookup must never fail the turn (ADR-0047 §7).
+    let model_token_calibration =
+        den_service::model_selection::load_model_token_calibration(deps.pool, &model)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::debug!(
+                    model = %model,
+                    error = %err,
+                    "model token calibration lookup failed; using chars/4 fallback"
+                );
+                None
+            });
     let bifrost_virtual_key = den_service::bears::db::bifrost_virtual_key_for_inference(
         deps.pool,
         bear.id,
@@ -882,6 +945,12 @@ async fn build_session(
         workspace_roots: workspace_roots
             .map(|items| items.to_vec())
             .unwrap_or_default(),
+        session_capabilities: session_capabilities_from_client_tools(
+            client_tools,
+            client_session_id,
+            workspace_roots,
+        ),
+        recently_discovered_capabilities: vec![],
         request_id: request_id.map(|id| id.to_string()),
         run_id: run_id.map(str::to_string),
         messages,
@@ -894,6 +963,7 @@ async fn build_session(
         model_max_output_tokens: model_option
             .as_ref()
             .and_then(|option| option.max_output_tokens),
+        model_token_calibration,
         bifrost_virtual_key,
         api_style,
         step: 0,
@@ -1107,6 +1177,16 @@ pub async fn start_native_profile_turn_event_stream(
         },
     )
     .await?;
+    tracing::warn!(
+        event = "native_turn_start",
+        session_key = %session.session_key,
+        conversation_id = %conversation_id,
+        client_session_id = %client_session_id,
+        request_id = %request.request_id,
+        run_id = ?request.run_id,
+        step = session.step,
+        "native turn starts with a fresh session budget"
+    );
     let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
     let mut content_json = provenance.as_content_json("user_prompt");
     content_json["role"] = serde_json::json!("user");
@@ -1658,6 +1738,7 @@ async fn execute_approved_den_tool_for_session(
         conversation_selection: Some(session.conversation_id.clone()),
         runtime_target: Some(session.conversation_id.clone()),
         workspace_roots: session.workspace_roots.clone(),
+        session_capabilities: session.session_capabilities.clone(),
         session_policy: None,
         activity: session
             .cached_activity_plan_projection
@@ -1711,6 +1792,17 @@ pub async fn continue_native_client_turn_event_stream(
     let prior_session = existing_session
         .clone()
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
+    tracing::warn!(
+        event = "native_turn_continue",
+        session_key = %session_key,
+        conversation_id = %conversation_id,
+        client_session_id = %client_session_id,
+        request_id = %request.request_id,
+        run_id = ?request.run_id,
+        stored_run_id = ?prior_session.run_id,
+        step = prior_session.step,
+        "continuing native turn from client result"
+    );
     let mut tool_messages = Vec::new();
     let mut observations = Vec::new();
     let observation_run_id = request.run_id.or(prior_session.run_id.as_deref());
@@ -1786,14 +1878,16 @@ pub async fn continue_native_client_turn_event_stream(
                 reason.as_deref(),
             )
             .await?;
-            // Approval is control-plane state. Armature-local approvals wait for the
-            // armature to execute the tool and send RuntimeContinuation::ToolResult;
-            // Den-hosted web_fetch approvals execute server-side immediately.
+            // Approval is control-plane state. Client-owned tools wait for the client
+            // to execute them and send RuntimeContinuation::ToolResult; Den-owned tools
+            // execute server-side immediately.
             if approve {
                 if let Some(session) = existing_session.as_ref() {
                     if let Some(tool_call_id) = tool_call_id.as_deref() {
                         if let Some(call) = session.find_pending_tool_call(tool_call_id) {
-                            if call_is_den_web_fetch(&call) {
+                            if builtin_den_tool_descriptor_for_provider_name(&call.function.name)
+                                .is_some()
+                            {
                                 let tool_message = execute_approved_den_tool_for_session(
                                     &request, session, &call, profile,
                                 )
@@ -1902,6 +1996,21 @@ pub async fn continue_native_client_turn_event_stream(
             }
         }
     }
+    if let Some(reason) = evaluation.stop_reason {
+        tracing::warn!(
+            event = "native_turn_budget_fuse",
+            session_key = %session_key,
+            conversation_id = %conversation_id,
+            client_session_id = %client_session_id,
+            request_id = %request.request_id,
+            run_id = ?session.run_id,
+            step = session.step,
+            limit = session.turn_budget.emergency_hard_steps,
+            "client continuation stopped by turn budget"
+        );
+        SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
+        return Ok(continuation_budget_stop(reason));
+    }
     if let Some(refreshed_plan) = refresh_cached_activity_plan_projection_from_docket(
         request.sqlx_pool,
         &conversation_id,
@@ -1916,10 +2025,6 @@ pub async fn continue_native_client_turn_event_stream(
             session.cached_activity_plan_projection = Some(refreshed_plan.clone());
         });
         session.cached_activity_plan_projection = Some(refreshed_plan);
-    }
-    if let Some(reason) = evaluation.stop_reason {
-        SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
-        return Ok(continuation_budget_stop(reason));
     }
     let llm = LlmClient::new(request.config);
     let config = Arc::new(request.config.clone());
@@ -2031,7 +2136,7 @@ mod tests {
     }
 
     #[test]
-    fn active_docket_execution_lookup_uses_conversation_focus_restore_path() {
+    fn active_docket_execution_lookup_uses_conversation_execution_restore_path() {
         let lookup = active_docket_execution_lookup_for_session("conv-1", "session-1");
         assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
         assert_eq!(lookup.source_conversation_id.as_deref(), Some("conv-1"));
@@ -2137,6 +2242,8 @@ mod tests {
             client_session_id: "session".to_string(),
             work_run_id: None,
             workspace_roots: vec![],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: None,
             messages: vec![],
@@ -2145,6 +2252,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
@@ -2214,6 +2322,8 @@ mod tests {
             client_session_id: "session".to_string(),
             work_run_id: None,
             workspace_roots: vec![],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: None,
             messages: vec![],
@@ -2222,6 +2332,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
@@ -2299,6 +2410,8 @@ mod tests {
             client_session_id: "session".to_string(),
             work_run_id: None,
             workspace_roots: vec![],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: None,
             messages: vec![],
@@ -2307,6 +2420,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
@@ -2355,6 +2469,8 @@ mod tests {
             client_session_id: "session".to_string(),
             work_run_id: None,
             workspace_roots: vec![],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: None,
             messages: vec![],
@@ -2363,6 +2479,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
@@ -2489,6 +2606,8 @@ mod tests {
             client_session_id: client_session_id.clone(),
             work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: Some("run-max-step".to_string()),
             messages: Vec::new(),
@@ -2497,6 +2616,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 8,
@@ -2555,11 +2675,11 @@ mod tests {
             .expect("terminal event")
             .expect("event ok");
         match event {
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
-                assert!(message.contains("emergency continuation fuse"));
-                assert!(message.contains("step=8/emergency_hard_steps=8"));
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }) => {
+                assert!(text.contains("emergency continuation fuse"));
+                assert!(text.contains("step=8/emergency_hard_steps=8"));
             }
-            other => panic!("expected TurnFailed, got {other:?}"),
+            other => panic!("expected terminal stop message, got {other:?}"),
         }
         SESSION_STORE.remove(&session_key);
     }
@@ -2579,6 +2699,8 @@ mod tests {
             client_session_id: client_session_id.clone(),
             work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: Some("request-before-tool".to_string()),
             run_id: Some("run-visible-tool".to_string()),
             messages: vec![
@@ -2613,6 +2735,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 1,
@@ -2756,6 +2879,8 @@ mod tests {
             client_session_id: client_session_id.clone(),
             work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: Some(request_id.clone()),
             run_id: Some("run-persisted-visible".to_string()),
             messages: vec![ChatMessage {
@@ -2778,6 +2903,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 1,
@@ -2913,6 +3039,8 @@ mod tests {
             client_session_id: client_session_id.clone(),
             work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
+            session_capabilities: vec![],
+            recently_discovered_capabilities: vec![],
             request_id: Some(request_id.clone()),
             run_id: Some("run-load-history".to_string()),
             messages: vec![ChatMessage {
@@ -2935,6 +3063,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 1,

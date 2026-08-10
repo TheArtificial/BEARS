@@ -78,7 +78,11 @@ pub fn agent_loop_control_profile_fingerprint(
     let bytes = serde_json::to_vec(profile)
         .map_err(|err| DenError::System(format!("serialize agent-loop profile: {err}")))?;
     let digest = Sha256::digest(bytes);
-    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+    Ok(digest.iter().fold(String::new(), |mut hex, byte| {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    }))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -389,7 +393,7 @@ pub struct TaskOrientation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobOrientation {
+pub struct DocketExecutionOrientation {
     pub job_id: String,
     pub active_task_ref: Option<OrientationTaskRef>,
     pub mutable: bool,
@@ -400,7 +404,7 @@ pub struct JobOrientation {
 pub enum ObjectiveOrientation {
     Freeform { policy: FreeformPolicy },
     Oriented { task: TaskOrientation },
-    Focused { job: JobOrientation },
+    DocketExecution { job: DocketExecutionOrientation },
 }
 
 impl ObjectiveOrientation {
@@ -408,7 +412,7 @@ impl ObjectiveOrientation {
         match self {
             Self::Freeform { .. } => "freeform",
             Self::Oriented { .. } => "oriented",
-            Self::Focused { .. } => "focused",
+            Self::DocketExecution { .. } => "docket_execution",
         }
     }
 }
@@ -418,13 +422,16 @@ pub fn objective_orientation_allowed_for_stance(
     objective_orientation: &ObjectiveOrientation,
 ) -> bool {
     !matches!(stance, BearStance::Work)
-        || matches!(objective_orientation, ObjectiveOrientation::Focused { .. })
+        || matches!(
+            objective_orientation,
+            ObjectiveOrientation::DocketExecution { .. }
+        )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectiveOrientationResolutionInput {
-    pub focused_job_id: Option<String>,
-    pub focused_job_mutable: bool,
+    pub docket_job_id: Option<String>,
+    pub docket_execution_mutable: bool,
     pub active_task_ref: Option<OrientationTaskRef>,
     pub freeform_policy: FreeformPolicy,
 }
@@ -432,12 +439,12 @@ pub struct ObjectiveOrientationResolutionInput {
 pub fn resolve_objective_orientation(
     input: ObjectiveOrientationResolutionInput,
 ) -> ObjectiveOrientation {
-    if let Some(job_id) = input.focused_job_id {
-        return ObjectiveOrientation::Focused {
-            job: JobOrientation {
+    if let Some(job_id) = input.docket_job_id {
+        return ObjectiveOrientation::DocketExecution {
+            job: DocketExecutionOrientation {
                 job_id,
                 active_task_ref: input.active_task_ref,
-                mutable: input.focused_job_mutable,
+                mutable: input.docket_execution_mutable,
             },
         };
     }
@@ -537,11 +544,11 @@ fn context_agent_loop_control_default(
     stance: Option<BearStance>,
     objective_orientation: Option<&ObjectiveOrientation>,
 ) -> Option<AgentLoopControlLevel> {
-    let focused_job = matches!(
+    let docket_execution = matches!(
         objective_orientation,
-        Some(ObjectiveOrientation::Focused { .. })
+        Some(ObjectiveOrientation::DocketExecution { .. })
     );
-    match (stance, focused_job) {
+    match (stance, docket_execution) {
         (Some(BearStance::Pair | BearStance::Work), true) => Some(AgentLoopControlLevel::Careful),
         (Some(BearStance::Chat | BearStance::Pair), false) => Some(AgentLoopControlLevel::Standard),
         _ => None,
@@ -891,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn objective_orientation_resolver_prefers_focused_job_over_task() {
+    fn objective_orientation_resolver_prefers_work_assignment_over_task() {
         let task_ref = OrientationTaskRef::DocketTask {
             job_id: Some("job-from-task".to_string()),
             task_id: "task-1".to_string(),
@@ -899,16 +906,16 @@ mod tests {
         };
 
         let resolved = resolve_objective_orientation(ObjectiveOrientationResolutionInput {
-            focused_job_id: Some("job-1".to_string()),
-            focused_job_mutable: true,
+            docket_job_id: Some("job-1".to_string()),
+            docket_execution_mutable: true,
             active_task_ref: Some(task_ref.clone()),
             freeform_policy: FreeformPolicy::task_definition_permitted(),
         });
 
         assert_eq!(
             resolved,
-            ObjectiveOrientation::Focused {
-                job: JobOrientation {
+            ObjectiveOrientation::DocketExecution {
+                job: DocketExecutionOrientation {
                     job_id: "job-1".to_string(),
                     active_task_ref: Some(task_ref),
                     mutable: true,
@@ -926,8 +933,8 @@ mod tests {
         };
 
         let resolved = resolve_objective_orientation(ObjectiveOrientationResolutionInput {
-            focused_job_id: None,
-            focused_job_mutable: true,
+            docket_job_id: None,
+            docket_execution_mutable: true,
             active_task_ref: Some(task_ref.clone()),
             freeform_policy: FreeformPolicy::task_definition_permitted(),
         });
@@ -949,8 +956,8 @@ mod tests {
     #[test]
     fn objective_orientation_resolver_preserves_closed_freeform_policy() {
         let resolved = resolve_objective_orientation(ObjectiveOrientationResolutionInput {
-            focused_job_id: None,
-            focused_job_mutable: true,
+            docket_job_id: None,
+            docket_execution_mutable: true,
             active_task_ref: None,
             freeform_policy: FreeformPolicy::closed(),
         });
@@ -1339,8 +1346,8 @@ mod tests {
     }
 
     fn focused_orientation() -> ObjectiveOrientation {
-        ObjectiveOrientation::Focused {
-            job: JobOrientation {
+        ObjectiveOrientation::DocketExecution {
+            job: DocketExecutionOrientation {
                 job_id: "job-1".to_string(),
                 active_task_ref: None,
                 mutable: true,

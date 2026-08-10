@@ -93,6 +93,24 @@ pub async fn append_bearwire_event_on(
     })
 }
 
+pub async fn append_ephemeral_bearwire_event(
+    pool: &PgPool,
+    session_id: &str,
+    bear_id: Option<Uuid>,
+    user_id: Option<i32>,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> Result<BearWireEventRow, DenError> {
+    append_bearwire_event(
+        pool,
+        session_id,
+        bear_id,
+        user_id,
+        BearWireEvent::ephemeral(event_type, payload),
+    )
+    .await
+}
+
 pub async fn append_bearwire_event(
     pool: &PgPool,
     session_id: &str,
@@ -129,14 +147,14 @@ pub async fn latest_bearwire_event_of_type(
     event_type: &str,
 ) -> Result<Option<BearWireEventRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT id, sequence_no, session_id, event_type, event_json, created_at
         FROM bearwire_events
         WHERE session_id = $1
           AND event_type = $2
         ORDER BY sequence_no DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(session_id)
     .bind(event_type)

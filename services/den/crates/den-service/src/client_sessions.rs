@@ -65,6 +65,10 @@ pub struct ClientSessionRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter_environment: Option<serde_json::Value>,
     pub current_mode: String,
+    /// The Docket task explicitly selected as this session's current objective.
+    /// This is distinct from an active Docket execution and from a Work assignment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_task_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,6 +197,29 @@ pub async fn set_current_mode(
     Ok(())
 }
 
+pub async fn set_current_task(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: &str,
+    task_id: Option<Uuid>,
+) -> Result<(), DenError> {
+    sqlx::query(
+        r"
+        UPDATE client_sessions
+        SET current_task_id = $4, updated_at = NOW()
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
+        ",
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(client_session_id)
+    .bind(task_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn mark_resolved(
     pool: &PgPool,
     user_id: i32,
@@ -225,7 +252,7 @@ pub async fn find_for_user_bear_session(
     let row = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM client_sessions
@@ -250,7 +277,7 @@ pub async fn find_for_user_bear_session_id(
     let row = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM client_sessions
@@ -274,7 +301,7 @@ pub async fn find_latest_for_bear_conversation(
     let row = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM client_sessions
@@ -326,6 +353,10 @@ pub struct OpenReflectionCandidateRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter_environment: Option<serde_json::Value>,
     pub current_mode: String,
+    /// The Docket task explicitly selected as this session's current objective.
+    /// This is distinct from an active Docket execution and from a Work assignment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_task_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -363,6 +394,7 @@ impl OpenReflectionCandidateRow {
             cwd: self.cwd.clone(),
             adapter_environment: self.adapter_environment.clone(),
             current_mode: self.current_mode.clone(),
+            current_task_id: self.current_task_id,
             conversation_title: self.conversation_title.clone(),
             conversation_title_updated_at: self.conversation_title_updated_at,
             conversation_title_synced_at: self.conversation_title_synced_at,
@@ -376,9 +408,10 @@ impl OpenReflectionCandidateRow {
 
 /// Finds open sessions eligible for automatic pair reflection.
 ///
-/// ponytail: event-count eligibility uses total session event count. The ceiling
-/// is unrelated events dominating the count; source-message watermarks from
-/// compaction/reflection prevent skipped reflections from hiding later summaries.
+/// ponytail: activity eligibility probes only through the configured threshold;
+/// exact event counts are collected only for the selected sweep candidates.
+/// The ceiling is a separate indexed event probe per open session; persist
+/// reflection state on the session if the open-session population grows large.
 pub async fn list_open_reflection_candidates(
     pool: &PgPool,
     params: OpenReflectionCandidatesParams,
@@ -386,30 +419,35 @@ pub async fn list_open_reflection_candidates(
     let default_stale_after_minutes = params.stale_after_minutes.max(1);
     let default_activity_threshold = params.activity_threshold.max(1);
     let default_limit = params.limit.clamp(1, 100);
-    let rows = sqlx::query_as::<_, OpenReflectionCandidateRow>(
+    let rows = sqlx::query_as!(
+        OpenReflectionCandidateRow,
         r#"
         WITH open_sessions AS (
             SELECT s.*,
-                   COALESCE(events.event_count, 0)::bigint AS event_count,
                    reflected.last_reflected_at,
                    latest_compaction.source_message_end_seq AS latest_compaction_source_end_seq,
                    reflected.last_reflected_source_end_seq,
-                   COALESCE(b.live_reflection_stale_after_minutes, $1)::bigint AS stale_after_minutes,
-                   COALESCE(b.live_reflection_activity_threshold, $2)::bigint AS activity_threshold,
-                   COALESCE(b.live_reflection_sweep_limit, $3)::bigint AS sweep_limit,
+                   COALESCE(b.live_reflection_stale_after_minutes::bigint, $1::bigint) AS stale_after_minutes,
+                   COALESCE(b.live_reflection_activity_threshold::bigint, $2::bigint) AS activity_threshold,
+                   COALESCE(b.live_reflection_sweep_limit::bigint, $3::bigint) AS sweep_limit,
                    CASE
-                       WHEN s.updated_at <= NOW() - (COALESCE(b.live_reflection_stale_after_minutes, $1) * INTERVAL '1 minute') THEN 'stale_open_sweep'
+                       WHEN s.updated_at <= NOW() - (COALESCE(b.live_reflection_stale_after_minutes::bigint, $1::bigint) * INTERVAL '1 minute') THEN 'stale_open_sweep'
                        ELSE 'activity_threshold_sweep'
-                   END AS reflection_trigger
+                   END AS reflection_trigger,
+                   CASE
+                       WHEN s.updated_at <= NOW() - (COALESCE(b.live_reflection_stale_after_minutes::bigint, $1::bigint) * INTERVAL '1 minute') THEN FALSE
+                       ELSE EXISTS (
+                           SELECT 1
+                           FROM bearwire_events e
+                           WHERE e.session_id = s.client_session_id
+                             AND e.bear_id = s.bear_id
+                             AND e.user_id = s.user_id
+                           OFFSET (GREATEST(COALESCE(b.live_reflection_activity_threshold::bigint, $2::bigint), 1) - 1)
+                           LIMIT 1
+                       )
+                   END AS activity_threshold_reached
             FROM client_sessions s
             INNER JOIN bears b ON b.id = s.bear_id
-            LEFT JOIN LATERAL (
-                SELECT COUNT(*)::bigint AS event_count
-                FROM bearwire_events e
-                WHERE e.session_id = s.client_session_id
-                  AND e.bear_id = s.bear_id
-                  AND e.user_id = s.user_id
-            ) events ON TRUE
             LEFT JOIN LATERAL (
                 SELECT MAX(e.created_at) AS reflection_requeued_at
                 FROM bearwire_events e
@@ -454,27 +492,39 @@ pub async fn list_open_reflection_candidates(
                    ROW_NUMBER() OVER (PARTITION BY bear_id ORDER BY updated_at ASC, id ASC) AS bear_sweep_rank
             FROM open_sessions
             WHERE (updated_at <= NOW() - (stale_after_minutes * INTERVAL '1 minute')
-                   OR event_count >= activity_threshold)
+                   OR activity_threshold_reached)
               AND (
                   (last_reflected_at IS NULL AND last_reflected_source_end_seq IS NULL)
                   OR latest_compaction_source_end_seq > COALESCE(last_reflected_source_end_seq, 0)
               )
+        ), selected_sessions AS MATERIALIZED (
+            SELECT *
+            FROM eligible_sessions
+            WHERE bear_sweep_rank <= sweep_limit
+            ORDER BY updated_at ASC, id ASC
+            LIMIT $3
         )
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
-               closed_at, archived_at, created_at, updated_at, event_count, last_reflected_at,
+               closed_at, archived_at, created_at, updated_at,
+               events.event_count AS "event_count!", last_reflected_at,
                latest_compaction_source_end_seq, last_reflected_source_end_seq,
-               reflection_trigger
-        FROM eligible_sessions
-        WHERE bear_sweep_rank <= sweep_limit
+               reflection_trigger AS "reflection_trigger!"
+        FROM selected_sessions
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::bigint AS event_count
+            FROM bearwire_events e
+            WHERE e.session_id = selected_sessions.client_session_id
+              AND e.bear_id = selected_sessions.bear_id
+              AND e.user_id = selected_sessions.user_id
+        ) events ON TRUE
         ORDER BY updated_at ASC, id ASC
-        LIMIT $3
         "#,
+        default_stale_after_minutes,
+        default_activity_threshold,
+        default_limit,
     )
-    .bind(default_stale_after_minutes)
-    .bind(default_activity_threshold)
-    .bind(default_limit)
     .fetch_all(pool)
     .await?;
 
@@ -490,7 +540,7 @@ pub async fn list_for_user_bear(
     let rows = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
-               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at
         FROM client_sessions
@@ -620,6 +670,29 @@ pub async fn set_title_for_bear_conversation(
     Ok(result.rows_affected())
 }
 
+pub async fn list_for_bear_conversation(
+    pool: &PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+) -> Result<Vec<ClientSessionRow>, DenError> {
+    sqlx::query_as::<_, ClientSessionRow>(
+        r"
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
+               conversation_title, conversation_title_updated_at, conversation_title_synced_at,
+               closed_at, archived_at, created_at, updated_at
+        FROM client_sessions
+        WHERE bear_id = $1
+          AND (conversation_id = $2 OR resolved_conversation_id = $2)
+        ",
+    )
+    .bind(bear_id)
+    .bind(conversation_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
 pub async fn mark_title_synced(
     pool: &PgPool,
     user_id: i32,
@@ -686,11 +759,11 @@ mod reflection_candidate_tests {
     async fn insert_test_user(pool: &PgPool) -> i32 {
         let suffix = Uuid::new_v4().simple().to_string();
         let (user_id,): (i32,) = sqlx::query_as(
-            r#"
+            r"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-            "#,
+            ",
         )
         .bind(format!("reflection-{suffix}@example.test"))
         .bind(format!("reflection{}", &suffix[..16]))
@@ -706,11 +779,11 @@ mod reflection_candidate_tests {
         let suffix = Uuid::new_v4().simple().to_string();
         let slug = format!("reflection-bear-{}", &suffix[..12]);
         let (bear_id,): (Uuid,) = sqlx::query_as(
-            r#"
+            r"
             INSERT INTO bears (slug, name, description, system_prompt, live_reflection_enabled)
             VALUES ($1, 'Reflection Test Bear', 'test', 'test', TRUE)
             RETURNING id
-            "#,
+            ",
         )
         .bind(&slug)
         .fetch_one(pool)
@@ -758,11 +831,11 @@ mod reflection_candidate_tests {
         end_seq: i64,
     ) {
         let canonical_id = if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>(
-            r#"
+            r"
             SELECT id
             FROM conversations
             WHERE bear_id = $1 AND external_conversation_id = $2
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(conversation_id)
@@ -773,11 +846,11 @@ mod reflection_candidate_tests {
             id
         } else {
             let (id,): (Uuid,) = sqlx::query_as(
-                r#"
+                r"
                 INSERT INTO conversations (bear_id, external_conversation_id)
                 VALUES ($1, $2)
                 RETURNING id
-                "#,
+                ",
             )
             .bind(bear_id)
             .bind(conversation_id)
@@ -787,19 +860,41 @@ mod reflection_candidate_tests {
             id
         };
         sqlx::query(
-            r#"
+            r"
             INSERT INTO conversation_compaction_artifacts (
                 conversation_id, artifact_kind, policy_version, trigger,
                 source_message_start_seq, source_message_end_seq, artifact_json
             )
             VALUES ($1, 'iterative_summary', 'test', 'test', 1, $2, '{}'::jsonb)
-            "#,
+            ",
         )
         .bind(canonical_id)
         .bind(end_seq)
         .execute(pool)
         .await
         .expect("insert artifact");
+    }
+
+    async fn insert_event(
+        pool: &PgPool,
+        user_id: i32,
+        bear_id: Uuid,
+        session_id: &str,
+        event_type: &str,
+    ) {
+        sqlx::query(
+            r"
+            INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
+            VALUES ($1, $2, $3, $4, '{}'::jsonb)
+            ",
+        )
+        .bind(session_id)
+        .bind(bear_id)
+        .bind(user_id)
+        .bind(event_type)
+        .execute(pool)
+        .await
+        .expect("insert event");
     }
 
     async fn insert_reflection_event(
@@ -815,10 +910,10 @@ mod reflection_candidate_tests {
             pair_reflection["source_message_end_seq"] = json!(source_end_seq);
         }
         sqlx::query(
-            r#"
+            r"
             INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
             VALUES ($1, $2, $3, 'session.reflected', $4)
-            "#,
+            ",
         )
         .bind(session_id)
         .bind(bear_id)
@@ -827,6 +922,63 @@ mod reflection_candidate_tests {
         .execute(pool)
         .await
         .expect("insert reflection event");
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn activity_threshold_returns_exact_count_only_after_eligibility(pool: PgPool) {
+        let user_id = insert_test_user(&pool).await;
+        let (bear_id, bear_slug) = insert_test_bear(&pool).await;
+        insert_open_session(
+            &pool,
+            user_id,
+            bear_id,
+            &bear_slug,
+            "session-activity-threshold",
+            "conv-activity-threshold",
+        )
+        .await;
+
+        for _ in 0..3 {
+            insert_event(
+                &pool,
+                user_id,
+                bear_id,
+                "session-activity-threshold",
+                "message.created",
+            )
+            .await;
+        }
+        let params = OpenReflectionCandidatesParams {
+            stale_after_minutes: 120,
+            activity_threshold: 3,
+            limit: 25,
+        };
+        let candidates = list_open_reflection_candidates(&pool, params.clone())
+            .await
+            .expect("list candidates at threshold");
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.client_session_id == "session-activity-threshold")
+            .expect("threshold activity makes session eligible");
+        assert_eq!(candidate.event_count, 3);
+        assert_eq!(candidate.reflection_trigger, "activity_threshold_sweep");
+
+        insert_event(
+            &pool,
+            user_id,
+            bear_id,
+            "session-activity-threshold",
+            "message.created",
+        )
+        .await;
+        let candidates = list_open_reflection_candidates(&pool, params)
+            .await
+            .expect("list candidates above threshold");
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.client_session_id == "session-activity-threshold")
+            .expect("session stays eligible above threshold");
+        assert_eq!(candidate.event_count, 4);
     }
 
     #[sqlx::test(migrations = "../../migrations")]

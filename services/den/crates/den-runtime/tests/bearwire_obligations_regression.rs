@@ -231,6 +231,7 @@ async fn armature_owned_tool_call_creates_client_obligation(pool: sqlx::PgPool) 
     let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -290,6 +291,7 @@ async fn unknown_tool_execution_owner_fails_closed(pool: sqlx::PgPool) {
     let err = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -329,6 +331,7 @@ async fn den_owned_tool_call_does_not_create_client_obligation(pool: sqlx::PgPoo
     turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -377,6 +380,7 @@ async fn den_owned_approval_required_tool_creates_permission_obligation(pool: sq
     let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -442,6 +446,7 @@ async fn armature_approval_required_tool_persists_policy_for_permission_reconstr
     let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -561,7 +566,7 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn expired_client_obligation_is_marked_failed(pool: sqlx::PgPool) {
+async fn expired_client_obligation_is_detected_without_early_settlement(pool: sqlx::PgPool) {
     let (user_id, bear_id) = create_user_and_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
@@ -594,16 +599,14 @@ async fn expired_client_obligation_is_marked_failed(pool: sqlx::PgPool) {
         .expect("expire obligations");
     assert_eq!(expired.len(), 1);
     assert_eq!(expired[0].id, obligation.id);
-    assert_eq!(expired[0].state, "failed");
-    assert_eq!(
-        expired[0].result_payload.as_ref().unwrap()["status"],
-        "timeout"
-    );
+    assert_eq!(expired[0].state, "waiting_for_client");
+    assert!(expired[0].result_payload.is_none());
 
     let open = turn_obligations::open_client_obligations_for_session(&pool, &session_id)
         .await
         .expect("list open obligations");
-    assert!(open.is_empty(), "expired obligation should not remain open");
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].id, obligation.id);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -740,6 +743,7 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
     let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,

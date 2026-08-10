@@ -10,6 +10,7 @@
 - [Skills implementation](SKILLS_IMPLEMENTATION_PLAN.md)
 - [Phase 1 native product debt](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)
 - [Den-BearWire-armature-ACP hardening](DEN_BEARWIRE_ARMATURE_ACP_HARDENING_PLAN.md)
+- [Host browser MCP bridge](HOST_BROWSER_MCP_BRIDGE_IMPLEMENTATION_PLAN.md)
 
 ## Goal
 
@@ -116,7 +117,21 @@ The intended product behavior is:
 
 **Exit criteria:** a Bear can declare it needs a provider connection; import restores the requirement but not the secret, and capability discovery can report missing connection state.
 
-### Phase 5 — Capability discovery integration
+### Phase 5 — MCP catalog and Bear/stance attachments
+
+This phase absorbs the former standalone Phase 1 MCP catalog/attachment slice. It owns the general product model for MCP servers; provider-specific implementation, including the host-browser bridge, remains in its own plan.
+
+1. Inventory existing MCP configuration and discovery data from armatures, Den descriptors, and Bear configuration.
+2. Define the smallest MCP catalog record that reuses capability definitions where possible: name, description, source kind, transport, version/pin, required secret/config fields (never values), stance/surface compatibility, risk class, descriptors, and diagnostics.
+3. Add Bear/stance attachment records with configuration references and policy. Keep catalog record, Bear attachment, and runtime-discovered tool instance distinct.
+4. Add operator catalog/detail and attachment-status UI/API: configured, secrets missing, unreachable, discovery failed, no tools, or tools discovered.
+5. Feed only configured, discovered, stance- and surface-compatible attachments into descriptor routing. A web turn must not inherit an armature-local MCP tool merely because it is attached for `pair` or `work`.
+6. Keep MCP attachments subject to normal stance policy and dispatcher authorization; attachment is not an authority grant.
+7. Add a smoke check proving a web chat turn does not receive an armature-local MCP tool solely because of a pair/work attachment.
+
+**Exit criteria:** operators can attach an MCP catalog entry to a Bear/stance, see actionable configuration and discovery diagnostics, and receive only compatible descriptor projections.
+
+### Phase 6 — Capability discovery integration
 
 1. Update `capability_search` and `capability_describe` to merge:
    - catalog definition,
@@ -139,7 +154,7 @@ The intended product behavior is:
 
 **Exit criteria:** discovery can explain why a capability can or cannot be used by the current Bear in the current stance.
 
-### Phase 6 — Bear portability export/import
+### Phase 7 — Bear portability export/import
 
 1. Define portable Bear export shape for:
    - bundled skills,
@@ -169,6 +184,10 @@ The smallest useful implementation is:
 5. tests proving importing a Bear with skills affects only that Bear.
 
 `ponytail:` The first slice can use exact refs and simple JSON config blobs instead of a generalized policy engine. The ceiling is awkward matching for abstract capabilities like `capability.issue_tracker.create`. The upgrade path is explicit requirement resolution and provider predicates after MCP and skills use cases are concrete.
+
+## Documentation and model experience
+
+For every delivered phase, review and update [`MODEL_EXPERIENCE.md`](../../MODEL_EXPERIENCE.md) when the model-facing discovery, descriptor, authority, or failure behavior changes. Create or update the relevant operator and user documentation under [`docs/guides`](../guides), including connection setup, MCP attachment, portability/import degradation, and diagnostics. Documentation must distinguish catalog presence, Bear attachment, runtime availability, and invocation authority.
 
 ## Verification strategy
 

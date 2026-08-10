@@ -70,6 +70,7 @@ fn tool_call_policy(tool_name: &str, owner: ToolExecutionOwner) -> Value {
 
 #[derive(Debug, Clone)]
 pub struct PersistToolCallWaitInput<'a> {
+    pub process_epoch_id: Uuid,
     pub session_id: &'a str,
     pub run_id: &'a str,
     pub bear_id: Uuid,
@@ -113,8 +114,8 @@ pub struct PersistedSurfaceObligation {
 const STEP_RETURNING_COLUMNS: &str =
     "id, run_id, step_index, state, provider_response_id, opened_at, closed_at";
 const ACTIVE_STEP_STATES_SQL: &str = "'streaming_model', 'waiting_for_client', 'ready_to_continue'";
-const OBLIGATION_RETURNING_COLUMNS: &str = "id, run_id, session_id, kind, expected_responder_action, tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload, created_at, updated_at, completed_at";
-const OBLIGATION_RETURNING_COLUMNS_WITH_RESPONDER: &str = "id, run_id, session_id, kind, expected_responder_action, tool_call_id, permission_id, responder_ref_id, state, turn_step_id, request_payload, result_payload, created_at, updated_at, completed_at";
+const OBLIGATION_RETURNING_COLUMNS: &str = "id, run_id, session_id, kind, expected_responder_action, tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload, created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at";
+const OBLIGATION_RETURNING_COLUMNS_WITH_RESPONDER: &str = "id, run_id, session_id, kind, expected_responder_action, tool_call_id, permission_id, responder_ref_id, state, turn_step_id, request_payload, result_payload, created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at";
 
 fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObligationRow {
     turn_obligations::TurnObligationRow {
@@ -133,6 +134,9 @@ fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObli
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
+        lease_attempt_token_hash: row.try_get("lease_attempt_token_hash").ok(),
+        claimed_at: row.try_get("claimed_at").ok(),
+        lease_expires_at: row.try_get("lease_expires_at").ok(),
     }
 }
 
@@ -264,6 +268,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     };
     let policy = tool_call_policy(input.tool_name, execution_owner);
     let request_payload = json!({
+        "den_process_epoch_id": input.process_epoch_id,
         "tool_call_id": input.tool_call_id,
         "tool_name": input.tool_name,
         "arguments": input.arguments,
@@ -427,6 +432,10 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         })
     } else {
         BearWireEvent::tool_call_requested(ToolCallRequestedWire {
+            expected_responder_action: obligation.as_ref().map(|_| "tool_result".to_string()),
+            obligation_id: obligation
+                .as_ref()
+                .map(|obligation| obligation.id.to_string()),
             policy: request_payload.get("policy").cloned(),
             tool_call,
             approval_required: false,

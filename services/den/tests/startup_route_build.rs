@@ -23,7 +23,8 @@ async fn web_router_builds_without_startup_route_conflicts() {
     let pool = lazy_pool();
     let store = PostgresStore::new(pool.clone());
 
-    let _app = web::server_with_state(pool, store, config)
+    let memory_stores = den_memory::MemoryStoreManager::new(config.as_ref());
+    let _app = web::server_with_state(pool, store, config, memory_stores)
         .await
         .expect("web router should build without Axum route conflicts");
 }
@@ -38,7 +39,8 @@ async fn api_router_builds_without_startup_route_conflicts() {
         ("/bearwire", den_bearwire::router()),
     ];
 
-    let _app = api::create_api_app(pool, store, config, peer_routers)
+    let memory_stores = den_memory::MemoryStoreManager::new(config.as_ref());
+    let (_app, _state) = api::create_api_app(pool, store, config, memory_stores, peer_routers)
         .await
         .expect("API router should build without Axum route conflicts");
 }

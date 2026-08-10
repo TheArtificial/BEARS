@@ -24,6 +24,9 @@ const PROFILE_LOCAL_INDEXABLE_KINDS: &[&str] = &["note", "decision", "summary"];
 pub struct IndexRequest {
     pub bear_id: Uuid,
     pub memory_id: String,
+    /// Canonical SQLite `sequence_no` of the head record; drives the recall
+    /// consistency watermark (ADR-0038 §8). Not part of the Qdrant payload.
+    pub sequence_no: i64,
     pub logical_path: Option<String>,
     pub scope_type: String,
     pub scope_profile: Option<String>,
@@ -161,6 +164,7 @@ mod tests {
         let req = IndexRequest {
             bear_id: Uuid::nil(),
             memory_id: "mem-archived".into(),
+            sequence_no: 1,
             logical_path: Some("core/old.md".into()),
             scope_type: "shared".into(),
             scope_profile: None,
@@ -181,6 +185,7 @@ mod tests {
         let req = IndexRequest {
             bear_id: Uuid::nil(),
             memory_id: "mem-1".into(),
+            sequence_no: 1,
             logical_path: Some("core/work_surfaces/x/overview.md".into()),
             scope_type: "shared".into(),
             scope_profile: None,

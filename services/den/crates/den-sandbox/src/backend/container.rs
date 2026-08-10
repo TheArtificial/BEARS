@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const DOCKER_TIMEOUT: Duration = Duration::from_secs(120);
+const DOCKER_TIMEOUT: Duration = Duration::from_mins(2);
 const DOCKER_OUTPUT_CAP: usize = 256 * 1024;
 const CARGO_DIAGNOSTIC_CAP: usize = 4096;
 const CONTAINER_PREFIX: &str = "den-sbx-";
@@ -60,6 +60,9 @@ fn rust_preparation_cargo_args(request: &PrepareRustDependenciesRequest) -> Vec<
         args.push("--no-run".to_string());
     }
     if request.resolution == RustDependencyResolution::Locked {
+        // The helper has network access specifically to populate the managed
+        // cache. Keep the checked-in resolution immutable while fetching it;
+        // the task sandbox is the offline consumer of that cache.
         args.push("--locked".to_string());
     }
     args
@@ -643,15 +646,6 @@ impl DockerCliBackend {
         }
     }
 
-    pub(crate) async fn system_df(&self) -> Option<String> {
-        let out = self.docker(&["system", "df"], None).await.ok()?;
-        if out.success() {
-            Some(out.stdout_lossy())
-        } else {
-            None
-        }
-    }
-
     pub(crate) async fn remove_image(
         &self,
         reference: &str,
@@ -1141,7 +1135,7 @@ mod tests {
     }
 
     #[test]
-    fn whole_workspace_preparation_fetches_locked_manifest_without_empty_package_flag() {
+    fn whole_workspace_preparation_fetches_locked_without_empty_package_flag() {
         let args = rust_preparation_cargo_args(&PrepareRustDependenciesRequest {
             manifest_path: "Cargo.toml".to_string(),
             package: String::new(),

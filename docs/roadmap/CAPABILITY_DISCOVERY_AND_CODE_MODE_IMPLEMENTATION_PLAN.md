@@ -1,6 +1,6 @@
 # Capability Discovery and Code Mode Implementation Plan
 
-**Status:** Proposed
+**Status:** In progress — Phases 0–2 implemented; Phases 3–6 planned
 
 **Decision source of truth:** [ADR-0054 — Capability Discovery and Code Mode](../decisions/adr-0054-capability-discovery-and-code-mode.md)
 
@@ -13,7 +13,26 @@
 - [Pair tool discovery and scope policy](PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md)
 - [Context window budget](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md)
 
-## Goal
+## Plan boundaries
+
+This plan owns the model-facing capability lifecycle: catalog taxonomy, search/describe, availability-aware discovery, lazy loading, bundles, governed invocation, and Code Mode. Bear/stance authority, connections, portability, and general MCP catalog attachments are owned by [Bear capability configuration and portability](BEAR_CAPABILITY_CONFIGURATION_AND_PORTABILITY_PLAN.md). Provider-specific bridges remain in their provider plans; Pair-specific scope and tool-call UX remain in [Pair tool discovery and scope policy](PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md).
+
+## Documentation and model experience
+
+Every phase that changes model-facing capability discovery, descriptors, invocation, or Code Mode must review and update [`MODEL_EXPERIENCE.md`](../../MODEL_EXPERIENCE.md). Create or update corresponding documentation in [`docs/guides`](../guides), covering the supported discovery and invocation workflow, user-visible limitations, and operator setup where applicable.
+
+## Current implementation status
+
+**Implemented (Phases 0–2):**
+
+- Curated capability descriptors now provide stable refs, taxonomy tags, provider/origin, locality, authority, availability/lifetime, scope, risk, relationship, and Code Mode compatibility metadata.
+- `capability_search` and `capability_describe` expose durable Den-managed definitions plus available session-bound provider instances. Session instances preserve connection-specific identity and locality; discovery does not change invocation, approval, or authorization behavior.
+- A runtime prompt fragment explains discovery, direct one-off invocation, and Code Mode as the composition-heavy option.
+- Successful discovery calls retain a bounded, deduplicated, recency-ordered `Recently discovered` working set for continuation prompts. It includes risk/scope details and session locality/surface/authority/lifetime details where applicable.
+- Context-budget diagnostics separately attribute static capability-discovery guidance and dynamic recently-discovered context.
+
+**Deferred:** Bear capability configuration, stance overrides, Bear-scoped connection coverage, and broader bundle members (skills, policies, memories, and surfaces) remain governed by the companion configuration/portability work and Phases 3–6 of this plan. Code Mode is currently catalogued guidance, not an implemented governed executor.
+
 
 Reduce model-context pollution from growing tool, skill, and execution catalogs by adding a small, stable capability discovery surface. Bears should learn how to discover and reuse relevant capabilities instead of receiving the full catalog in every runtime prompt.
 

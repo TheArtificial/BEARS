@@ -1,4 +1,8 @@
 use den_core::DenError;
+use den_llm::model_registry::{
+    ModelTokenCalibration, MODEL_TOKEN_CALIBRATION_EMA_ALPHA, MODEL_TOKEN_CALIBRATION_MAX_RATIO,
+    MODEL_TOKEN_CALIBRATION_MIN_RATIO,
+};
 use den_llm::ModelOption;
 use serde_json::Value;
 use sqlx::{types::Json, FromRow, PgPool};
@@ -256,9 +260,177 @@ pub async fn resolve_model_option(
         .map(|entry| entry.to_model_option_for_handle(trimmed)))
 }
 
+fn calibration_registry_key(handle: &str) -> Option<&str> {
+    let trimmed = handle.trim();
+    if trimmed.is_empty() || den_llm::model_registry::is_routing_wildcard_model_handle(trimmed) {
+        return None;
+    }
+    Some(den_llm::model_registry::resolve_model_handle(trimmed).unwrap_or(trimmed))
+}
+
+/// Load the stored chars→tokens calibration for a model handle from the Den
+/// model registry (ADR-0047 §7). Returns `None` when the registry has no row
+/// or no observed samples yet.
+pub async fn load_model_token_calibration(
+    pool: &PgPool,
+    handle: &str,
+) -> Result<Option<ModelTokenCalibration>, DenError> {
+    let Some(key) = calibration_registry_key(handle) else {
+        return Ok(None);
+    };
+    let row = sqlx::query_as::<_, (Option<f64>, i64)>(
+        r"
+        SELECT calibration_tokens_per_char, calibration_sample_count
+        FROM model_selection_options
+        WHERE handle = $1
+        LIMIT 1
+        ",
+    )
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| DenError::Database(format!("load model token calibration: {err}")))?;
+    Ok(row.and_then(|(tokens_per_char, sample_count)| {
+        tokens_per_char.map(|tokens_per_char| ModelTokenCalibration {
+            tokens_per_char,
+            sample_count,
+        })
+    }))
+}
+
+/// Fold one observed Bifrost prompt-usage sample into the stored per-model
+/// calibration ratio (ADR-0047 §7). A previously unseen concrete model gets a
+/// non-selectable registry row, so observed Bifrost usage is retained without
+/// accidentally advertising that model in selection UI. Returns `Ok(false)`
+/// only when the sample or handle is unusable.
+pub async fn record_model_token_calibration_sample(
+    pool: &PgPool,
+    handle: &str,
+    assembled_prompt_chars: u64,
+    observed_prompt_tokens: u64,
+) -> Result<bool, DenError> {
+    let Some(observed) = den_llm::model_registry::observed_tokens_per_char(
+        observed_prompt_tokens,
+        assembled_prompt_chars,
+    ) else {
+        return Ok(false);
+    };
+    let Some(key) = calibration_registry_key(handle) else {
+        return Ok(false);
+    };
+    let result = sqlx::query(
+        r"
+        INSERT INTO model_selection_options (
+            handle,
+            display_name,
+            selectable,
+            recommended,
+            calibration_tokens_per_char,
+            calibration_sample_count,
+            calibration_updated_at
+        )
+        VALUES ($1, $1, FALSE, FALSE, $2, 1, NOW())
+        ON CONFLICT (handle) DO UPDATE
+        SET calibration_tokens_per_char = CASE
+                WHEN model_selection_options.calibration_tokens_per_char IS NULL
+                    OR NOT (
+                        model_selection_options.calibration_tokens_per_char
+                            > '-Infinity'::DOUBLE PRECISION
+                        AND model_selection_options.calibration_tokens_per_char
+                            < 'Infinity'::DOUBLE PRECISION
+                    )
+                THEN $2
+                ELSE LEAST(
+                    $4,
+                    GREATEST(
+                        $5,
+                        model_selection_options.calibration_tokens_per_char
+                            + $3 * ($2 - model_selection_options.calibration_tokens_per_char)
+                    )
+                )
+            END,
+            calibration_sample_count = CASE
+                WHEN model_selection_options.calibration_sample_count = 9223372036854775807
+                THEN model_selection_options.calibration_sample_count
+                ELSE model_selection_options.calibration_sample_count + 1
+            END,
+            calibration_updated_at = NOW()
+        ",
+    )
+    .bind(key)
+    .bind(observed)
+    .bind(MODEL_TOKEN_CALIBRATION_EMA_ALPHA)
+    .bind(MODEL_TOKEN_CALIBRATION_MAX_RATIO)
+    .bind(MODEL_TOKEN_CALIBRATION_MIN_RATIO)
+    .execute(pool)
+    .await
+    .map_err(|err| DenError::Database(format!("record model token calibration sample: {err}")))?;
+    Ok(result.rows_affected() > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn calibration_samples_roundtrip_through_model_registry(pool: PgPool) {
+        // No samples yet: the seeded registry row has a NULL ratio.
+        assert_eq!(
+            load_model_token_calibration(&pool, "openai/gpt-4.1")
+                .await
+                .expect("load"),
+            None
+        );
+
+        // First sample (alias resolves to the canonical registry key).
+        let stored = record_model_token_calibration_sample(&pool, "gpt-4.1", 4_000, 1_200)
+            .await
+            .expect("record");
+        assert!(stored);
+        let calibration = load_model_token_calibration(&pool, "openai/gpt-4.1")
+            .await
+            .expect("load")
+            .expect("calibration stored");
+        assert!((calibration.tokens_per_char - 0.3).abs() < 1e-12);
+        assert_eq!(calibration.sample_count, 1);
+
+        // Second sample folds via EMA: 0.3 + 0.2 * (0.25 - 0.3) = 0.29.
+        let stored = record_model_token_calibration_sample(&pool, "openai/gpt-4.1", 4_000, 1_000)
+            .await
+            .expect("record");
+        assert!(stored);
+        let calibration = load_model_token_calibration(&pool, "openai/gpt-4.1")
+            .await
+            .expect("load")
+            .expect("calibration stored");
+        assert!((calibration.tokens_per_char - 0.29).abs() < 1e-12);
+        assert_eq!(calibration.sample_count, 2);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn calibration_sample_persists_unknown_models_and_skips_unusable_samples(pool: PgPool) {
+        // Unusable sample: zero chars can never produce a ratio.
+        assert!(
+            !record_model_token_calibration_sample(&pool, "openai/gpt-4.1", 0, 1_000)
+                .await
+                .expect("record")
+        );
+        // An unseeded concrete model gets a non-selectable calibration row.
+        assert!(record_model_token_calibration_sample(
+            &pool,
+            "vendor/unseeded-model",
+            4_000,
+            1_000
+        )
+        .await
+        .expect("record"));
+        let calibration = load_model_token_calibration(&pool, "vendor/unseeded-model")
+            .await
+            .expect("load")
+            .expect("calibration stored");
+        assert!((calibration.tokens_per_char - 0.25).abs() < 1e-12);
+        assert_eq!(calibration.sample_count, 1);
+    }
 
     #[test]
     fn simplify_model_option_for_acp_drops_context_window_details() {

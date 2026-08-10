@@ -17,6 +17,7 @@ use den_service::client_sessions;
 pub(crate) struct DenEnvironmentOps<'a> {
     pub(crate) pool: &'a PgPool,
     pub(crate) config: &'a Config,
+    pub(crate) stores: &'a MemoryStoreManager,
 }
 
 impl EnvironmentOps for DenEnvironmentOps<'_> {
@@ -29,7 +30,7 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
         context: &DenToolInvocationContext,
         role: BearProfile,
     ) -> Result<Value, DenError> {
-        memory_status_value(self.config, context, role, self.pool)
+        memory_status_value(self.config, self.stores, context, role, self.pool)
             .await
             .map_err(CustomError::into_den)
     }
@@ -39,8 +40,7 @@ impl EnvironmentOps for DenEnvironmentOps<'_> {
         context: &DenToolInvocationContext,
         _role: BearProfile,
     ) -> Result<Value, DenError> {
-        let stores = MemoryStoreManager::new(self.config);
-        let store = stores.store_for_bear(context.bear_id).await?;
+        let store = self.stores.store_for_bear(context.bear_id).await?;
         let mut human = Value::Null;
         for (handle_type, handle_value) in [
             ("den_user", Some(context.user_id.to_string())),

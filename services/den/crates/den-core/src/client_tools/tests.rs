@@ -2,6 +2,39 @@ use super::*;
 use crate::tools::descriptor::builtin_den_tool_descriptors;
 
 #[test]
+fn read_only_git_tools_do_not_require_an_approval_gate() {
+    for tool in [
+        ClientToolName::GitStatus,
+        ClientToolName::GitDiff,
+        ClientToolName::GitLog,
+        ClientToolName::GitShow,
+    ] {
+        let policy = client_tool_policy(tool);
+        assert_eq!(
+            policy.approval_policy,
+            ApprovalPolicy::Never,
+            "{tool:?} should not pause for permission"
+        );
+        assert_eq!(policy.sensitive_path_policy, SensitivePathPolicy::Deny);
+    }
+}
+
+#[test]
+fn git_add_does_not_require_an_approval_gate() {
+    let policy = client_tool_policy(ClientToolName::GitAdd);
+    assert_eq!(policy.approval_policy, ApprovalPolicy::Never);
+    assert_eq!(policy.sensitive_path_policy, SensitivePathPolicy::Deny);
+}
+
+#[test]
+fn destructive_git_tools_still_require_approval() {
+    for tool in [ClientToolName::GitRestore, ClientToolName::GitStash] {
+        let policy = client_tool_policy(tool);
+        assert_eq!(policy.approval_policy, ApprovalPolicy::Required);
+    }
+}
+
+#[test]
 fn all_client_tool_policies_have_descriptor_owned_execution_contract() {
     for tool in ClientToolName::all() {
         let descriptor = tool.descriptor();
@@ -95,10 +128,11 @@ fn turn_authority_is_single_derived_permission_surface() {
         authority.denied_tool_classes(),
         vec!["workspace_mutation", "execution", "browser"]
     );
-    assert!(authority
+    let context = authority
         .read_only_runtime_context()
-        .expect("read-only context")
-        .contains("permission_mode=`Plan`; tool_enablement=`read_only`"));
+        .expect("read-only context");
+    assert_eq!(context["permission_mode"], "Plan");
+    assert_eq!(context["tool_enablement"], "read_only");
 }
 
 #[test]

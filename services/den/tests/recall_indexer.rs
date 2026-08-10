@@ -67,6 +67,7 @@ async fn recall_indexer_round_trip_against_live_qdrant() {
     let req = IndexRequest {
         bear_id,
         memory_id: memory_id.clone(),
+        sequence_no: 1,
         logical_path: Some("core/recall/smoke.md".into()),
         scope_type: "shared".into(),
         scope_profile: None,
@@ -171,6 +172,7 @@ async fn recall_query_retrieves_indexed_passage_against_live_qdrant() {
     let req = IndexRequest {
         bear_id,
         memory_id: memory_id.clone(),
+        sequence_no: 1,
         logical_path: Some(logical_path.into()),
         scope_type: "shared".into(),
         scope_profile: None,
@@ -281,6 +283,7 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
     let req = IndexRequest {
         bear_id,
         memory_id: memory_id.clone(),
+        sequence_no: 1,
         logical_path: Some("core/recall/entity-smoke.md".into()),
         scope_type: "shared".into(),
         scope_profile: None,
@@ -432,7 +435,7 @@ async fn hybrid_search_graph_leg_surfaces_indirectly_linked_record() {
     .await
     .expect("link neighbor");
 
-    let result = hybrid_memory_search(&config, bear_id, "work", token, 10)
+    let result = hybrid_memory_search(&config, &stores, bear_id, "work", token, 10)
         .await
         .expect("hybrid search");
 
@@ -488,9 +491,16 @@ async fn hybrid_search_temporal_leg_filters_by_effective_time() {
     }
 
     // A `today` window keeps just-written records and strips the temporal phrase from the query.
-    let today = hybrid_memory_search(&config, bear_id, "work", &format!("{token} today"), 10)
-        .await
-        .expect("today search");
+    let today = hybrid_memory_search(
+        &config,
+        &stores,
+        bear_id,
+        "work",
+        &format!("{token} today"),
+        10,
+    )
+    .await
+    .expect("today search");
     assert_eq!(today["temporal"]["matched"], "today", "{today}");
     assert!(
         !today["hits"].as_array().expect("hits").is_empty(),
@@ -500,6 +510,7 @@ async fn hybrid_search_temporal_leg_filters_by_effective_time() {
     // A window entirely in the past prunes every just-written record.
     let past = hybrid_memory_search(
         &config,
+        &stores,
         bear_id,
         "work",
         &format!("{token} before 2000-01-01"),

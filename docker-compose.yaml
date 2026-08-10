@@ -493,7 +493,10 @@ services:
     # (dev / air-gapped alternative to registry-published catalog images).
     # Run manually: `docker compose --profile sandbox-build run --rm bears-sandbox-images`
     bears-sandbox-images:
-        image: ${SANDBOX_CLI_IMAGE:-docker:27-cli}
+        build:
+            context: .
+            dockerfile: packaging/sandbox-image/Dockerfile.builder
+        image: ${SANDBOX_CLI_IMAGE:-bears/sandbox-builder:latest}
         restart: "no"
         profiles: ["sandbox-build"]
         depends_on:

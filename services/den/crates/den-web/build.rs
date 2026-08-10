@@ -113,9 +113,10 @@ fn validate_html_structure(template_name: &str, source: &str) {
         if raw.is_empty() || raw.starts_with('!') || raw.starts_with('?') {
             continue;
         }
-        if raw.contains('<') {
-            panic!("template {template_name:?} contains malformed HTML tag <{raw}>");
-        }
+        assert!(
+            !raw.contains('<'),
+            "template {template_name:?} contains malformed HTML tag <{raw}>"
+        );
         let closing = raw.starts_with('/');
         let body = raw.trim_start_matches('/').trim_start();
         let name = body

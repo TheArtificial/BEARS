@@ -124,6 +124,15 @@ All writes should go through the single logical write path. In a single process,
 
 These defaults are intended to keep the operational model simple while allowing readers to proceed concurrently and writers to wait briefly instead of failing immediately under modest contention.
 
+### Write-topology amendment (2026-07-30): one owning process per Bear database
+
+The paragraphs above allowed for cross-process write serialization via WAL locking and `busy_timeout`. With sleep-time curation ([ADR-0041](adr-0041-archival-recall-and-async-curation.md)) running harvest and consolidation off the hot path, that allowance created a latent topology ambiguity: a separate curation worker process would contend with the live-turn writer for the Bear write lock, producing multi-second stalls and `SQLITE_BUSY` failures under sustained curation. This amendment closes it:
+
+- **Exactly one process owns each Bear database's write path** — the Den runtime process, through the single `MemoryStoreManager` write pool (`max_connections(1)`).
+- **Reflection and curation workers are in-process Tokio tasks**, scheduled by the Den Postgres reflection queue but executing their SQLite writes through the same in-process write path as live turns. A reflection lane is never a separate OS process holding a writer on `memory.sqlite`.
+- **WAL locking + `busy_timeout` is a defensive backstop, not an operating mode.** It exists to fail safely under operator error (for example, an ad hoc CLI write against a live database), not to support routine multi-process writing. Cross-process writes to a live Bear database are a bug.
+- Offline tooling (import, `den reindex`, inspection) that must write should either run against a Bear whose runtime is stopped or go through the runtime's write path via an API/CLI seam — never concurrently and directly against a live database.
+
 ## Canonical model
 
 Canonical Bear state in SQLite follows these rules:

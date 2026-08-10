@@ -1,39 +1,114 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::tools::constants::{
-    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET,
-    DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
-    DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
-    DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
+    DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_CREATE,
+    DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST,
+    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS,
+    DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
+    DEN_TASK_SELECT, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
     DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+    DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
 };
 use den_docket::{
-    self as docket, docket_job_status_report, DocketCommitPolicy,
-    DocketConversationObjectiveRequest, DocketCriterionStateUpdate, DocketCriterionStatus,
-    DocketEffortHint, DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobStatus,
-    DocketJobStatusReport, DocketJobUpdate, DocketService, DocketTaskCreate,
+    self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
+    DocketCriterionStatus, DocketEffortHint, DocketEntryCreate, DocketEntryKind,
+    DocketEntryListFilter, DocketEntryPromotion, DocketEntryScope, DocketExecutionLookup,
+    DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobOverlapResolution, DocketJobProjection, DocketJobStatus, DocketJobStatusReport,
+    DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketService, DocketTaskCreate,
     DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
-    DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
-    DocketTaskUpdate, DocketValidationError, PgDocketService, TaskListCheckoutRequest,
-    TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest, TaskListVisibility,
+    DocketTaskListFilter, DocketTaskPlacement, DocketTaskRunStateUpdate, DocketTaskScope,
+    DocketTaskStatus, DocketTaskUpdate, DocketValidationError, MutationPolicy, PgDocketService,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
+    TaskListVisibility,
 };
 
 use crate::{
     config::Config,
-    core::tools::{session::DenToolInvocationContext, support::clean_optional},
+    core::tools::{
+        session::DenToolInvocationContext, support::clean_optional,
+        work_surface::persist_recognized_session_surface,
+    },
     errors::{CustomError, DenError},
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_runtime::plan_mode;
+use den_service::bears::db::get_bear;
 use den_service::{
     bears::BearProfile, client_sessions, conversation::persistence as conversation_persistence,
 };
 
 const FOCUSED_CONVERSATION_TITLE_MAX_CHARS: usize = 120;
+
+/// Chat-facing identity for a Docket resource. `id` remains the only value
+/// callers may pass back to a tool; `display` is deliberately presentation
+/// only.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct DocketEntityPresentation {
+    id: Uuid,
+    display: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    href: Option<String>,
+}
+
+fn docket_entity_presentation(
+    kind: &str,
+    id: Uuid,
+    ids: &[Uuid],
+    href: Option<String>,
+) -> DocketEntityPresentation {
+    // Short handles are presentation only: tool inputs retain canonical UUIDs.
+    // Canonical URLs use eight hexadecimal characters; extend only when this
+    // response contains a collision.
+    let id_text = id.simple().to_string();
+    let prefix_len = (8..=id_text.len())
+        .find(|&len| {
+            ids.iter()
+                .filter(|other| **other != id)
+                .all(|other| !other.simple().to_string().starts_with(&id_text[..len]))
+        })
+        .unwrap_or(id_text.len());
+    DocketEntityPresentation {
+        id,
+        display: format!("{kind} {}", &id_text[..prefix_len]),
+        href,
+    }
+}
+
+fn docket_entity_presentations(
+    kind: &str,
+    ids: impl IntoIterator<Item = Uuid>,
+    href_for: impl Fn(Uuid) -> Option<String>,
+) -> Vec<DocketEntityPresentation> {
+    let ids: Vec<Uuid> = ids.into_iter().collect();
+    ids.iter()
+        .copied()
+        .map(|id| docket_entity_presentation(kind, id, &ids, href_for(id)))
+        .collect()
+}
+
+async fn docket_web_base(
+    pool: &PgPool,
+    config: &Config,
+    bear_id: Uuid,
+) -> Result<String, CustomError> {
+    let bear = get_bear(pool, bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound(format!("bear not found: {bear_id}")))?;
+    Ok(format!(
+        "{}/bear/{}/jobs",
+        config.web_server_url.trim_end_matches('/'),
+        bear.slug
+    ))
+}
+
+fn docket_resource_href(base: &str, segment: &str, id: Uuid) -> String {
+    let compact_id = id.simple().to_string();
+    format!("{base}/{segment}/{}", &compact_id[..16])
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OrientedTaskCreatePolicy {
@@ -60,6 +135,10 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_TASK_FIND
             | DEN_TASK_UPDATE
             | DEN_TASK_UPDATE_CURRENT_STATUS
+            | DEN_TASK_SELECT
+            | DEN_DOCKET_ENTRY_APPEND
+            | DEN_DOCKET_ENTRY_PROMOTE
+            | DEN_DOCKET_ENTRY_LIST
             | DEN_TASK_LIST_SYNC
             | DEN_TASK_LIST_CHECKOUT
             | DEN_WORK_DISPATCH
@@ -67,7 +146,9 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_WORK_RUN_GET
             | DEN_WORK_RUN_FIND
             | DEN_WORK_RUN_CANCEL
+            | DEN_WORK_RUN_RESOLVE_STALLED
             | DEN_WORK_CATALOG
+            | DEN_WORK_SURFACE_CONFIRM
     )
 }
 
@@ -81,23 +162,48 @@ pub(crate) struct TaskListListArguments {
     pub(crate) include_artifacts: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum JobOverlapResolution {
+    #[default]
+    Reject,
+    Independent,
+    Supersede,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobSurfaceAssignmentArguments {
+    pub(crate) work_surface_id: Uuid,
+    #[serde(default)]
+    pub(crate) mutation_policy: MutationPolicy,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct DocketJobCreateArguments {
     pub(crate) goal: String,
     #[serde(default)]
-    pub(crate) work_surface_ref: Option<String>,
+    pub(crate) work_surface_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) work_surface_assignments: Vec<DocketJobSurfaceAssignmentArguments>,
     #[serde(default)]
     pub(crate) commit_policy: Option<DocketCommitPolicy>,
     #[serde(default)]
     pub(crate) work_branch: Option<String>,
-    #[serde(default = "default_job_status")]
-    pub(crate) status: DocketJobStatus,
     #[serde(default = "default_job_visibility")]
     pub(crate) visibility: TaskListVisibility,
+    #[serde(default)]
+    pub(crate) supersedes_job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) overlap_resolution: JobOverlapResolution,
     #[serde(default)]
     pub(crate) criteria: Vec<DocketJobCriterionInput>,
     #[serde(default)]
     pub(crate) tasks: Vec<DocketTaskInput>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConfirmWorkSurfaceArguments {
+    pub(crate) work_surface_id: Uuid,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,15 +232,11 @@ pub(crate) struct DocketJobUpdateArguments {
     #[serde(default)]
     pub(crate) goal: Option<String>,
     #[serde(default)]
-    pub(crate) work_surface_ref: Option<String>,
-    #[serde(default)]
-    pub(crate) clear_work_surface_ref: bool,
+    pub(crate) work_surface_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) commit_policy: Option<DocketCommitPolicy>,
     #[serde(default)]
     pub(crate) clear_commit_policy: bool,
-    #[serde(default)]
-    pub(crate) status: Option<DocketJobStatus>,
     #[serde(default)]
     pub(crate) visibility: Option<TaskListVisibility>,
 }
@@ -164,6 +266,8 @@ pub(crate) struct DocketTaskCreateArguments {
     pub(crate) parent_task_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) sibling_order: i32,
+    #[serde(default)]
+    pub(crate) placement: Option<DocketTaskPlacement>,
     #[serde(default = "default_task_kind")]
     pub(crate) kind: DocketTaskKind,
     #[serde(default = "default_task_scope")]
@@ -184,6 +288,12 @@ pub(crate) struct DocketTaskFindArguments {
     pub(crate) task_ref: String,
     #[serde(default)]
     pub(crate) job_ref: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketTaskSelectArguments {
+    #[serde(default)]
+    pub(crate) task_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -242,9 +352,71 @@ pub(crate) struct DocketCurrentTaskStatusArguments {
     pub(crate) task_id: Uuid,
     pub(crate) status: DocketTaskStatus,
     #[serde(default)]
+    pub(crate) outcome_disposition: Option<den_docket::DocketOutcomeDisposition>,
+    #[serde(default)]
     pub(crate) result_refs: Option<Value>,
     #[serde(default)]
     pub(crate) result_summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DocketEntryAppendKind {
+    Finding,
+    Decision,
+    Obstacle,
+    FollowUp,
+    Milestone,
+    Question,
+}
+
+impl From<DocketEntryAppendKind> for DocketEntryKind {
+    fn from(kind: DocketEntryAppendKind) -> Self {
+        match kind {
+            DocketEntryAppendKind::Finding => Self::Finding,
+            DocketEntryAppendKind::Decision => Self::Decision,
+            DocketEntryAppendKind::Obstacle => Self::Obstacle,
+            DocketEntryAppendKind::FollowUp => Self::FollowUp,
+            DocketEntryAppendKind::Milestone => Self::Milestone,
+            DocketEntryAppendKind::Question => Self::Question,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketEntryAppendArguments {
+    #[serde(default)]
+    pub(crate) job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) task_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) run_id: Option<Uuid>,
+    pub(crate) scope: DocketEntryScope,
+    pub(crate) kind: DocketEntryAppendKind,
+    pub(crate) summary: String,
+    #[serde(default)]
+    pub(crate) body: Option<String>,
+    #[serde(default)]
+    pub(crate) evidence_refs: Vec<Value>,
+    #[serde(default)]
+    pub(crate) related_task_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketEntryPromoteArguments {
+    pub(crate) entry_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketEntryListArguments {
+    #[serde(default)]
+    pub(crate) job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) task_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) limit: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,10 +459,6 @@ fn resolve_reference(
             "{kind} reference is ambiguous: {reference}"
         ))),
     }
-}
-
-fn default_job_status() -> DocketJobStatus {
-    DocketJobStatus::Ready
 }
 
 fn default_job_visibility() -> TaskListVisibility {
@@ -385,17 +553,19 @@ pub(crate) async fn get_task_list_status(
     activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
     let _ignored_arguments: Value = serde_json::from_value(arguments)?;
-    let session_anchor_id = match context.client_session_id.as_deref() {
-        Some(client_session_id) => client_sessions::find_for_user_bear_session_id(
-            pool,
-            context.user_id,
-            context.bear_id,
-            client_session_id,
-        )
-        .await?
-        .map(|session| session.id),
+    let session = match context.client_session_id.as_deref() {
+        Some(client_session_id) => {
+            client_sessions::find_for_user_bear_session_id(
+                pool,
+                context.user_id,
+                context.bear_id,
+                client_session_id,
+            )
+            .await?
+        }
         None => None,
     };
+    let session_anchor_id = session.as_ref().map(|session| session.id);
 
     let tasks = if let Some(session_anchor_id) = session_anchor_id {
         PgDocketService::from_pool(pool)
@@ -414,15 +584,16 @@ pub(crate) async fn get_task_list_status(
         Vec::new()
     };
 
-    let task_list = session_anchor_id.and_then(|session_anchor_id| {
-        docket::task_list_projection_from_session_tasks(
+    let task_list = session.as_ref().and_then(|session| {
+        docket::task_list_projection_from_session_tasks_with_current_task(
             context.bear_id,
             role,
             clean_optional(&context.conversation_id)
                 .as_deref()
                 .unwrap_or(""),
-            session_anchor_id,
+            session.id,
             &tasks,
+            session.current_task_id,
         )
     });
 
@@ -489,10 +660,10 @@ pub(crate) async fn update_task_list(
     .into())
 }
 
-/// Resolve a `work_surface_ref` against managed work surfaces. When the ref
-/// names one, the bear must be assigned to it, and the canonical name + id
-/// come back; names matching no managed surface pass through unchanged (the
-/// sandbox provider is the final validator for those).
+// Resolve a `work_surface_ref` against managed work surfaces. When the ref
+// names one, the bear must be assigned to it, and the canonical name + id
+// come back; names matching no managed surface pass through unchanged (the
+// sandbox provider is the final validator for those).
 
 fn truncate_focused_conversation_title(title: &str) -> String {
     title
@@ -772,17 +943,18 @@ fn docket_task_row_summary(task: &docket::DocketTaskRow) -> String {
 fn docket_task_create_summary(
     task: &docket::DocketTaskRow,
     job_id: Option<Uuid>,
-    defaulted_to_conversation_objective: bool,
+    defaulted_to_pair_task_tree: bool,
     planned_session_task: bool,
 ) -> String {
     if let Some(job_id) = job_id {
-        if defaulted_to_conversation_objective {
-            return format!(
-                "Task '{}' was created in the current conversation's Docket objective ({job_id}).",
-                task.title
-            );
-        }
         return format!("Task '{}' was created in Docket Job {job_id}.", task.title);
+    }
+
+    if defaulted_to_pair_task_tree {
+        return format!(
+            "Task '{}' was created in the current Pair task tree.",
+            task.title
+        );
     }
 
     if planned_session_task {
@@ -798,16 +970,14 @@ fn docket_task_create_summary(
 fn docket_tasks_summary_for_scope(
     tasks: &[docket::DocketTaskProjection],
     job_id: Option<Uuid>,
-    defaulted_to_conversation_objective: bool,
+    defaulted_to_pair_task_tree: bool,
 ) -> String {
     let count = count_label(tasks.len(), "Docket task", "Docket tasks");
     if let Some(job_id) = job_id {
-        if defaulted_to_conversation_objective {
-            return format!(
-                "Found {count} in the current conversation's Docket objective ({job_id})."
-            );
-        }
         return format!("Found {count} in Docket Job {job_id}.");
+    }
+    if defaulted_to_pair_task_tree {
+        return format!("Found {count} in the current Pair task tree.");
     }
     docket_tasks_summary(tasks)
 }
@@ -958,15 +1128,30 @@ async fn session_anchored_task_list_projection(
             },
         )
         .await?;
-    Ok(docket::task_list_projection_from_session_tasks(
-        context.bear_id,
-        role,
-        clean_optional(&context.conversation_id)
-            .as_deref()
-            .unwrap_or(""),
-        session_anchor_id,
-        &tasks,
-    ))
+    let selected_task_id = if let Some(client_session_id) = context.client_session_id.as_deref() {
+        client_sessions::find_for_user_bear_session_id(
+            pool,
+            context.user_id,
+            context.bear_id,
+            client_session_id,
+        )
+        .await?
+        .and_then(|session| session.current_task_id)
+    } else {
+        None
+    };
+    Ok(
+        docket::task_list_projection_from_session_tasks_with_current_task(
+            context.bear_id,
+            role,
+            clean_optional(&context.conversation_id)
+                .as_deref()
+                .unwrap_or(""),
+            session_anchor_id,
+            &tasks,
+            selected_task_id,
+        ),
+    )
 }
 
 fn refresh_runtime_session_activity_plan(
@@ -1006,35 +1191,116 @@ async fn update_focused_conversation_title(
     Ok(())
 }
 
-async fn resolve_surface_ref(
+async fn resolve_surface_id_for_create(
     pool: &PgPool,
-    bear_id: Uuid,
-    work_surface_ref: Option<String>,
-) -> Result<(Option<String>, Option<Uuid>), CustomError> {
-    let Some(ref_name) = work_surface_ref
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-    else {
-        return Ok((None, None));
-    };
-    match den_service::work_surfaces::surface_by_name(pool, ref_name).await? {
-        Some(surface) => {
-            if !den_service::work_surfaces::bear_may_use_surface(pool, bear_id, surface.id).await? {
-                return Err(DenError::ValidationError(format!(
-                    "bear is not assigned to work surface '{}'; pick a surface listed by get_work_catalog or ask a surface manager to assign this bear",
-                    surface.name
-                ))
-                .into());
-            }
-            Ok((Some(surface.name), Some(surface.id)))
-        }
-        None => Ok((Some(ref_name.to_string()), None)),
+    stores: &MemoryStoreManager,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    explicit_id: Option<Uuid>,
+) -> Result<(Option<Uuid>, bool), CustomError> {
+    if let Some(surface_id) = explicit_id {
+        validate_assigned_surface(pool, context, surface_id).await?;
+        return Ok((Some(surface_id), false));
     }
+    persist_recognized_session_surface(pool, stores, context, role).await?;
+    let Some(client_session_id) = context.client_session_id.as_deref() else {
+        return Ok((None, false));
+    };
+    let Some(session) = client_sessions::find_for_user_bear_session_id(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+    )
+    .await?
+    else {
+        return Ok((None, false));
+    };
+    let Some(resolution) =
+        den_service::client_session_work_surface_resolutions::find(pool, session.id).await?
+    else {
+        return Ok((None, false));
+    };
+    validate_assigned_surface(pool, context, resolution.work_surface_id).await?;
+    Ok((Some(resolution.work_surface_id), true))
+}
+
+async fn validate_assigned_surface(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    surface_id: Uuid,
+) -> Result<(), CustomError> {
+    if !den_service::work_surfaces::bear_may_use_surface(pool, context.bear_id, surface_id).await? {
+        return Err(DenError::ValidationError(
+            "work_surface_id must identify a managed surface assigned to this Bear".to_string(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+pub(crate) async fn confirm_work_surface(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearProfile::Pair {
+        return Err(DenError::Authorization(
+            "confirm_work_surface is available only to Pair".to_string(),
+        )
+        .into());
+    }
+    let args: ConfirmWorkSurfaceArguments = serde_json::from_value(arguments)?;
+    let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
+        DenError::ValidationError(
+            "confirm_work_surface requires an active client session".to_string(),
+        )
+    })?;
+    let session = client_sessions::find_for_user_bear_session_id(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+    )
+    .await?
+    .ok_or_else(|| {
+        DenError::ValidationError(
+            "confirm_work_surface requires a known client session".to_string(),
+        )
+    })?;
+    if !den_service::work_surfaces::bear_may_use_surface(
+        pool,
+        context.bear_id,
+        args.work_surface_id,
+    )
+    .await?
+    {
+        return Err(DenError::ValidationError(
+            "work_surface_id must identify a managed surface assigned to this Bear".to_string(),
+        )
+        .into());
+    }
+    den_service::client_session_work_surface_resolutions::upsert(
+        pool,
+        session.id,
+        args.work_surface_id,
+        den_service::client_session_work_surface_resolutions::ClientSessionWorkSurfaceResolutionStatus::Confirmed,
+        json!({ "kind": "user_confirmation" }),
+    )
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "status": "confirmed",
+        "work_surface_id": args.work_surface_id,
+        "notes": ["Recorded the user's explicit work-surface selection for this Pair session."]
+    }))
 }
 
 pub(crate) async fn create_job(
     pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
@@ -1048,42 +1314,86 @@ pub(crate) async fn create_job(
         );
     }
     let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
-    let (work_surface_ref, work_surface_id) =
-        resolve_surface_ref(pool, context.bear_id, args.work_surface_ref).await?;
+    let (work_surface_id, surface_auto_bound) = if args.work_surface_assignments.is_empty() {
+        resolve_surface_id_for_create(pool, stores, context, role, args.work_surface_id).await?
+    } else {
+        if args.work_surface_id.is_some() {
+            return Err(DenError::ValidationError(
+                "provide either work_surface_id or work_surface_assignments, not both".to_string(),
+            )
+            .into());
+        }
+        for assignment in &args.work_surface_assignments {
+            validate_assigned_surface(pool, context, assignment.work_surface_id).await?;
+        }
+        (None, false)
+    };
+    if work_surface_id.is_none() && args.work_surface_assignments.is_empty() {
+        return Err(DenError::ValidationError(
+            "work_surface_required: Docket work jobs require an assigned managed work surface; choose one from get_work_catalog or use a resolved/confirmed session anchor"
+                .to_string(),
+        )
+        .into());
+    }
     let job = PgDocketService::from_pool(pool)
         .create_job(DocketJobCreate {
             bear_id: context.bear_id,
             created_by_user_id: context.user_id,
             created_by_role: role.as_str().to_string(),
             goal: args.goal,
-            work_surface_ref,
             work_surface_id,
+            work_surface_assignments: args
+                .work_surface_assignments
+                .into_iter()
+                .map(|assignment| DocketJobSurfaceAssignmentInput {
+                    work_surface_id: assignment.work_surface_id,
+                    mutation_policy: assignment.mutation_policy,
+                })
+                .collect(),
             commit_policy: args.commit_policy,
             work_branch: args.work_branch,
-            status: args.status,
             visibility: args.visibility,
             source_conversation_id: clean_optional(&context.conversation_id),
             objective_kind: None,
+            supersedes_job_id: args.supersedes_job_id,
+            overlap_resolution: match args.overlap_resolution {
+                JobOverlapResolution::Reject => DocketJobOverlapResolution::Reject,
+                JobOverlapResolution::Independent => DocketJobOverlapResolution::Independent,
+                JobOverlapResolution::Supersede => DocketJobOverlapResolution::Supersede,
+            },
             criteria: args.criteria,
             tasks: args.tasks,
         })
         .await?;
     let task_list = docket::task_list_projection_from_docket_job(&job, None);
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "summary": docket_job_summary(&job),
+        "presentation": docket_entity_presentation(
+            "job",
+            job.job.id,
+            &[job.job.id],
+            Some(docket_resource_href(&web_base, "jobs", job.job.id)),
+        ),
         "job": job,
         "task_list": task_list,
         "notes": [
             "Created durable Docket job state; execution is not started by this tool.",
-            "Use get_job for canonical job/task state; checkout_task_list exposes a Docket job as a session task-list projection."
+            "Use get_job for canonical job/task state; checkout_task_list exposes a Docket job as a session task-list projection.",
+            if surface_auto_bound {
+                "Auto-bound the unique assigned work surface resolved from trusted session metadata."
+            } else {
+                "No work surface was auto-bound; explicit selection remains available and unresolved or ambiguous session hints remain unbound."
+            }
         ]
     }))
 }
 
 pub(crate) async fn list_jobs(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -1099,11 +1409,15 @@ pub(crate) async fn list_jobs(
             },
         )
         .await?;
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "summary": docket_job_rows_summary(&jobs),
         "count": jobs.len(),
+        "presentations": docket_entity_presentations("job", jobs.iter().map(|job| job.id), |id| {
+            Some(docket_resource_href(&web_base, "jobs", id))
+        }),
         "jobs": jobs,
     }))
 }
@@ -1165,7 +1479,7 @@ pub(crate) async fn get_job(
         let items: Vec<Value> = runs
             .iter()
             .map(|run| {
-                let mut item = work_run_summary_json(run);
+                let mut item = work_run_summary_json(run, None);
                 if let Some(queue) = queue_by_run.get(&run.id) {
                     item["queue"] = queue.clone();
                 }
@@ -1229,14 +1543,11 @@ pub(crate) async fn update_job(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobUpdateArguments = serde_json::from_value(arguments)?;
-    let (work_surface_ref, work_surface_id) = if args.clear_work_surface_ref {
-        (Some(None), Some(None))
-    } else if args.work_surface_ref.is_some() {
-        let (surface_ref, surface_id) =
-            resolve_surface_ref(pool, context.bear_id, args.work_surface_ref).await?;
-        (Some(surface_ref), Some(surface_id))
+    let work_surface_id = if let Some(surface_id) = args.work_surface_id {
+        validate_assigned_surface(pool, context, surface_id).await?;
+        Some(Some(surface_id))
     } else {
-        (None, None)
+        None
     };
     let job = PgDocketService::from_pool(pool)
         .update_job(DocketJobUpdate {
@@ -1246,14 +1557,13 @@ pub(crate) async fn update_job(
             actor_user_id: Some(context.user_id),
             actor_agent_id: clean_optional(&context.binding_id),
             goal: args.goal,
-            work_surface_ref,
             work_surface_id,
             commit_policy: args
                 .clear_commit_policy
                 .then_some(None)
                 .or_else(|| args.commit_policy.map(Some)),
             work_branch: None,
-            status: args.status,
+            status: None,
             visibility: args.visibility,
         })
         .await?;
@@ -1343,56 +1653,27 @@ pub(crate) async fn evaluate_criterion(
     }))
 }
 
-fn should_default_pair_conversation_objective(role: BearProfile, job_id: Option<Uuid>) -> bool {
-    role == BearProfile::Pair && job_id.is_none()
-}
-
-fn should_default_pair_task_list_filter(
+fn should_default_pair_session_task_tree(
     role: BearProfile,
     job_id: Option<Uuid>,
     session_anchor_id: Option<Uuid>,
 ) -> bool {
-    should_default_pair_conversation_objective(role, job_id) && session_anchor_id.is_none()
+    role == BearProfile::Pair && job_id.is_none() && session_anchor_id.is_none()
 }
 
-async fn pair_conversation_objective_job_id(
+async fn resolve_task_session_anchor_id(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    role: BearProfile,
+    job_id: Option<Uuid>,
+    session_anchor_id: Option<Uuid>,
 ) -> Result<Option<Uuid>, CustomError> {
-    if role != BearProfile::Pair {
-        return Ok(None);
-    }
-    let Some(conversation_id) = clean_optional(&context.conversation_id) else {
-        return Err(DenError::ValidationError(
-            "pair task tools without job_id need the current conversation, but no conversation id is available in this tool context"
-                .to_string(),
-        )
-        .into());
-    };
-    let objective = PgDocketService::from_pool(pool)
-        .get_or_create_conversation_objective(DocketConversationObjectiveRequest {
-            bear_id: context.bear_id,
-            created_by_user_id: context.user_id,
-            created_by_role: role.as_str().to_string(),
-            source_conversation_id: conversation_id,
-        })
-        .await?;
-    Ok(Some(objective.job.id))
-}
-
-async fn default_task_session_anchor_id(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-    args: &DocketTaskCreateArguments,
-) -> Result<Option<Uuid>, CustomError> {
-    if args.job_id.is_some() || args.session_anchor_id.is_some() {
-        return Ok(args.session_anchor_id);
+    if job_id.is_some() || session_anchor_id.is_some() {
+        return Ok(session_anchor_id);
     }
 
     let Some(client_session_id) = context.client_session_id.as_deref() else {
         return Err(DenError::ValidationError(
-            "create_task without job_id needs the current client session, but no client session id is available in this tool context".to_string(),
+            "task operation without job_id needs the current client session, but no client session id is available in this tool context".to_string(),
         )
         .into());
     };
@@ -1406,7 +1687,7 @@ async fn default_task_session_anchor_id(
     .await?
     else {
         return Err(DenError::ValidationError(
-            "create_task without job_id could not resolve the current client session anchor"
+            "task operation without job_id could not resolve the current client session anchor"
                 .to_string(),
         )
         .into());
@@ -1422,17 +1703,13 @@ pub(crate) async fn create_task(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
-    let defaulted_to_conversation_objective =
-        should_default_pair_conversation_objective(role, args.job_id);
-    let job_id = if defaulted_to_conversation_objective {
-        pair_conversation_objective_job_id(pool, context, role).await?
-    } else {
-        args.job_id
-    };
+    let defaulted_to_pair_task_tree =
+        should_default_pair_session_task_tree(role, args.job_id, args.session_anchor_id);
+    let job_id = args.job_id;
     let session_anchor_id = if job_id.is_some() {
         args.session_anchor_id
     } else {
-        default_task_session_anchor_id(pool, context, &args).await?
+        resolve_task_session_anchor_id(pool, context, args.job_id, args.session_anchor_id).await?
     };
     enforce_oriented_task_create_policy(pool, context, &args).await?;
     let task = PgDocketService::from_pool(pool)
@@ -1442,6 +1719,7 @@ pub(crate) async fn create_task(
             session_anchor_id,
             parent_task_id: args.parent_task_id,
             sibling_order: args.sibling_order,
+            placement: args.placement,
             kind: args.kind,
             scope: args.scope,
             title: args.title,
@@ -1449,12 +1727,39 @@ pub(crate) async fn create_task(
             completion_criteria: args.completion_criteria,
             difficulty: args.difficulty,
             effort_hint: args.effort_hint,
+            routing_strategy: Default::default(),
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: role.as_str().to_string(),
             created_by_user_id: Some(context.user_id),
             created_by_agent_id: clean_optional(&context.binding_id),
             created_in_run_id: args.created_in_run_id,
         })
         .await?;
+    if job_id.is_none() && session_anchor_id.is_some() {
+        let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
+            DenError::ValidationError(
+                "session task creation needs the current client session".to_string(),
+            )
+        })?;
+        client_sessions::set_current_task(
+            pool,
+            context.user_id,
+            context.bear_id,
+            client_session_id,
+            Some(task.id),
+        )
+        .await?;
+        if let Some(conversation_id) = clean_optional(&context.conversation_id) {
+            conversation_persistence::set_conversation_title_and_sync_client_sessions(
+                pool,
+                context.bear_id,
+                &conversation_id,
+                &task.title,
+            )
+            .await?;
+        }
+    }
     let task_list = if job_id.is_none() {
         if let Some(session_anchor_id) = session_anchor_id {
             session_anchored_task_list_projection(pool, context, role, session_anchor_id).await?
@@ -1475,7 +1780,7 @@ pub(crate) async fn create_task(
     let summary = docket_task_create_summary(
         &task,
         job_id,
-        defaulted_to_conversation_objective,
+        defaulted_to_pair_task_tree,
         planned_session_task,
     );
     Ok(json!({
@@ -1489,7 +1794,7 @@ pub(crate) async fn create_task(
         "execution_allowed": execution_allowed,
         "item_counts": task_list.as_ref().map(task_list_item_counts),
         "docket_scope": {
-            "kind": if defaulted_to_conversation_objective { "conversation_objective" } else if job_id.is_some() { "explicit_job" } else { "session_task_list" },
+            "kind": if defaulted_to_pair_task_tree { "pair_task_tree" } else if job_id.is_some() { "work_job" } else { "session_task_list" },
             "job_id": job_id,
             "session_anchor_id": session_anchor_id,
         },
@@ -1506,26 +1811,110 @@ pub(crate) async fn create_task(
     }))
 }
 
-pub(crate) async fn list_tasks(
+pub(crate) async fn select_current_task(
     pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
-    let args: DocketTaskListArguments = serde_json::from_value(arguments)?;
-    let defaulted_to_conversation_objective =
-        should_default_pair_task_list_filter(role, args.job_id, args.session_anchor_id);
-    let job_id = if defaulted_to_conversation_objective {
-        pair_conversation_objective_job_id(pool, context, role).await?
+    if role != BearProfile::Pair {
+        return Err(DenError::ValidationError(
+            "select_current_task is available only in Pair stance".to_string(),
+        )
+        .into());
+    }
+    let args: DocketTaskSelectArguments = serde_json::from_value(arguments)?;
+    let session_anchor_id = resolve_task_session_anchor_id(pool, context, None, None)
+        .await?
+        .ok_or_else(|| {
+            DenError::ValidationError(
+                "select_current_task needs the current client session".to_string(),
+            )
+        })?;
+    let selected_title = if let Some(task_id) = args.task_id {
+        let task_list =
+            session_anchored_task_list_projection(pool, context, role, session_anchor_id)
+                .await?
+                .ok_or_else(|| {
+                    DenError::ValidationError(
+                        "the current session has no selectable tasks".to_string(),
+                    )
+                })?;
+        let selected = task_list
+            .items
+            .iter()
+            .find(|item| item.id == task_id.to_string());
+        let Some(selected) = selected.filter(|item| {
+            matches!(
+                item.status,
+                docket::TaskListItemStatus::Pending | docket::TaskListItemStatus::InProgress
+            )
+        }) else {
+            return Err(DenError::ValidationError(
+                "selected task must be an actionable task anchored to the current session"
+                    .to_string(),
+            )
+            .into());
+        };
+        Some(selected.title.clone())
     } else {
-        args.job_id
+        None
     };
+    let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
+        DenError::ValidationError(
+            "select_current_task needs the current client session".to_string(),
+        )
+    })?;
+    client_sessions::set_current_task(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+        args.task_id,
+    )
+    .await?;
+    if let (Some(title), Some(conversation_id)) = (
+        selected_title.as_deref(),
+        clean_optional(&context.conversation_id),
+    ) {
+        conversation_persistence::set_conversation_title_and_sync_client_sessions(
+            pool,
+            context.bear_id,
+            &conversation_id,
+            title,
+        )
+        .await?;
+    }
+    let task_list =
+        session_anchored_task_list_projection(pool, context, role, session_anchor_id).await?;
+    refresh_runtime_session_activity_plan(context, task_list.clone());
+    Ok(json!({
+        "domain": "docket",
+        "current_task_id": args.task_id,
+        "task_list": task_list,
+        "summary": if args.task_id.is_some() { "Selected the current Pair task." } else { "Cleared the current Pair task." },
+    }))
+}
+
+pub(crate) async fn list_tasks(
+    pool: &PgPool,
+    config: &Config,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketTaskListArguments = serde_json::from_value(arguments)?;
+    let defaulted_to_pair_task_tree =
+        should_default_pair_session_task_tree(role, args.job_id, args.session_anchor_id);
+    let job_id = args.job_id;
+    let session_anchor_id =
+        resolve_task_session_anchor_id(pool, context, args.job_id, args.session_anchor_id).await?;
     let tasks = PgDocketService::from_pool(pool)
         .list_tasks(
             context.bear_id,
             DocketTaskListFilter {
                 job_id,
-                session_anchor_id: args.session_anchor_id,
+                session_anchor_id,
                 parent_task_id: args.parent_task_id,
                 include_descendants: args.include_descendants,
                 limit: args.limit,
@@ -1533,18 +1922,24 @@ pub(crate) async fn list_tasks(
         )
         .await?;
     let content = docket_tasks_card_content(&tasks);
-    let summary =
-        docket_tasks_summary_for_scope(&tasks, job_id, defaulted_to_conversation_objective);
+    let summary = docket_tasks_summary_for_scope(&tasks, job_id, defaulted_to_pair_task_tree);
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "content": content,
         "summary": summary,
         "count": tasks.len(),
+        "presentations": docket_entity_presentations("task", tasks.iter().map(|task| task.task.id), |id| {
+            tasks.iter().find(|task| task.task.id == id).and_then(|task| task.task.job_id).map(|job_id| {
+                format!("{}#task-{}", docket_resource_href(&web_base, "jobs", job_id), id)
+            })
+        }),
         "counts": docket_task_counts(&tasks),
         "docket_scope": {
-            "kind": if defaulted_to_conversation_objective { "conversation_objective" } else if job_id.is_some() { "explicit_job" } else { "session_task_list" },
+            "kind": if defaulted_to_pair_task_tree { "pair_task_tree" } else if job_id.is_some() { "work_job" } else { "session_task_list" },
             "job_id": job_id,
+            "session_anchor_id": session_anchor_id,
         },
         "tasks": tasks,
     }))
@@ -1637,6 +2032,9 @@ pub(crate) async fn update_task(
                 scope: args.scope,
                 difficulty: args.difficulty.map(Some),
                 effort_hint: args.effort_hint.map(Some),
+                routing_strategy: None,
+                expected_context_size: None,
+                result_rollup_policy: None,
             },
             run_state: None,
         })
@@ -1708,6 +2106,7 @@ pub(crate) async fn update_current_task_status(
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: args.status,
+                outcome_disposition: args.outcome_disposition,
                 result_refs: args.result_refs,
                 result_summary: args.result_summary,
             }),
@@ -1749,6 +2148,72 @@ pub(crate) async fn update_current_task_status(
         "task_list": task_list,
         "status_report": status_report,
     }))
+}
+
+pub(crate) async fn append_docket_entry(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketEntryAppendArguments = serde_json::from_value(arguments)?;
+    let entry = PgDocketService::from_pool(pool)
+        .append_entry(DocketEntryCreate {
+            bear_id: context.bear_id,
+            job_id: args.job_id,
+            task_id: args.task_id,
+            run_id: args.run_id,
+            scope: args.scope,
+            kind: args.kind.into(),
+            summary: args.summary,
+            body: args.body,
+            evidence_refs: args.evidence_refs,
+            related_task_ids: args.related_task_ids,
+            tags: args.tags,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+        })
+        .await?;
+    Ok(json!({ "domain": "docket", "entry": entry }))
+}
+
+pub(crate) async fn promote_docket_entry(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketEntryPromoteArguments = serde_json::from_value(arguments)?;
+    let entry = PgDocketService::from_pool(pool)
+        .promote_entry(DocketEntryPromotion {
+            bear_id: context.bear_id,
+            entry_id: args.entry_id,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+        })
+        .await?;
+    Ok(json!({ "domain": "docket", "entry": entry }))
+}
+
+pub(crate) async fn list_docket_entries(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketEntryListArguments = serde_json::from_value(arguments)?;
+    let entries = PgDocketService::from_pool(pool)
+        .list_entries(
+            context.bear_id,
+            DocketEntryListFilter {
+                job_id: args.job_id,
+                task_id: args.task_id,
+                limit: args.limit,
+            },
+        )
+        .await?;
+    Ok(json!({ "domain": "docket", "entries": entries }))
 }
 
 pub(crate) async fn sync_task_list(pool: &PgPool, arguments: Value) -> Result<Value, CustomError> {
@@ -1797,13 +2262,26 @@ pub(crate) async fn checkout_task_list(
             },
             Some(job_id),
         )
-    } else if let Some(job_id) = pair_conversation_objective_job_id(pool, context, role).await? {
+    } else if role == BearProfile::Pair {
+        let session_anchor_id = resolve_task_session_anchor_id(pool, context, None, None)
+            .await?
+            .ok_or_else(|| {
+                DenError::ValidationError(
+                    "pair checkout_task_list needs the current client session anchor".to_string(),
+                )
+            })?;
+        let task_list =
+            session_anchored_task_list_projection(pool, context, role, session_anchor_id)
+                .await?
+                .ok_or_else(|| {
+                    DenError::ValidationError(
+                        "pair checkout_task_list could not project the current session task tree"
+                            .to_string(),
+                    )
+                })?;
         (
-            TaskListCheckoutSource::DocketJob {
-                job_id,
-                parent_task_id: args.parent_task_id,
-            },
-            Some(job_id),
+            TaskListCheckoutSource::LocalProjection(Box::new(task_list)),
+            None,
         )
     } else {
         return Err(DenError::ValidationError(
@@ -1870,6 +2348,35 @@ mod test {
             criteria_complete: true,
             next_action: next_action.to_string(),
         }
+    }
+
+    #[test]
+    fn docket_entry_arguments_reject_outcome_and_accept_evidence() {
+        let outcome = serde_json::from_value::<DocketEntryAppendArguments>(json!({
+            "scope": "task_journal",
+            "kind": "outcome",
+            "summary": "settled"
+        }));
+        assert!(outcome.is_err());
+
+        let valid = serde_json::from_value::<DocketEntryAppendArguments>(json!({
+            "scope": "job_notebook",
+            "kind": "finding",
+            "summary": "Inventory complete",
+            "evidence_refs": [{"kind": "source", "ref": "inventory"}]
+        }))
+        .expect("valid journal arguments");
+        assert_eq!(valid.kind, DocketEntryAppendKind::Finding);
+        assert_eq!(valid.evidence_refs.len(), 1);
+    }
+
+    #[test]
+    fn docket_entry_list_defaults_to_service_limit() {
+        let args = serde_json::from_value::<DocketEntryListArguments>(json!({}))
+            .expect("empty list filter");
+        assert_eq!(args.limit, 0);
+        assert!(args.job_id.is_none());
+        assert!(args.task_id.is_none());
     }
 
     #[test]
@@ -1975,6 +2482,9 @@ mod test {
                 completion_criteria: sqlx::types::Json(vec!["Done".to_string()]),
                 difficulty: None,
                 effort_hint: None,
+                routing_strategy: "inline".to_string(),
+                expected_context_size: None,
+                result_rollup_policy: None,
                 created_by_role: "pair".to_string(),
                 created_by_user_id: None,
                 created_by_agent_id: None,
@@ -1987,39 +2497,26 @@ mod test {
     }
 
     #[test]
-    fn pair_defaults_only_when_task_tool_scope_is_implicit() {
+    fn pair_defaults_only_when_task_tree_scope_is_implicit() {
         let explicit_job_id = Uuid::new_v4();
         let session_anchor_id = Uuid::new_v4();
 
-        assert!(should_default_pair_conversation_objective(
-            BearProfile::Pair,
-            None
-        ));
-        assert!(!should_default_pair_conversation_objective(
-            BearProfile::Pair,
-            Some(explicit_job_id)
-        ));
-        assert!(!should_default_pair_conversation_objective(
-            BearProfile::Chat,
-            None
-        ));
-
-        assert!(should_default_pair_task_list_filter(
+        assert!(should_default_pair_session_task_tree(
             BearProfile::Pair,
             None,
             None
         ));
-        assert!(!should_default_pair_task_list_filter(
+        assert!(!should_default_pair_session_task_tree(
             BearProfile::Pair,
             Some(explicit_job_id),
             None
         ));
-        assert!(!should_default_pair_task_list_filter(
+        assert!(!should_default_pair_session_task_tree(
             BearProfile::Pair,
             None,
             Some(session_anchor_id)
         ));
-        assert!(!should_default_pair_task_list_filter(
+        assert!(!should_default_pair_session_task_tree(
             BearProfile::Chat,
             None,
             None
@@ -2027,15 +2524,13 @@ mod test {
     }
 
     #[test]
-    fn task_create_summary_names_conversation_objective_scope() {
+    fn task_create_summary_names_pair_task_tree_scope() {
         let mut task = task_projection(Uuid::new_v4(), None).task;
         task.title = "Capture next step".to_string();
-        let job_id = Uuid::new_v4();
 
-        let summary = docket_task_create_summary(&task, Some(job_id), true, false);
+        let summary = docket_task_create_summary(&task, None, true, false);
 
-        assert!(summary.contains("current conversation's Docket objective"));
-        assert!(summary.contains(&job_id.to_string()));
+        assert!(summary.contains("current Pair task tree"));
         assert!(!summary.contains("Docket Job"));
     }
 
@@ -2113,8 +2608,6 @@ mod test {
 pub(crate) struct WorkDispatchArguments {
     job_id: Uuid,
     #[serde(default)]
-    root: Option<String>,
-    #[serde(default)]
     git_ref: Option<String>,
     /// Catalog image name on the sandbox provider (see get_work_catalog).
     #[serde(default)]
@@ -2123,6 +2616,7 @@ pub(crate) struct WorkDispatchArguments {
 
 pub(crate) async fn dispatch_work(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
@@ -2134,30 +2628,44 @@ pub(crate) async fn dispatch_work(
         )));
     }
     let args: WorkDispatchArguments = serde_json::from_value(arguments)?;
+    PgDocketService::from_pool(pool)
+        .get_job(context.bear_id, args.job_id)
+        .await?
+        .ok_or_else(|| DenError::NotFound(format!("Docket job {} not found", args.job_id)))?;
+    let execution_target = den_docket::work_runs::WorkExecutionTarget::Sandbox;
     let runs = den_docket::work_runs::enqueue_work_job(
         pool,
         den_docket::work_runs::WorkJobEnqueue {
             bear_id: context.bear_id,
             job_id: args.job_id,
-            root_name: args.root.as_deref().and_then(clean_optional),
+            durable_result: den_docket::DurableResultKind::RepositoryChanges,
             git_ref: args.git_ref.as_deref().and_then(clean_optional),
             image_name: args.image.as_deref().and_then(clean_optional),
             requested_by_user_id: Some(context.user_id),
+            execution_target,
+            attachment_warning: None,
         },
     )
     .await?;
     let run_ids: Vec<Uuid> = runs.iter().map(|run| run.id).collect();
     let queue = den_docket::work_runs::queued_run_positions(pool, &run_ids).await?;
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
+    let presentations = docket_entity_presentations("work run", run_ids.iter().copied(), |id| {
+        Some(docket_resource_href(&web_base, "runs", id))
+    });
     Ok(json!({
         "ok": true,
         "job_id": args.job_id,
         "work_run_ids": run_ids,
+        "presentations": presentations,
         "queued_tasks": runs.len(),
         "queue": queue.iter().map(|info| json!({
             "run_id": info.run_id,
             "position": info.position,
             "waiting_on_run_id": info.waiting_on_run_id,
         })).collect::<Vec<_>>(),
+        "execution_target": "sandbox",
+        "internal_execution_target": "sandbox",
         "note": "Job queued; one work run will execute its runnable work tasks in the shared sandbox.",
     }))
 }
@@ -2174,6 +2682,7 @@ pub(crate) struct WorkRunListArguments {
 
 pub(crate) async fn list_work_runs(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -2188,18 +2697,26 @@ pub(crate) async fn list_work_runs(
         },
     )
     .await?;
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
     let queue_by_run = work_run_queue_map(pool, &runs).await?;
     let items: Vec<Value> = runs
         .iter()
         .map(|run| {
-            let mut item = work_run_summary_json(run);
+            let mut item =
+                work_run_summary_json(run, Some(docket_resource_href(&web_base, "runs", run.id)));
             if let Some(queue) = queue_by_run.get(&run.id) {
                 item["queue"] = queue.clone();
             }
             item
         })
         .collect();
-    Ok(json!({ "ok": true, "work_runs": items }))
+    Ok(json!({
+        "ok": true,
+        "presentations": docket_entity_presentations("work run", runs.iter().map(|run| run.id), |id| {
+            Some(docket_resource_href(&web_base, "runs", id))
+        }),
+        "work_runs": items,
+    }))
 }
 
 /// Queue placement for the queued runs in `runs`, keyed by run id (runs
@@ -2255,7 +2772,7 @@ pub(crate) async fn get_work_run(
         .ok_or_else(|| {
             CustomError::NotFound(format!("work run not found: {}", args.work_run_id))
         })?;
-    let mut value = work_run_summary_json(&run);
+    let mut value = work_run_summary_json(&run, None);
     value["work_surface"] = run.work_surface.clone().unwrap_or(Value::Null);
     // Result refs already carry the bounded log tail / diff captured at
     // harvest time; live logs for active runs are on the /work web UI.
@@ -2272,6 +2789,7 @@ pub(crate) async fn get_work_run(
 
 pub(crate) async fn find_work_run(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -2307,6 +2825,7 @@ pub(crate) async fn find_work_run(
             let job_id = resolve_reference(reference, "job", jobs.into_iter().map(|job| job.id))?;
             list_work_runs(
                 pool,
+                config,
                 context,
                 json!({ "job_id": job_id, "limit": args.limit.unwrap_or(50) }),
             )
@@ -2333,21 +2852,72 @@ pub(crate) async fn cancel_work_run(
         )));
     }
     let args: WorkRunCancelArguments = serde_json::from_value(arguments)?;
-    let requested =
-        den_docket::work_runs::request_work_run_cancel(pool, args.work_run_id, context.bear_id)
-            .await?;
+    let requested = den_docket::work_runs::request_work_run_cancel_with_provenance(
+        pool,
+        args.work_run_id,
+        context.bear_id,
+        &den_docket::work_runs::WorkRunCancelRequest {
+            requested_by: format!("tool:{}", role.as_str()),
+            reason: "cancelled through the Docket control tool".into(),
+        },
+    )
+    .await?;
     Ok(json!({
         "ok": true,
         "cancel_requested": requested,
         "note": if requested {
-            "the dispatch worker will tear the sandbox down and record the task as blocked"
+            "cancellation was requested; inspect the terminal work-run record for the final outcome and any partial progress"
         } else {
             "run is already terminal or unknown; nothing to cancel"
         },
     }))
 }
 
-/// Read the sandbox provider's roots + image catalog so the model can choose
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkRunResolveStalledArguments {
+    work_run_id: Uuid,
+    #[serde(default = "default_stalled_resolution_reason")]
+    reason: String,
+}
+
+fn default_stalled_resolution_reason() -> String {
+    "resolved through the Docket control tool".into()
+}
+
+pub(crate) async fn resolve_stalled_work_run(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
+        return Err(CustomError::ValidationError(format!(
+            "resolve_stalled_work_run is available to chat and pair stances, not {}",
+            role.as_str()
+        )));
+    }
+    let args: WorkRunResolveStalledArguments = serde_json::from_value(arguments)?;
+    let resolved = den_docket::work_runs::resolve_stalled_work_run(
+        pool,
+        args.work_run_id,
+        context.bear_id,
+        &den_docket::work_runs::StalledWorkRunResolution {
+            resolved_by: format!("tool:{}", role.as_str()),
+            reason: args.reason,
+        },
+    )
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "resolved": resolved,
+        "note": if resolved {
+            "recorded the stalled-run resolution without changing its terminal outcome"
+        } else {
+            "run is not stalled, is unknown, or already has a recorded resolution; nothing changed"
+        },
+    }))
+}
+
 /// a root and toolchain image before dispatching.
 pub(crate) async fn get_work_catalog(
     pool: &PgPool,
@@ -2365,6 +2935,7 @@ pub(crate) async fn get_work_catalog(
             .into_iter()
             .map(|surface| {
                 json!({
+                    "id": surface.id,
                     "name": surface.name,
                     "description": surface.description,
                     "default_ref": surface.default_ref,
@@ -2395,14 +2966,82 @@ pub(crate) async fn get_work_catalog(
         "images": catalog.images,
         "roots": catalog.roots,
         "notes": [
-            "Prefer a `surfaces` name (managed work surfaces assigned to this bear) as create_job's work_surface_ref / dispatch_work's root.",
+            "Pass a `surfaces[].id` UUID as create_job's work_surface_id. Use the surface name as dispatch_work's root when dispatching that job.",
             "Pass an image name from `images` as dispatch_work's `image` to select a toolchain; omit it to use the surface's default.",
             "Roots with has_upstream=true are git-backed; pushable jobs publish to their upstream work branch."
         ],
     }))
 }
 
-fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
+fn execution_surface_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
+    // A work run owns a separate execution surface. Pair can report its
+    // durable evidence but cannot inspect or continue that worktree without
+    // an explicit transfer or separately granted access.
+    json!({
+        "kind": execution_surface_kind(&run.execution_target),
+        "access_from_pair": "report_only",
+        "work_surface": run.work_surface,
+        "git_ref": run.git_ref,
+        "sandbox_id": run.sandbox_id,
+        "sandbox_type": run.sandbox_type,
+        "may_contain_partial_changes": work_run_may_contain_partial_changes(&run.state),
+    })
+}
+
+fn execution_surface_kind(execution_target: &str) -> &'static str {
+    match execution_target {
+        "attached_armature" => "attached_armature",
+        _ => "work_sandbox",
+    }
+}
+
+fn work_run_may_contain_partial_changes(state: &str) -> bool {
+    matches!(state, "blocked" | "failed" | "cancelled" | "timed_out")
+}
+
+#[cfg(test)]
+mod docket_entity_presentation_tests {
+    use super::{docket_entity_presentation, docket_entity_presentations};
+    use uuid::Uuid;
+
+    fn id(value: &str) -> Uuid {
+        Uuid::parse_str(value).expect("valid UUID fixture")
+    }
+
+    #[test]
+    fn uses_eight_character_typed_handle_when_unambiguous() {
+        let entity = docket_entity_presentation(
+            "job",
+            id("e4e4797b-2d29-4800-856e-b8220a9097dd"),
+            &[id("e4e4797b-2d29-4800-856e-b8220a9097dd")],
+            None,
+        );
+
+        assert_eq!(entity.display, "job e4e4797b");
+        assert_eq!(entity.href, None);
+    }
+
+    #[test]
+    fn extends_handle_when_response_ids_share_the_default_prefix() {
+        let ids = [
+            id("e4e4797b-2d29-4800-856e-b8220a9097dd"),
+            id("e4e4797b-2d29-4800-956e-b8220a9097dd"),
+        ];
+
+        let entities = docket_entity_presentations("work run", ids, |_| None);
+        let displays: Vec<_> = entities
+            .iter()
+            .map(|entity| entity.display.as_str())
+            .collect();
+
+        assert_eq!(
+            displays,
+            ["work run e4e4797b2d2948008", "work run e4e4797b2d2948009"]
+        );
+    }
+}
+
+fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow, href: Option<String>) -> Value {
     fn ts(value: Option<time::OffsetDateTime>) -> Value {
         value
             .and_then(|t| {
@@ -2413,15 +3052,20 @@ fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
     }
     json!({
         "work_run_id": run.id,
+        "presentation": docket_entity_presentation("work run", run.id, &[run.id], href),
         "state": run.state,
         "attempt": run.attempt,
         "job_id": run.job_id,
         "cancel_requested": run.cancel_requested,
-        "root": run.root_name,
+        "cancel_requested_by": run.cancel_requested_by,
+        "cancel_reason": run.cancel_reason,
+        "cancel_requested_at": ts(run.cancel_requested_at),
+        "work_surface": run.work_surface,
         "git_ref": run.git_ref,
         "sandbox_id": run.sandbox_id,
         "sandbox_type": run.sandbox_type,
         "sandbox_strength": run.sandbox_strength,
+        "execution_surface": execution_surface_json(run),
         "result_summary": run.result_summary,
         "error": run.error,
         "queued_at": ts(Some(run.queued_at)),

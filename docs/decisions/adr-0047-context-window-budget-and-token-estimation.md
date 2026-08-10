@@ -106,6 +106,11 @@ When the inference substrate/provider returns actual prompt or completion token 
 
 Calibration must not replace preflight estimation; it improves it.
 
+> **Amendment (2026-07-30) — memory components and calibration home.** Two clarifications from the memory-budget review:
+>
+> 1. **Key memory projection** and **derived recall** are named components in the budget report's per-component attribution (§2), distinct from prompt-memory blocks. The memory subsystem's character caps ([den-runtime v1 budgets](../architecture/den-runtime.md#v1-budgets)) remain selection heuristics inside the projector; this ADR's final-request estimate is the only budget authority. Den does not grow a second, memory-local token estimator.
+> 2. **Calibration data lives in the model registry**: observed Bifrost prompt-token usage is recorded against assembled character counts to maintain per-model-family chars→tokens correction ratios, which feed both the approximate estimator (§3, option 3) and periodic re-tuning of the memory char caps. This keeps Den out of the token-counting-authority business, consistent with the Model-Ops principle that Bifrost owns usage truth and Den mirrors it for policy and UX.
+
 ### 8. Den persists the latest session budget view for inspection
 
 Den should persist the **most recent** context-budget report for a session so human

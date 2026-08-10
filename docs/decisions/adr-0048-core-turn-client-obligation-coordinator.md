@@ -11,6 +11,7 @@
 - [ADR-0044: Runtime stream state machines must make progress explicit](adr-0044-runtime-stream-wake-invariant.md)
 - [BearWire JSON specification](../architecture/bearwire-json-spec.md)
 - [BearWire turn coordinator refactor plan](../roadmap/BEARWIRE_TURN_COORDINATOR_REFACTOR_PLAN.md)
+- [Armature tool-obligation leasing implementation plan](../roadmap/ARMATURE_TOOL_OBLIGATION_LEASING_PLAN.md)
 - [Den state machine inventory](../architecture/den-state-machine-inventory.md)
 
 > **State-inventory maintenance.** This ADR owns turn phases, run lifecycle waits, obligation kinds/states, and late-result handling in the Den state machine inventory. Changes to any wait/settlement/continuation transition must update that inventory and add/update coordinator tests for legal and illegal transitions.
@@ -145,6 +146,22 @@ A tool result is not replayable if it only says `Tool completed`, omits the argu
 
 Failed or max-step turns are not exempt. If a tool call/result happened before terminal failure, it must remain visible to later model context and operator/debug UI. Terminal run state may be stored separately, but it must not cause the user prompt, assistant tool call, or tool result records from that turn to disappear.
 
+### 10. Armature-local tool execution uses durable fenced leases
+
+An armature must claim an open `ToolResult` obligation before starting local execution. A successful claim moves the obligation from waiting to claimed/running and returns an opaque attempt token, a server-clock lease deadline, and a server-selected renewal interval. Only that claimant may renew the lease or submit the result.
+
+Every claim, renewal, result, expiry, and cancellation transition must match the authenticated responder and the complete durable identity:
+
+```text
+run_id + session_id + obligation_id + tool_call_id + attempt_token + open state
+```
+
+`turn_step_id` is also required once available. Claim is transactional: concurrent armatures cannot both acquire permission to execute. Renewal is idempotent, uses Den's database clock, and cannot revive an expired, cancelled, superseded, or settled obligation. Result, expiry, cancellation, and renewal use conditional transitions so exactly one canonical transition wins.
+
+Lease expiry after execution was claimed means Den can no longer establish whether the local command is still running or already changed the workspace. The coordinator must settle the obligation and run as `outcome_unknown`, persist recovery evidence, and prohibit automatic re-execution. A reconnecting armature inspects `run.state`; possession of stale session state without the current attempt token grants inspection but not renewal or execution authority.
+
+Lease ownership is core Den state. BearWire and other surfaces only transport claim, renewal, and result inputs. Process-local task registries may suppress duplicate work as an optimization, but they are not execution authority.
+
 ## Rationale
 
 ACP-specific code was correctly pushed to the edge, but part of the old consolidated turn/tool state machine appears to have been lost or bypassed during the migration. The fix is not to move ACP semantics back into Den, and it is not to make BearWire the new center. The fix is to make the turn/obligation state machine explicitly core and protocol-neutral again, with BearWire, web chat, Slack, macOS, and future channels/armatures as projections over it.
@@ -200,3 +217,7 @@ When modifying turn, permission, or tool-result paths:
 6. Is `run.paused` treated as non-actionable status?
 7. Are duplicate/late/stale obligation results fenced by durable IDs?
 8. Is behavior tested with multiple tool calls or obligations in one model step?
+9. Can more than one armature claim and execute the same obligation?
+10. Can a stale claimant renew a lease or submit a result?
+11. Do result, renewal, cancellation, and expiry races have one canonical winner?
+12. Can any recovery path automatically re-execute a command whose outcome is unknown? It must not.

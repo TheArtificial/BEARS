@@ -305,12 +305,9 @@ impl ApprovalCache {
             })
             .collect::<Vec<_>>();
         let now = now_secs();
-        let entries = self.entries.lock().await;
-        candidate_keys.iter().any(|key| {
-            entries
-                .get(key)
-                .is_some_and(|record| record.expires_at_secs > now)
-        })
+        let mut entries = self.entries.lock().await;
+        entries.retain(|_, record| record.expires_at_secs > now);
+        candidate_keys.iter().any(|key| entries.contains_key(key))
     }
 
     pub(crate) async fn clear_session(&self, _session_id: &str) {

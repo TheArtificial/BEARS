@@ -56,7 +56,7 @@ impl<'a> CommandSpec<'a> {
             args,
             cwd: None,
             env: &[],
-            timeout: Duration::from_secs(60),
+            timeout: Duration::from_mins(1),
             max_output_bytes: 256 * 1024,
             window: CaptureWindow::Head,
         }

@@ -23,6 +23,7 @@ fn pair_context() -> DenToolInvocationContext {
         conversation_selection: Some("src/main.rs".to_string()),
         runtime_target: Some("repo:builder-bear".to_string()),
         workspace_roots: vec!["/workspace".to_string()],
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,
@@ -229,6 +230,7 @@ fn chat_session_info_available_tools_match_memory_roster() {
         conversation_selection: Some("conv-123".to_string()),
         runtime_target: Some("conv-123".to_string()),
         workspace_roots: Vec::new(),
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,
@@ -272,6 +274,7 @@ fn bear_environment_payload_exposes_baseline_sections() {
         conversation_selection: Some("conv-123".to_string()),
         runtime_target: Some("conv-123".to_string()),
         workspace_roots: vec!["/workspace".to_string()],
+        session_capabilities: Vec::new(),
         session_policy: Some(json!({ "mode_label": "Write" })),
         activity: None,
         runtime: Some(json!({

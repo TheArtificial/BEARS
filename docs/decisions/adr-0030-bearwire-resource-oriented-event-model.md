@@ -1,6 +1,6 @@
 # ADR: BearWire resource-oriented event model
 
-**Status:** Proposed  
+**Status:** Accepted (2026-08-16)  
 **Date:** 2026-05-26  
 **Deciders:** Hans
 
@@ -263,6 +263,145 @@ These events must indicate the resource kind explicitly.
 - `reflection.run_started`
 - `reflection.run_completed`
 - `reflection.proposal_created`
+
+## Persistence and UI projection policy
+
+Event meaning, live delivery, persistence, and UI projection are independent decisions. An event does not need durable storage merely because a live client needs it, and persistence does not imply display in every UI.
+
+The initial projection audiences are:
+
+- **livestream** — watching execution; may include transient placeholders that explain current activity;
+- **review** — reading a run's result; the most concise, outcome-oriented projection;
+- **audit** — examining behavior and performance; the most detailed human projection, but still redacted rather than a raw provider or secret-bearing log.
+
+Matrix values: **D** = durable; **C** = durable but compactable after the replay/live window; **E** = ephemeral; **separate** = persist the underlying resource/obligation rather than this notification. Projection values are **yes**, **summary**, **current** (only while unresolved), **conditional**, and **no**.
+
+The JSON specification remains the payload-level inventory. Adding a canonical event requires updating this matrix in the same change.
+
+### Implementation inventory (2026-08-16)
+
+This matrix is the policy target; implementation is deliberately staged rather than implied by acceptance:
+
+| Policy path | Current implementation | Follow-up |
+| --- | --- | --- |
+| Durable BearWire replay | `den_runtime::bearwire_events::append_bearwire_event`, consumed by the HTTP event-page endpoint | Filter/coalesce remaining compactable rows at their producer or projection boundary. |
+| `client.waiting` (`separate`) | `persist_runtime_event_as_bearwire` first persists the authoritative `turn_obligation`, then publishes a safe `client.waiting` observation to `DenState`'s process-local fan-out; it is not appended to the durable sequence. | Expose the reconnect snapshot and subscriber transport in the livestream projection task. |
+| `run.progress` (`E`) | `persist_run_progress` records operational telemetry only; it does not append an event. `publish_run_progress` is the safe fan-out helper, but no producer calls it yet. | Wire producers to the helper while implementing the livestream projection. |
+| Review and audit | Existing event-page/review consumers still render durable event rows directly. | Implement normalized audience-specific projections in their dedicated tasks. |
+
+### Ephemeral livestream delivery and reconnect
+
+Events classified **E** are not inserted into the durable BearWire event sequence. Den delivers them through a bounded, process-local, best-effort livestream fan-out. The fan-out is deliberately not a second event log: it has no replay cursor, does not survive a Den process restart, and may drop events for a slow or disconnected subscriber. A later ephemeral update must therefore be sufficient to replace an earlier one.
+
+A livestream subscriber first receives a derived current snapshot, then best-effort ephemeral updates and durable events as they occur. On reconnect it must reconstruct its view from durable run/session state and unresolved authoritative resources, rather than expecting transient history to be replayed. The snapshot includes the active run state, unresolved client obligations, and any other current values required by the livestream projection; it does not invent a history of prior progress placeholders.
+
+`client.waiting` is a live notification derived from a durable client obligation. The obligation, not the notification, is the source of truth for reconnect, timeout, and authorization validation. A reconnect snapshot exposes unresolved obligations so a client can recover an actionable prompt without a replayed `client.waiting` event.
+
+For armature-local tool execution, the current obligation resource also owns claim and lease status. A successful execution claim may produce one durable `tool_call.started` fact for timing and audit, but periodic lease renewals update current obligation state only: they are not appended to the durable BearWire sequence and must not create livestream, review, or audit heartbeat spam. Lease expiry that changes the run produces one canonical durable terminal outcome.
+
+The opaque attempt token is execution authority and must never appear in ordinary event, history, snapshot, or `run.state` projections. Those projections may expose typed status and expiry (`waiting` or `claimed/running`, plus `lease_expires_at`) without the token. `outcome_unknown` and its recovery evidence must be derived from the same normalized terminal state for livestream/conversation, review, and audit projections.
+
+### Connection and session
+
+| Event | Persistence and retention | Livestream | Review | Audit |
+| --- | --- | --- | --- | --- |
+| `connection.opened` | D; bounded operational retention | no | no | summary |
+| `connection.capabilities` | C; latest snapshot | no | no | summary |
+| `connection.heartbeat` | E; metrics only | no | no | no |
+| `connection.warning` | D; bounded | conditional | conditional | yes |
+| `connection.closing` | E; superseded by terminal state | current | no | summary |
+| `connection.lost` | D when it affects a session/run | yes | conditional | yes |
+| `session.opened` | D | no | no | summary |
+| `session.bound` | D | summary | conditional | yes |
+| `session.resumed` | D | summary | no | yes |
+| `session.state` | C; latest snapshot, never poll-spam | current | no | summary |
+| `runtime.objective_orientation` | D; latest is current | conditional | conditional | yes |
+| `model.selection.changed` | D; latest is current | summary | conditional | yes |
+| `session.metadata.updated` | C by metadata key | conditional | conditional | summary |
+| `session.closed` | D; terminal | summary | no | yes |
+| `session.invalidated` | D; terminal | yes | conditional | yes |
+
+### Run and work progress
+
+| Event | Persistence and retention | Livestream | Review | Audit |
+| --- | --- | --- | --- | --- |
+| `run.accepted` | D | current | no | yes |
+| `run.started` | D | yes | no | yes |
+| `run.progress` (`status_text`, `phase`) | E; replace current display | current | no | conditional |
+| `run.progress` (`queue`, `heartbeat`) | E; current state/metrics only | current | no | no |
+| `run.paused` | D; resolved by resume/terminal | current | conditional | yes |
+| `run.resumed` | D | summary | no | yes |
+| `run.completed` | D; terminal | yes | yes | yes |
+| `run.failed` | D; terminal | yes | yes | yes |
+| `run.cancelled` | D; terminal | yes | yes | yes |
+| `run.expired` | D; terminal | yes | yes | yes |
+| `run.warning` | D; compact exact duplicates | conditional | conditional | yes |
+| `work.progress.updated` | C; latest per work item | yes | summary | yes |
+
+`run.progress` is deliberately non-durable. If an observation is required to explain a failure or performance problem, emit a typed warning, diagnostic, or lifecycle fact instead of retaining periodic status text.
+
+### Messages
+
+| Event | Persistence and retention | Livestream | Review | Audit |
+| --- | --- | --- | --- | --- |
+| `message.started` | C; compact into terminal message | current | no | summary |
+| `message.delta` | C; coalesce into completed content | yes | no | summary |
+| `message.reasoning.delta` | C; coalesce and bound | conditional | no | summary |
+| `message.part` | D; structured content | yes | yes | yes |
+| `message.completed` | D; supersedes deltas for review | yes | yes | yes |
+| `message.aborted` | D; terminal | yes | conditional | yes |
+
+Review renders an assembled message once, rather than displaying its deltas, parts, and completion separately. Reasoning projection is limited to provider-exposed reasoning permitted by visibility policy; hidden chain-of-thought and private scratchpad content are never projected.
+
+### Tools, client obligations, and permissions
+
+| Event | Persistence and retention | Livestream | Review | Audit |
+| --- | --- | --- | --- | --- |
+| `tool_call.requested` | D; replayable call record | summary | summary | yes |
+| `tool_call.dispatched` | D; timing/target evidence | current | no | yes |
+| `client.waiting` | separate; obligation is authoritative | current | no | summary |
+| `tool_call.blocked` | D for exceptional blockers; not duplicate permission waits | current | conditional | yes |
+| `tool_call.started` | D; timing evidence | current | no | yes |
+| `tool_call.progress` | E; replace current display | current | no | conditional |
+| `tool_call.completed` | D; terminal | summary | summary | yes |
+| `tool_call.failed` | D; terminal | yes | summary | yes |
+| `tool_call.cancelled` | D; terminal | summary | conditional | yes |
+| `tool_call.warning` | D; compact exact duplicates | conditional | conditional | yes |
+| `permission.requested` | D; decision context | current | conditional | yes |
+| `permission.granted` | D; resolves request | summary | conditional | yes |
+| `permission.denied` | D; resolves request | yes | conditional | yes |
+| `permission.expired` | D; resolves request | yes | conditional | yes |
+| `permission.revoked` | D; governance transition | yes | conditional | yes |
+
+`client.waiting` is live delivery of an already durable obligation. It must not create a second durable history fact that merely says the client is waiting. Audit derives the wait and duration from the obligation and its resolution. Permission-related `tool_call.blocked` is a legacy projection and must not duplicate that wait in new streams.
+
+### Resources, diagnostics, and governance
+
+| Event | Persistence and retention | Livestream | Review | Audit |
+| --- | --- | --- | --- | --- |
+| `resource.detected` | C; compact into binding/latest state | conditional | no | summary |
+| `resource.bound` | D; binding used by run | summary | conditional | yes |
+| `resource.updated` | C; latest per resource/version | conditional | conditional | summary |
+| `resource.unbound` | D | conditional | conditional | yes |
+| `resource.rejected` | D | yes | conditional | yes |
+| `diagnostic.reported` | D; bounded by severity/policy | conditional | conditional | yes |
+| `health.reported` | C; latest snapshot/metric aggregate | no | no | conditional |
+| `version.reported` | C; latest per component/run | no | no | summary |
+| `memory.review_requested` | D; request and disposition | conditional | conditional | yes |
+| `memory.write_recorded` | D; governance evidence, never secret content | conditional | conditional | yes |
+| `reflection.run_started` | D | summary | no | yes |
+| `reflection.run_completed` | D; terminal | summary | conditional | yes |
+| `reflection.proposal_created` | D; proposal reference | yes | summary | yes |
+
+### Cross-cutting rules
+
+1. **Review is outcome-oriented.** Assemble messages, pair tool requests with outcomes, omit resolved placeholders, and collapse repeated lifecycle detail. Material failures and user decisions remain visible.
+2. **Livestream placeholders are replaceable.** Queue, progress, dispatch, waiting, and partial-message displays may live in client state without becoming durable history.
+3. **Audit is detailed, not raw.** Preserve identity, ordering, timing, correlation, lifecycle, warnings, decisions, and bounded summaries. Raw tool arguments/results, provider payloads, credentials, and hidden reasoning require separately authorized diagnostics.
+4. **Durable facts are immutable.** Supersession controls projection and compaction; it must not rewrite terminal outcomes or decision evidence so as to change history.
+5. **Current status is derived.** Waiting duration, active phase, and similar status come from unresolved obligations and lifecycle timestamps, not periodic persisted observations.
+6. **Projection is correlated.** Pair starts with outcomes and requests with decisions by stable identifiers instead of rendering every event as an unrelated chat message.
+7. **Security applies before projection.** Visibility and redaction are evaluated per audience before content leaves the server. Persistence is not authorization to display.
 
 ## Semantic mapping guidance
 

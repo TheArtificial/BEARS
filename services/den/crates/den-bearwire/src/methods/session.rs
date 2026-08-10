@@ -1,7 +1,5 @@
 use axum::http::HeaderMap;
-use den_docket::{
-    DocketExecutionLookup, DocketService, PgDocketService, TaskListItem, TaskListItemStatus,
-};
+use den_docket::{DocketService, PgDocketService, TaskListItem, TaskListItemStatus};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -18,9 +16,9 @@ use den_runtime::{
     },
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
-    runtime::focus_context::{
-        active_docket_execution_lookup_for_session, resolve_runtime_focus_context,
-        RuntimeFocusResolveRequest,
+    runtime::task_context::{
+        active_docket_execution_lookup_for_session, resolve_runtime_task_context,
+        RuntimeTaskResolveRequest,
     },
     turn_obligations,
 };
@@ -30,7 +28,6 @@ use den_service::{
 };
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
-use crate::methods::conversation::project_focus_title;
 use crate::methods::{parse_params, DEFAULT_CLIENT};
 
 pub async fn reflect_open_sessions_once(state: &DenState) -> Result<usize, CustomError> {
@@ -84,7 +81,7 @@ pub async fn reflect_open_sessions_once(state: &DenState) -> Result<usize, Custo
                 }
             }
             Err(error) => {
-                tracing::warn!(session_id = %session.client_session_id, error = %error, "open-session pair reflection failed")
+                tracing::warn!(session_id = %session.client_session_id, error = %error, "open-session pair reflection failed");
             }
         }
     }
@@ -233,11 +230,11 @@ async fn session_state_payload(
         &conversation_runtime_id,
         &session.client_session_id,
     );
-    let runtime_focus_context = if work_enabled {
+    let runtime_task_context = if work_enabled {
         Some(
-            resolve_runtime_focus_context(
+            resolve_runtime_task_context(
                 &state.sqlx_pool,
-                RuntimeFocusResolveRequest {
+                RuntimeTaskResolveRequest {
                     bear_id: session.bear_id,
                     profile: BearProfile::Pair,
                     user_id: Some(session.user_id),
@@ -254,11 +251,13 @@ async fn session_state_payload(
     } else {
         None
     };
-    let active_activity_plan = runtime_focus_context.as_ref().and_then(|focus| {
-        focus
-            .active_activity_plan()
-            .cloned()
-            .map(|plan| active_activity_plan_projection(plan, focus.source.as_str()))
+    let current_task = runtime_task_context
+        .as_ref()
+        .and_then(pair_current_task_projection);
+    let active_activity_plan = runtime_task_context.as_ref().and_then(|focus| {
+        focus.active_activity_plan().cloned().map(|plan| {
+            active_activity_plan_projection(plan, focus.source.as_str(), current_task.clone())
+        })
     });
     let active_docket_execution = if work_enabled {
         PgDocketService::from_pool(&state.sqlx_pool)
@@ -324,6 +323,7 @@ async fn session_state_payload(
         "created_at": session.created_at,
         "updated_at": session.updated_at,
         "context_budget": latest_context_budget,
+        "current_task": current_task,
         "diagnostics": {
             "trusted_workspace": trusted_workspace,
             "runtime_conversation_id": conversation_runtime_id,
@@ -333,6 +333,27 @@ async fn session_state_payload(
             "active_docket_execution": active_docket_execution,
             "open_obligations": open_obligations,
         }
+    }))
+}
+
+fn pair_current_task_projection(
+    context: &den_runtime::runtime::task_context::RuntimeTaskContext,
+) -> Option<Value> {
+    let task_id = context.current_task_id?;
+    if context.source != den_runtime::runtime::task_context::RuntimeTaskSource::SessionCurrentTask {
+        return None;
+    }
+    let item = context
+        .active_activity_plan()?
+        .current_item
+        .as_ref()
+        .filter(|item| item.id == task_id.to_string())?;
+    Some(json!({
+        "id": item.id,
+        "title": item.title,
+        "summary": item.summary,
+        "status": item.status,
+        "source_ref": item.source_ref,
     }))
 }
 
@@ -353,7 +374,11 @@ fn active_docket_execution_projection(execution: den_docket::DocketExecutionSess
     })
 }
 
-fn active_activity_plan_projection(plan: den_docket::TaskListProjection, source: &str) -> Value {
+fn active_activity_plan_projection(
+    plan: den_docket::TaskListProjection,
+    source: &str,
+    current_task: Option<Value>,
+) -> Value {
     let current_item_id = plan.current_item.as_ref().map(|item| item.id.clone());
     json!({
         "schema": "den.acp_plan_projection.v1",
@@ -364,6 +389,7 @@ fn active_activity_plan_projection(plan: den_docket::TaskListProjection, source:
         "status": plan.status,
         "version": plan.version,
         "current_item_id": current_item_id,
+        "current_task": current_task,
         "items": plan.items.into_iter().map(|item| {
             let status = acp_plan_item_status(&item, current_item_id.as_deref());
             json!({
@@ -392,51 +418,87 @@ fn acp_plan_item_status(item: &TaskListItem, current_item_id: Option<&str>) -> &
     }
 }
 
-fn normalized_mode(value: &str) -> &str {
-    value.trim()
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use den_docket::{TaskListProjection, TaskListSourceRef, TaskListSyncState};
+    use den_runtime::runtime::task_context::{RuntimeTaskContext, RuntimeTaskSource};
+    use sqlx::types::time::OffsetDateTime;
+    use uuid::Uuid;
 
-fn mode_changed(
-    existing: Option<&den_service::client_sessions::ClientSessionRow>,
-    requested: Option<&str>,
-) -> bool {
-    let Some(requested) = requested
-        .map(normalized_mode)
-        .filter(|mode| !mode.is_empty())
-    else {
-        return false;
-    };
-    existing
-        .map(|session| normalized_mode(&session.current_mode) != requested)
-        .unwrap_or(false)
-}
-
-async fn clear_focus_for_mode_change(
-    state: &DenState,
-    bear_id: uuid::Uuid,
-    existing: Option<&den_service::client_sessions::ClientSessionRow>,
-    requested_mode: Option<&str>,
-) -> Result<u64, CustomError> {
-    if !mode_changed(existing, requested_mode) {
-        return Ok(0);
+    fn session_current_task_context(task_id: Uuid) -> RuntimeTaskContext {
+        let item = TaskListItem {
+            id: task_id.to_string(),
+            title: "Selected task".to_string(),
+            summary: Some("Only explicit selections project".to_string()),
+            status: TaskListItemStatus::Pending,
+            blocked_reason: None,
+            source_ref: TaskListSourceRef::local(vec![]),
+            sync_state: TaskListSyncState::CheckedOut,
+        };
+        RuntimeTaskContext {
+            source: RuntimeTaskSource::SessionCurrentTask,
+            current_task_id: Some(task_id),
+            cached_activity_plan_projection: Some(TaskListProjection {
+                id: Uuid::new_v4(),
+                bear_id: Uuid::new_v4(),
+                title: "Session tasks".to_string(),
+                summary: String::new(),
+                owner_profile: "pair".to_string(),
+                visibility: "private_to_profile".to_string(),
+                status: "active".to_string(),
+                version: 1,
+                source_ref: TaskListSourceRef::local(vec![]),
+                items: vec![item.clone()],
+                current_item: Some(item),
+                source_conversation_id: None,
+                source_client_session_id: None,
+                handoff_intent_path: None,
+                handoff_task_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            }),
+        }
     }
-    let Some(existing) = existing else {
-        return Ok(0);
-    };
-    let conversation_id = existing
-        .resolved_conversation_id
-        .clone()
-        .or_else(|| Some(existing.conversation_id.clone()));
-    Ok(PgDocketService::from_pool(&state.sqlx_pool)
-        .clear_active_execution_sessions(
-            bear_id,
-            DocketExecutionLookup {
-                source_conversation_id: conversation_id,
-                session_id: None,
-                source_client_session_id: Some(existing.client_session_id.clone()),
-            },
-        )
-        .await?)
+
+    #[test]
+    fn pair_current_task_projects_only_explicit_session_selection() {
+        let task_id = Uuid::new_v4();
+        let projected = pair_current_task_projection(&session_current_task_context(task_id))
+            .expect("selected task should project");
+        assert_eq!(projected["id"], task_id.to_string());
+        assert_eq!(projected["title"], "Selected task");
+
+        let plan = session_current_task_context(task_id)
+            .active_activity_plan()
+            .cloned()
+            .expect("session task plan");
+        let acp_projection = active_activity_plan_projection(
+            plan,
+            RuntimeTaskSource::SessionCurrentTask.as_str(),
+            Some(projected),
+        );
+        assert_eq!(acp_projection["current_task"]["id"], task_id.to_string());
+
+        let mut no_selection = session_current_task_context(task_id);
+        no_selection.current_task_id = None;
+        assert!(pair_current_task_projection(&no_selection).is_none());
+
+        let no_selection_plan = no_selection
+            .active_activity_plan()
+            .cloned()
+            .expect("session task plan");
+        let acp_without_selection = active_activity_plan_projection(
+            no_selection_plan,
+            RuntimeTaskSource::SessionCurrentTask.as_str(),
+            None,
+        );
+        assert!(acp_without_selection["current_task"].is_null());
+
+        let mut legacy_execution = session_current_task_context(task_id);
+        legacy_execution.source = RuntimeTaskSource::DurableDocketExecution;
+        assert!(pair_current_task_projection(&legacy_execution).is_none());
+    }
 }
 
 pub(crate) async fn session_open_result(
@@ -480,13 +542,6 @@ pub(crate) async fn session_open_result(
         .as_deref()
         .map(client_sessions::ClientSessionMode::try_from_storage)
         .transpose()?;
-    let cleared_focus_count = clear_focus_for_mode_change(
-        state,
-        bear.id,
-        existing.as_ref(),
-        current_mode.as_ref().map(|mode| mode.as_str()),
-    )
-    .await?;
     let client_context = request.client_context;
     client_sessions::upsert_session(
         &state.sqlx_pool,
@@ -504,6 +559,10 @@ pub(crate) async fn session_open_result(
         },
     )
     .await?;
+    let reconnected =
+        den_docket::work_runs::reconnect_attached_work_run(&state.sqlx_pool, &session_id)
+            .await?
+            .is_some();
     if let Some(client_context) = client_context.as_ref() {
         client_sessions::update_adapter_environment(
             &state.sqlx_pool,
@@ -521,40 +580,11 @@ pub(crate) async fn session_open_result(
         &session_id,
     )
     .await?;
-    if cleared_focus_count > 0 {
-        if let Some(session) = session.as_ref() {
-            let title = project_focus_title(session.conversation_title.clone(), false);
-            if title.is_some() || session.conversation_title_updated_at.is_some() {
-                let mut update = BearWireEvent::ephemeral(
-                    "session_info_update",
-                    json!({
-                        "title": title,
-                        "updated_at": session
-                            .conversation_title_updated_at
-                            .unwrap_or(session.updated_at)
-                            .to_string(),
-                    }),
-                );
-                update.bear_id = Some(bear.id.to_string());
-                update.human_id = Some(user_id.to_string());
-                update.session_id = Some(session_id.clone());
-                let _ = bearwire_events::append_bearwire_event(
-                    &state.sqlx_pool,
-                    &session_id,
-                    Some(bear.id),
-                    Some(user_id),
-                    update,
-                )
-                .await;
-            }
-        }
-    }
     let mut event = BearWireEvent::ephemeral(
         "session.opened",
         json!({
             "session_id": session_id,
             "bear_slug": bear.slug,
-            "cleared_focus_count": cleared_focus_count,
         }),
     );
     event.bear_id = Some(bear.id.to_string());
@@ -572,7 +602,7 @@ pub(crate) async fn session_open_result(
         "ok": true,
         "session": session,
         "event_sequence": persisted.sequence_no,
-        "cleared_focus_count": cleared_focus_count,
+        "attached_work_reconnected": reconnected,
     }))
 }
 
@@ -657,6 +687,13 @@ pub(crate) async fn session_close_result(
             }
         };
     client_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
+    let disconnected = den_docket::work_runs::disconnect_attached_work_run(
+        &state.sqlx_pool,
+        &session_id,
+        den_docket::work_runs::ATTACHED_DISCONNECT_TIMEOUT,
+    )
+    .await?
+    .is_some();
     let mut event = BearWireEvent::ephemeral(
         "session.closed",
         json!({
@@ -682,6 +719,7 @@ pub(crate) async fn session_close_result(
         "session_id": session_id,
         "event_sequence": persisted.sequence_no,
         "pair_reflection": reflection_payload,
+        "attached_work_disconnected": disconnected,
     }))
 }
 

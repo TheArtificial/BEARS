@@ -50,6 +50,8 @@ pub mod turn_runs;
 pub mod turn_steps;
 /// Transactional core wait/obligation persistence helpers.
 pub mod turn_waits;
+/// Readable, ordered work activity projected from the canonical BearWire event log.
+pub mod work_activity;
 
 /// Runtime-side memory glue over the `den-memory` leaf: curation, curate-executor,
 /// prompt-block store/blocks, proposals, observations, and admin inspection.
@@ -88,9 +90,9 @@ pub use runtime::compaction as runtime_compaction;
 pub use runtime::compaction_observability as runtime_compaction_observability;
 pub use runtime::compaction_store as runtime_compaction_store;
 pub use runtime::conversations as runtime_conversations;
-pub use runtime::focus_context as runtime_focus_context;
 pub use runtime::pair_turn;
 pub use runtime::provider as runtime_provider;
 pub use runtime::role as role_runtime;
 pub use runtime::role_registry as role_runtime_registry;
+pub use runtime::task_context as runtime_task_context;
 pub use runtime::turn_state;

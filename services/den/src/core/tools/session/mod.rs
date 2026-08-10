@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use crate::{
@@ -9,13 +9,14 @@ use crate::{
 use den_core::tools::{
     arguments::PrepareRustDependenciesArguments,
     constants::{
-        DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET,
-        DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
-        DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
-        DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
-        DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
-        DEN_WORK_PREPARE_RUST_DEPENDENCIES, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND,
-        DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+        DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_CREATE,
+        DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST,
+        DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS,
+        DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
+        DEN_TASK_SELECT, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
+        DEN_WORK_DISPATCH, DEN_WORK_PREPARE_RUST_DEPENDENCIES, DEN_WORK_RUN_CANCEL,
+        DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST, DEN_WORK_RUN_RESOLVE_STALLED,
+        DEN_WORK_SURFACE_CONFIRM,
     },
 };
 use den_memory::MemoryStoreManager;
@@ -254,8 +255,10 @@ async fn invoke_workflow_tool(
             )
             .await?
         }
-        DEN_JOB_CREATE => workflow::create_job(pool, context, role, arguments).await?,
-        DEN_JOB_LIST => workflow::list_jobs(pool, context, arguments).await?,
+        DEN_JOB_CREATE => {
+            workflow::create_job(pool, config, stores, context, role, arguments).await?
+        }
+        DEN_JOB_LIST => workflow::list_jobs(pool, config, context, arguments).await?,
         DEN_JOB_GET => workflow::get_job(pool, context, arguments).await?,
         DEN_JOB_FIND => workflow::find_job(pool, context, arguments).await?,
         DEN_JOB_UPDATE => workflow::update_job(pool, context, role, arguments).await?,
@@ -264,22 +267,38 @@ async fn invoke_workflow_tool(
             workflow::evaluate_criterion(pool, context, role, arguments).await?
         }
         DEN_TASK_CREATE => workflow::create_task(pool, context, role, arguments).await?,
-        DEN_TASK_LIST => workflow::list_tasks(pool, context, role, arguments).await?,
+        DEN_TASK_LIST => workflow::list_tasks(pool, config, context, role, arguments).await?,
         DEN_TASK_FIND => workflow::find_task(pool, context, arguments).await?,
         DEN_TASK_UPDATE => workflow::update_task(pool, context, role, arguments).await?,
+        DEN_TASK_SELECT => workflow::select_current_task(pool, context, role, arguments).await?,
         DEN_TASK_UPDATE_CURRENT_STATUS => {
             workflow::update_current_task_status(pool, context, role, arguments).await?
         }
+        DEN_DOCKET_ENTRY_APPEND => {
+            workflow::append_docket_entry(pool, context, role, arguments).await?
+        }
+        DEN_DOCKET_ENTRY_PROMOTE => {
+            workflow::promote_docket_entry(pool, context, role, arguments).await?
+        }
+        DEN_DOCKET_ENTRY_LIST => workflow::list_docket_entries(pool, context, arguments).await?,
         DEN_TASK_LIST_SYNC => workflow::sync_task_list(pool, arguments).await?,
         DEN_TASK_LIST_CHECKOUT => {
             workflow::checkout_task_list(pool, context, role, arguments).await?
         }
-        DEN_WORK_DISPATCH => workflow::dispatch_work(pool, context, role, arguments).await?,
-        DEN_WORK_RUN_LIST => workflow::list_work_runs(pool, context, arguments).await?,
+        DEN_WORK_DISPATCH => {
+            workflow::dispatch_work(pool, config, context, role, arguments).await?
+        }
+        DEN_WORK_RUN_LIST => workflow::list_work_runs(pool, config, context, arguments).await?,
         DEN_WORK_RUN_GET => workflow::get_work_run(pool, context, arguments).await?,
-        DEN_WORK_RUN_FIND => workflow::find_work_run(pool, context, arguments).await?,
+        DEN_WORK_RUN_FIND => workflow::find_work_run(pool, config, context, arguments).await?,
         DEN_WORK_RUN_CANCEL => workflow::cancel_work_run(pool, context, role, arguments).await?,
+        DEN_WORK_RUN_RESOLVE_STALLED => {
+            workflow::resolve_stalled_work_run(pool, context, role, arguments).await?
+        }
         DEN_WORK_CATALOG => workflow::get_work_catalog(pool, config, context, arguments).await?,
+        DEN_WORK_SURFACE_CONFIRM => {
+            workflow::confirm_work_surface(pool, context, role, arguments).await?
+        }
         _ => {
             return Err(CustomError::NotFound(format!(
                 "unknown workflow tool: {tool_name}"
@@ -370,13 +389,38 @@ impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitl
         conversation_id: &str,
         title: &str,
     ) -> Result<u64, crate::errors::DenError> {
-        conversation_persistence::set_conversation_title_and_sync_client_sessions(
+        let synced_acp_sessions =
+            conversation_persistence::set_conversation_title_and_sync_client_sessions(
+                self.pool,
+                bear_id,
+                conversation_id,
+                title,
+            )
+            .await?;
+        for session in den_service::client_sessions::list_for_bear_conversation(
             self.pool,
             bear_id,
             conversation_id,
-            title,
         )
-        .await
+        .await?
+        {
+            den_runtime::bearwire_events::append_ephemeral_bearwire_event(
+                self.pool,
+                &session.client_session_id,
+                Some(bear_id),
+                Some(session.user_id),
+                "session_info_update",
+                json!({
+                    "title": title,
+                    "updated_at": session
+                        .conversation_title_updated_at
+                        .unwrap_or(session.updated_at)
+                        .to_string(),
+                }),
+            )
+            .await?;
+        }
+        Ok(synced_acp_sessions)
     }
 }
 

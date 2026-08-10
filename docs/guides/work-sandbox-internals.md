@@ -109,7 +109,7 @@ queued → claimed → provisioning → running → reporting → succeeded
 
 ## Publish semantics
 
-- `per_task` checkpoints/publishes after completed task boundaries while retaining the same Job sandbox; `per_job` publishes once when the Job Run completes. `propose_only` / `none` do not publish. `propose_only` / `none` stay diff-only.
+- `per_task` checkpoints/publishes after completed task boundaries while retaining the same Job sandbox; `per_job` publishes once when the Job Run completes. `none` does not publish because no source changes are expected.
 - The push happens **host-side on the sandbox server** with the root's
   credentials (managed-surface credentials arrive via the Den config sync —
   encrypted at rest in Den, written to per-surface 0600 files on the

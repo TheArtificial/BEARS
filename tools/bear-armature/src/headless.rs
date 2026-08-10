@@ -23,6 +23,7 @@ use crate::{
 };
 use agent_client_protocol::schema::RequestPermissionRequest;
 use anyhow::{anyhow, Context, Result};
+use bearwire_protocol::compatibility::CompatibilityManifest;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -117,7 +118,15 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
     // turn explicitly. Without this, streamed output and armature-local tool
     // updates are incorrectly discarded as stale.
     let turn_token = Uuid::new_v4();
-    crate::register_prompt_turn_for_session(&shared_state, &session_id, turn_token, None).await;
+    let response = crate::PromptResponseGuard::new(Value::Null);
+    crate::register_prompt_turn_for_session(
+        &shared_state,
+        &session_id,
+        turn_token,
+        None,
+        response.clone(),
+    )
+    .await;
 
     // ponytail: bearwire::handle_prompt has its own 600s internal ceiling per
     // turn; long work orders hit that before multi-hour deadlines. Upgrade
@@ -129,7 +138,7 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
             &config,
             &mut adapter_state,
             &shared_state,
-            Value::Null,
+            response,
             &session_id,
             &prompt,
             json!({}),
@@ -223,6 +232,7 @@ async fn checkout_work_order(
             "session_id": session_id,
             "work_order_id": env.work_order_id,
             "cwd": env.workspace,
+            "compatibility": CompatibilityManifest::armature(),
         }),
     )
     .await

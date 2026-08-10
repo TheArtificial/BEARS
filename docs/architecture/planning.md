@@ -50,7 +50,25 @@ The model still uses workboard tools for planning; modes are not themselves mode
 | Docket task / job | Docket in Den Postgres | Approved background or autonomous work | canonical work-management record |
 | Work result | Docket + related artifacts/memory | Outcome of approved work | durable result with optional curation |
 
-## Work-surface continuity
+## Work-surface mutation policy
+
+A job-to-work-surface assignment also expresses whether the surface is an
+intended mutation target, rather than asking models to define output contracts
+for individual tasks:
+
+| Policy | Meaning | Completion and capability effect |
+| --- | --- | --- |
+| `required` (default) | The job is expected to leave a durable effect on this surface. | Successful settlement requires the surface-specific verified mutation evidence. |
+| `optional` | The surface may be changed if the work warrants it. | A report-only outcome remains valid; any mutation is still durably recorded and verified. |
+| `forbidden` | The surface is context only. | Mutation capability is not offered; attempts are rejected. |
+
+Mutation policy is separate from a surface's publication policy. For example,
+a required Git surface can publish `per_task` or `per_job`; the former settles
+each permitted task publication through its provider lifecycle, while the
+latter verifies final publication at job settlement. A required Cabinet surface
+requires an authorized record/revision reference. With no required surface
+mutation, completion relies on durable result evidence and required validation.
+
 
 Plans should attach to the same durable work surfaces used elsewhere in Bear Den.
 

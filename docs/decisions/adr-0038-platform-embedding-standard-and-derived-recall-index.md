@@ -125,6 +125,25 @@ Three context lanes (see [den-runtime](../architecture/den-runtime.md#turn-conte
 - Shared embedding geometry does **not** imply shared access. Every query applies **source_class + ACL filters** (Bear membership, Cabinet mission visibility).
 - Cross-corpus search is **policy-gated** (e.g. linked mission + resolved work surface), not default global merge.
 
+### 8. Recall consistency watermark (amendment 2026-07-30)
+
+Because canonical write → passage registry → Qdrant is asynchronous with no distributed transaction, "is this Bear's memory fully recallable right now?" needs a first-class answer. Degraded recall must be **visible, never silent** — a promoted memory that is not yet (or failed to be) indexed is otherwise a Bear that silently "forgets" something it demonstrably knows.
+
+Each Bear exposes a **recall watermark**:
+
+- **`indexed_seq`** — the highest canonical `sequence_no` such that every *indexable* record (per §4 indexing policy) at or below it has been fully processed into the passage registry and Qdrant.
+- **`canonical_seq`** — the Bear's current SQLite `MAX(sequence_no)`.
+- The Bear is **fully recallable** iff `indexed_seq == canonical_seq` (non-indexable records advance the watermark without indexing work).
+
+Surfacing requirements:
+
+- **`memory_status` tool** — reports `indexed_seq` / `canonical_seq`, lag count of unprocessed indexable records, timestamp of the last successful `recall_index` run, and failed-job count, so the model can answer "what can you see?" truthfully.
+- **Admin recall diagnostics** — the same fields per Bear, plus reindex-job progress.
+- **Health check** — a `den doctor`-style check flags Bears whose lag exceeds a threshold or whose last index run failed.
+- **Turn assembly (optional)** — the `## Recalled memory` section may carry a one-line annotation ("recall index N records behind") when the watermark lags, so neither the model nor the user mistakes degraded recall for absence of memory.
+
+The watermark is derived state, computable from the passage registry against canonical SQLite; it introduces no new store and no new consistency obligation — only visibility into the existing eventual consistency.
+
 ## Consequences
 
 **Positive**

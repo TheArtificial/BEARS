@@ -25,9 +25,9 @@ use den_sandbox::protocol::{
 };
 use den_sandbox::SandboxClient;
 
-const LEASE: Duration = Duration::from_secs(120);
-const ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_secs(3600);
-const SURFACE_SYNC_INTERVAL: Duration = Duration::from_secs(300);
+const LEASE: Duration = Duration::from_mins(2);
+const ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_hours(1);
+const SURFACE_SYNC_INTERVAL: Duration = Duration::from_mins(5);
 const LOG_TAIL_BYTES: u64 = 64 * 1024;
 const DIFF_PATCH_BYTES: u64 = 256 * 1024;
 /// Margin under the container timeout so the armature self-kills (and reports)
@@ -72,6 +72,9 @@ pub async fn run_work_dispatch_worker_loop(
 
         if config.work_dispatch_auto {
             auto_enqueue(&pool).await;
+        }
+        if let Err(err) = work_runs::timeout_disconnected_work_runs(&pool).await {
+            tracing::warn!(error = %err, "work_dispatch: attached disconnect timeout sweep failed");
         }
         monitor_owned_runs(&pool, &config, &client, &runner_id).await;
         claim_and_provision(&pool, &config, &client, &runner_id).await;
@@ -133,10 +136,12 @@ async fn auto_enqueue(pool: &PgPool) {
                 work_runs::WorkJobEnqueue {
                     bear_id,
                     job_id,
-                    root_name: None,
+                    durable_result: den_docket::DurableResultKind::RepositoryChanges,
                     git_ref: None,
                     image_name: None,
                     requested_by_user_id,
+                    execution_target: work_runs::WorkExecutionTarget::Sandbox,
+                    attachment_warning: None,
                 },
             )
             .await
@@ -209,12 +214,16 @@ async fn provision_run(
         }
     };
 
-    let Some(root) = run.root_name.clone().filter(|root| !root.trim().is_empty()) else {
+    let Some(root) = context
+        .work_surface_name
+        .clone()
+        .filter(|surface| !surface.trim().is_empty())
+    else {
         fail_run(
             pool,
             run,
-            "no_root",
-            "no sandbox root configured on work run: dispatch must freeze root_name before provisioning",
+            "work_surface_required",
+            "work run has no usable managed work surface",
             None,
         )
         .await;
@@ -299,7 +308,7 @@ async fn provision_run(
 
     let request = CreateSandboxRequest {
         root,
-        git_ref: run.git_ref.clone().or(work_branch),
+        git_ref: work_branch.or(run.git_ref.clone()),
         sandbox_type: SandboxType::Container,
         requires_write: true,
         image: run.image_name.clone(),
@@ -424,8 +433,25 @@ async fn monitor_owned_runs(
     }
 }
 
-/// A running run whose sandbox has exited without a recorded turn outcome is
-/// a lost turn (Den restart, armature crash, provider timeout).
+fn sandbox_exit_failure(result_refs: Option<&Value>) -> (&'static str, String) {
+    let report = result_refs.and_then(|refs| refs.get("armature_report"));
+    let summary = report
+        .and_then(|report| report.get("summary"))
+        .and_then(Value::as_str)
+        .filter(|summary| !summary.trim().is_empty());
+
+    match summary {
+        Some(summary) => ("armature_failed", summary.to_string()),
+        None => (
+            "turn_lost",
+            "sandbox exited without a terminal turn outcome (armature crash, deadline, or Den restart)"
+                .to_string(),
+        ),
+    }
+}
+
+/// Reconcile a running run after its sandbox exits. An armature report is an
+/// authoritative terminal failure; `turn_lost` is only the no-report fallback.
 async fn reconcile_running(
     pool: &PgPool,
     config: &Arc<Config>,
@@ -484,18 +510,12 @@ async fn reconcile_running(
                 .map(|logs| logs.content)
                 .unwrap_or_default();
             revoke_token_for_run(pool, run.id).await;
+            let (reason, message) = sandbox_exit_failure(current.result_refs.as_ref());
             let refs = json!({
                 "log_tail": log_tail,
                 "sandbox_exit_code": descriptor.exit_code,
             });
-            fail_run(
-                pool,
-                &current,
-                "turn_lost",
-                "sandbox exited without a terminal turn outcome (armature crash, deadline, or Den restart)",
-                Some(refs),
-            )
-            .await;
+            fail_run(pool, &current, reason, &message, Some(refs)).await;
             teardown_sandbox(pool, config, client, &current, false).await;
             maybe_requeue(pool, config, &current).await;
         }
@@ -516,6 +536,20 @@ fn work_run_succeeded(
     }
 }
 
+fn work_run_final_state(
+    task_succeeded: bool,
+    publication_required: bool,
+    publication_succeeded: bool,
+) -> WorkRunState {
+    if !task_succeeded {
+        WorkRunState::Blocked
+    } else if publication_required && !publication_succeeded {
+        WorkRunState::Failed
+    } else {
+        WorkRunState::Succeeded
+    }
+}
+
 fn work_run_outcome_summary(
     succeeded: bool,
     armature_summary: Option<String>,
@@ -529,14 +563,14 @@ fn work_run_outcome_summary(
     }
 
     let status = task_status.unwrap_or("pending");
-    let blocked = format!(
-        "turn completed with unfinished job tasks (task run status: {status}); unfinished tasks remain pending"
+    let incomplete = format!(
+        "sandbox turn completed without recording a terminal task status (task run status: {status})"
     );
     match armature_summary {
         Some(summary) if !summary.trim().is_empty() => {
-            format!("{blocked}; armature: {summary}")
+            format!("{incomplete}; armature: {summary}")
         }
-        _ => blocked,
+        _ => incomplete,
     }
 }
 
@@ -603,50 +637,62 @@ async fn harvest_run(
         .map(|diff| diff.changed_files.len())
         .unwrap_or(0);
 
-    // Publish before teardown: push the run's commits to the job's upstream
-    // work branch when the commit policy allows. A publish failure never
-    // un-dones the task (the work happened) — it is recorded loudly instead.
+    // A pushable job has an explicit delivery obligation. Record its outcome
+    // on every path so `published: null` never masquerades as success.
+    let publication_required = context
+        .as_ref()
+        .is_some_and(WorkRunDispatchContext::publishes);
     let mut published: Option<Value> = None;
     let mut publish_failed: Option<String> = None;
-    if succeeded {
-        let context = context;
-        if let Some(context) = context.filter(WorkRunDispatchContext::publishes) {
-            match (sandbox_id, context.work_branch.as_deref()) {
-                (Some(id), Some(branch)) => {
-                    let request = PublishRequest {
-                        branch: branch.to_string(),
-                        auto_commit_leftovers: true,
-                        allow_default_ref: context.allow_default_ref,
-                        author_name: Some(context.bear_name.clone()),
-                        run_label: Some(run.id.to_string()),
-                    };
-                    match client.publish(id, &request).await {
-                        Ok(outcome) => {
-                            tracing::info!(
-                                work_run_id = %run.id,
-                                branch = %outcome.branch,
-                                commits = outcome.commits_pushed,
-                                pushed = outcome.pushed,
-                                "work_dispatch: run published to upstream"
-                            );
-                            published = Some(serde_json::to_value(&outcome).unwrap_or(Value::Null));
-                        }
-                        Err(err) => publish_failed = Some(err.to_string()),
+    let mut publication_status = if publication_required {
+        "not_attempted"
+    } else {
+        "not_required"
+    };
+    if publication_required && succeeded {
+        let context = context
+            .as_ref()
+            .expect("publication requirement has context");
+        match (sandbox_id, context.work_branch.as_deref()) {
+            (Some(id), Some(branch)) => {
+                let request = PublishRequest {
+                    branch: branch.to_string(),
+                    auto_commit_leftovers: true,
+                    allow_default_ref: context.allow_default_ref,
+                    author_name: Some(context.bear_name.clone()),
+                    run_label: Some(run.id.to_string()),
+                };
+                match client.publish(id, &request).await {
+                    Ok(outcome) => {
+                        tracing::info!(
+                            work_run_id = %run.id,
+                            branch = %outcome.branch,
+                            commits = outcome.commits_pushed,
+                            pushed = outcome.pushed,
+                            "work_dispatch: run published to upstream"
+                        );
+                        published = Some(serde_json::to_value(&outcome).unwrap_or(Value::Null));
+                        publication_status = "succeeded";
+                    }
+                    Err(err) => {
+                        publish_failed = Some(err.to_string());
+                        publication_status = "failed";
                     }
                 }
-                (None, _) => publish_failed = Some("run has no sandbox to publish from".into()),
-                (_, None) => {
-                    publish_failed = Some("job has no work branch recorded".into());
-                }
+            }
+            (None, _) => {
+                publish_failed = Some("run has no sandbox to publish from".into());
+                publication_status = "failed";
+            }
+            (_, None) => {
+                publish_failed = Some("job has no work branch recorded".into());
+                publication_status = "failed";
             }
         }
     }
 
-    let final_state = if succeeded {
-        WorkRunState::Succeeded
-    } else {
-        WorkRunState::Blocked
-    };
+    let publication_succeeded = publication_status == "succeeded";
+    let final_state = work_run_final_state(succeeded, publication_required, publication_succeeded);
     let summary = work_run_outcome_summary(
         succeeded,
         turn_summary,
@@ -666,6 +712,10 @@ async fn harvest_run(
         "log_tail": log_tail,
         "published": published,
         "publish_failed": publish_failed,
+        "publication": {
+            "required": publication_required,
+            "status": publication_status,
+        },
     });
 
     if let Some(session_id) = run.bearwire_session_id.as_deref() {
@@ -693,7 +743,14 @@ async fn harvest_run(
         }
     }
 
-    teardown_sandbox(pool, config, client, run, !succeeded).await;
+    teardown_sandbox(
+        pool,
+        config,
+        client,
+        run,
+        final_state != WorkRunState::Succeeded,
+    )
+    .await;
 }
 
 async fn cancel_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient, run: &WorkRunRow) {
@@ -753,6 +810,14 @@ async fn teardown_sandbox(
     }
 }
 
+fn should_block_failed_work_task(
+    active_task_id: Option<Uuid>,
+    task_id: Uuid,
+    status: &str,
+) -> bool {
+    Some(task_id) == active_task_id && status != "done"
+}
+
 async fn fail_run(
     pool: &PgPool,
     run: &WorkRunRow,
@@ -762,12 +827,18 @@ async fn fail_run(
 ) {
     tracing::warn!(work_run_id = %run.id, reason, message, "work_dispatch: run failed");
     let service = PgDocketService::from_pool(pool);
+    let active_task_id = run
+        .result_refs
+        .as_ref()
+        .and_then(|refs| refs.get("task_id"))
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok());
     for (task_id, status) in
         work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
             .await
             .unwrap_or_default()
     {
-        if status == "done" {
+        if !should_block_failed_work_task(active_task_id, task_id, &status) {
             continue;
         }
         let _ = service
@@ -810,10 +881,12 @@ async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
         work_runs::WorkJobEnqueue {
             bear_id: run.bear_id,
             job_id: run.job_id,
-            root_name: run.root_name.clone(),
+            durable_result: den_docket::DurableResultKind::RepositoryChanges,
             git_ref: run.git_ref.clone(),
             image_name: run.image_name.clone(),
             requested_by_user_id: Some(context.created_by_user_id),
+            execution_target: work_runs::WorkExecutionTarget::Sandbox,
+            attachment_warning: None,
         },
     )
     .await
@@ -854,45 +927,6 @@ async fn revoke_token_for_run(pool: &PgPool, run_id: Uuid) {
     };
     if let Err(err) = den_http::armature_tokens::revoke_for_user(pool, user_id, token_id).await {
         tracing::warn!(error = %err, work_run_id = %run_id, "work_dispatch: token revoke failed");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use uuid::Uuid;
-
-    use super::{work_run_outcome_summary, work_run_succeeded};
-
-    #[test]
-    fn per_task_succeeds_when_its_checked_out_task_is_done() {
-        let done = Uuid::new_v4();
-        let pending = Uuid::new_v4();
-        let statuses = vec![(done, "done".to_string()), (pending, "pending".to_string())];
-
-        assert!(work_run_succeeded(Some("per_task"), Some(done), &statuses));
-        assert!(!work_run_succeeded(
-            Some("per_task"),
-            Some(pending),
-            &statuses
-        ));
-        assert!(!work_run_succeeded(Some("per_task"), None, &statuses));
-        assert!(!work_run_succeeded(Some("per_job"), Some(done), &statuses));
-        assert!(!work_run_succeeded(None, Some(done), &statuses));
-    }
-
-    #[test]
-    fn blocked_summary_is_not_hidden_by_generic_armature_completion() {
-        let summary = work_run_outcome_summary(
-            false,
-            Some("headless turn reached a terminal run event".to_string()),
-            0,
-            Some("in_progress"),
-        );
-
-        assert!(summary.contains("unfinished job tasks"));
-        assert!(summary.contains("unfinished tasks remain pending"));
-        assert!(summary.contains("task run status: in_progress"));
-        assert!(summary.contains("armature: headless turn reached"));
     }
 }
 
@@ -938,5 +972,112 @@ async fn orphan_sweep(pool: &PgPool, config: &Arc<Config>, client: &SandboxClien
                 config.sandbox_preserve_failed && run.as_ref().is_some_and(|r| r.state == "failed");
             let _ = client.destroy(&descriptor.id, preserve).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::{
+        sandbox_exit_failure, should_block_failed_work_task, work_run_final_state,
+        work_run_outcome_summary, work_run_succeeded,
+    };
+
+    #[test]
+    fn per_task_succeeds_when_its_checked_out_task_is_done() {
+        let done = Uuid::new_v4();
+        let pending = Uuid::new_v4();
+        let statuses = vec![(done, "done".to_string()), (pending, "pending".to_string())];
+
+        assert!(work_run_succeeded(Some("per_task"), Some(done), &statuses));
+        assert!(!work_run_succeeded(
+            Some("per_task"),
+            Some(pending),
+            &statuses
+        ));
+        assert!(!work_run_succeeded(Some("per_task"), None, &statuses));
+        assert!(!work_run_succeeded(Some("per_job"), Some(done), &statuses));
+        assert!(!work_run_succeeded(None, Some(done), &statuses));
+    }
+
+    #[test]
+    fn required_publication_prevents_success_when_not_published() {
+        assert_eq!(
+            work_run_final_state(true, true, false),
+            den_docket::work_runs::WorkRunState::Failed
+        );
+        assert_eq!(
+            work_run_final_state(true, true, true),
+            den_docket::work_runs::WorkRunState::Succeeded
+        );
+        assert_eq!(
+            work_run_final_state(true, false, false),
+            den_docket::work_runs::WorkRunState::Succeeded
+        );
+    }
+
+    #[test]
+    fn failed_work_run_blocks_only_its_active_unfinished_task() {
+        let active = Uuid::new_v4();
+        let unattempted = Uuid::new_v4();
+
+        assert!(should_block_failed_work_task(
+            Some(active),
+            active,
+            "in_progress"
+        ));
+        assert!(!should_block_failed_work_task(
+            Some(active),
+            unattempted,
+            "pending"
+        ));
+        assert!(!should_block_failed_work_task(Some(active), active, "done"));
+        assert!(!should_block_failed_work_task(None, active, "pending"));
+    }
+
+    #[test]
+    fn sandbox_exit_prefers_armature_report_over_turn_lost() {
+        let refs = json!({
+            "armature_report": {
+                "status_hint": "failed",
+                "summary": "headless turn failed: unsupported required BearWire client obligation"
+            }
+        });
+
+        assert_eq!(
+            sandbox_exit_failure(Some(&refs)),
+            (
+                "armature_failed",
+                "headless turn failed: unsupported required BearWire client obligation".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn sandbox_exit_is_turn_lost_only_without_armature_report() {
+        assert_eq!(
+            sandbox_exit_failure(None),
+            (
+                "turn_lost",
+                "sandbox exited without a terminal turn outcome (armature crash, deadline, or Den restart)"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn incomplete_summary_identifies_missing_terminal_task_status() {
+        let summary = work_run_outcome_summary(
+            false,
+            Some("headless turn reached a terminal run event".to_string()),
+            0,
+            Some("in_progress"),
+        );
+
+        assert!(summary.contains("without recording a terminal task status"));
+        assert!(summary.contains("task run status: in_progress"));
+        assert!(summary.contains("armature: headless turn reached"));
     }
 }

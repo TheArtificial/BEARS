@@ -20,6 +20,8 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den ru
 | **ADR-0041 schema + curation engine** | `valid_from`/`invalid_at`, `salience`, lifecycle/freshness indicators, harvest marks, archive-harvest lane, reviewed supersession writes, deterministic harvest quality fixtures, exact-claim consolidation review metadata | Optional/evidence-driven richer model-assisted harvest/consolidation quality | [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_CURATION_PLAN.md](MEMORY_CURATION_PLAN.md) |
 | **Work-surface memory** | Resolver on entity layer; scaffolds in logical-path model | End-to-end scaffolding + resolution UX | [WORK_SURFACE_MEMORY_SCAFFOLDING_PLAN.md](WORK_SURFACE_MEMORY_SCAFFOLDING_PLAN.md), [WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md](WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md) |
 | **Semantic memory schema (ADR-0022)** | Logical-path projection | Resource-scoped write paths, `plan` kind removal | [SEMANTIC_MEMORY_SCHEMA_IMPLEMENTATION_PLAN.md](SEMANTIC_MEMORY_SCHEMA_IMPLEMENTATION_PLAN.md) |
+| **Write topology (ADR-0031 amendment)** | ✅ Complete: one `MemoryStoreManager` per process (`eaaf897a`), CI-enforced allowlist + CLI/deployment guardrails (`81fbad49`) | — | [MEMORY_WRITE_TOPOLOGY_PLAN.md](MEMORY_WRITE_TOPOLOGY_PLAN.md) |
+| **Recall observability + conflicts (ADR-0038 §8, ADR-0041 §8)** | ✅ Complete: watermark in `memory_status`/admin (`afda4b93`); conflict markers + `memory_conflict` observations + lag annotation (`373f1a00`) | Follow-up: auto-enqueue `memory_curate` on conflict observations | [RECALL_OBSERVABILITY_AND_CONFLICTS_PLAN.md](RECALL_OBSERVABILITY_AND_CONFLICTS_PLAN.md) |
 
 ---
 

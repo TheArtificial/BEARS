@@ -51,6 +51,7 @@ fn trusted_workspace_context_prefers_adapter_roots_and_falls_back_to_cwd() {
             "workspace_roots": ["/workspace/root-a", "/workspace/root-b"]
         })),
         current_mode: "ask".to_string(),
+        current_task_id: None,
         conversation_title: None,
         conversation_title_updated_at: None,
         conversation_title_synced_at: None,

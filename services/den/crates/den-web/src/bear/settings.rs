@@ -30,7 +30,7 @@ use crate::{
     web::{self, AppState},
 };
 use den_core::{AgentLoopControlLevel, DenError};
-use den_memory::{bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager};
+use den_memory::{bear_memory_admin_stats, BearMemoryAdminStats};
 use den_protocol::ContextBudgetReport;
 use den_runtime::{
     bearwire_events,
@@ -729,7 +729,7 @@ async fn live_reflection_status_for_bear(
     workers_enabled: bool,
 ) -> Result<LiveReflectionStatusAdmin, CustomError> {
     let row = sqlx::query_as::<_, (Option<time::OffsetDateTime>, i64, i64, i64)>(
-        r#"
+        r"
         SELECT MAX(created_at) AS last_event_at,
                COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::bigint AS checked_24h,
                COUNT(*) FILTER (
@@ -744,7 +744,7 @@ async fn live_reflection_status_for_bear(
         WHERE bear_id = $1
           AND event_type = 'session.reflected'
           AND COALESCE(event_json->'data'->'pair_reflection'->>'trigger', event_json->'data'->>'trigger') = 'open-session-stale'
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_one(pool)
@@ -805,7 +805,7 @@ async fn reflection_rows_for_bear(
             serde_json::Value,
         ),
     >(
-        r#"
+        r"
         SELECT e.created_at,
                e.event_type,
                e.session_id,
@@ -832,7 +832,7 @@ async fn reflection_rows_for_bear(
           AND COALESCE(e.event_json->'data'->'pair_reflection', e.event_json->'data') IS NOT NULL
         ORDER BY e.created_at DESC, e.sequence_no DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(conversation_id)
@@ -915,7 +915,7 @@ fn reflection_watermark_admin(
         .map(|(latest, reflected_through)| latest.saturating_sub(reflected_through));
     let explanation = match latest_reflection {
         None => "This conversation has not been reflected yet.".to_string(),
-        Some(row) if reflected_through_sequence_no.is_some() => {
+        Some(_row) if reflected_through_sequence_no.is_some() => {
             "Reflection events carry a source-message watermark, so repeated runs can show whether new transcript content exists.".to_string()
         }
         Some(row) => format!(
@@ -1249,7 +1249,7 @@ fn manifest_for_bear(bear: &den_service::bears::Bear) -> Result<BearBundleManife
 }
 
 async fn snapshot_memory_sqlite(state: &AppState, bear_id: Uuid) -> Result<Vec<u8>, CustomError> {
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     let store = manager.store_for_bear(bear_id).await?;
     let snapshot_path =
         std::env::temp_dir().join(format!("bear-export-{bear_id}-{}.sqlite", Uuid::new_v4()));
@@ -1374,7 +1374,7 @@ async fn rewrite_imported_memory_bear_id(
     state: &AppState,
     bear_id: Uuid,
 ) -> Result<(), CustomError> {
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     let store = manager.store_for_bear(bear_id).await?;
     let new_id = bear_id.to_string();
     for table in [
@@ -1530,14 +1530,23 @@ async fn import_bear_bundle(
     })?;
     rewrite_imported_memory_bear_id(&state, bear_id).await?;
 
-    if let Err(err) =
-        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), bear_id)
-            .await
+    if let Err(err) = provision::provision_bear_if_configured(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        &state.memory_stores,
+        bear_id,
+    )
+    .await
     {
         tracing::warn!(%bear_id, error = %err, "provision after Bear import failed");
     }
-    if let Err(err) =
-        provision::reconcile_bear_native(state.sqlx_pool(), state.config.as_ref(), bear_id).await
+    if let Err(err) = provision::reconcile_bear_native(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        &state.memory_stores,
+        bear_id,
+    )
+    .await
     {
         tracing::warn!(%bear_id, error = %err, "reconcile after Bear import failed");
     }
@@ -1553,7 +1562,7 @@ async fn memory_stats_for_bear(
     state: &AppState,
     bear_id: Uuid,
 ) -> Result<Option<BearMemoryAdminStats>, CustomError> {
-    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let manager = state.memory_stores.clone();
     match bear_memory_admin_stats(&manager, state.config.as_ref(), bear_id).await {
         Ok(stats) => Ok(Some(stats)),
         Err(err) => {
@@ -1586,7 +1595,7 @@ async fn overview_view(
         .filter(|row| row.health_status == "error")
         .count();
     let memory_stats = {
-        let manager = MemoryStoreManager::new(state.config.as_ref());
+        let manager = state.memory_stores.clone();
         match bear_memory_admin_stats(&manager, state.config.as_ref(), id).await {
             Ok(stats) => Some(stats),
             Err(err) => {
@@ -3286,7 +3295,7 @@ async fn reflect_persisted_conversation(
     )
     .await?;
     let compaction_status = compaction_state.as_ref().map(|state| &state.event.status);
-    let memory_stores = MemoryStoreManager::new(&state.config);
+    let memory_stores = state.memory_stores.clone();
     let output = create_pair_reflection_proposals_from_latest_summary(
         state.sqlx_pool(),
         &state.config,
@@ -3622,6 +3631,7 @@ async fn provision_missing_stances_action(
     let message = match provision::provision_missing_bear_profiles(
         state.sqlx_pool(),
         state.config.as_ref(),
+        &state.memory_stores,
         bear.id,
     )
     .await

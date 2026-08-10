@@ -16,8 +16,8 @@ use time::OffsetDateTime;
 use crate::proc::{run_streaming, CommandSpec, TailBuffer};
 use crate::protocol::{OperationDescriptor, OperationState};
 
-pub const PULL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-pub const BUILD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+pub const PULL_TIMEOUT: Duration = Duration::from_mins(15);
+pub const BUILD_TIMEOUT: Duration = Duration::from_mins(30);
 const OP_LOG_TAIL_BYTES: usize = 64 * 1024;
 const MAX_FINISHED_OPS: usize = 50;
 
@@ -172,7 +172,7 @@ fn prune_finished(ops: &mut BTreeMap<String, Arc<OpShared>>) {
     if finished.len() < MAX_FINISHED_OPS {
         return;
     }
-    finished.sort_by(|a, b| a.0.cmp(&b.0));
+    finished.sort_by_key(|entry| entry.0);
     let excess = finished.len() + 1 - MAX_FINISHED_OPS;
     for (_, id) in finished.into_iter().take(excess) {
         ops.remove(&id);
@@ -267,7 +267,7 @@ mod tests {
             "long".into(),
             "sleep".into(),
             vec!["30".into()],
-            Duration::from_secs(60),
+            Duration::from_mins(1),
         );
         let ops = registry.list();
         assert!(ops.len() <= MAX_FINISHED_OPS);

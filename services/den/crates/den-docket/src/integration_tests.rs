@@ -1,17 +1,36 @@
 use den_core::BearProfile;
+use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
 
 use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
-    DocketCommitPolicy, DocketConversationObjectiveRequest, DocketCriterionKind,
-    DocketCriterionStateUpdate, DocketEffortHint, DocketExecutionLookup, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobStatus, DocketService,
+    DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
+    DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
+    DocketEntryScope, DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
     DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
     DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
-    DocketTaskStatus, DocketTaskUpdate, PgDocketService, TaskDispatcher, TaskListCheckoutRequest,
-    TaskListCheckoutSource, TaskListSyncRequest, TaskListVisibility,
+    DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher,
+    TaskListSyncRequest, TaskListVisibility,
 };
+
+fn primary_output_result_refs() -> Value {
+    json!({
+        "primary_output": {
+            "kind": "git_commit",
+            "artifact_ref": "git:0123456789abcdef0123456789abcdef01234567",
+            "immutable_identity": "0123456789abcdef0123456789abcdef01234567"
+        },
+        "validation": {
+            "primary_output_ref": "git:0123456789abcdef0123456789abcdef01234567",
+            "immutable_identity": "0123456789abcdef0123456789abcdef01234567",
+            "command": "cargo test -p den-docket",
+            "result": "passed",
+            "execution_provenance": "local integration test"
+        }
+    })
+}
 
 async fn test_pool() -> Option<PgPool> {
     let database_url = std::env::var("TEST_DATABASE_URL")
@@ -24,6 +43,10 @@ async fn test_pool() -> Option<PgPool> {
         .ok()?;
     sqlx::migrate!("../../migrations").run(&pool).await.ok()?;
     Some(pool)
+}
+
+fn test_work_surface_id(bear_id: Uuid) -> Uuid {
+    bear_id
 }
 
 async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
@@ -59,6 +82,43 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     .await
     .expect("seed bear");
 
+    let surface_id = test_work_surface_id(bear_id);
+    let surface_name = format!("surface-{}", &surface_id.simple().to_string()[..12]);
+    sqlx::query(
+        r"
+        INSERT INTO work_surfaces (id, name, kind, created_by_user_id)
+        VALUES ($1, $2, 'git_workspace', $3)
+        ",
+    )
+    .bind(surface_id)
+    .bind(surface_name)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .expect("seed work surface");
+    sqlx::query(
+        r"
+        INSERT INTO git_work_surface_details (work_surface_id, upstream_url)
+        VALUES ($1, $2)
+        ",
+    )
+    .bind(surface_id)
+    .bind("https://example.test/docket.git")
+    .execute(pool)
+    .await
+    .expect("seed git work surface details");
+    sqlx::query(
+        r"
+        INSERT INTO work_surface_bears (surface_id, bear_id)
+        VALUES ($1, $2)
+        ",
+    )
+    .bind(surface_id)
+    .bind(bear_id)
+    .execute(pool)
+    .await
+    .expect("assign work surface");
+
     (user_id, bear_id)
 }
 
@@ -67,15 +127,16 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
         bear_id,
         created_by_user_id: user_id,
         created_by_role: "pair".to_string(),
-        goal: "Docket integration lifecycle".to_string(),
-        work_surface_ref: None,
-        work_surface_id: None,
-        commit_policy: Some(DocketCommitPolicy::ProposeOnly),
+        goal: format!("Docket integration lifecycle {}", Uuid::new_v4().simple()),
+        work_surface_id: Some(test_work_surface_id(bear_id)),
+        work_surface_assignments: vec![],
+        commit_policy: Some(DocketCommitPolicy::None),
         work_branch: None,
-        status: DocketJobStatus::Ready,
         visibility: TaskListVisibility::SameUser,
         source_conversation_id: None,
         objective_kind: None,
+        supersedes_job_id: None,
+        overlap_resolution: DocketJobOverlapResolution::Reject,
         criteria: vec![DocketJobCriterionInput {
             kind: DocketCriterionKind::Narrative,
             description: "Both tasks are done".to_string(),
@@ -87,7 +148,7 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
                 client_key: Some("first".to_string()),
                 parent_client_key: None,
                 parent_task_id: None,
-                sibling_order: 0,
+                sibling_order: Some(0),
                 kind: DocketTaskKind::Execution,
                 scope: DocketTaskScope::Template,
                 title: "First task".to_string(),
@@ -95,12 +156,15 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
                 completion_criteria: vec!["First task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Trivial),
                 effort_hint: Some(DocketEffortHint::Low),
+                routing_strategy: RoutingStrategy::Auto,
+                expected_context_size: None,
+                result_rollup_policy: None,
             },
             DocketTaskInput {
                 client_key: Some("second".to_string()),
                 parent_client_key: None,
                 parent_task_id: None,
-                sibling_order: 1,
+                sibling_order: Some(1),
                 kind: DocketTaskKind::Execution,
                 scope: DocketTaskScope::Template,
                 title: "Second task".to_string(),
@@ -108,156 +172,12 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
                 completion_criteria: vec!["Second task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Trivial),
                 effort_hint: Some(DocketEffortHint::Low),
+                routing_strategy: RoutingStrategy::Auto,
+                expected_context_size: None,
+                result_rollup_policy: None,
             },
         ],
     }
-}
-
-#[tokio::test]
-async fn conversation_objective_checkout_projects_active_subtree_after_reconnect() {
-    let Some(pool) = test_pool().await else {
-        eprintln!("skipping postgres-backed docket integration test; database unavailable");
-        return;
-    };
-    let (user_id, bear_id) = seed_user_and_bear(&pool, "conversation-objective").await;
-    let service = PgDocketService::from_pool(&pool);
-
-    let first = service
-        .get_or_create_conversation_objective(DocketConversationObjectiveRequest {
-            bear_id,
-            created_by_user_id: user_id,
-            created_by_role: "pair".to_string(),
-            source_conversation_id: "conversation-1".to_string(),
-        })
-        .await
-        .expect("create conversation objective");
-    let second = service
-        .get_or_create_conversation_objective(DocketConversationObjectiveRequest {
-            bear_id,
-            created_by_user_id: user_id,
-            created_by_role: "pair".to_string(),
-            source_conversation_id: "conversation-1".to_string(),
-        })
-        .await
-        .expect("reuse conversation objective");
-
-    assert_eq!(first.job.id, second.job.id);
-    assert_eq!(
-        first.job.source_conversation_id.as_deref(),
-        Some("conversation-1")
-    );
-    assert_eq!(
-        first.job.objective_kind.as_deref(),
-        Some("conversation_task_list")
-    );
-
-    let (count,): (i64,) = sqlx::query_as(
-        r"
-        SELECT COUNT(*)
-        FROM bear_jobs
-        WHERE bear_id = $1
-          AND source_conversation_id = 'conversation-1'
-          AND objective_kind = 'conversation_task_list'
-          AND status NOT IN ('completed', 'cancelled')
-        ",
-    )
-    .bind(bear_id)
-    .fetch_one(&pool)
-    .await
-    .expect("count conversation objectives");
-    assert_eq!(count, 1);
-
-    let parent = service
-        .create_task(DocketTaskCreate {
-            bear_id,
-            job_id: Some(first.job.id),
-            session_anchor_id: None,
-            parent_task_id: None,
-            sibling_order: 0,
-            kind: DocketTaskKind::Execution,
-            scope: DocketTaskScope::Template,
-            title: "Parent task".to_string(),
-            body: "Own the active subtree".to_string(),
-            completion_criteria: vec!["Subtree is projected".to_string()],
-            difficulty: Some(DocketTaskDifficulty::Trivial),
-            effort_hint: Some(DocketEffortHint::Low),
-            created_by_role: "pair".to_string(),
-            created_by_user_id: Some(user_id),
-            created_by_agent_id: None,
-            created_in_run_id: first.job.current_run_id,
-        })
-        .await
-        .expect("create parent task");
-    let child = service
-        .create_task(DocketTaskCreate {
-            bear_id,
-            job_id: Some(first.job.id),
-            session_anchor_id: None,
-            parent_task_id: Some(parent.id),
-            sibling_order: 0,
-            kind: DocketTaskKind::Execution,
-            scope: DocketTaskScope::Template,
-            title: "Child task".to_string(),
-            body: "Stay active across reconnect".to_string(),
-            completion_criteria: vec!["Child is current".to_string()],
-            difficulty: Some(DocketTaskDifficulty::Trivial),
-            effort_hint: Some(DocketEffortHint::Low),
-            created_by_role: "pair".to_string(),
-            created_by_user_id: Some(user_id),
-            created_by_agent_id: None,
-            created_in_run_id: first.job.current_run_id,
-        })
-        .await
-        .expect("create child task");
-    service
-        .update_task(DocketTaskUpdate {
-            bear_id,
-            job_id: None,
-            task_id: child.id,
-            actor_role: BearProfile::Pair,
-            actor_user_id: Some(user_id),
-            actor_agent_id: None,
-            definition: DocketTaskDefinitionPatch::default(),
-            run_state: Some(DocketTaskRunStateUpdate {
-                run_id: first
-                    .job
-                    .current_run_id
-                    .expect("conversation objective run"),
-                status: DocketTaskStatus::InProgress,
-                result_refs: None,
-                result_summary: None,
-            }),
-        })
-        .await
-        .expect("mark child active");
-
-    let projected = service
-        .checkout_task_list(
-            bear_id,
-            BearProfile::Pair,
-            user_id,
-            TaskListCheckoutRequest {
-                source: TaskListCheckoutSource::ConversationObjective {
-                    request: DocketConversationObjectiveRequest {
-                        bear_id,
-                        created_by_user_id: user_id,
-                        created_by_role: "pair".to_string(),
-                        source_conversation_id: "conversation-1".to_string(),
-                    },
-                    active_subtree: true,
-                },
-            },
-        )
-        .await
-        .expect("checkout conversation objective")
-        .expect("conversation objective projection");
-    assert_eq!(projected.id, first.job.id);
-    assert_eq!(projected.items.len(), 1);
-    assert_eq!(projected.items[0].id, child.id.to_string());
-    assert_eq!(
-        projected.current_item.as_ref().map(|item| item.id.as_str()),
-        Some(child.id.to_string().as_str())
-    );
 }
 
 #[tokio::test]
@@ -295,6 +215,7 @@ async fn creates_session_anchored_task_without_job() {
             session_anchor_id: Some(session_anchor_id),
             parent_task_id: None,
             sibling_order: 0,
+            placement: None,
             kind: DocketTaskKind::Investigation,
             scope: DocketTaskScope::Run,
             title: "Session anchored task".to_string(),
@@ -302,6 +223,9 @@ async fn creates_session_anchored_task_without_job() {
             completion_criteria: vec!["Task row is inserted".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -358,6 +282,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             session_anchor_id: Some(session_anchor_id),
             parent_task_id: None,
             sibling_order: 0,
+            placement: None,
             kind: DocketTaskKind::Execution,
             scope: DocketTaskScope::Run,
             title: "Session task with state".to_string(),
@@ -365,6 +290,9 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             completion_criteria: vec!["Task status is projected".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -384,7 +312,8 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
-                result_refs: None,
+                outcome_disposition: None,
+                result_refs: Some(primary_output_result_refs()),
                 result_summary: Some("Verified status projection".to_string()),
             }),
         })
@@ -430,6 +359,82 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     let criterion_id = created.criteria[0].id;
     let first_task_id = created.tasks[0].id;
     let second_task_id = created.tasks[1].id;
+
+    let finding = service
+        .append_entry(DocketEntryCreate {
+            bear_id,
+            job_id: Some(created.job.id),
+            task_id: Some(first_task_id),
+            run_id: Some(run_id),
+            scope: DocketEntryScope::TaskJournal,
+            kind: DocketEntryKind::Finding,
+            summary: "Inventory contains two runnable tasks.".to_string(),
+            body: None,
+            evidence_refs: vec![],
+            related_task_ids: vec![second_task_id],
+            tags: vec!["inventory".to_string()],
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect("append task finding");
+    assert_eq!(finding.kind, "finding");
+    let journal = service
+        .list_entries(
+            bear_id,
+            DocketEntryListFilter {
+                job_id: Some(created.job.id),
+                task_id: Some(first_task_id),
+                limit: 10,
+            },
+        )
+        .await
+        .expect("list task journal");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].id, finding.id);
+
+    let promoted = service
+        .promote_entry(DocketEntryPromotion {
+            bear_id,
+            entry_id: finding.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect("promote finding");
+    assert_eq!(promoted.scope, "job_notebook");
+    assert_eq!(promoted.source_entry_id, Some(finding.id));
+    let retried = service
+        .promote_entry(DocketEntryPromotion {
+            bear_id,
+            entry_id: finding.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect("retry finding promotion");
+    assert_eq!(retried.id, promoted.id);
+    let notebook = service
+        .list_entries(
+            bear_id,
+            DocketEntryListFilter {
+                job_id: Some(created.job.id),
+                task_id: None,
+                limit: 10,
+            },
+        )
+        .await
+        .expect("list job notebook");
+    assert_eq!(
+        notebook
+            .iter()
+            .filter(|entry| entry.source_entry_id == Some(finding.id))
+            .count(),
+        1
+    );
 
     let first = service
         .execute_job(DocketJobExecuteRequest {
@@ -504,6 +509,145 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     .expect("query task definition event");
     assert_eq!(task_definition_count, 1);
 
+    let report_only_completion = service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: Some("Inventory findings recorded in the task result.".to_string()),
+            }),
+        })
+        .await;
+    assert!(report_only_completion.is_ok());
+
+    let (outcome_summary, outcome_disposition, evidence_count): (String, String, i64) =
+        sqlx::query_as(
+            r"
+            SELECT summary, disposition, jsonb_array_length(evidence_refs)
+            FROM bear_docket_entries
+            WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'
+            ORDER BY created_at DESC
+            LIMIT 1
+            ",
+        )
+        .bind(first_task_id)
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("query terminal outcome journal entry");
+    assert_eq!(
+        outcome_summary,
+        "Inventory findings recorded in the task result."
+    );
+    assert_eq!(outcome_disposition, "completed");
+    assert_eq!(evidence_count, 0);
+
+    let identical_retry = service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: Some("Inventory findings recorded in the task result.".to_string()),
+            }),
+        })
+        .await;
+    assert!(identical_retry.is_ok());
+    let (outcome_count,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM bear_docket_entries WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'",
+    )
+    .bind(first_task_id)
+    .bind(run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count terminal outcomes after retry");
+    assert_eq!(outcome_count, 1);
+
+    let replacement_without_reopen = service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: Some("Changed after settlement.".to_string()),
+            }),
+        })
+        .await;
+    assert!(replacement_without_reopen.is_err());
+
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Pending,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: None,
+            }),
+        })
+        .await
+        .expect("reopen settled task");
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: Some("Rechecked after reopening.".to_string()),
+            }),
+        })
+        .await
+        .expect("resettle reopened task");
+    let (outcome_count,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM bear_docket_entries WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'",
+    )
+    .bind(first_task_id)
+    .bind(run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count terminal outcomes after resettlement");
+    assert_eq!(outcome_count, 2);
+
     let missing_summary = service
         .update_task(DocketTaskUpdate {
             bear_id,
@@ -516,6 +660,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
+                outcome_disposition: None,
                 result_refs: None,
                 result_summary: None,
             }),
@@ -535,7 +680,8 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
-                result_refs: None,
+                outcome_disposition: None,
+                result_refs: Some(primary_output_result_refs()),
                 result_summary: Some("First task actually completed".to_string()),
             }),
         })
@@ -569,7 +715,8 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status: DocketTaskStatus::Done,
-                result_refs: None,
+                outcome_disposition: None,
+                result_refs: Some(primary_output_result_refs()),
                 result_summary: Some("Second task actually completed".to_string()),
             }),
         })
@@ -590,7 +737,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .await
         .expect("blocked before criteria");
     assert!(blocked.blocked);
-    assert_eq!(blocked.job.job.status, "blocked");
+    assert_eq!(blocked.job.job.status, "ready");
 
     let evaluated = service
         .evaluate_criterion(DocketCriterionStateUpdate {
@@ -607,6 +754,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .await
         .expect("evaluate criterion");
     assert_eq!(evaluated.criteria_states[0].status, "met");
+    assert_eq!(evaluated.job.status, "completed");
 
     let completed = service
         .execute_job(DocketJobExecuteRequest {
@@ -924,6 +1072,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
             session_anchor_id: None,
             parent_task_id: Some(phase_one_id),
             sibling_order: 0,
+            placement: None,
             kind: DocketTaskKind::Execution,
             scope: DocketTaskScope::Template,
             title: "Phase one, first step".to_string(),
@@ -931,6 +1080,9 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
             completion_criteria: vec!["First step done".to_string()],
             difficulty: None,
             effort_hint: None,
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -945,6 +1097,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
             session_anchor_id: None,
             parent_task_id: Some(phase_one_id),
             sibling_order: 1,
+            placement: None,
             kind: DocketTaskKind::Execution,
             scope: DocketTaskScope::Template,
             title: "Phase one, second step".to_string(),
@@ -952,6 +1105,9 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
             completion_criteria: vec!["Second step done".to_string()],
             difficulty: None,
             effort_hint: None,
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -1091,4 +1247,59 @@ async fn docket_rejects_parent_completion_until_children_are_terminal() {
         parent_state.result_summary.as_deref(),
         Some("All child tasks are terminal.")
     );
+}
+
+#[tokio::test]
+async fn create_job_requires_explicit_resolution_for_exact_active_overlap() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket integration test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "job-overlap").await;
+    let service = PgDocketService::from_pool(&pool);
+    let goal = format!("Exact overlap {}", Uuid::new_v4().simple());
+    let create = |resolution, supersedes_job_id| DocketJobCreate {
+        goal: goal.clone(),
+        overlap_resolution: resolution,
+        supersedes_job_id,
+        tasks: Vec::new(),
+        criteria: Vec::new(),
+        ..two_task_job(user_id, bear_id)
+    };
+
+    let first = service
+        .create_job(create(DocketJobOverlapResolution::Reject, None))
+        .await
+        .expect("create initial job");
+
+    let duplicate = service
+        .create_job(create(DocketJobOverlapResolution::Reject, None))
+        .await
+        .expect_err("exact active overlap is rejected by default");
+    assert!(matches!(
+        duplicate,
+        den_core::DenError::ValidationError(message) if message.contains(&first.job.id.to_string())
+    ));
+
+    let independent = service
+        .create_job(create(DocketJobOverlapResolution::Independent, None))
+        .await
+        .expect("explicit independent job");
+    assert_eq!(independent.job.supersedes_job_id, None);
+
+    let replacement = service
+        .create_job(create(
+            DocketJobOverlapResolution::Supersede,
+            Some(independent.job.id),
+        ))
+        .await
+        .expect("explicitly supersede the matching job");
+    assert_eq!(replacement.job.supersedes_job_id, Some(independent.job.id));
+
+    let predecessor = service
+        .get_job(bear_id, independent.job.id)
+        .await
+        .expect("read predecessor")
+        .expect("predecessor exists");
+    assert_eq!(predecessor.job.status, "cancelled");
 }

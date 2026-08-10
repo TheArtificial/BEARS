@@ -91,6 +91,19 @@ fn stop_finish_emits_turn_completed() {
 }
 
 #[test]
+fn openai_usage_chunk_captures_prompt_tokens_without_choices() {
+    let mut acc = OpenAiStreamAccumulator::default();
+    let usage = serde_json::json!({
+        "usage": {"prompt_tokens": 1_234},
+        "choices": []
+    });
+
+    assert!(acc.ingest_sse_data_line(&usage).events.is_empty());
+    assert_eq!(acc.take_observed_prompt_tokens(), Some(1_234));
+    assert_eq!(acc.take_observed_prompt_tokens(), None);
+}
+
+#[test]
 fn responses_text_delta_emits_assistant_text_delta() {
     let mut acc = ResponsesStreamAccumulator::default();
     let frame = br#"data: {"type":"response.output_text.delta","delta":"hello"}
@@ -115,6 +128,21 @@ fn responses_completed_emits_turn_completed() {
         event,
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
     )));
+}
+
+#[test]
+fn responses_completed_captures_input_tokens() {
+    let mut acc = ResponsesStreamAccumulator::default();
+    let frame = br#"data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":4321}}}
+
+"#;
+
+    let events = responses_sse_frame_to_runtime_events(&mut acc, frame).expect("parse");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
+    )));
+    assert_eq!(acc.take_observed_prompt_tokens(), Some(4_321));
 }
 
 #[test]

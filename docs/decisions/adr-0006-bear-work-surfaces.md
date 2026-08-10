@@ -160,6 +160,31 @@ bear_plan_handoffs
 
 This ADR does not require adding these tables immediately. It defines the target concept and vocabulary.
 
+### Output and verification contract
+
+A work surface defines the durable output forms it can materialize and verify for a Docket work run. It may nominate a default output form for ordinary work, but it does not dictate the output of every job: a Git-backed surface can support both a repository commit and a durable report, and an investigation on that surface may correctly yield the latter.
+
+Den uses a small closed vocabulary rather than provider-defined strings:
+
+```rust
+enum WorkOutputKind {
+    GitCommit,
+    GitPatch,
+    FileBundle,
+    Report,
+}
+```
+
+The surface declares its supported kinds and optionally its default. A task normally accepts the default or another supported kind; it constrains the kind only when its outcome genuinely requires one. The selected surface records a run's typed candidate output and may add observations such as existence, reachability, publication, or artifact finalization. Docket records that evidence and applies the universal settlement rule: a required output needs structured output evidence and any validation explicitly required by the task. The task's prose result is a human-facing summary, never sufficient evidence by itself. These records establish provenance and a reviewable handoff, not a certificate that the output is correct or complete.
+
+This boundary deliberately separates responsibilities:
+
+- **Work surface:** supported output kinds, materialization/storage binding, and verification implementation.
+- **Docket:** task acceptance constraints, evidence persistence, required-validation gates, and task/job settlement.
+- **Run:** candidate output plus raw execution evidence.
+
+A required observation or validation failure preserves the candidate and blocks settlement with a structured reason. Optional or unavailable observations are recorded as such; they do not become a universal correctness gate. A worker claim of a commit, push, report, or deployment is insufficient by itself, but Docket does not recast recorded evidence as a guarantee of correctness.
+
 ## Current implementation interpretation
 
 Existing planning schema should be interpreted through this lens:

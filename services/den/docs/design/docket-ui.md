@@ -1,5 +1,19 @@
 # Docket UI standards
 
+## Execution boundaries
+
+A Docket job is an explicit durable work contract: it owns durable task trees,
+journals, retries, delivery policy, and isolated Work runs. Creating or
+dispatching one is not the default way for Pair to perform ordinary work.
+
+A Pair session instead has an optional current task that supplies its working
+objective. Task delegation is deferred; do not offer, imply, or simulate
+`delegate_task` until its real execution lifecycle and shared workspace-safety
+protocol exist. The planned contract and prerequisites are recorded in
+`docs/roadmap/TASK_DELEGATION_LIFECYCLE_PLAN.md`. Docket dispatches always use
+isolated sandbox checkouts and must not be presented as changes to Pair's
+attached workspace.
+
 ## Entity references
 
 Work surfaces, jobs, tasks, and work runs use one linked reference form:
@@ -44,6 +58,30 @@ operational detail matters, and icons have accessible labels.
 
 Work surfaces do not use execution-status markers until they have a defined
 execution lifecycle.
+
+## Retrying a blocked run
+
+A Docket run blocked by a terminal work failure is immutable history, not a
+permanent lock on its job. An explicit job-level retry creates a new current
+Docket run and then queues a new work run:
+
+```text
+Job
+├── Docket run 1: blocked (original failure and evidence retained)
+└── Docket run 2: running
+    └── Work run 2: queued
+```
+
+Automatic dispatch continues to exclude blocked jobs. A retry carries completed
+and cancelled task state forward, resets interrupted (`in_progress`) tasks to
+`pending`, and preserves task- or criterion-local blockers for explicit
+resolution. If unpublished changes from the failed work run cannot be recovered,
+the UI must warn the operator and require confirmation before starting clean.
+
+Use **Docket run** for the job lifecycle attempt and **work run** for its provider
+execution attempt. Retrying a terminal work run within an active Docket run does
+not replace the job's current Docket run; explicitly retrying a job after its
+Docket run is blocked does.
 
 ## Tool lookup references
 

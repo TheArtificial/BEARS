@@ -12,8 +12,8 @@ use den_core::{BearProfile, DenError};
 
 use super::db;
 use super::model::{
-    active_task_parent_id, task_list_projection_from_docket_job,
-    DocketConversationObjectiveRequest, DocketCriterionStateUpdate, DocketExecutionLookup,
+    task_list_projection_from_docket_job, DocketCriterionStateUpdate, DocketEntryCreate,
+    DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketExecutionLookup,
     DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest,
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate,
     DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
@@ -42,11 +42,6 @@ pub trait DocketService: Send + Sync {
         bear_id: Uuid,
         job_id: Uuid,
     ) -> Result<Option<DocketJobProjection>, DenError>;
-
-    async fn get_or_create_conversation_objective(
-        &self,
-        request: DocketConversationObjectiveRequest,
-    ) -> Result<DocketJobProjection, DenError>;
 
     async fn update_job(&self, update: DocketJobUpdate) -> Result<DocketJobProjection, DenError>;
 
@@ -83,6 +78,19 @@ pub trait DocketService: Send + Sync {
 
     async fn update_task(&self, update: DocketTaskUpdate)
         -> Result<DocketTaskProjection, DenError>;
+
+    async fn append_entry(&self, create: DocketEntryCreate) -> Result<DocketEntryRow, DenError>;
+
+    async fn promote_entry(
+        &self,
+        promotion: DocketEntryPromotion,
+    ) -> Result<DocketEntryRow, DenError>;
+
+    async fn list_entries(
+        &self,
+        bear_id: Uuid,
+        filter: DocketEntryListFilter,
+    ) -> Result<Vec<DocketEntryRow>, DenError>;
 
     async fn checkout_task_list(
         &self,
@@ -142,13 +150,6 @@ impl DocketService for PgDocketService {
         db::get_job(&self.pool, bear_id, job_id).await
     }
 
-    async fn get_or_create_conversation_objective(
-        &self,
-        request: DocketConversationObjectiveRequest,
-    ) -> Result<DocketJobProjection, DenError> {
-        db::get_or_create_conversation_objective(&self.pool, request).await
-    }
-
     async fn update_job(&self, update: DocketJobUpdate) -> Result<DocketJobProjection, DenError> {
         db::update_job(&self.pool, update).await
     }
@@ -203,6 +204,25 @@ impl DocketService for PgDocketService {
         db::update_task(&self.pool, update).await
     }
 
+    async fn append_entry(&self, create: DocketEntryCreate) -> Result<DocketEntryRow, DenError> {
+        db::append_entry(&self.pool, create).await
+    }
+
+    async fn promote_entry(
+        &self,
+        promotion: DocketEntryPromotion,
+    ) -> Result<DocketEntryRow, DenError> {
+        db::promote_entry(&self.pool, promotion).await
+    }
+
+    async fn list_entries(
+        &self,
+        bear_id: Uuid,
+        filter: DocketEntryListFilter,
+    ) -> Result<Vec<DocketEntryRow>, DenError> {
+        db::list_entries(&self.pool, bear_id, filter).await
+    }
+
     async fn checkout_task_list(
         &self,
         bear_id: Uuid,
@@ -218,25 +238,6 @@ impl DocketService for PgDocketService {
                 .get_job(bear_id, job_id)
                 .await?
                 .map(|job| task_list_projection_from_docket_job(&job, parent_task_id))),
-            TaskListCheckoutSource::ConversationObjective {
-                request,
-                active_subtree,
-            } => {
-                if request.bear_id != bear_id {
-                    return Err(DenError::ValidationError(
-                        "Conversation objective checkout bear_id does not match request"
-                            .to_string(),
-                    ));
-                }
-                let job = self.get_or_create_conversation_objective(request).await?;
-                let parent_task_id = active_subtree
-                    .then(|| active_task_parent_id(&job))
-                    .flatten();
-                Ok(Some(task_list_projection_from_docket_job(
-                    &job,
-                    parent_task_id,
-                )))
-            }
             TaskListCheckoutSource::LocalProjection(task_list) => Ok(Some(*task_list)),
         }
     }

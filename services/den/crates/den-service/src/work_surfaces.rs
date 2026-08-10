@@ -1,10 +1,11 @@
 //! Managed work surfaces and the sandbox image catalog.
 //!
-//! A work surface is a den-level entity backing a sandbox root: a git
-//! upstream plus an optional access credential, created by a user (the
+//! A work surface is a generic Den-level entity, created by a user (the
 //! owner), manageable by granted users, and assigned to bears (full access).
-//! Den's database is the source of truth; [`build_managed_config`] produces
-//! the declarative payload pushed to the sandbox provider.
+//! This module implements the `git_workspace` adapter: a Git upstream plus an
+//! optional access credential. Den's database is the source of truth;
+//! [`build_managed_config`] produces the declarative payload pushed to the
+//! sandbox provider.
 //!
 //! Not to be confused with `den-core`'s `tools::work_surface` (memory
 //! scaffolding) — this module is about sandbox provisioning surfaces.
@@ -82,8 +83,13 @@ pub struct WorkSurfaceRow {
     pub updated_at: time::OffsetDateTime,
 }
 
-const SURFACE_COLUMNS: &str = "id, name, description, upstream_url, default_ref, default_image, \
-     allowed_outbound_hosts, credential_kind, created_by_user_id, created_at, updated_at";
+const SURFACE_COLUMNS: &str = "s.id, s.name, s.description, g.upstream_url, g.default_ref, \
+     g.default_image, g.allowed_outbound_hosts, g.credential_kind, s.created_by_user_id, \
+     s.created_at, s.updated_at";
+
+const GIT_SURFACE_FROM: &str = "FROM work_surfaces s \
+    INNER JOIN git_work_surface_details g ON g.id = s.id \
+    WHERE s.kind = 'git_workspace'";
 
 #[derive(Debug, Clone)]
 pub struct NewWorkSurface {
@@ -132,25 +138,19 @@ pub async fn create_surface(
     };
 
     let mut tx = pool.begin().await?;
-    let row = sqlx::query_as::<_, WorkSurfaceRow>(&format!(
+    let surface_id = Uuid::new_v4();
+    sqlx::query(
         r"
         INSERT INTO work_surfaces
-            (name, description, upstream_url, default_ref, default_image,
-             allowed_outbound_hosts, credential_kind, credential_encrypted, created_by_user_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING {SURFACE_COLUMNS}
+            (id, name, description, kind, created_by_user_id, created_at, updated_at)
+        VALUES ($1, $2, $3, 'git_workspace', $4, now(), now())
         ",
-    ))
+    )
+    .bind(surface_id)
     .bind(&surface.name)
     .bind(&surface.description)
-    .bind(surface.upstream_url.trim())
-    .bind(surface.default_ref.trim())
-    .bind(&surface.default_image)
-    .bind(&allowed_outbound_hosts)
-    .bind(&credential_kind)
-    .bind(&credential_encrypted)
     .bind(owner_user_id)
-    .fetch_one(&mut *tx)
+    .execute(&mut *tx)
     .await
     .map_err(|err| match &err {
         sqlx::Error::Database(db) if db.constraint() == Some("work_surfaces_name_key") => {
@@ -161,6 +161,29 @@ pub async fn create_surface(
         }
         _ => DenError::from(err),
     })?;
+    sqlx::query(
+        r"
+        INSERT INTO git_work_surface_details
+            (id, upstream_url, default_ref, default_image, allowed_outbound_hosts,
+             credential_kind, credential_encrypted)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ",
+    )
+    .bind(surface_id)
+    .bind(surface.upstream_url.trim())
+    .bind(surface.default_ref.trim())
+    .bind(&surface.default_image)
+    .bind(&allowed_outbound_hosts)
+    .bind(&credential_kind)
+    .bind(&credential_encrypted)
+    .execute(&mut *tx)
+    .await?;
+    let row = sqlx::query_as::<_, WorkSurfaceRow>(&format!(
+        "SELECT {SURFACE_COLUMNS} {GIT_SURFACE_FROM} AND s.id = $1",
+    ))
+    .bind(surface_id)
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query(
         r"
         INSERT INTO work_surface_managers (surface_id, user_id, role, granted_by_user_id)
@@ -199,22 +222,18 @@ pub async fn update_surface(
     if let Some(hosts) = update.allowed_outbound_hosts.clone() {
         validate_allowed_outbound_hosts(hosts)?;
     }
-    sqlx::query_as::<_, WorkSurfaceRow>(&format!(
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
         r"
-        UPDATE work_surfaces SET
-            description = CASE WHEN $2 THEN $3 ELSE description END,
-            upstream_url = COALESCE($4, upstream_url),
-            default_ref = COALESCE($5, default_ref),
-            default_image = CASE WHEN $6 THEN $7 ELSE default_image END,
-            allowed_outbound_hosts = CASE WHEN $8 THEN $9 ELSE allowed_outbound_hosts END,
-            updated_at = now()
+        UPDATE git_work_surface_details SET
+            upstream_url = COALESCE($2, upstream_url),
+            default_ref = COALESCE($3, default_ref),
+            default_image = CASE WHEN $4 THEN $5 ELSE default_image END,
+            allowed_outbound_hosts = CASE WHEN $6 THEN $7 ELSE allowed_outbound_hosts END
         WHERE id = $1
-        RETURNING {SURFACE_COLUMNS}
         ",
-    ))
+    )
     .bind(surface_id)
-    .bind(update.description.is_some())
-    .bind(update.description.flatten())
     .bind(update.upstream_url.as_deref().map(str::trim))
     .bind(update.default_ref.as_deref().map(str::trim))
     .bind(update.default_image.is_some())
@@ -226,9 +245,32 @@ pub async fn update_surface(
             .map(validate_allowed_outbound_hosts)
             .transpose()?,
     )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| DenError::NotFound("work surface not found".to_string()))
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(DenError::NotFound("work surface not found".to_string()));
+    }
+    sqlx::query(
+        r"
+        UPDATE work_surfaces SET
+            description = CASE WHEN $2 THEN $3 ELSE description END,
+            updated_at = now()
+        WHERE id = $1 AND kind = 'git_workspace'
+        ",
+    )
+    .bind(surface_id)
+    .bind(update.description.is_some())
+    .bind(update.description.flatten())
+    .execute(&mut *tx)
+    .await?;
+    let row = sqlx::query_as::<_, WorkSurfaceRow>(&format!(
+        "SELECT {SURFACE_COLUMNS} {GIT_SURFACE_FROM} AND s.id = $1",
+    ))
+    .bind(surface_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(row)
 }
 
 pub async fn set_credential(
@@ -242,8 +284,8 @@ pub async fn set_credential(
     let encrypted = crate::secrets::encrypt_secret(value, secret_key)?;
     let r = sqlx::query(
         r"
-        UPDATE work_surfaces
-        SET credential_kind = $2, credential_encrypted = $3, updated_at = now()
+        UPDATE git_work_surface_details
+        SET credential_kind = $2, credential_encrypted = $3
         WHERE id = $1
         ",
     )
@@ -261,8 +303,8 @@ pub async fn set_credential(
 pub async fn clear_credential(pool: &PgPool, surface_id: Uuid) -> Result<(), DenError> {
     let r = sqlx::query(
         r"
-        UPDATE work_surfaces
-        SET credential_kind = NULL, credential_encrypted = NULL, updated_at = now()
+        UPDATE git_work_surface_details
+        SET credential_kind = NULL, credential_encrypted = NULL
         WHERE id = $1
         ",
     )
@@ -290,10 +332,16 @@ pub async fn surface_by_id(
     pool: &PgPool,
     surface_id: Uuid,
 ) -> Result<Option<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as::<_, WorkSurfaceRow>(&format!(
-        "SELECT {SURFACE_COLUMNS} FROM work_surfaces WHERE id = $1",
-    ))
-    .bind(surface_id)
+    Ok(sqlx::query_as!(
+        WorkSurfaceRow,
+        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+                  g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  s.created_by_user_id, s.created_at, s.updated_at
+           FROM work_surfaces s
+           INNER JOIN git_work_surface_details g ON g.id = s.id
+           WHERE s.kind = 'git_workspace' AND s.id = $1"#,
+        surface_id
+    )
     .fetch_optional(pool)
     .await?)
 }
@@ -302,18 +350,31 @@ pub async fn surface_by_name(
     pool: &PgPool,
     name: &str,
 ) -> Result<Option<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as::<_, WorkSurfaceRow>(&format!(
-        "SELECT {SURFACE_COLUMNS} FROM work_surfaces WHERE name = $1",
-    ))
-    .bind(name)
+    Ok(sqlx::query_as!(
+        WorkSurfaceRow,
+        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+                  g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  s.created_by_user_id, s.created_at, s.updated_at
+           FROM work_surfaces s
+           INNER JOIN git_work_surface_details g ON g.id = s.id
+           WHERE s.kind = 'git_workspace' AND s.name = $1"#,
+        name
+    )
     .fetch_optional(pool)
     .await?)
 }
 
 pub async fn list_all_surfaces(pool: &PgPool) -> Result<Vec<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as::<_, WorkSurfaceRow>(&format!(
-        "SELECT {SURFACE_COLUMNS} FROM work_surfaces ORDER BY name",
-    ))
+    Ok(sqlx::query_as!(
+        WorkSurfaceRow,
+        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+                  g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  s.created_by_user_id, s.created_at, s.updated_at
+           FROM work_surfaces s
+           INNER JOIN git_work_surface_details g ON g.id = s.id
+           WHERE s.kind = 'git_workspace'
+           ORDER BY s.name"#
+    )
     .fetch_all(pool)
     .await?)
 }
@@ -322,17 +383,21 @@ pub async fn list_surfaces_managed_by(
     pool: &PgPool,
     user_id: i32,
 ) -> Result<Vec<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as::<_, WorkSurfaceRow>(&format!(
-        r"
-        SELECT {SURFACE_COLUMNS} FROM work_surfaces s
-        WHERE EXISTS (
-            SELECT 1 FROM work_surface_managers m
-            WHERE m.surface_id = s.id AND m.user_id = $1
-        )
-        ORDER BY s.name
-        ",
-    ))
-    .bind(user_id)
+    Ok(sqlx::query_as!(
+        WorkSurfaceRow,
+        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+                  g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  s.created_by_user_id, s.created_at, s.updated_at
+           FROM work_surfaces s
+           INNER JOIN git_work_surface_details g ON g.id = s.id
+           WHERE s.kind = 'git_workspace'
+             AND EXISTS (
+                 SELECT 1 FROM work_surface_managers m
+                 WHERE m.surface_id = s.id AND m.user_id = $1
+             )
+           ORDER BY s.name"#,
+        user_id
+    )
     .fetch_all(pool)
     .await?)
 }
@@ -376,11 +441,12 @@ pub async fn list_surfaces_for_bears(
 ) -> Result<Vec<SurfaceForBearRow>, DenError> {
     Ok(sqlx::query_as::<_, SurfaceForBearRow>(
         r"
-        SELECT s.id, s.name, s.description, s.upstream_url, s.default_ref,
-               s.default_image, sb.bear_id
+        SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+               g.default_image, sb.bear_id
         FROM work_surfaces s
+        INNER JOIN git_work_surface_details g ON g.id = s.id
         INNER JOIN work_surface_bears sb ON sb.surface_id = s.id
-        WHERE sb.bear_id = ANY($1)
+        WHERE s.kind = 'git_workspace' AND sb.bear_id = ANY($1)
         ORDER BY s.name, sb.bear_id
         ",
     )
@@ -701,10 +767,12 @@ pub async fn build_managed_config(
 ) -> Result<ManagedConfig, DenError> {
     let surface_rows = sqlx::query_as::<_, SurfaceSyncRow>(
         r"
-        SELECT name, upstream_url, default_ref, default_image, allowed_outbound_hosts,
-               credential_kind, credential_encrypted
-        FROM work_surfaces
-        ORDER BY name
+        SELECT s.name, g.upstream_url, g.default_ref, g.default_image,
+               g.allowed_outbound_hosts, g.credential_kind, g.credential_encrypted
+        FROM work_surfaces s
+        INNER JOIN git_work_surface_details g ON g.id = s.id
+        WHERE s.kind = 'git_workspace'
+        ORDER BY s.name
         ",
     )
     .fetch_all(pool)

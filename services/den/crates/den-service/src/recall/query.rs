@@ -33,6 +33,9 @@ pub struct RecalledPassage {
     pub lifecycle_status: String,
     pub freshness_trend: String,
     pub text: String,
+    /// Memory ids of retrieved records this one conflicts with (ADR-0041 §8 read-time
+    /// contradiction surfacing); empty when no conflict was detected.
+    pub conflicts_with: Vec<String>,
 }
 
 fn salience_multiplier(salience: &str) -> f32 {
@@ -227,6 +230,7 @@ async fn search_passages<E: PassageEmbedder + ?Sized>(
             lifecycle_status,
             freshness_trend,
             text,
+            conflicts_with: Vec::new(),
         });
         if passages.len() >= limit {
             break;
@@ -396,7 +400,7 @@ const GRAPH_MAX_DEPTH: u32 = 2;
 /// is inherent (traversal is over the descriptive table only) and `AccessContext` is applied by
 /// the caller once access rules exist.
 pub async fn graph_expand_hits(
-    config: &Config,
+    stores: &den_memory::MemoryStoreManager,
     bear_id: Uuid,
     role: &str,
     seed_memory_ids: &[String],
@@ -406,7 +410,6 @@ pub async fn graph_expand_hits(
     if seed_memory_ids.is_empty() || limit == 0 {
         return Ok(Vec::new());
     }
-    let stores = den_memory::MemoryStoreManager::new(config);
     let store = stores.store_for_bear(bear_id).await?;
     let reached =
         den_memory::bounded_graph_expand(&store, seed_memory_ids, max_depth, limit).await?;
@@ -477,6 +480,122 @@ pub async fn graph_expand_hits(
     Ok(hits)
 }
 
+/// Detect read-time contradictions among the records already retrieved for a turn and emit
+/// best-effort `memory_conflict` observations (ADR-0041 §8). Bounded: the predicate runs only
+/// over `memory_ids`, never the corpus. Best-effort on the hot path — any store or write error
+/// is logged and yields no conflicts; recall never fails or slows because of detection.
+pub async fn surface_recall_conflicts(
+    stores: &den_memory::MemoryStoreManager,
+    bear_id: Uuid,
+    memory_ids: &[String],
+) -> Vec<den_memory::MemoryConflict> {
+    if memory_ids.len() < 2 {
+        return Vec::new();
+    }
+    let store = match stores.store_for_bear(bear_id).await {
+        Ok(store) => store,
+        Err(error) => {
+            tracing::warn!(%error, "recall conflict detection skipped: store unavailable");
+            return Vec::new();
+        }
+    };
+    let conflicts = match den_memory::memory_conflicts_among(&store, memory_ids).await {
+        Ok(conflicts) => conflicts,
+        Err(error) => {
+            tracing::warn!(%error, "recall conflict detection failed; continuing without markers");
+            return Vec::new();
+        }
+    };
+    for conflict in &conflicts {
+        if let Err(error) = den_memory::record_conflict_observation(&store, conflict).await {
+            tracing::warn!(%error, "memory_conflict observation write failed; continuing");
+        }
+    }
+    conflicts
+}
+
+/// Conflict presence summary for diagnostics: pair count plus the involved record ids.
+pub fn conflict_summary_json(conflicts: &[den_memory::MemoryConflict]) -> Value {
+    let mut records: Vec<&str> = conflicts
+        .iter()
+        .flat_map(|c| [c.memory_id_a.as_str(), c.memory_id_b.as_str()])
+        .collect();
+    records.sort_unstable();
+    records.dedup();
+    json!({ "pairs": conflicts.len(), "records": records })
+}
+
+/// Mark the projection's conflicting passages (fill `conflicts_with`) and record conflict
+/// presence in its diagnostic so the session diagnostic can surface it.
+pub fn mark_projection_conflicts(
+    projection: &mut RecallProjection,
+    conflicts: &[den_memory::MemoryConflict],
+) {
+    if conflicts.is_empty() {
+        return;
+    }
+    for passage in &mut projection.passages {
+        for conflict in conflicts {
+            if let Some(other) = conflict.other(&passage.memory_id) {
+                passage.conflicts_with.push(other.to_string());
+            }
+        }
+    }
+    if let Some(diagnostic) = projection.diagnostic.as_object_mut() {
+        diagnostic.insert("conflicts".to_string(), conflict_summary_json(conflicts));
+    }
+}
+
+/// Tag conflicting hits in the merged `memory_search` result with an explicit marker:
+/// `conflicting: true` plus `conflicts_with` naming the counterpart record ids.
+fn apply_conflict_markers(hits: &mut [Value], conflicts: &[den_memory::MemoryConflict]) {
+    for hit in hits {
+        let Some(memory_id) = hit.get("memory_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let others: Vec<&str> = conflicts
+            .iter()
+            .filter_map(|conflict| conflict.other(memory_id))
+            .collect();
+        if others.is_empty() {
+            continue;
+        }
+        hit["conflicting"] = json!(true);
+        hit["conflicts_with"] = json!(others);
+    }
+}
+
+/// Final top-N cap that never ranks a conflict away (ADR-0041 §8): after truncating to
+/// `limit`, re-appends any cut hit that a retained hit names in `conflicts_with`, so both
+/// sides of a surfaced disagreement stay in the result.
+fn cap_hits_retaining_conflicts(mut hits: Vec<Value>, limit: usize) -> Vec<Value> {
+    if hits.len() <= limit {
+        return hits;
+    }
+    let cut = hits.split_off(limit);
+    let mut counterparts: std::collections::HashSet<&str> = hits
+        .iter()
+        .filter_map(|hit| hit.get("conflicts_with").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    for hit in &hits {
+        if let Some(memory_id) = hit.get("memory_id").and_then(Value::as_str) {
+            counterparts.remove(memory_id);
+        }
+    }
+    let retained_counterparts: Vec<Value> = cut
+        .into_iter()
+        .filter(|hit| {
+            hit.get("memory_id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| counterparts.contains(id))
+        })
+        .collect();
+    hits.extend(retained_counterparts);
+    hits
+}
+
 /// Hybrid `memory_search` (ADR-0038 Phase 3 + 3.5): the **union** of three role-scoped legs over
 /// the same visibility — the derived **vector** index, the **keyword** (`LIKE`) leg over canonical
 /// SQLite, and the bounded-**graph** leg that expands from the direct hits over the record↔entity
@@ -488,6 +607,7 @@ pub async fn graph_expand_hits(
 /// The keyword leg reads the canonical store, so its errors propagate.
 pub async fn hybrid_memory_search(
     config: &Config,
+    stores: &den_memory::MemoryStoreManager,
     bear_id: Uuid,
     role: &str,
     query: &str,
@@ -524,7 +644,6 @@ pub async fn hybrid_memory_search(
         }
     };
 
-    let stores = den_memory::MemoryStoreManager::new(config);
     let store = stores.store_for_bear(bear_id).await?;
     let limit_i64 = i64::try_from(fetch_limit).unwrap_or(10);
     let keyword =
@@ -543,7 +662,7 @@ pub async fn hybrid_memory_search(
             }
         }
     }
-    let graph = match graph_expand_hits(config, bear_id, role, &seeds, GRAPH_MAX_DEPTH, fetch_limit)
+    let graph = match graph_expand_hits(stores, bear_id, role, &seeds, GRAPH_MAX_DEPTH, fetch_limit)
         .await
     {
         Ok(hits) => hits,
@@ -553,23 +672,21 @@ pub async fn hybrid_memory_search(
         }
     };
 
-    let mut result = merge_search_results(&vector, &keyword, &graph, query, fetch_limit);
+    let mut result = merge_search_results(&vector, &keyword, &graph, query);
+    let mut hits = result
+        .get("hits")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
 
     if let Some(temporal) = &temporal {
-        let hits = result
-            .get("hits")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut filtered = match filter_hits_by_temporal(&store, hits, temporal).await {
+        hits = match filter_hits_by_temporal(&store, hits, temporal).await {
             Ok(hits) => hits,
             Err(error) => {
                 tracing::warn!(%error, "recall temporal leg failed; returning unfiltered results");
                 Vec::new()
             }
         };
-        filtered.truncate(limit);
-        result["hits"] = Value::Array(filtered);
         result["temporal"] = json!({
             "matched": temporal.matched,
             "as_of": temporal.as_of,
@@ -577,6 +694,23 @@ pub async fn hybrid_memory_search(
             "to": temporal.to.and_then(|d| d.format(&Rfc3339).ok()),
         });
     }
+
+    // Read-time contradiction surfacing (ADR-0041 §8): detect over the full merged set
+    // *before* the final top-N cap so a conflicting counterpart is never ranked away.
+    let ids: Vec<String> = hits
+        .iter()
+        .filter_map(|hit| {
+            hit.get("memory_id")
+                .and_then(Value::as_str)
+                .map(String::from)
+        })
+        .collect();
+    let conflicts = surface_recall_conflicts(stores, bear_id, &ids).await;
+    if !conflicts.is_empty() {
+        apply_conflict_markers(&mut hits, &conflicts);
+        result["conflicts"] = conflict_summary_json(&conflicts);
+    }
+    result["hits"] = Value::Array(cap_hits_retaining_conflicts(hits, limit));
 
     Ok(result)
 }
@@ -637,15 +771,15 @@ async fn filter_hits_by_temporal(
 
 /// Merge the vector projection, the keyword leg's JSON, and the bounded-graph leg's hits into the
 /// unified `memory_search` result. De-dupes by `memory_id` in priority order (vector ≻ keyword ≻
-/// graph — a record surfaced by a higher-signal leg is not repeated), caps to `limit`, and tags
-/// each hit's `source` plus a top-level `strategy` (the `+`-joined list of contributing legs, e.g.
-/// `vector+keyword+graph`, or a single leg, or `none`).
+/// graph — a record surfaced by a higher-signal leg is not repeated) and tags each hit's `source`
+/// plus a top-level `strategy` (the `+`-joined list of contributing legs, e.g.
+/// `vector+keyword+graph`, or a single leg, or `none`). The final top-N cap is applied by the
+/// caller after conflict detection (see [`cap_hits_retaining_conflicts`]), never here.
 fn merge_search_results(
     vector: &RecallProjection,
     keyword: &Value,
     graph: &[Value],
     query: &str,
-    limit: usize,
 ) -> Value {
     let mut hits: Vec<Value> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -701,7 +835,6 @@ fn merge_search_results(
         graph_count += 1;
         hits.push(hit.clone());
     }
-    hits.truncate(limit);
 
     let mut legs: Vec<&str> = Vec::new();
     if vector_count > 0 {
@@ -729,10 +862,26 @@ fn merge_search_results(
     })
 }
 
+/// The rendered label of a passage: its logical path, or the memory id when pathless.
+fn passage_label(passage: &RecalledPassage) -> &str {
+    passage
+        .logical_path
+        .as_deref()
+        .filter(|p| !p.is_empty())
+        .unwrap_or(&passage.memory_id)
+}
+
 /// Render the `## Recalled memory` section, dropping passages whose `logical_path` already
 /// appears in `anchor_text` (the key-memory projection) so recall never duplicates anchors.
+/// Conflicting passages carry an explicit `conflicting with` marker naming the counterpart
+/// record (ADR-0041 §8) so the model sees the disagreement instead of a silent ranked winner.
 /// Returns `None` when nothing survives dedupe/budget.
 pub fn render_recall_block(projection: &RecallProjection, anchor_text: &str) -> Option<String> {
+    let labels: std::collections::HashMap<&str, &str> = projection
+        .passages
+        .iter()
+        .map(|p| (p.memory_id.as_str(), passage_label(p)))
+        .collect();
     let mut body = String::new();
     let mut used = 0usize;
     let mut rendered = 0usize;
@@ -743,15 +892,22 @@ pub fn render_recall_block(projection: &RecallProjection, anchor_text: &str) -> 
                 continue;
             }
         }
-        let label = passage
-            .logical_path
-            .as_deref()
-            .filter(|p| !p.is_empty())
-            .unwrap_or(&passage.memory_id);
+        let label = passage_label(passage);
         let kind = passage.kind.as_deref().unwrap_or("memory");
         let snippet = truncate_chars(&passage.text, SNIPPET_CHARS);
+        let conflict_marker = if passage.conflicts_with.is_empty() {
+            String::new()
+        } else {
+            let others = passage
+                .conflicts_with
+                .iter()
+                .map(|id| format!("`{}`", labels.get(id.as_str()).copied().unwrap_or(id)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(", conflicting with {others}")
+        };
         let line = format!(
-            "- `{label}` ({kind}, score {:.2}): {snippet}\n",
+            "- `{label}` ({kind}, score {:.2}{conflict_marker}): {snippet}\n",
             passage.score
         );
         if used + line.len() > RECALL_CHAR_BUDGET && rendered > 0 {
@@ -793,6 +949,7 @@ mod tests {
             lifecycle_status: "active".into(),
             freshness_trend: "stable".into(),
             text: "the quick brown fox jumps over the lazy dog".into(),
+            conflicts_with: Vec::new(),
         }
     }
 
@@ -889,7 +1046,7 @@ mod tests {
                 { "memory_id": "m2", "path": "work/b.md", "kind": "note", "snippet": "exact match" },
             ]
         });
-        let value = merge_search_results(&vector, &keyword, &[], "fox", 10);
+        let value = merge_search_results(&vector, &keyword, &[], "fox");
 
         assert_eq!(value["storage"], "hybrid");
         assert_eq!(value["strategy"], "vector+keyword");
@@ -926,7 +1083,6 @@ mod tests {
             &json!({ "hits": [] }),
             &[],
             "q",
-            10,
         );
         assert_eq!(only_vector["strategy"], "vector");
 
@@ -938,7 +1094,6 @@ mod tests {
             &json!({ "hits": [{ "memory_id": "m9", "path": "p", "kind": "note", "snippet": "s" }] }),
             &[],
             "q",
-            10,
         );
         assert_eq!(only_keyword["strategy"], "keyword");
     }
@@ -955,7 +1110,7 @@ mod tests {
             json!({ "memory_id": "m1", "path": "core/a.md", "kind": "note", "score": Value::Null, "snippet": "dup", "source": "graph", "hop": 1 }),
             json!({ "memory_id": "m3", "path": "core/c.md", "kind": "note", "score": Value::Null, "snippet": "reached via shared entity", "source": "graph", "hop": 2 }),
         ];
-        let value = merge_search_results(&vector, &keyword, &graph, "q", 10);
+        let value = merge_search_results(&vector, &keyword, &graph, "q");
 
         assert_eq!(value["strategy"], "vector+keyword+graph");
         let hits = value["hits"].as_array().expect("hits array");
@@ -970,7 +1125,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_caps_to_limit_prioritizing_vector() {
+    fn cap_hits_caps_to_limit_prioritizing_vector() {
         let vector = RecallProjection {
             passages: vec![
                 passage("m1", "core/a.md", 0.9),
@@ -980,13 +1135,119 @@ mod tests {
         };
         let keyword =
             json!({ "hits": [{ "memory_id": "m3", "path": "p", "kind": "note", "snippet": "s" }] });
-        let value = merge_search_results(&vector, &keyword, &[], "q", 2);
-        let hits = value["hits"].as_array().expect("hits");
+        let value = merge_search_results(&vector, &keyword, &[], "q");
+        let hits = value["hits"].as_array().expect("hits").clone();
+        let hits = cap_hits_retaining_conflicts(hits, 2);
         assert_eq!(hits.len(), 2, "capped to limit");
         assert_eq!(hits[0]["memory_id"], "m1");
         assert_eq!(
             hits[1]["memory_id"], "m2",
             "vector hits retained over keyword when capping"
+        );
+    }
+
+    fn conflict(a: &str, b: &str, path: &str) -> den_memory::MemoryConflict {
+        den_memory::MemoryConflict {
+            memory_id_a: a.min(b).to_string(),
+            memory_id_b: a.max(b).to_string(),
+            reason: den_memory::ConflictReason::SharedLogicalPath(path.to_string()),
+        }
+    }
+
+    #[test]
+    fn conflict_markers_tag_both_sides_and_summary_lists_records() {
+        let mut hits = vec![
+            json!({ "memory_id": "m1", "source": "vector" }),
+            json!({ "memory_id": "m2", "source": "keyword" }),
+            json!({ "memory_id": "m3", "source": "keyword" }),
+        ];
+        let conflicts = vec![conflict("m1", "m3", "core/a.md")];
+        apply_conflict_markers(&mut hits, &conflicts);
+
+        assert_eq!(hits[0]["conflicting"], true);
+        assert_eq!(hits[0]["conflicts_with"], json!(["m3"]));
+        assert!(hits[1].get("conflicting").is_none(), "{:?}", hits[1]);
+        assert_eq!(hits[2]["conflicting"], true);
+        assert_eq!(hits[2]["conflicts_with"], json!(["m1"]));
+
+        let summary = conflict_summary_json(&conflicts);
+        assert_eq!(summary["pairs"], 1);
+        assert_eq!(summary["records"], json!(["m1", "m3"]));
+    }
+
+    #[test]
+    fn cap_retains_conflicting_counterpart_that_ranking_would_cut() {
+        let mut hits = vec![
+            json!({ "memory_id": "m1", "source": "vector" }),
+            json!({ "memory_id": "m2", "source": "vector" }),
+            json!({ "memory_id": "m3", "source": "keyword" }),
+            json!({ "memory_id": "m4", "source": "keyword" }),
+        ];
+        // m1 conflicts with m3, which the top-2 cap would otherwise drop.
+        apply_conflict_markers(&mut hits, &[conflict("m1", "m3", "core/a.md")]);
+        let capped = cap_hits_retaining_conflicts(hits, 2);
+
+        let ids: Vec<&str> = capped
+            .iter()
+            .filter_map(|h| h["memory_id"].as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["m1", "m2", "m3"],
+            "counterpart re-appended past the cap; unrelated m4 stays cut"
+        );
+    }
+
+    #[test]
+    fn mark_projection_conflicts_fills_passages_and_diagnostic() {
+        let mut projection = RecallProjection {
+            passages: vec![
+                passage("m1", "core/a.md", 0.91),
+                passage("m2", "core/b.md", 0.80),
+            ],
+            diagnostic: json!({ "status": "ok" }),
+        };
+        mark_projection_conflicts(&mut projection, &[conflict("m1", "m2", "core/a.md")]);
+
+        assert_eq!(
+            projection.passages[0].conflicts_with,
+            vec!["m2".to_string()]
+        );
+        assert_eq!(
+            projection.passages[1].conflicts_with,
+            vec!["m1".to_string()]
+        );
+        assert_eq!(projection.diagnostic["conflicts"]["pairs"], 1);
+        assert_eq!(
+            projection.diagnostic["conflicts"]["records"],
+            json!(["m1", "m2"])
+        );
+    }
+
+    #[test]
+    fn render_marks_conflicting_passages_naming_the_counterpart() {
+        let mut projection = RecallProjection {
+            passages: vec![
+                passage("m1", "core/a.md", 0.91),
+                passage("m2", "core/b.md", 0.80),
+                passage("m3", "core/c.md", 0.70),
+            ],
+            diagnostic: json!({ "status": "ok" }),
+        };
+        mark_projection_conflicts(&mut projection, &[conflict("m1", "m2", "core/a.md")]);
+        let block = render_recall_block(&projection, "").expect("block");
+
+        assert!(
+            block.contains("- `core/a.md` (note, score 0.91, conflicting with `core/b.md`):"),
+            "{block}"
+        );
+        assert!(
+            block.contains("- `core/b.md` (note, score 0.80, conflicting with `core/a.md`):"),
+            "{block}"
+        );
+        assert!(
+            block.contains("- `core/c.md` (note, score 0.70):"),
+            "unconflicted passage keeps the plain marker: {block}"
         );
     }
 }

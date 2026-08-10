@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS artifact_links_one_primary_output_per_docket_task;

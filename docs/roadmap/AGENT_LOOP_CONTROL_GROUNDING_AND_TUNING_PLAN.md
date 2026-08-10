@@ -4,7 +4,7 @@
 
 In progress. Implements the 2026-07-06 amendment to [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) (§7c grounding probes, §11 context/token budget as a loop dimension, and the replayable ledger/tuning loop).
 
-The useful-minimum measurement spine is now live: the transcript-free ledger records checkpoint, context-budget, and grounding-probe decisions; runtime replay helpers support typed observations, turn/profile expected-vs-observed comparisons, reason counts, DB-backed profile summaries, and checkpoint profile fingerprints. Generic MVP grounding probes are wired into mutation verification with tool-call attribution required at observation time, context pressure participates in turn-budget state, emergency compaction runs before over-budget model calls, checkpoint responses are authoritative in enforce mode, and initial checkpoint/KO cadence tuning has started from recorded/live behavior. Current code review supports deferring checkpoint-before-growth until ledger summaries show compact-first is insufficient. Remaining work should stay evidence-led: add stronger probes, checkpoint-before-growth, or more replay machinery only when recorded runs show the current hooks are too weak.
+The useful-minimum measurement spine is now live: the transcript-free ledger records checkpoint, context-budget, and grounding-probe decisions; runtime replay helpers support typed observations, turn/profile expected-vs-observed comparisons, reason counts, DB-backed profile summaries, and checkpoint profile fingerprints. Generic MVP grounding probes are wired into mutation verification with tool-call attribution required at observation time, context pressure participates in turn-budget state, emergency compaction runs before over-budget model calls, checkpoint responses are authoritative in enforce mode, and initial checkpoint/KO cadence tuning has started from recorded/live behavior. Current code review supports deferring checkpoint-before-growth until ledger summaries show compact-first is insufficient. The single-user UAT instance validates release behavior but cannot supply a statistically useful tuning corpus: ship the tested defaults, retain production ledger collection, and tune only from a meaningful production window. Remaining work should stay evidence-led: add stronger probes, checkpoint-before-growth, or more replay machinery only when recorded production runs show the current hooks are too weak.
 
 This plan is a **companion to** [AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md](AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md), which delivers the core control levels, governance/focused-Job inputs, profiles, budgets, ko/failure state, structured checkpoints, and client **Focus** projection. Read that plan first; this one adds three capabilities on top of it and keeps loop-control tuning measurable through replayable ledgers and Reflection assessments. Den is pre-release: staged development is sensible, but completed slices are active by default once tested rather than spending a long observe-only rollout period. Where the two plans overlap, the phase mapping is called out inline.
 
@@ -250,7 +250,9 @@ bear_loop_ledger_turns
 
 ### C4 — Heuristic outcome labeling
 
-| Task | Done when |
+Deferred until production has a meaningful decision corpus. A sole-user UAT instance cannot establish rates or safely drive threshold changes. Keep the tested profiles active and retain the transcript-free production ledger; introduce labels only when a concrete production tuning question needs a trend signal.
+
+| Future task | Done when |
 | --- | --- |
 | Label likely false positives | A stop (or `would_stop`) immediately followed by user "continue"/re-ask is labeled `likely_false_positive`. |
 | Label likely false negatives | A normal end after a long read-only tail with no mutation is labeled `likely_false_negative`. |
@@ -258,7 +260,7 @@ bear_loop_ledger_turns
 | Keep labels advisory | Labels are heuristics for trend lines, never authoritative outcome truth. |
 | Add tests | Labeling rules fire on constructed transcripts; labels surface in replay summaries. |
 
-**Exit gate:** a tuning trend line exists without human annotation.
+**Exit gate:** a production-backed tuning trend line exists without human annotation.
 
 ### C5 — Threshold tuning criteria
 

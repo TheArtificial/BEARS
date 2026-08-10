@@ -366,7 +366,6 @@ async fn create(
                     actor_user_id: Some(user_id),
                     actor_agent_id: None,
                     goal: None,
-                    work_surface_ref: Some(Some(surface.name.clone())),
                     work_surface_id: Some(Some(surface.id)),
                     commit_policy: None,
                     work_branch: None,

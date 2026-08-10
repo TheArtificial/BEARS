@@ -1,6 +1,6 @@
 # Artifact refs implementation plan
 
-**Status:** Proposed — implement first  
+**Status:** In progress — Phase 1 registry/core service and the currently available Phase 3 citation surfaces are implemented; Garage-backed content transfer, GC, and future consumer surfaces remain deferred.  
 **Primary ADR:** [ADR-0004: Artifacts, Garage (S3), and Cabinet separation](../decisions/adr-0004-artifacts-garage.md)  
 **Related ADRs:** [ADR-0006](../decisions/adr-0006-bear-work-surfaces.md), [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0053](../decisions/adr-0053-stance-scoped-delegated-runs.md)
 
@@ -60,6 +60,21 @@ This plan fulfills ADR-0004 by implementing:
 - [ ] Lifecycle states for pending, ephemeral, promoted, Cabinet-durable, archived, and deleted.
 - [ ] GC that respects lifecycle and Cabinet attachment state.
 
+## Current execution status
+
+**Local execution started.** Phase 1's registry/core-service slice is already present in the workspace through migration `20260716120000_artifact_refs` and `den-service::artifacts`. During verification, `den-service` was missing SQLx's existing `migrate` feature, so the artifact tests could not compile; enabling that feature is the only Phase-1 code change made in this execution so far.
+
+Verified locally:
+
+```text
+SQLX_OFFLINE=true cargo test -p den-service artifacts::tests --lib
+SQLX_OFFLINE=true cargo check -p den-service
+```
+
+Both pass after that manifest correction. Phase 1 is functionally implemented; Phase 3 now records the required structured output/validation handoff, so it is no longer blocked on a platform claim to correctness. The next implementation slice is therefore the remaining Phase 3 integration work, not Garage upload/download work.
+
+**Phase 3 progress:** Docket now rejects a `done` task update unless `result_refs` contains structured `primary_output` (`git_commit` or `den_artifact`) evidence and a recorded validation attempt that names the same ref and, when supplied, immutable identity, command, and execution provenance. This is a provenance/handoff integrity check, not a judgment that the output is correct. Completion writes a Docket-owned **evidence receipt** containing the recorded output, identity, and validation attempt. Artifact finalization/link checks are available for workflows that explicitly require them, but are not settlement gates; Git commit reachability/OID resolution is likewise not a universal gate. BearWire's `docket.jobs.diagnostics` now composes Docket job/task state with access-filtered, non-clickable task artifact citations via `den-service`; the citation projection is covered by a serialization check that excludes storage keys, digests, provenance, and metadata. The same diagnostics response now includes a minimal safe run summary and access-filtered run artifact citations. Conversation history now renders task-linked citations as non-clickable opaque `artifact_...` identifiers on its Docket diagnostic events, with a focused check confirming that no backing fields are rendered. Criterion surfaces do not yet have a BearWire consumer endpoint; add their citations when that read model exists. Remaining Phase 3 work is therefore limited to any future criterion presentation and broader conversation attachment/link support, without leaking backend object keys or workspace paths.
+
 ## Implementation phases
 
 ### Phase 0 — Inventory and initial decisions
@@ -76,7 +91,7 @@ Current ad hoc artifact-like stores:
 
 Initial implementation decisions:
 
-- **Ref format:** Den-minted `artifact_` + UUID v4, using the already-installed `uuid` crate. Do not add ULID/UUIDv7 unless ordered refs become a real requirement.
+- **Ref format:** Den-minted `artifact_` + UUID v4, using the already-installed `uuid` crate. Refs remain opaque and stable; do not add ULID/UUIDv7 unless ordered refs become a real requirement.
 - **First storage kinds:** `db_text` for metadata-only/small text JSON/diff artifacts in the registry service, and `garage_artifacts` for byte-backed artifacts in the next phase. Avoid a storage-backend trait until a second implemented backend makes it pay for itself.
 - **Lifecycle values:** start with `pending`, `finalized`, `ephemeral`, `promoted`, `cabinet_durable`, `archived`, and `deleted`. Reads of complete content require a non-pending, non-deleted finalized/promoted/durable state; finalize is one-way.
 - **Visibility/auth model:** begin with bear-scoped ownership plus visibility values aligned with Docket (`private_to_profile`, `same_user`, `bear_visible`) and optional subject links. Artifact links may justify access, but every read/write/attach/delete operation must still pass through the artifact service authorization check.
@@ -98,7 +113,7 @@ Initial implementation decisions:
   - [ ] `get_artifact_metadata(...)`
   - [ ] `authorize_artifact_access(...)`
   - [ ] `mark_artifact_deleted(...)`
-- [ ] Generate refs in Den only, using an opaque stable ID format such as `artifact_` + ULID/UUIDv7.
+- [ ] Generate opaque, stable refs in Den only as `artifact_` + UUID v4 using the existing `uuid` crate; models and clients cannot mint them.
 - [ ] Add small service-level checks for reserve/finalize/read authorization and invalid lifecycle transitions.
 
 **Exit gate:** Den can reserve, finalize, read metadata for, and lifecycle-check an artifact without exposing storage keys.
@@ -122,17 +137,19 @@ Initial implementation decisions:
 
 - [ ] Allow conversation events/messages to cite artifact refs for attachments and generated outputs.
 - [ ] Add generic artifact link/attachment records for Den subjects, including at least conversation, job, task, run, criterion, and delegated-run anchors.
-- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `input`, `source`, `output`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`.
+- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `primary_output`, `input`, `source`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`. A primary output may be a Git-commit `external_ref` or Den-owned content artifact, but a finalized/link-verified artifact is only required when the task or work-surface policy says so.
+- [ ] Record task-required validation attempts against the task's primary-output ref and, when available, stable identity (Git OID or finalized content digest), including the executed check, observed result, execution provenance, and durable diagnostics where relevant. Identity agreement preserves evidence integrity; it does not prove correctness.
+- [ ] Settle task completion only after structured primary-output evidence and the task's required validation evidence are recorded. Preserve candidate evidence and a blocked recovery path when an explicitly required observation (such as publication or finalization) fails.
 - [ ] Add run/task provenance when artifacts are created by work/runtime activity.
 - [ ] Render artifact refs in task/run completion receipts.
 - [ ] Keep criterion/task/job state separate from artifact presence; completion decisions cite evidence refs but are not implied by them.
 - [ ] Stop leaking object keys or workspace paths as durable evidence handles.
 
-**Exit gate:** A task/run can produce or cite artifact-backed evidence, and the UI/model layer can display the artifact metadata by ref.
+**Exit gate:** A task/run can produce or cite artifact-backed evidence. A Docket task that requires output records structured primary-output evidence and its required validation attempts, with consistent identities where supplied; UI/model layers can display artifact metadata by ref. Finalization, link verification, publication observations, and successful checks remain explicit stronger policies, not universal correctness certificates.
 
 ### Phase 4 — Cabinet attachment integration
 
-**Goal:** Let Cabinet use artifact refs without conflating Cabinet records with blob storage.
+**Goal:** Let Cabinet use artifact refs without conflating Cabinet records with blob storage. The Cabinet item, ACL, and review contract is owned by the [Cabinet implementation plan](CABINET_IMPLEMENTATION_PLAN.md).
 
 - [ ] Add Cabinet attachment link model: Cabinet item -> artifact ref + attachment role.
 - [ ] Support `cabinet_durable` lifecycle or equivalent retention promotion for attached artifacts.
@@ -209,6 +226,7 @@ Artifact refs are ready when:
 - [ ] Pending artifacts cannot be read as complete artifacts.
 - [ ] Finalized artifacts are stable snapshots.
 - [ ] Conversation, Docket, Cabinet, and work-surface flows can cite artifact refs.
+- [ ] A Docket task that requires an output records structured primary-output evidence and any task-required validation attempt before completion. Where an output identity is recorded, associated validation names the same identity; terminal run telemetry and worker narratives alone do not settle task/job state. This is a provenance and reviewability contract, not a correctness certificate. Artifact finalization, publication observation, and successful checks are stronger gates only when the applicable task or work-surface policy requires them.
 - [ ] Users can preview/download/attach artifacts from obvious UI affordances.
 - [ ] Models can cite, inspect, create, and attach artifacts through typed operations without storage trivia.
 - [ ] GC respects lifecycle and never deletes Cabinet-durable attachments.

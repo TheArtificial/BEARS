@@ -11,13 +11,19 @@ use bearwire_protocol::{
     surface::{SurfaceHistoryEvent, SurfaceResourceRef},
 };
 use den_http::errors::CustomError;
-use den_runtime::bearwire_events;
-use den_service::{client_sessions, conversation::persistence, DenState};
+use den_runtime::{
+    bearwire_events,
+    work_activity::{WorkActivityEntry, WorkActivityKind},
+};
+use den_service::{
+    artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
+    client_sessions,
+    conversation::persistence,
+    DenState,
+};
 
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
-
-pub(crate) const FOCUS_TITLE_PREFIX: &str = "⌖ ";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DocketSurfaceEventId(Uuid);
@@ -40,57 +46,13 @@ struct DocketTaskDefinition {
     title: Option<String>,
 }
 
-pub(crate) fn project_focus_title(title: Option<String>, focused: bool) -> Option<String> {
-    title.map(|title| {
-        let bare = title.strip_prefix(FOCUS_TITLE_PREFIX).unwrap_or(&title);
-        if focused {
-            format!("{FOCUS_TITLE_PREFIX}{bare}")
-        } else {
-            bare.to_string()
-        }
-    })
-}
-
-pub(crate) async fn conversation_has_active_focus(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    conversation_id: &str,
-    client_session_id: Option<&str>,
-) -> Result<bool, den_core::DenError> {
-    let focused = sqlx::query_scalar::<_, bool>(
-        r"
-        SELECT EXISTS (
-            SELECT 1
-            FROM docket_execution_sessions
-            WHERE bear_id = $1
-              AND state IN ('active', 'blocked', 'completing', 'paused')
-              AND (
-                source_conversation_id = $2
-                OR ($3::TEXT IS NOT NULL AND source_client_session_id = $3)
-                OR ($3::TEXT IS NOT NULL AND session_id = $3)
-              )
-        )
-        ",
-    )
-    .bind(bear_id)
-    .bind(conversation_id)
-    .bind(client_session_id)
-    .fetch_one(pool)
-    .await?;
-    Ok(focused)
-}
-
 #[derive(Debug, sqlx::FromRow)]
 struct DocketDiagnosticEventRow {
     id: Uuid,
     created_at: OffsetDateTime,
     event_type: String,
     payload: Value,
-    job_id: Option<Uuid>,
-    job_goal: Option<String>,
-    job_status: Option<String>,
     task_id: Option<Uuid>,
-    task_title: Option<String>,
 }
 
 async fn list_docket_diagnostic_events(
@@ -101,36 +63,22 @@ async fn list_docket_diagnostic_events(
 ) -> Result<Vec<DocketDiagnosticEventRow>, den_core::DenError> {
     sqlx::query_as::<_, DocketDiagnosticEventRow>(
         r"
-        WITH focused_jobs AS (
-            SELECT DISTINCT ON (job_id) job_id, task_id
+        WITH execution_jobs AS (
+            SELECT DISTINCT ON (job_id) job_id
             FROM docket_execution_sessions
             WHERE bear_id = $1
               AND source_conversation_id = $2
             ORDER BY job_id, updated_at DESC
         ), docket_events AS (
             SELECT events.id, events.created_at, events.event_type, events.payload,
-                   events.job_id, jobs.goal AS job_goal, jobs.status AS job_status,
-                   focused_jobs.task_id AS task_id,
-                   focus_tasks.title AS task_title
-            FROM bear_job_events events
-            JOIN bear_jobs jobs ON jobs.id = events.job_id
-            JOIN focused_jobs ON focused_jobs.job_id = events.job_id
-            LEFT JOIN bear_tasks focus_tasks ON focus_tasks.id = focused_jobs.task_id
-            WHERE events.job_id IN (SELECT job_id FROM focused_jobs)
-              AND events.event_type = 'focus_selected'
-            UNION ALL
-            SELECT events.id, events.created_at, events.event_type, events.payload,
-                   tasks.job_id, jobs.goal AS job_goal, jobs.status AS job_status,
-                   events.task_id,
-                   tasks.title AS task_title
+                   events.task_id
             FROM bear_task_events events
             JOIN bear_tasks tasks ON tasks.id = events.task_id
-            JOIN bear_jobs jobs ON jobs.id = tasks.job_id
-            WHERE tasks.job_id IN (SELECT job_id FROM focused_jobs)
+            WHERE tasks.job_id IN (SELECT job_id FROM execution_jobs)
               AND events.event_type IN ('created', 'updated')
               AND events.payload ? 'definition'
         )
-        SELECT id, created_at, event_type, payload, job_id, job_goal, job_status, task_id, task_title
+        SELECT id, created_at, event_type, payload, task_id
         FROM docket_events
         ORDER BY created_at ASC
         LIMIT $3
@@ -144,25 +92,15 @@ async fn list_docket_diagnostic_events(
     .map_err(|err| den_core::DenError::Database(format!("list docket diagnostic events: {err}")))
 }
 
-fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Value> {
+fn docket_diagnostic_surface_event(
+    row: DocketDiagnosticEventRow,
+    artifact_refs: &[String],
+) -> Option<Value> {
+    let artifact_suffix = artifact_refs
+        .iter()
+        .map(|artifact_ref| format!("\nArtifact: {artifact_ref}"))
+        .collect::<String>();
     match row.event_type.as_str() {
-        "focus_selected" => Some(json!(SurfaceHistoryEvent::Message {
-            id: Some(DocketSurfaceEventId::new(row.id).to_string()),
-            role: "system".to_string(),
-            text: format!(
-                "Docket focus selected: job={} goal={} status={} task={} state={}",
-                row.job_id?,
-                row.job_goal.as_deref().unwrap_or("unknown"),
-                row.job_status.as_deref().unwrap_or("unknown"),
-                row.task_title.as_deref().unwrap_or("unknown task"),
-                row.payload
-                    .get("state")
-                    .and_then(Value::as_str)
-                    .unwrap_or("active")
-            ),
-            resources: Vec::<SurfaceResourceRef>::new(),
-            created_at: Some(row.created_at.to_string()),
-        })),
         "created" | "updated" => {
             let definition = serde_json::from_value::<DocketTaskDefinition>(
                 row.payload.get("definition")?.clone(),
@@ -173,12 +111,13 @@ fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Valu
                 id: Some(DocketSurfaceEventId::new(row.id).to_string()),
                 role: "system".to_string(),
                 text: format!(
-                    "Docket task {}: {} ({})",
+                    "Docket task {}: {} ({}){}",
                     row.event_type,
                     title,
                     row.task_id
                         .map(|id| id.to_string())
-                        .unwrap_or_else(|| "unknown task".to_string())
+                        .unwrap_or_else(|| "unknown task".to_string()),
+                    artifact_suffix
                 ),
                 resources: Vec::<SurfaceResourceRef>::new(),
                 created_at: Some(row.created_at.to_string()),
@@ -194,7 +133,7 @@ fn orientation_diagnostic_text(data: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let orientation = data.get("orientation").unwrap_or(&Value::Null);
-    let focused_job = orientation
+    let job_id = orientation
         .pointer("/job/job_id")
         .and_then(Value::as_str)
         .unwrap_or("none");
@@ -209,8 +148,15 @@ fn orientation_diagnostic_text(data: &Value) -> String {
         })
         .unwrap_or("none");
     format!(
-        "Runtime orientation: kind={} focused_job={} task={}",
-        kind, focused_job, task
+        "Runtime orientation: kind={} job={} task={}",
+        kind, job_id, task
+    )
+}
+
+fn omit_from_review_projection(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "run.progress" | "message.delta" | "message.reasoning.delta"
     )
 }
 
@@ -316,6 +262,61 @@ pub(crate) async fn conversation_surface_history_result(
     .await
 }
 
+fn work_activity_surface_event(entry: WorkActivityEntry) -> Option<SurfaceHistoryEvent> {
+    let id = Some(format!("bearwire:{}", entry.id));
+    let created_at = Some(entry.created_at.to_string());
+    let text = if entry.truncated {
+        format!("{} [truncated]", entry.text)
+    } else {
+        entry.text
+    };
+    match entry.kind {
+        WorkActivityKind::AssistantMessage => Some(SurfaceHistoryEvent::Message {
+            id,
+            role: "assistant".to_string(),
+            text,
+            resources: Vec::new(),
+            created_at,
+        }),
+        WorkActivityKind::ReasoningSummary => Some(SurfaceHistoryEvent::ReasoningDelta {
+            id,
+            role: Some("assistant".to_string()),
+            text,
+            source: Some("provider_reasoning".to_string()),
+            replay_policy: Some("thought".to_string()),
+            created_at,
+        }),
+        WorkActivityKind::ToolCall => Some(SurfaceHistoryEvent::ToolCall {
+            id,
+            role: Some("assistant".to_string()),
+            tool_call_id: entry.tool_call_id?,
+            tool_name: entry.tool_name.unwrap_or_else(|| "tool".to_string()),
+            status: "requested".to_string(),
+            arguments: Value::Null,
+            created_at,
+        }),
+        WorkActivityKind::ToolResult => Some(SurfaceHistoryEvent::ToolResult {
+            id,
+            role: Some("tool".to_string()),
+            tool_call_id: entry.tool_call_id?,
+            tool_name: entry.tool_name.unwrap_or_else(|| "tool".to_string()),
+            status: "completed".to_string(),
+            text: Some(text),
+            raw_output: Value::Null,
+            created_at,
+        }),
+        WorkActivityKind::Approval | WorkActivityKind::Lifecycle => {
+            Some(SurfaceHistoryEvent::Message {
+                id,
+                role: "system".to_string(),
+                text,
+                resources: Vec::new(),
+                created_at,
+            })
+        }
+    }
+}
+
 async fn conversation_history_like_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -323,7 +324,7 @@ async fn conversation_history_like_result(
     response_kind: &str,
     records_key: &str,
 ) -> Result<Value, CustomError> {
-    let (_user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: ConversationHistoryRequest = parse_params(params)?;
     let conversation_id = request.conversation_id;
     let before_sequence_no = request.before;
@@ -426,20 +427,13 @@ async fn conversation_history_like_result(
         )
         .await?
         {
-            let focused = conversation_has_active_focus(
-                &state.sqlx_pool,
-                bear.id,
-                &conversation_id,
-                Some(&session.client_session_id),
-            )
-            .await?;
             messages.insert(
                 0,
                 json!(SurfaceHistoryEvent::SessionInfoUpdate {
                     id: Some(format!("session-info:{}", session.client_session_id)),
                     role: Some("system".to_string()),
                     session_id: Some(session.client_session_id.clone()),
-                    title: project_focus_title(session.conversation_title.clone(), focused),
+                    title: session.conversation_title.clone(),
                     title_updated_at: session
                         .conversation_title_updated_at
                         .map(|value| value.to_string()),
@@ -460,100 +454,92 @@ async fn conversation_history_like_result(
                 limit,
             )
             .await?;
-            for row in surface_event_rows {
-                if row.event_type == "runtime.objective_orientation" {
-                    let event_id = row
-                        .event
-                        .event_id
-                        .unwrap_or_else(|| format!("bearwire:{}", row.id));
-                    messages.push(json!(SurfaceHistoryEvent::Message {
-                        id: Some(event_id),
-                        role: "system".to_string(),
-                        text: orientation_diagnostic_text(&row.event.data),
-                        resources: Vec::<SurfaceResourceRef>::new(),
-                        created_at: Some(row.created_at.to_string()),
-                    }));
-                    continue;
-                }
-
-                if row.event_type == "session_info_update" {
-                    let title = row
-                        .event
-                        .data
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|title| !title.is_empty());
-                    let updated_at = row.event.data.get("updated_at").and_then(Value::as_str);
-                    if title.is_none() && updated_at.is_none() {
+            let is_work_session = den_docket::work_runs::get_work_run_by_session(
+                &state.sqlx_pool,
+                &session.client_session_id,
+            )
+            .await?
+            .is_some();
+            if is_work_session {
+                messages.extend(
+                    den_runtime::work_activity::project_work_activity(surface_event_rows)
+                        .into_iter()
+                        .filter_map(work_activity_surface_event)
+                        .map(|event| json!(event)),
+                );
+            } else {
+                for row in surface_event_rows {
+                    if omit_from_review_projection(&row.event_type) {
                         continue;
                     }
-                    let event_id = row
-                        .event
-                        .event_id
-                        .unwrap_or_else(|| format!("bearwire:{}", row.id));
-                    messages.push(json!(SurfaceHistoryEvent::SessionInfoUpdate {
-                        id: Some(event_id),
-                        role: Some("system".to_string()),
-                        session_id: Some(session.client_session_id.clone()),
-                        title: project_focus_title(title.map(str::to_string), focused),
-                        title_updated_at: updated_at.map(str::to_string),
-                        current_mode: None,
-                        created_at: Some(row.created_at.to_string()),
-                    }));
-                    continue;
-                }
+                    if row.event_type == "runtime.objective_orientation" {
+                        let event_id = row
+                            .event
+                            .event_id
+                            .unwrap_or_else(|| format!("bearwire:{}", row.id));
+                        messages.push(json!(SurfaceHistoryEvent::Message {
+                            id: Some(event_id),
+                            role: "system".to_string(),
+                            text: orientation_diagnostic_text(&row.event.data),
+                            resources: Vec::<SurfaceResourceRef>::new(),
+                            created_at: Some(row.created_at.to_string()),
+                        }));
+                        continue;
+                    }
 
-                if row.event_type != "message.reasoning.delta" {
-                    continue;
+                    if row.event_type == "session_info_update" {
+                        let title = row
+                            .event
+                            .data
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|title| !title.is_empty());
+                        let updated_at = row.event.data.get("updated_at").and_then(Value::as_str);
+                        if title.is_none() && updated_at.is_none() {
+                            continue;
+                        }
+                        let event_id = row
+                            .event
+                            .event_id
+                            .unwrap_or_else(|| format!("bearwire:{}", row.id));
+                        messages.push(json!(SurfaceHistoryEvent::SessionInfoUpdate {
+                            id: Some(event_id),
+                            role: Some("system".to_string()),
+                            session_id: Some(session.client_session_id.clone()),
+                            title: title.map(str::to_string),
+                            title_updated_at: updated_at.map(str::to_string),
+                            current_mode: None,
+                            created_at: Some(row.created_at.to_string()),
+                        }));
+                    }
                 }
-                let delta = row
-                    .event
-                    .data
-                    .get("delta")
-                    .or_else(|| row.event.data.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim();
-                if delta.is_empty() {
-                    continue;
-                }
-                let source = row
-                    .event
-                    .data
-                    .get("source")
-                    .and_then(Value::as_str)
-                    .unwrap_or("provider_reasoning")
-                    .to_string();
-                let replay_policy = row
-                    .event
-                    .data
-                    .get("replay_policy")
-                    .and_then(Value::as_str)
-                    .unwrap_or("none")
-                    .to_string();
-                if replay_policy != "thought" {
-                    continue;
-                }
-                let event_id = row
-                    .event
-                    .event_id
-                    .unwrap_or_else(|| format!("bearwire:{}", row.id));
-                messages.push(json!(SurfaceHistoryEvent::ReasoningDelta {
-                    id: Some(event_id),
-                    role: Some("assistant".to_string()),
-                    text: delta.to_string(),
-                    source: Some(source),
-                    replay_policy: Some(replay_policy),
-                    created_at: Some(row.created_at.to_string()),
-                }));
             }
         }
 
         for row in list_docket_diagnostic_events(&state.sqlx_pool, bear.id, &conversation_id, limit)
             .await?
         {
-            if let Some(event) = docket_diagnostic_surface_event(row) {
+            let artifact_refs = if let Some(task_id) = row.task_id {
+                artifacts::list_docket_artifact_citations(
+                    &state.sqlx_pool,
+                    bear.id,
+                    DocketArtifactTargetKind::Task,
+                    task_id,
+                    ArtifactAccessContext {
+                        bear_id: bear.id,
+                        user_id: Some(user_id),
+                        profile: den_core::BearProfile::Pair,
+                    },
+                )
+                .await?
+                .into_iter()
+                .map(|citation| citation.artifact_ref)
+                .collect()
+            } else {
+                Vec::new()
+            };
+            if let Some(event) = docket_diagnostic_surface_event(row, &artifact_refs) {
                 messages.push(event);
             }
         }
@@ -588,12 +574,75 @@ mod tests {
     use super::*;
 
     #[test]
+    fn work_activity_surface_events_preserve_safe_activity_details() {
+        let entry = |kind, text: &str| WorkActivityEntry {
+            id: Uuid::from_u128(7),
+            first_sequence: 1,
+            last_sequence: 1,
+            kind,
+            text: text.to_string(),
+            tool_call_id: Some("call-1".to_string()),
+            tool_name: Some("fs.read".to_string()),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            truncated: false,
+        };
+
+        let assistant = work_activity_surface_event(entry(
+            WorkActivityKind::AssistantMessage,
+            "Inspecting files.",
+        ))
+        .expect("assistant activity");
+        let tool = work_activity_surface_event(entry(WorkActivityKind::ToolCall, "safe summary"))
+            .expect("tool activity");
+
+        assert_eq!(
+            serde_json::to_value(assistant).unwrap()["text"],
+            "Inspecting files."
+        );
+        let tool = serde_json::to_value(tool).unwrap();
+        assert_eq!(tool["tool_call_id"], "call-1");
+        assert_eq!(tool["tool_name"], "fs.read");
+        assert_eq!(tool["arguments"], Value::Null);
+    }
+
+    #[test]
     fn docket_surface_event_id_preserves_wire_string() {
         let id = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
         assert_eq!(
             DocketSurfaceEventId::new(id).to_string(),
             "docket:11111111-2222-3333-4444-555555555555"
         );
+    }
+
+    #[test]
+    fn review_projection_omits_transient_stream_events() {
+        assert!(omit_from_review_projection("run.progress"));
+        assert!(omit_from_review_projection("message.delta"));
+        assert!(omit_from_review_projection("message.reasoning.delta"));
+        assert!(!omit_from_review_projection("session_info_update"));
+        assert!(!omit_from_review_projection(
+            "runtime.objective_orientation"
+        ));
+    }
+
+    #[test]
+    fn docket_artifact_refs_render_only_opaque_identifiers() {
+        let row = DocketDiagnosticEventRow {
+            id: Uuid::from_u128(1),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            event_type: "created".to_string(),
+            payload: json!({"definition": {"title": "Ship it"}}),
+            task_id: Some(Uuid::from_u128(3)),
+        };
+        let event = docket_diagnostic_surface_event(
+            row,
+            &["artifact_0123456789abcdef0123456789abcdef".to_string()],
+        )
+        .expect("surface event");
+        let text = event["text"].as_str().expect("message text");
+        assert!(text.contains("artifact_0123456789abcdef0123456789abcdef"));
+        assert!(!text.contains("storage_key"));
+        assert!(!text.contains("content_sha256"));
     }
 
     #[test]

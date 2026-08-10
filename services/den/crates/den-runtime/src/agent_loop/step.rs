@@ -16,7 +16,9 @@ use crate::{
         evaluate_turn_context_budget,
         overflow_retry::compact_session_messages_for_overflow,
         record_context_budget_pressure_decision,
-        session_store::{AgentLoopSession, AgentLoopSessionStore},
+        session_store::{
+            render_recently_discovered_capabilities, AgentLoopSession, AgentLoopSessionStore,
+        },
     },
     context_budget::estimate_context_budget,
     llm::{
@@ -26,7 +28,7 @@ use crate::{
     },
     native_runtime::{
         openai_byte_stream_to_event_stream_with_telemetry,
-        responses_byte_stream_to_event_stream_with_telemetry,
+        responses_byte_stream_to_event_stream_with_telemetry, ObservedPromptTokensSink,
     },
     runtime_compaction::{den_error_indicates_context_overflow, CompactionMode},
 };
@@ -69,6 +71,52 @@ pub struct AgentStepOverflowContext {
     pub session_store: AgentLoopSessionStore,
 }
 
+/// Build a best-effort sink that folds provider-reported prompt-token usage
+/// into the model registry's chars→tokens calibration (ADR-0047 §7). The
+/// assembled char count mirrors the estimator's `to_body` measure so the
+/// stored ratio corrects exactly what the estimator counts. Returns `None`
+/// without a pool (no persistence context on this path).
+fn observed_prompt_usage_sink(
+    pool: Option<&PgPool>,
+    request: &ChatCompletionRequest,
+) -> Option<ObservedPromptTokensSink> {
+    let pool = pool?.clone();
+    let model = request.model.clone();
+    let assembled_prompt_chars = request.to_body().to_string().chars().count() as u64;
+    Some(Arc::new(move |observed_prompt_tokens: u64| {
+        let pool = pool.clone();
+        let model = model.clone();
+        // Fire-and-forget: calibration must never fail or slow the turn.
+        tokio::spawn(async move {
+            match den_service::model_selection::record_model_token_calibration_sample(
+                &pool,
+                &model,
+                assembled_prompt_chars,
+                observed_prompt_tokens,
+            )
+            .await
+            {
+                Ok(stored) => {
+                    tracing::debug!(
+                        model = %model,
+                        assembled_prompt_chars,
+                        observed_prompt_tokens,
+                        stored,
+                        "recorded model token calibration sample"
+                    );
+                }
+                Err(err) => {
+                    tracing::debug!(
+                        model = %model,
+                        error = %err,
+                        "model token calibration sample write failed"
+                    );
+                }
+            }
+        });
+    }))
+}
+
 enum LazyAgentStepState {
     Init {
         fut: Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>,
@@ -88,7 +136,9 @@ impl LazyAgentStepStream {
         model: &str,
         api_style: LlmApiStyle,
         started: Instant,
+        calibration_pool: Option<&PgPool>,
     ) -> Result<RuntimeEventStream, DenError> {
+        let usage_sink = observed_prompt_usage_sink(calibration_pool, request);
         match api_style {
             LlmApiStyle::ChatCompletionsStream => {
                 let byte_stream = llm.chat_completions_byte_stream(request).await?;
@@ -99,6 +149,7 @@ impl LazyAgentStepStream {
                     started,
                     byte_stream,
                     request.telemetry.clone(),
+                    usage_sink,
                 )
             }
             LlmApiStyle::ResponsesStream => match llm.responses_byte_stream(request).await {
@@ -109,6 +160,7 @@ impl LazyAgentStepStream {
                     started,
                     byte_stream,
                     request.telemetry.clone(),
+                    usage_sink,
                 ),
                 Err(err) if bifrost_key_selection_error(&err.to_string()) => {
                     tracing::warn!(
@@ -126,6 +178,7 @@ impl LazyAgentStepStream {
                         started,
                         byte_stream,
                         request.telemetry.clone(),
+                        usage_sink,
                     )
                 }
                 Err(err) => Err(err),
@@ -138,6 +191,7 @@ impl LazyAgentStepStream {
         request: &ChatCompletionRequest,
         session_key: &str,
         api_style_override: Option<LlmApiStyle>,
+        calibration_pool: Option<&PgPool>,
     ) -> Result<Option<RuntimeEventStream>, DenError> {
         let fallback_models = execution_fallback_model_handles(&request.model);
         if fallback_models.is_empty() {
@@ -164,6 +218,7 @@ impl LazyAgentStepStream {
                     fallback_model,
                     fallback_style,
                     Instant::now(),
+                    calibration_pool,
                 ),
             )
             .await
@@ -261,6 +316,7 @@ impl LazyAgentStepStream {
                     &model,
                     api_style,
                     started,
+                    overflow.as_ref().map(|ctx| &ctx.pool),
                 ),
             )
             .await;
@@ -294,6 +350,7 @@ impl LazyAgentStepStream {
                             &request,
                             &session_key,
                             api_style_override,
+                            overflow.as_ref().map(|ctx| &ctx.pool),
                         )
                         .await?
                         {
@@ -328,6 +385,7 @@ impl LazyAgentStepStream {
         started: Instant,
         byte_stream: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
         telemetry: Option<crate::llm::LlmRequestTelemetry>,
+        usage_sink: Option<ObservedPromptTokensSink>,
     ) -> Result<RuntimeEventStream, DenError> {
         tracing::info!(
             session_key = %session_key,
@@ -342,11 +400,17 @@ impl LazyAgentStepStream {
                 .map_err(DenError::from);
         Ok(match api_style {
             LlmApiStyle::ChatCompletionsStream => {
-                openai_byte_stream_to_event_stream_with_telemetry(byte_stream, telemetry)
+                openai_byte_stream_to_event_stream_with_telemetry(
+                    byte_stream,
+                    telemetry,
+                    usage_sink,
+                )
             }
-            LlmApiStyle::ResponsesStream => {
-                responses_byte_stream_to_event_stream_with_telemetry(byte_stream, telemetry)
-            }
+            LlmApiStyle::ResponsesStream => responses_byte_stream_to_event_stream_with_telemetry(
+                byte_stream,
+                telemetry,
+                usage_sink,
+            ),
         })
     }
 
@@ -422,6 +486,7 @@ impl LazyAgentStepStream {
         );
 
         let handshake_timeout = native_llm_handshake_timeout();
+        let usage_sink = observed_prompt_usage_sink(Some(&ctx.pool), &retry_request);
         let handshake = timeout(handshake_timeout, async {
             match api_style {
                 LlmApiStyle::ChatCompletionsStream => {
@@ -433,6 +498,7 @@ impl LazyAgentStepStream {
                         started,
                         byte_stream,
                         retry_request.telemetry.clone(),
+                        usage_sink,
                     )
                 }
                 LlmApiStyle::ResponsesStream => {
@@ -444,6 +510,7 @@ impl LazyAgentStepStream {
                         started,
                         byte_stream,
                         retry_request.telemetry.clone(),
+                        usage_sink,
                     )
                 }
             }
@@ -663,6 +730,24 @@ pub async fn run_agent_step_stream(
         overflow_recovery = overflow.is_some(),
         "native agent step starting LLM stream"
     );
+    let recently_discovered =
+        render_recently_discovered_capabilities(&session.recently_discovered_capabilities);
+    if !recently_discovered.is_empty() {
+        let chars = recently_discovered.chars().count() as u32;
+        messages.insert(
+            0,
+            crate::llm::ChatMessage {
+                role: "system".to_string(),
+                content: Some(recently_discovered),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            },
+        );
+        session
+            .budget_components
+            .recently_discovered_capabilities_chars = chars;
+    }
     let (request, budget, context_budget_evaluation) = loop {
         let tools = tools_with_checkpoint_tool(&session);
         let thinking_effort = checkpoint_thinking_effort_for_session(&session, !tools.is_empty());
@@ -682,6 +767,7 @@ pub async fn run_agent_step_stream(
             &session.budget_components,
             session.model_context_window,
             session.model_max_output_tokens,
+            session.model_token_calibration,
         );
         let context_budget_evaluation =
             evaluate_turn_context_budget(&session.turn_budget_state, budget);

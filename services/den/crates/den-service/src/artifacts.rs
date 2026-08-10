@@ -21,6 +21,7 @@ const ARTIFACT_REF_PREFIX: &str = "artifact_";
 pub enum ArtifactStorageKind {
     DbText,
     GarageArtifacts,
+    ExternalGitCommit,
 }
 
 impl ArtifactStorageKind {
@@ -28,6 +29,7 @@ impl ArtifactStorageKind {
         match self {
             Self::DbText => "db_text",
             Self::GarageArtifacts => "garage_artifacts",
+            Self::ExternalGitCommit => "external_git_commit",
         }
     }
 }
@@ -45,6 +47,7 @@ impl FromStr for ArtifactStorageKind {
         match value {
             "db_text" => Ok(Self::DbText),
             "garage_artifacts" => Ok(Self::GarageArtifacts),
+            "external_git_commit" => Ok(Self::ExternalGitCommit),
             other => Err(DenError::ValidationError(format!(
                 "unknown artifact storage kind: {other}"
             ))),
@@ -172,6 +175,33 @@ pub struct FinalizeGarageArtifactInput {
     pub metadata: Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct FinalizeGitCommitArtifactInput {
+    pub artifact_ref: String,
+    pub bear_id: Uuid,
+    pub repository: String,
+    pub object_format: GitObjectFormat,
+    pub commit_oid: String,
+    pub output_ref: String,
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitObjectFormat {
+    Sha1,
+    Sha256,
+}
+
+impl GitObjectFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Sha1 => "sha1",
+            Self::Sha256 => "sha256",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GarageArtifactUploadPath {
     pub storage_key: String,
@@ -179,7 +209,7 @@ pub struct GarageArtifactUploadPath {
     pub object_path: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactContentLocation {
     pub artifact_ref: String,
     pub storage_kind: ArtifactStorageKind,
@@ -234,6 +264,7 @@ impl DocketArtifactTargetKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocketArtifactRole {
+    PrimaryOutput,
     Input,
     Source,
     Output,
@@ -247,6 +278,7 @@ pub enum DocketArtifactRole {
 impl DocketArtifactRole {
     fn as_str(self) -> &'static str {
         match self {
+            Self::PrimaryOutput => "primary_output",
             Self::Input => "input",
             Self::Source => "source",
             Self::Output => "output",
@@ -270,7 +302,7 @@ pub struct AttachDocketArtifactInput {
     pub created_by_user_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ArtifactCitation {
     pub artifact_ref: String,
     pub kind: String,
@@ -282,7 +314,7 @@ pub struct ArtifactCitation {
     pub readable: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactMetadata {
     pub id: Uuid,
     pub artifact_ref: String,
@@ -308,7 +340,7 @@ pub struct ArtifactMetadata {
     pub updated_at: OffsetDateTime,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactLink {
     pub id: Uuid,
     pub artifact_ref: String,
@@ -380,7 +412,10 @@ pub async fn finalize_metadata_only_artifact(
         "UPDATE artifacts
          SET lifecycle = 'finalized', storage_key = $3, content_bytes = $4,
              content_sha256 = $5, metadata = $6, finalized_at = NOW(), updated_at = NOW()
-         WHERE artifact_ref = $1 AND bear_id = $2 AND lifecycle = 'pending'
+         WHERE artifact_ref = $1
+           AND bear_id = $2
+           AND lifecycle = 'pending'
+           AND storage_kind = 'db_text'
          RETURNING *",
     )
     .bind(&input.artifact_ref)
@@ -472,6 +507,50 @@ pub async fn finalize_garage_artifact(
     }
 }
 
+pub async fn finalize_git_commit_artifact(
+    pool: &PgPool,
+    input: FinalizeGitCommitArtifactInput,
+) -> Result<ArtifactMetadata, DenError> {
+    validate_non_empty("repository", &input.repository)?;
+    validate_non_empty("output ref", &input.output_ref)?;
+    validate_git_commit_oid(&input.commit_oid, input.object_format)?;
+    validate_json_object("metadata", &input.metadata)?;
+
+    let metadata = merge_json_objects(
+        input.metadata,
+        serde_json::json!({
+            "git": {
+                "repository": input.repository,
+                "object_format": input.object_format.as_str(),
+                "commit_oid": input.commit_oid,
+                "output_ref": input.output_ref,
+            }
+        }),
+    )?;
+    let row = sqlx::query(
+        "UPDATE artifacts
+         SET lifecycle = 'finalized', metadata = $3, finalized_at = NOW(), updated_at = NOW()
+         WHERE artifact_ref = $1
+            AND bear_id = $2
+            AND lifecycle = 'pending'
+            AND storage_kind = 'external_git_commit'
+         RETURNING *",
+    )
+    .bind(&input.artifact_ref)
+    .bind(input.bear_id)
+    .bind(metadata)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(row) => artifact_from_row(&row),
+        None => Err(DenError::ValidationError(format!(
+            "artifact {} is not pending external Git commit or does not exist",
+            input.artifact_ref
+        ))),
+    }
+}
+
 pub async fn get_artifact_content_location(
     pool: &PgPool,
     artifact_ref: &str,
@@ -537,6 +616,11 @@ pub async fn authorize_artifact_access(
                     "artifact {artifact_ref} is not readable"
                 )))
             }
+        }
+        if artifact.storage_kind == ArtifactStorageKind::ExternalGitCommit {
+            return Err(DenError::ValidationError(format!(
+                "artifact {artifact_ref} is an external Git commit and has no Den content location"
+            )));
         }
     } else if matches!(artifact.lifecycle, ArtifactLifecycle::Deleted) {
         return Err(DenError::Authorization(format!(
@@ -881,6 +965,37 @@ fn validate_json_object(name: &str, value: &Value) -> Result<(), DenError> {
     }
 }
 
+fn validate_git_commit_oid(oid: &str, object_format: GitObjectFormat) -> Result<(), DenError> {
+    let expected_length = match object_format {
+        GitObjectFormat::Sha1 => 40,
+        GitObjectFormat::Sha256 => 64,
+    };
+    if oid.len() == expected_length
+        && oid
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        Ok(())
+    } else {
+        Err(DenError::ValidationError(format!(
+            "Git {} commit OID must be {expected_length} lowercase hex characters",
+            object_format.as_str()
+        )))
+    }
+}
+
+fn merge_json_objects(left: Value, right: Value) -> Result<Value, DenError> {
+    let mut left = left
+        .as_object()
+        .cloned()
+        .ok_or_else(|| DenError::ValidationError("metadata must be a JSON object".to_string()))?;
+    let right = right
+        .as_object()
+        .ok_or_else(|| DenError::ValidationError("metadata must be a JSON object".to_string()))?;
+    left.extend(right.clone());
+    Ok(Value::Object(left))
+}
+
 fn validate_sha256(hash: &str) -> Result<(), DenError> {
     if hash.len() == 64
         && hash
@@ -976,6 +1091,14 @@ mod tests {
             metadata: json!({"phase": 2}),
             expires_at,
         }
+    }
+
+    #[test]
+    fn git_commit_oid_validation_accepts_declared_object_format_only() {
+        assert!(validate_git_commit_oid(&"a".repeat(40), GitObjectFormat::Sha1).is_ok());
+        assert!(validate_git_commit_oid(&"b".repeat(64), GitObjectFormat::Sha256).is_ok());
+        assert!(validate_git_commit_oid(&"a".repeat(64), GitObjectFormat::Sha1).is_err());
+        assert!(validate_git_commit_oid(&"A".repeat(40), GitObjectFormat::Sha1).is_err());
     }
 
     #[tokio::test]
@@ -1136,8 +1259,8 @@ mod tests {
                 bear_id,
                 target_kind: DocketArtifactTargetKind::Task,
                 target_id: task_id,
-                role: DocketArtifactRole::Evidence,
-                metadata: json!({"note": "does not update task state"}),
+                role: DocketArtifactRole::PrimaryOutput,
+                metadata: json!({"note": "one finalized task output"}),
                 created_by_user_id: Some(user_id),
             },
         )
@@ -1145,7 +1268,44 @@ mod tests {
         .expect("attach docket artifact");
         assert_eq!(link.target_kind, "docket_task");
         assert_eq!(link.target_id, task_id.to_string());
-        assert_eq!(link.role, "evidence");
+        assert_eq!(link.role, "primary_output");
+
+        let second_reserved = reserve_artifact(&pool, reserve_input(bear_id, user_id))
+            .await
+            .expect("reserve second artifact");
+        finalize_metadata_only_artifact(
+            &pool,
+            FinalizeArtifactInput {
+                artifact_ref: second_reserved.artifact_ref.clone(),
+                bear_id,
+                storage_key: Some("db-text-placeholder-2".to_string()),
+                content_bytes: Some(12),
+                content_sha256: Some(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                ),
+                metadata: json!({}),
+            },
+        )
+        .await
+        .expect("finalize second artifact");
+
+        let duplicate_primary_output = attach_docket_artifact(
+            &pool,
+            AttachDocketArtifactInput {
+                artifact_ref: second_reserved.artifact_ref,
+                bear_id,
+                target_kind: DocketArtifactTargetKind::Task,
+                target_id: task_id,
+                role: DocketArtifactRole::PrimaryOutput,
+                metadata: json!({}),
+                created_by_user_id: Some(user_id),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(duplicate_primary_output
+            .to_string()
+            .contains("artifact_links_one_primary_output_per_docket_task"));
 
         let citations = list_docket_artifact_citations(
             &pool,
@@ -1162,8 +1322,13 @@ mod tests {
         .expect("list citations");
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0].artifact_ref, reserved.artifact_ref);
-        assert_eq!(citations[0].readable, true);
+        assert!(citations[0].readable);
         assert_eq!(citations[0].content_bytes, Some(12));
+        let rendered = serde_json::to_value(&citations[0]).expect("serialize citation");
+        assert!(rendered.get("storage_key").is_none());
+        assert!(rendered.get("content_sha256").is_none());
+        assert!(rendered.get("provenance").is_none());
+        assert!(rendered.get("metadata").is_none());
     }
 
     #[tokio::test]

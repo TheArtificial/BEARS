@@ -584,24 +584,57 @@ block head %} {{ super() }}
                 }
                 historyNextBefore = data.next_before || null;
                 var out = (data.messages || [])
-                    .filter(function (m) {
-                        return (
-                            m &&
-                            typeof m === "object" &&
-                            (m.role === "user" ||
-                                m.role === "ai" ||
-                                m.role === "system")
-                        );
-                    })
                     .map(function (m) {
+                        if (!m || typeof m !== "object") return null;
+                        var kind = String(m.kind || "message");
+                        var role = m.role === "assistant" ? "ai" : m.role;
                         var t = String(m.text != null ? m.text : "");
-                        if (m.role === "system") {
+
+                        if (kind === "reasoning_delta") {
+                            var reasoning = buildReasoningLogHtml(t);
+                            return reasoning
+                                ? { role: "ai", html: reasoning }
+                                : null;
+                        }
+                        if (kind === "tool_call") {
+                            return {
+                                role: "system",
+                                html: formatSystemDebugHtml(
+                                    "Tool call: " +
+                                        String(m.tool_name || "tool") +
+                                        " (" +
+                                        String(m.status || "requested") +
+                                        ")",
+                                ),
+                            };
+                        }
+                        if (kind === "tool_result") {
+                            return {
+                                role: "system",
+                                html: formatSystemDebugHtml(
+                                    "Tool result: " +
+                                        String(m.tool_name || "tool") +
+                                        " (" +
+                                        String(m.status || "completed") +
+                                        ")" +
+                                        (t ? "\n" + t : ""),
+                                ),
+                            };
+                        }
+                        if (
+                            role !== "user" &&
+                            role !== "ai" &&
+                            role !== "system"
+                        ) {
+                            return null;
+                        }
+                        if (role === "system") {
                             return {
                                 role: "system",
                                 html: formatSystemDebugHtml(t),
                             };
                         }
-                        if (m.role !== "ai") return { role: m.role, text: t };
+                        if (role !== "ai") return { role: role, text: t };
                         if (
                             DEN_CHAT_DEBUG_VERBOSE &&
                             /<system-reminder/i.test(t)
@@ -615,6 +648,9 @@ block head %} {{ super() }}
                             role: "ai",
                             text: stripSystemReminderBlocks(t),
                         };
+                    })
+                    .filter(function (m) {
+                        return m !== null;
                     });
                 // Deep Chat expects `false` only after real messages; `[false]` alone can break the component.
                 if (data.has_more && out.length > 0) {

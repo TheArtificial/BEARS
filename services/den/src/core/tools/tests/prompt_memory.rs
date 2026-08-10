@@ -90,10 +90,12 @@ async fn prompt_memory_tools_round_trip_through_store() {
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("sess-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,
@@ -323,10 +325,12 @@ async fn prompt_memory_upsert_archives_superseded_block() {
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("sess-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,
@@ -414,10 +418,12 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("sess-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,
@@ -501,10 +507,12 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("sess-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
+        session_capabilities: Vec::new(),
         session_policy: None,
         activity: None,
         runtime: None,
@@ -535,7 +543,8 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
     .await
     .expect("upsert status block");
     let config = Config::test_stub();
-    let status = memory_status_value(&config, &context, BearProfile::Pair, &pool)
+    let stores = den_memory::MemoryStoreManager::new(&config);
+    let status = memory_status_value(&config, &stores, &context, BearProfile::Pair, &pool)
         .await
         .expect("memory status value");
     assert_eq!(

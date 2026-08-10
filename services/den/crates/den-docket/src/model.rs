@@ -487,10 +487,6 @@ pub enum TaskListCheckoutSource {
         job_id: Uuid,
         parent_task_id: Option<Uuid>,
     },
-    ConversationObjective {
-        request: DocketConversationObjectiveRequest,
-        active_subtree: bool,
-    },
     LocalProjection(Box<TaskListProjection>),
 }
 
@@ -585,9 +581,11 @@ pub enum DocketJobStatus {
     Draft,
     Ready,
     Running,
+    Stalled,
     Blocked,
     Completed,
     Cancelled,
+    Archived,
 }
 
 impl DocketJobStatus {
@@ -596,9 +594,11 @@ impl DocketJobStatus {
             Self::Draft => "draft",
             Self::Ready => "ready",
             Self::Running => "running",
+            Self::Stalled => "stalled",
             Self::Blocked => "blocked",
             Self::Completed => "completed",
             Self::Cancelled => "cancelled",
+            Self::Archived => "archived",
         }
     }
 }
@@ -609,13 +609,23 @@ impl fmt::Display for DocketJobStatus {
     }
 }
 
+/// Explicit caller intent when a new job has the same normalized goal and
+/// work surface as an active job. This is deliberately not a fuzzy goal
+/// similarity heuristic.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DocketJobOverlapResolution {
+    #[default]
+    Reject,
+    Independent,
+    Supersede,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocketCommitPolicy {
     None,
     PerTask,
     PerJob,
-    ProposeOnly,
 }
 
 impl DocketCommitPolicy {
@@ -624,8 +634,13 @@ impl DocketCommitPolicy {
             Self::None => "none",
             Self::PerTask => "per_task",
             Self::PerJob => "per_job",
-            Self::ProposeOnly => "propose_only",
         }
+    }
+
+    /// Source-changing jobs publish one coherent result unless the caller
+    /// explicitly chooses another policy.
+    pub fn for_new_job(policy: Option<Self>) -> Self {
+        policy.unwrap_or(Self::PerJob)
     }
 }
 
@@ -761,11 +776,47 @@ impl DocketEffortHint {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingStrategy {
+    Inline,
+    Scoped,
+    Delegated,
+    #[default]
+    Auto,
+}
+
+impl RoutingStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Scoped => "scoped",
+            Self::Delegated => "delegated",
+            Self::Auto => "auto",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultRollupPolicy {
+    SummaryToParent,
+    None,
+}
+
+impl ResultRollupPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SummaryToParent => "summary_to_parent",
+            Self::None => "none",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocketTaskStatus {
     Pending,
-    InProgress,
     Done,
     Blocked,
     Cancelled,
@@ -775,11 +826,45 @@ impl DocketTaskStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
-            Self::InProgress => "in_progress",
             Self::Done => "done",
             Self::Blocked => "blocked",
             Self::Cancelled => "cancelled",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketOutcomeDisposition {
+    Completed,
+    NoChange,
+    Delegated,
+    Blocked,
+    Failed,
+    Cancelled,
+}
+
+impl DocketOutcomeDisposition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::NoChange => "no_change",
+            Self::Delegated => "delegated",
+            Self::Blocked => "blocked",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn is_valid_for(self, status: DocketTaskStatus) -> bool {
+        matches!(
+            (status, self),
+            (
+                DocketTaskStatus::Done,
+                Self::Completed | Self::NoChange | Self::Delegated
+            ) | (DocketTaskStatus::Blocked, Self::Blocked | Self::Failed)
+                | (DocketTaskStatus::Cancelled, Self::Cancelled)
+        )
     }
 }
 
@@ -801,6 +886,40 @@ impl DocketCriterionStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationPolicy {
+    #[default]
+    Required,
+    Optional,
+    Forbidden,
+}
+
+impl MutationPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Optional => "optional",
+            Self::Forbidden => "forbidden",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocketJobSurfaceAssignmentInput {
+    pub work_surface_id: Uuid,
+    pub mutation_policy: MutationPolicy,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize)]
+pub struct DocketJobSurfaceAssignmentRow {
+    pub job_id: Uuid,
+    pub work_surface_id: Uuid,
+    pub mutation_policy: String,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
 #[derive(Debug, Clone, FromRow, Serialize)]
 pub struct DocketJobRow {
     pub id: Uuid,
@@ -808,18 +927,23 @@ pub struct DocketJobRow {
     pub created_by_user_id: i32,
     pub created_by_role: String,
     pub goal: String,
-    pub work_surface_ref: Option<String>,
-    /// Managed work surface this job runs on (`work_surfaces.id`), when the
-    /// ref names one. `work_surface_ref` mirrors the surface name.
+    /// Compatibility projection of the first dispatchable Git assignment.
+    /// The canonical job-to-surface relationship is `job_work_surface_assignments`.
     pub work_surface_id: Option<Uuid>,
     pub commit_policy: Option<String>,
     /// Upstream branch this job's work runs publish to (set on first
     /// pushable dispatch when absent; default `den/job-<short-id>`).
     pub work_branch: Option<String>,
+    /// Derived operational status; never persisted in `bear_jobs`.
     pub status: String,
+    /// Explicit user lifecycle intent.
+    pub lifecycle_intent: Option<String>,
     pub visibility: String,
     pub source_conversation_id: Option<String>,
     pub objective_kind: Option<String>,
+    /// The active job explicitly replaced by this job, if any. This preserves
+    /// ownership/history without guessing semantic equivalence from prose.
+    pub supersedes_job_id: Option<Uuid>,
     pub current_run_id: Option<Uuid>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
@@ -866,6 +990,9 @@ pub struct DocketTaskRow {
     pub completion_criteria: Json<Vec<String>>,
     pub difficulty: Option<String>,
     pub effort_hint: Option<String>,
+    pub routing_strategy: String,
+    pub expected_context_size: Option<i32>,
+    pub result_rollup_policy: Option<String>,
     pub created_by_role: String,
     pub created_by_user_id: Option<i32>,
     pub created_by_agent_id: Option<String>,
@@ -904,6 +1031,8 @@ pub struct DocketJobProjection {
     pub criteria_states: Vec<DocketCriterionStateRow>,
     pub tasks: Vec<DocketTaskRow>,
     pub task_states: Vec<DocketTaskRunStateRow>,
+    /// Tasks with a live execution lease. This is the sole execution authority.
+    pub active_task_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -961,7 +1090,7 @@ pub struct DocketTaskInput {
     #[serde(default)]
     pub parent_task_id: Option<Uuid>,
     #[serde(default)]
-    pub sibling_order: i32,
+    pub sibling_order: Option<i32>,
     #[serde(default = "default_task_kind")]
     pub kind: DocketTaskKind,
     #[serde(default = "default_task_scope")]
@@ -974,6 +1103,12 @@ pub struct DocketTaskInput {
     pub difficulty: Option<DocketTaskDifficulty>,
     #[serde(default)]
     pub effort_hint: Option<DocketEffortHint>,
+    #[serde(default)]
+    pub routing_strategy: RoutingStrategy,
+    #[serde(default)]
+    pub expected_context_size: Option<i32>,
+    #[serde(default)]
+    pub result_rollup_policy: Option<ResultRollupPolicy>,
 }
 
 fn default_task_kind() -> DocketTaskKind {
@@ -990,34 +1125,31 @@ pub struct DocketJobCreate {
     pub created_by_user_id: i32,
     pub created_by_role: String,
     pub goal: String,
-    pub work_surface_ref: Option<String>,
-    /// Managed surface id; callers set it together with `work_surface_ref`
-    /// (= the surface name) after checking the bear's assignment.
+    /// Managed surface id, after checking the bear's assignment.
     pub work_surface_id: Option<Uuid>,
+    /// Canonical surface assignments. An empty list preserves the
+    /// single-surface shorthand above, which becomes a required assignment.
+    pub work_surface_assignments: Vec<DocketJobSurfaceAssignmentInput>,
     pub commit_policy: Option<DocketCommitPolicy>,
     /// Explicit upstream branch for work-run publishing; generated
     /// (`den/job-<short-id>`) on first pushable dispatch when absent.
     pub work_branch: Option<String>,
-    pub status: DocketJobStatus,
     pub visibility: TaskListVisibility,
     pub source_conversation_id: Option<String>,
     pub objective_kind: Option<String>,
+    /// Explicitly replace this active job. Required only when
+    /// `overlap_resolution` is `supersede`.
+    pub supersedes_job_id: Option<Uuid>,
+    pub overlap_resolution: DocketJobOverlapResolution,
     pub criteria: Vec<DocketJobCriterionInput>,
     pub tasks: Vec<DocketTaskInput>,
-}
-
-#[derive(Debug, Clone)]
-pub struct DocketConversationObjectiveRequest {
-    pub bear_id: Uuid,
-    pub created_by_user_id: i32,
-    pub created_by_role: String,
-    pub source_conversation_id: String,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct DocketJobListFilter {
     pub statuses: Option<Vec<DocketJobStatus>>,
     pub include_cancelled: bool,
+    pub include_archived: bool,
     pub source_conversation_id: Option<String>,
     pub limit: i64,
 }
@@ -1030,9 +1162,7 @@ pub struct DocketJobUpdate {
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,
     pub goal: Option<String>,
-    pub work_surface_ref: Option<Option<String>>,
-    /// Set together with `work_surface_ref` when the new ref names a managed
-    /// surface; `Some(None)` clears it.
+    /// Replace the managed surface binding. Work jobs cannot clear it.
     pub work_surface_id: Option<Option<Uuid>>,
     pub commit_policy: Option<Option<DocketCommitPolicy>>,
     /// Explicit publish branch; `Some(None)` clears it so the next pushable
@@ -1112,6 +1242,15 @@ pub struct DocketJobExecuteOutcome {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DocketTaskPlacement {
+    First,
+    Last,
+    Before { task_id: Uuid },
+    After { task_id: Uuid },
+}
+
 #[derive(Debug, Clone)]
 pub struct DocketTaskCreate {
     pub bear_id: Uuid,
@@ -1119,6 +1258,7 @@ pub struct DocketTaskCreate {
     pub session_anchor_id: Option<Uuid>,
     pub parent_task_id: Option<Uuid>,
     pub sibling_order: i32,
+    pub placement: Option<DocketTaskPlacement>,
     pub kind: DocketTaskKind,
     pub scope: DocketTaskScope,
     pub title: String,
@@ -1126,6 +1266,9 @@ pub struct DocketTaskCreate {
     pub completion_criteria: Vec<String>,
     pub difficulty: Option<DocketTaskDifficulty>,
     pub effort_hint: Option<DocketEffortHint>,
+    pub routing_strategy: RoutingStrategy,
+    pub expected_context_size: Option<i32>,
+    pub result_rollup_policy: Option<ResultRollupPolicy>,
     pub created_by_role: String,
     pub created_by_user_id: Option<i32>,
     pub created_by_agent_id: Option<String>,
@@ -1145,6 +1288,7 @@ pub struct DocketTaskListFilter {
 pub struct DocketTaskRunStateUpdate {
     pub run_id: Uuid,
     pub status: DocketTaskStatus,
+    pub outcome_disposition: Option<DocketOutcomeDisposition>,
     pub result_refs: Option<serde_json::Value>,
     pub result_summary: Option<String>,
 }
@@ -1160,6 +1304,153 @@ pub struct DocketTaskDefinitionPatch {
     pub scope: Option<DocketTaskScope>,
     pub difficulty: Option<Option<DocketTaskDifficulty>>,
     pub effort_hint: Option<Option<DocketEffortHint>>,
+    pub routing_strategy: Option<RoutingStrategy>,
+    pub expected_context_size: Option<Option<i32>>,
+    pub result_rollup_policy: Option<Option<ResultRollupPolicy>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketEntryScope {
+    TaskJournal,
+    JobNotebook,
+}
+
+impl DocketEntryScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TaskJournal => "task_journal",
+            Self::JobNotebook => "job_notebook",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketEntryKind {
+    Outcome,
+    Finding,
+    Decision,
+    Obstacle,
+    FollowUp,
+    Milestone,
+    Question,
+}
+
+impl DocketEntryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Outcome => "outcome",
+            Self::Finding => "finding",
+            Self::Decision => "decision",
+            Self::Obstacle => "obstacle",
+            Self::FollowUp => "follow_up",
+            Self::Milestone => "milestone",
+            Self::Question => "question",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketEntryCreate {
+    pub bear_id: Uuid,
+    pub job_id: Option<Uuid>,
+    pub task_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
+    pub scope: DocketEntryScope,
+    pub kind: DocketEntryKind,
+    pub summary: String,
+    pub body: Option<String>,
+    pub evidence_refs: Vec<serde_json::Value>,
+    pub related_task_ids: Vec<Uuid>,
+    pub tags: Vec<String>,
+    pub actor_role: BearProfile,
+    pub actor_user_id: Option<i32>,
+    pub actor_agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DocketEntryListFilter {
+    pub job_id: Option<Uuid>,
+    pub task_id: Option<Uuid>,
+    pub limit: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketEntryPromotion {
+    pub bear_id: Uuid,
+    pub entry_id: Uuid,
+    pub actor_role: BearProfile,
+    pub actor_user_id: Option<i32>,
+    pub actor_agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct DocketEntryRow {
+    pub id: Uuid,
+    pub job_id: Option<Uuid>,
+    pub task_id: Option<Uuid>,
+    pub run_id: Option<Uuid>,
+    pub scope: String,
+    pub kind: String,
+    pub summary: String,
+    pub body: Option<String>,
+    pub disposition: Option<String>,
+    pub evidence_refs: serde_json::Value,
+    pub related_task_ids: serde_json::Value,
+    pub tags: serde_json::Value,
+    pub by_role: String,
+    pub by_agent_id: Option<String>,
+    pub by_user_id: Option<i32>,
+    pub source_entry_id: Option<Uuid>,
+    pub created_at: OffsetDateTime,
+}
+
+pub const DISPATCH_NOTEBOOK_CONTEXT_MAX_ENTRIES: usize = 12;
+pub const DISPATCH_NOTEBOOK_CONTEXT_MAX_CHARS: usize = 6_000;
+
+/// Selects durable notebook knowledge worth carrying into a dispatched worker.
+///
+/// Decisions and follow-ups are always eligible. Other entry kinds must be
+/// explicitly tagged. Higher-value kinds win before recency, and the returned
+/// text is bounded for direct prompt inclusion.
+pub fn select_dispatch_notebook_context(entries: &[DocketEntryRow]) -> Vec<DocketEntryRow> {
+    let mut eligible = entries
+        .iter()
+        .filter(|entry| entry.scope == DocketEntryScope::JobNotebook.as_str())
+        .filter_map(|entry| {
+            let priority = match entry.kind.as_str() {
+                "decision" => 0,
+                "follow_up" => 1,
+                _ if entry.tags.as_array().is_some_and(|tags| !tags.is_empty()) => 2,
+                _ => return None,
+            };
+            Some((priority, entry))
+        })
+        .collect::<Vec<_>>();
+    eligible.sort_by(|(left_priority, left), (right_priority, right)| {
+        left_priority
+            .cmp(right_priority)
+            .then_with(|| right.created_at.cmp(&left.created_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let mut used_chars = 0;
+    eligible
+        .into_iter()
+        .take(DISPATCH_NOTEBOOK_CONTEXT_MAX_ENTRIES)
+        .filter_map(|(_, entry)| {
+            let entry_chars = entry.summary.chars().count()
+                + entry.body.as_deref().map_or(0, |body| body.chars().count());
+            if used_chars + entry_chars > DISPATCH_NOTEBOOK_CONTEXT_MAX_CHARS {
+                return None;
+            }
+            used_chars += entry_chars;
+            Some(entry.clone())
+        })
+        .collect()
+    // ponytail: fixed priority/count/text bounds avoid retrieval machinery;
+    // add relevance ranking only when real notebooks exceed these ceilings.
 }
 
 #[derive(Debug, Clone)]
@@ -1183,6 +1474,10 @@ pub struct DocketTaskProjection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocketValidationError {
     EmptyGoal,
+    MissingWorkSurface,
+    AmbiguousWorkSurfaceAssignments,
+    DuplicateWorkSurfaceAssignment { work_surface_id: Uuid },
+    MismatchedWorkSurfaceBinding,
     InvalidJobCreatorRole { role: String },
     EmptyCriterionDescription,
     EmptyTaskTitle,
@@ -1192,12 +1487,27 @@ pub enum DocketValidationError {
     TaskMissingAnchor,
     DuplicateTaskClientKey { client_key: String },
     MissingParentClientKey { client_key: String },
+    SupersedeRequiresPredecessor,
+    SupersedeRequiresMatchingActiveJob { job_id: Uuid },
+    ActiveJobOverlap { job_id: Uuid },
 }
 
 impl fmt::Display for DocketValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyGoal => f.write_str("Docket job goal must not be empty"),
+            Self::MissingWorkSurface => {
+                f.write_str("Docket work job requires a managed work surface")
+            }
+            Self::AmbiguousWorkSurfaceAssignments => f.write_str(
+                "Docket job must use either work_surface_id shorthand or work_surface_assignments, not both",
+            ),
+            Self::DuplicateWorkSurfaceAssignment { work_surface_id } => {
+                write!(f, "Docket job assigns work surface `{work_surface_id}` more than once")
+            }
+            Self::MismatchedWorkSurfaceBinding => f.write_str(
+                "Docket work job surface name and managed surface ID must be set together",
+            ),
             Self::InvalidJobCreatorRole { role } => {
                 write!(
                     f,
@@ -1227,6 +1537,21 @@ impl fmt::Display for DocketValidationError {
                     "Docket task parent_client_key `{client_key}` does not exist"
                 )
             }
+            Self::SupersedeRequiresPredecessor => {
+                f.write_str("Docket job overlap resolution `supersede` requires supersedes_job_id")
+            }
+            Self::SupersedeRequiresMatchingActiveJob { job_id } => {
+                write!(
+                    f,
+                    "Docket job `{job_id}` is not an active matching predecessor"
+                )
+            }
+            Self::ActiveJobOverlap { job_id } => {
+                write!(
+                    f,
+                    "an active Docket job already owns this goal and work surface: {job_id}"
+                )
+            }
         }
     }
 }
@@ -1239,7 +1564,56 @@ impl From<DocketValidationError> for DenError {
     }
 }
 
+pub fn derived_docket_job_status(projection: &DocketJobProjection) -> String {
+    let run_state = projection
+        .current_run
+        .as_ref()
+        .map(|run| run.state.as_str());
+    if let Some(intent) = projection.job.lifecycle_intent.as_deref() {
+        return intent.to_string();
+    }
+    if run_state == Some("stalled") {
+        return "stalled".to_string();
+    }
+    if !projection.active_task_ids.is_empty() {
+        return "running".to_string();
+    }
+    if run_state == Some("blocked")
+        || projection
+            .task_states
+            .iter()
+            .any(|state| state.status == "blocked")
+    {
+        return "blocked".to_string();
+    }
+    let tasks_complete = projection.tasks.iter().all(|task| {
+        projection
+            .task_states
+            .iter()
+            .find(|state| state.task_id == task.id)
+            .is_some_and(|state| matches!(state.status.as_str(), "done" | "cancelled"))
+    });
+    let criteria_complete = projection.criteria.iter().all(|criterion| {
+        projection
+            .criteria_states
+            .iter()
+            .find(|state| state.criterion_id == criterion.id)
+            .is_some_and(|state| matches!(state.status.as_str(), "met" | "waived"))
+    });
+    if tasks_complete
+        && criteria_complete
+        && (!projection.tasks.is_empty() || !projection.criteria.is_empty())
+    {
+        "completed".to_string()
+    } else if projection.tasks.is_empty() {
+        "draft".to_string()
+    } else {
+        "ready".to_string()
+    }
+}
+
 pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobStatusReport {
+    let job_status = derived_docket_job_status(projection);
     let mut task_counts = DocketCountByStatus {
         pending: 0,
         in_progress: 0,
@@ -1252,18 +1626,25 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
         .iter()
         .map(|state| (state.task_id, state.status.as_str()))
         .collect::<std::collections::HashMap<_, _>>();
-    let current_task = projection.tasks.iter().find(|task| {
-        task_states_by_id
-            .get(&task.id)
-            .is_some_and(|status| *status == "in_progress")
-    });
+    let active_task_ids = projection
+        .active_task_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    let current_task = projection
+        .tasks
+        .iter()
+        .find(|task| active_task_ids.contains(&task.id));
     for task in &projection.tasks {
+        if active_task_ids.contains(&task.id) {
+            task_counts.in_progress += 1;
+            continue;
+        }
         match task_states_by_id
             .get(&task.id)
             .copied()
             .unwrap_or("pending")
         {
-            "in_progress" => task_counts.in_progress += 1,
             "done" => task_counts.done += 1,
             "blocked" => task_counts.blocked += 1,
             "cancelled" => task_counts.cancelled += 1,
@@ -1300,7 +1681,9 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
     let criteria_complete = projection.criteria.is_empty()
         || criteria_counts.unmet == 0
             && criteria_counts.met + criteria_counts.waived == projection.criteria.len();
-    let next_action = if task_counts.blocked > 0 || projection.job.status == "blocked" {
+    let next_action = if job_status == "stalled" {
+        "resolve_stalled_work_run".to_string()
+    } else if task_counts.blocked > 0 || job_status == "blocked" {
         "resolve_blocked_task_or_criterion".to_string()
     } else if task_counts.in_progress > 0 {
         "continue_current_task".to_string()
@@ -1308,7 +1691,7 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
         "execute_job_to_select_next_task".to_string()
     } else if !criteria_complete {
         "evaluate_remaining_criteria".to_string()
-    } else if projection.job.status != "completed" {
+    } else if job_status != "completed" {
         "execute_job_to_complete".to_string()
     } else {
         "done".to_string()
@@ -1317,7 +1700,7 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
     DocketJobStatusReport {
         job_id: projection.job.id,
         run_id: projection.current_run.as_ref().map(|run| run.id),
-        job_status: projection.job.status.clone(),
+        job_status: job_status.to_string(),
         run_state: projection.current_run.as_ref().map(|run| run.state.clone()),
         current_task_id: current_task.map(|task| task.id),
         current_task_title: current_task.map(|task| task.title.clone()),
@@ -1330,11 +1713,7 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
 }
 
 pub fn active_task_parent_id(projection: &DocketJobProjection) -> Option<Uuid> {
-    let active_task_id = projection
-        .task_states
-        .iter()
-        .find(|state| state.status == "in_progress")?
-        .task_id;
+    let active_task_id = *projection.active_task_ids.first()?;
     projection
         .tasks
         .iter()
@@ -1362,7 +1741,13 @@ pub fn task_list_projection_from_docket_job(
     tasks.sort_by_key(|task| (task.sibling_order, task.created_at, task.id));
     let items = tasks
         .into_iter()
-        .map(|task| task_list_item_from_docket_task(task, states_by_task_id.get(&task.id).copied()))
+        .map(|task| {
+            task_list_item_from_docket_task(
+                task,
+                states_by_task_id.get(&task.id).copied(),
+                projection.active_task_ids.contains(&task.id),
+            )
+        })
         .collect::<Vec<_>>();
     let current_item = current_task_list_item(&items).cloned();
 
@@ -1370,15 +1755,10 @@ pub fn task_list_projection_from_docket_job(
         id: projection.job.id,
         bear_id: projection.job.bear_id,
         title: projection.job.goal.clone(),
-        summary: projection
-            .job
-            .work_surface_ref
-            .as_ref()
-            .map(|surface| format!("Docket job on work surface `{surface}`"))
-            .unwrap_or_else(|| "Docket job checkout".to_string()),
+        summary: "Docket work job checkout".to_string(),
         owner_profile: projection.job.created_by_role.clone(),
         visibility: projection.job.visibility.clone(),
-        status: projection.job.status.clone(),
+        status: derived_docket_job_status(projection),
         version: 1,
         source_ref: TaskListSourceRef::docket_job(
             projection.job.id.to_string(),
@@ -1402,8 +1782,44 @@ pub fn task_list_projection_from_session_tasks(
     session_anchor_id: Uuid,
     tasks: &[DocketTaskProjection],
 ) -> Option<TaskListProjection> {
+    task_list_projection_from_session_tasks_with_current_task(
+        bear_id,
+        owner_profile,
+        conversation_id,
+        session_anchor_id,
+        tasks,
+        None,
+    )
+}
+
+/// Builds a session task projection, preferring an explicitly selected task
+/// when it remains actionable in the anchored task tree.
+pub fn task_list_projection_from_session_tasks_with_current_task(
+    bear_id: Uuid,
+    owner_profile: BearProfile,
+    conversation_id: &str,
+    session_anchor_id: Uuid,
+    tasks: &[DocketTaskProjection],
+    selected_task_id: Option<Uuid>,
+) -> Option<TaskListProjection> {
     let first_task = tasks.first()?;
-    let mut sorted_tasks = tasks.iter().collect::<Vec<_>>();
+    let selected_parent_id = selected_task_id.and_then(|selected_task_id| {
+        tasks
+            .iter()
+            .find(|projection| projection.task.id == selected_task_id)
+            .and_then(|projection| projection.task.parent_task_id)
+    });
+    let mut sorted_tasks = tasks
+        .iter()
+        .filter(|projection| {
+            // ACP's agent plan is scoped to the selected task's current level:
+            // child siblings share a parent; a root task stays a one-item plan.
+            selected_task_id.is_none()
+                || selected_parent_id
+                    .is_some_and(|parent_id| projection.task.parent_task_id == Some(parent_id))
+                || selected_task_id == Some(projection.task.id)
+        })
+        .collect::<Vec<_>>();
     // See task_list_projection_from_docket_job: ACP plan projection must be
     // deterministic even if the caller hands us an unordered task slice.
     sorted_tasks.sort_by_key(|projection| {
@@ -1416,10 +1832,21 @@ pub fn task_list_projection_from_session_tasks(
     let items = sorted_tasks
         .into_iter()
         .map(|projection| {
-            task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref())
+            task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref(), false)
         })
         .collect::<Vec<_>>();
-    let current_item = current_task_list_item(&items).cloned();
+    let current_item = selected_task_id
+        .and_then(|task_id| {
+            items.iter().find(|item| {
+                item.id == task_id.to_string()
+                    && matches!(
+                        item.status,
+                        TaskListItemStatus::Pending | TaskListItemStatus::InProgress
+                    )
+            })
+        })
+        .cloned()
+        .or_else(|| current_task_list_item(&items).cloned());
     let status = if items
         .iter()
         .all(|item| item.status == TaskListItemStatus::Completed)
@@ -1534,7 +1961,7 @@ pub fn docket_task_status_from_task_list_item_status(
 ) -> DocketTaskStatus {
     match status {
         TaskListItemStatus::Pending => DocketTaskStatus::Pending,
-        TaskListItemStatus::InProgress => DocketTaskStatus::InProgress,
+        TaskListItemStatus::InProgress => DocketTaskStatus::Pending,
         TaskListItemStatus::Blocked => DocketTaskStatus::Blocked,
         TaskListItemStatus::Completed => DocketTaskStatus::Done,
         TaskListItemStatus::Cancelled => DocketTaskStatus::Cancelled,
@@ -1544,10 +1971,15 @@ pub fn docket_task_status_from_task_list_item_status(
 fn task_list_item_from_docket_task(
     task: &DocketTaskRow,
     state: Option<&DocketTaskRunStateRow>,
+    is_executing: bool,
 ) -> TaskListItem {
-    let status = state
-        .map(|state| task_list_item_status_from_docket_task_status(&state.status))
-        .unwrap_or(TaskListItemStatus::Pending);
+    let status = if is_executing {
+        TaskListItemStatus::InProgress
+    } else {
+        state
+            .map(|state| task_list_item_status_from_docket_task_status(&state.status))
+            .unwrap_or(TaskListItemStatus::Pending)
+    };
     TaskListItem {
         id: task.id.to_string(),
         title: task.title.clone(),
@@ -1591,6 +2023,20 @@ pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), Docket
     if create.goal.trim().is_empty() {
         return Err(DocketValidationError::EmptyGoal);
     }
+    if create.work_surface_id.is_some() && !create.work_surface_assignments.is_empty() {
+        return Err(DocketValidationError::AmbiguousWorkSurfaceAssignments);
+    }
+    if create.work_surface_id.is_none() && create.work_surface_assignments.is_empty() {
+        return Err(DocketValidationError::MissingWorkSurface);
+    }
+    let mut surface_ids = std::collections::HashSet::new();
+    for assignment in &create.work_surface_assignments {
+        if !surface_ids.insert(assignment.work_surface_id) {
+            return Err(DocketValidationError::DuplicateWorkSurfaceAssignment {
+                work_surface_id: assignment.work_surface_id,
+            });
+        }
+    }
     if !matches!(create.created_by_role.trim(), "chat" | "pair" | "ui") {
         return Err(DocketValidationError::InvalidJobCreatorRole {
             role: create.created_by_role.clone(),
@@ -1602,6 +2048,23 @@ pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), Docket
         }
     }
     validate_docket_task_inputs(&create.tasks)
+}
+
+pub fn docket_job_surface_assignments(
+    create: &DocketJobCreate,
+) -> Vec<DocketJobSurfaceAssignmentInput> {
+    if create.work_surface_assignments.is_empty() {
+        create
+            .work_surface_id
+            .map(|work_surface_id| DocketJobSurfaceAssignmentInput {
+                work_surface_id,
+                mutation_policy: MutationPolicy::Required,
+            })
+            .into_iter()
+            .collect()
+    } else {
+        create.work_surface_assignments.clone()
+    }
 }
 
 pub fn normalize_completion_criteria(criteria: &[String]) -> Vec<String> {
@@ -1807,6 +2270,74 @@ mod tests {
             blocked_reason: None,
             source_refs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn dispatch_notebook_context_is_explicit_prioritized_and_bounded() {
+        fn entry(
+            kind: &str,
+            summary: &str,
+            tags: serde_json::Value,
+            seconds: i64,
+        ) -> DocketEntryRow {
+            DocketEntryRow {
+                id: Uuid::new_v4(),
+                job_id: Some(Uuid::nil()),
+                task_id: Some(Uuid::nil()),
+                run_id: None,
+                scope: "job_notebook".to_string(),
+                kind: kind.to_string(),
+                summary: summary.to_string(),
+                body: None,
+                disposition: None,
+                evidence_refs: serde_json::json!([]),
+                related_task_ids: serde_json::json!([]),
+                tags,
+                by_role: "pair".to_string(),
+                by_agent_id: None,
+                by_user_id: None,
+                source_entry_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(seconds),
+            }
+        }
+
+        let entries = vec![
+            entry("finding", "ignored", serde_json::json!([]), 4),
+            entry("finding", "tagged", serde_json::json!(["api"]), 3),
+            entry("follow_up", "follow", serde_json::json!([]), 2),
+            entry("decision", "decision", serde_json::json!([]), 1),
+        ];
+
+        let selected = select_dispatch_notebook_context(&entries);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|entry| entry.summary.as_str())
+                .collect::<Vec<_>>(),
+            vec!["decision", "follow", "tagged"]
+        );
+        assert!(selected.len() <= DISPATCH_NOTEBOOK_CONTEXT_MAX_ENTRIES);
+    }
+
+    #[test]
+    fn outcome_dispositions_match_terminal_lifecycle_states() {
+        use DocketOutcomeDisposition as Outcome;
+        use DocketTaskStatus as Status;
+
+        for disposition in [Outcome::Completed, Outcome::NoChange, Outcome::Delegated] {
+            assert!(disposition.is_valid_for(Status::Done));
+        }
+        for disposition in [Outcome::Blocked, Outcome::Failed] {
+            assert!(disposition.is_valid_for(Status::Blocked));
+        }
+        assert!(Outcome::Cancelled.is_valid_for(Status::Cancelled));
+
+        for status in [Status::Pending, Status::Blocked, Status::Cancelled] {
+            assert!(!Outcome::Completed.is_valid_for(status));
+        }
+        assert!(!Outcome::Failed.is_valid_for(Status::Done));
+        assert!(!Outcome::NoChange.is_valid_for(Status::Blocked));
+        assert!(!Outcome::Delegated.is_valid_for(Status::Cancelled));
     }
 
     #[test]
@@ -2032,6 +2563,9 @@ mod tests {
             completion_criteria: Json(vec!["Plan is visible".to_string()]),
             difficulty: None,
             effort_hint: None,
+            routing_strategy: "auto".to_string(),
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: None,
             created_by_agent_id: None,
@@ -2105,20 +2639,155 @@ mod tests {
     }
 
     #[test]
+    fn session_task_projection_prefers_an_explicit_actionable_task() {
+        let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
+        let first_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let selected_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+        let task = |id, order, title: &str| DocketTaskProjection {
+            task: DocketTaskRow {
+                id,
+                bear_id,
+                job_id: None,
+                session_anchor_id: Some(session_anchor_id),
+                parent_task_id: None,
+                sibling_order: order,
+                kind: "execution".to_string(),
+                scope: "run".to_string(),
+                title: title.to_string(),
+                body: String::new(),
+                completion_criteria: Json(vec![]),
+                difficulty: None,
+                effort_hint: None,
+                routing_strategy: "auto".to_string(),
+                expected_context_size: None,
+                result_rollup_policy: None,
+                created_by_role: "pair".to_string(),
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                created_in_run_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            run_state: None,
+        };
+
+        let projection = task_list_projection_from_session_tasks_with_current_task(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[task(first_id, 0, "first"), task(selected_id, 1, "selected")],
+            Some(selected_id),
+        )
+        .expect("session projection");
+
+        assert_eq!(projection.current_item.unwrap().id, selected_id.to_string());
+        assert_eq!(projection.items.len(), 1);
+        assert_eq!(projection.items[0].id, selected_id.to_string());
+    }
+
+    #[test]
+    fn selected_session_child_projects_its_siblings_in_order() {
+        let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
+        let parent_id = Uuid::parse_str("00000000-0000-0000-0000-000000000010").unwrap();
+        let first_id = Uuid::parse_str("00000000-0000-0000-0000-000000000011").unwrap();
+        let selected_id = Uuid::parse_str("00000000-0000-0000-0000-000000000012").unwrap();
+        let task = |id, parent_task_id, order, title: &str| DocketTaskProjection {
+            task: DocketTaskRow {
+                id,
+                bear_id,
+                job_id: None,
+                session_anchor_id: Some(session_anchor_id),
+                parent_task_id,
+                sibling_order: order,
+                kind: "execution".to_string(),
+                scope: "run".to_string(),
+                title: title.to_string(),
+                body: String::new(),
+                completion_criteria: Json(vec![]),
+                difficulty: None,
+                effort_hint: None,
+                routing_strategy: "auto".to_string(),
+                expected_context_size: None,
+                result_rollup_policy: None,
+                created_by_role: "pair".to_string(),
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                created_in_run_id: None,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                updated_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            run_state: None,
+        };
+
+        let projection = task_list_projection_from_session_tasks_with_current_task(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[
+                task(parent_id, None, 0, "parent"),
+                task(selected_id, Some(parent_id), 1, "selected"),
+                task(first_id, Some(parent_id), 0, "first"),
+            ],
+            Some(selected_id),
+        )
+        .expect("session projection");
+
+        assert_eq!(projection.current_item.unwrap().id, selected_id.to_string());
+        assert_eq!(
+            projection
+                .items
+                .iter()
+                .map(|item| item.id.clone())
+                .collect::<Vec<_>>(),
+            vec![first_id.to_string(), selected_id.to_string()]
+        );
+    }
+
+    #[test]
+    fn new_jobs_default_to_one_coherent_publish() {
+        assert_eq!(
+            DocketCommitPolicy::for_new_job(None),
+            DocketCommitPolicy::PerJob
+        );
+        assert_eq!(
+            DocketCommitPolicy::for_new_job(Some(DocketCommitPolicy::None)),
+            DocketCommitPolicy::None
+        );
+    }
+
+    #[test]
+    fn docket_job_status_serializes_archived() {
+        assert_eq!(DocketJobStatus::Archived.as_str(), "archived");
+        assert_eq!(
+            serde_json::to_string(&DocketJobStatus::Archived).unwrap(),
+            "\"archived\""
+        );
+        assert_eq!(
+            serde_json::from_str::<DocketJobStatus>("\"archived\"").unwrap(),
+            DocketJobStatus::Archived
+        );
+    }
+
+    #[test]
     fn validates_docket_job_created_by_human_surface() {
         let create = DocketJobCreate {
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
             created_by_user_id: 42,
             created_by_role: "work".to_string(),
             goal: "Ship Docket".to_string(),
-            work_surface_ref: None,
-            work_surface_id: None,
-            commit_policy: Some(DocketCommitPolicy::ProposeOnly),
+            work_surface_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap()),
+            work_surface_assignments: vec![],
+            commit_policy: Some(DocketCommitPolicy::None),
             work_branch: None,
-            status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::BearVisible,
             source_conversation_id: None,
             objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
             criteria: Vec::new(),
             tasks: Vec::new(),
         };
@@ -2138,20 +2807,21 @@ mod tests {
             created_by_user_id: 42,
             created_by_role: "pair".to_string(),
             goal: "Ship Docket".to_string(),
-            work_surface_ref: None,
-            work_surface_id: None,
+            work_surface_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap()),
+            work_surface_assignments: vec![],
             commit_policy: None,
             work_branch: None,
-            status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::BearVisible,
             source_conversation_id: None,
             objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
             criteria: Vec::new(),
             tasks: vec![DocketTaskInput {
                 client_key: Some("child".to_string()),
                 parent_client_key: Some("missing-parent".to_string()),
                 parent_task_id: None,
-                sibling_order: 0,
+                sibling_order: Some(0),
                 kind: DocketTaskKind::Execution,
                 scope: DocketTaskScope::Template,
                 title: "Implement child".to_string(),
@@ -2159,6 +2829,9 @@ mod tests {
                 completion_criteria: vec!["Child task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Moderate),
                 effort_hint: Some(DocketEffortHint::Medium),
+                routing_strategy: RoutingStrategy::Auto,
+                expected_context_size: None,
+                result_rollup_policy: None,
             }],
         };
 
@@ -2178,6 +2851,7 @@ mod tests {
             session_anchor_id: None,
             parent_task_id: None,
             sibling_order: 0,
+            placement: None,
             kind: DocketTaskKind::Investigation,
             scope: DocketTaskScope::Run,
             title: "Investigate".to_string(),
@@ -2185,6 +2859,9 @@ mod tests {
             completion_criteria: Vec::new(),
             difficulty: Some(DocketTaskDifficulty::Unknown),
             effort_hint: None,
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(42),
             created_by_agent_id: None,
@@ -2205,6 +2882,7 @@ mod tests {
             session_anchor_id: None,
             parent_task_id: None,
             sibling_order: 0,
+            placement: None,
             kind: DocketTaskKind::Investigation,
             scope: DocketTaskScope::Run,
             title: "Investigate".to_string(),
@@ -2212,6 +2890,9 @@ mod tests {
             completion_criteria: vec!["Relevant facts are identified".to_string()],
             difficulty: Some(DocketTaskDifficulty::Unknown),
             effort_hint: None,
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(42),
             created_by_agent_id: None,
@@ -2235,14 +2916,15 @@ mod tests {
                 created_by_user_id: 42,
                 created_by_role: "pair".to_string(),
                 goal: "Ship Docket".to_string(),
-                work_surface_ref: Some("zed".to_string()),
                 work_surface_id: None,
-                commit_policy: Some("propose_only".to_string()),
+                commit_policy: Some("none".to_string()),
                 work_branch: None,
                 status: "running".to_string(),
+                lifecycle_intent: None,
                 visibility: "bear_visible".to_string(),
                 source_conversation_id: Some("conversation-1".to_string()),
                 objective_kind: Some("conversation_task_list".to_string()),
+                supersedes_job_id: None,
                 current_run_id: Some(run_id),
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
@@ -2284,6 +2966,9 @@ mod tests {
                 completion_criteria: Json(vec!["Root work done".to_string()]),
                 difficulty: None,
                 effort_hint: None,
+                routing_strategy: "auto".to_string(),
+                expected_context_size: None,
+                result_rollup_policy: None,
                 created_by_role: "pair".to_string(),
                 created_by_user_id: Some(42),
                 created_by_agent_id: None,
@@ -2301,6 +2986,7 @@ mod tests {
                 finished_at: None,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             }],
+            active_task_ids: vec![root_task_id],
         }
     }
 
@@ -2321,6 +3007,20 @@ mod tests {
     }
 
     #[test]
+    fn derived_status_prefers_stalled_run_over_stale_job_status() {
+        let mut projection = docket_projection_fixture();
+        projection.job.status = "ready".to_string();
+        projection.current_run.as_mut().unwrap().state = "stalled".to_string();
+
+        let report = docket_job_status_report(&projection);
+        let task_list = task_list_projection_from_docket_job(&projection, None);
+
+        assert_eq!(report.job_status, "stalled");
+        assert_eq!(report.next_action, "resolve_stalled_work_run");
+        assert_eq!(task_list.status, "stalled");
+    }
+
+    #[test]
     fn task_list_projection_from_docket_job_projects_conversation_objective_level() {
         let job_id = Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap();
         let root_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000888").unwrap();
@@ -2334,14 +3034,15 @@ mod tests {
                 created_by_user_id: 42,
                 created_by_role: "pair".to_string(),
                 goal: "Ship Docket".to_string(),
-                work_surface_ref: Some("zed".to_string()),
                 work_surface_id: None,
-                commit_policy: Some("propose_only".to_string()),
+                commit_policy: Some("none".to_string()),
                 work_branch: None,
                 status: "running".to_string(),
+                lifecycle_intent: None,
                 visibility: "bear_visible".to_string(),
                 source_conversation_id: Some("conversation-1".to_string()),
                 objective_kind: Some("conversation_task_list".to_string()),
+                supersedes_job_id: None,
                 current_run_id: Some(run_id),
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
@@ -2363,6 +3064,9 @@ mod tests {
                     completion_criteria: sqlx::types::Json(vec!["Root work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
+                    routing_strategy: "auto".to_string(),
+                    expected_context_size: None,
+                    result_rollup_policy: None,
                     created_by_role: "pair".to_string(),
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
@@ -2384,6 +3088,9 @@ mod tests {
                     completion_criteria: sqlx::types::Json(vec!["Peer work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
+                    routing_strategy: "auto".to_string(),
+                    expected_context_size: None,
+                    result_rollup_policy: None,
                     created_by_role: "pair".to_string(),
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
@@ -2405,6 +3112,9 @@ mod tests {
                     completion_criteria: sqlx::types::Json(vec!["Child work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
+                    routing_strategy: "auto".to_string(),
+                    expected_context_size: None,
+                    result_rollup_policy: None,
                     created_by_role: "pair".to_string(),
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
@@ -2424,6 +3134,7 @@ mod tests {
                 finished_at: None,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             }],
+            active_task_ids: vec![root_task_id],
         };
 
         let root_checkout = task_list_projection_from_docket_job(&projection, None);

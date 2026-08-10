@@ -106,6 +106,7 @@ mod tests {
             conversation_selection: None,
             runtime_target: None,
             workspace_roots: Vec::new(),
+            session_capabilities: Vec::new(),
             session_policy: None,
             activity: None,
             runtime: None,

@@ -188,6 +188,8 @@ Budgets are in **characters** (Den has no model tokenizer). Per-tier quotas appl
 
 Assembly stops when the global cap is reached. Emit a `key_memory_projection` diagnostic (included paths/ids, omitted-by-budget, omitted-because-no-surface) alongside prompt-memory diagnostics where practical.
 
+**Char caps are selection heuristics, not the budget authority.** The caps above bound what the projector *picks* — cheap and deterministic, with no tokenizer in the memory hot path. Authoritative token accounting happens once, on the final assembled request, under [ADR-0047](../decisions/adr-0047-context-window-budget-and-token-estimation.md): key memory projection and derived recall are named components in the budget report's per-component attribution, and Den calibrates chars→tokens per model family from Bifrost-observed prompt usage (correction ratios held in the model registry, per ADR-0047 §7). Char caps should be re-tuned from those measured ratios rather than treated as token estimates themselves.
+
 #### v1 supersede policy
 
 **Latest head only** — no short history in proactive projection.

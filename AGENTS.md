@@ -48,6 +48,13 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 ./scripts/smoke-stack.sh
 ```
 
+Run SQLx commands through `scripts/sqlx.sh`. It starts and verifies bundled Postgres without building Den, makes the Compose service reachable from this workspace, changes to the Den Cargo workspace, and supplies the matching `DATABASE_URL` to Cargo:
+
+```bash
+./scripts/sqlx.sh migrate run
+./scripts/sqlx.sh prepare --workspace -- --all-targets
+```
+
 ## Dependency Hygiene
 
 - Before adding a dependency, check whether an existing crate in the workspace already solves the problem. Prefer reusing existing dependencies over adding parallel libraries for the same concern.
@@ -92,6 +99,10 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
   - Do not route Den-hosted tools to `bear-armature` for local execution.
 - If adding, renaming, or aliasing tools, update descriptors/resolvers first. Avoid scattered string `match` arms or hardcoded allowlists except at narrow routing boundaries.
 
+## Single Source of Truth for State
+
+- Model each piece of state once, with one canonical owner. Other layers may derive, project, or cache it, but must not keep independently writable copies that can drift; update the canonical state and regenerate derived views.
+
 ## Typed Boundaries and String Hygiene
 
 - Avoid "stringy" protocol designs. Do not embed control data in transcript text with XML/Markdown/JSON blocks or sentinel strings; use typed BearWire/ACP events, message parts, or explicit fields instead.
@@ -106,6 +117,7 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 - `pair` can learn things useful to `work`, but `work` must not read raw `pair/`. The intended path is `pair/` → pair reflection/review request → `curate` → `core`/archive/Cabinet/task context → `work`.
 - Human identity for ACP `pair` comes from the ACP token. Use `session_info.human` as trusted identity; do not infer the human from chat text when it conflicts with Den identity.
 - `curate` owns cross-role memory curation and `core/` cleanliness. Human UI should make its activity visible and overrideable, not require approval for routine inner-loop memory work.
+- Write topology (ADR-0031 amendment): exactly one `MemoryStoreManager` per process. Production code receives clones of the instance built at server startup (threaded via `DenState`/runtime context) — never call `MemoryStoreManager::new` outside the sanctioned sites (startup, short-lived CLIs, tests). CI enforces this via `scripts/check-memory-write-topology.sh`.
 
 ## Conversation History and Transcript Projection
 

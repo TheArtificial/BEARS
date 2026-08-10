@@ -1,6 +1,6 @@
 //! `den import-legacy-memory` CLI: optional archived bundle import into per-Bear SQLite.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context};
 use uuid::Uuid;
@@ -105,9 +105,40 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<Option<ImportLegacyMemoryAr
     }))
 }
 
+/// WAL/SHM sidecar files that suggest another process has (or recently had)
+/// the Bear's SQLite database open.
+fn live_database_sidecars(data_dir: &Path, bear_id: Uuid) -> Vec<PathBuf> {
+    ["sqlite-wal", "sqlite-shm"]
+        .iter()
+        .map(|suffix| data_dir.join(format!("{bear_id}.{suffix}")))
+        .filter(|path| path.exists())
+        .collect()
+}
+
+fn warn_if_database_may_be_live(config: &Config, bear_id: Uuid) {
+    let sidecars = live_database_sidecars(Path::new(&config.bear_sqlite_data_dir), bear_id);
+    if sidecars.is_empty() {
+        return;
+    }
+    eprintln!("================================================================");
+    eprintln!("WARNING: SQLite WAL/SHM sidecar file(s) exist for this Bear:");
+    for path in &sidecars {
+        eprintln!("  {}", path.display());
+    }
+    eprintln!("A live `den` runtime may own this database. ADR-0031 write");
+    eprintln!("topology allows exactly one owning process per Bear database:");
+    eprintln!("stop the runtime before importing. (Sidecars can also linger");
+    eprintln!("after an unclean shutdown; proceeding with the import.)");
+    eprintln!("================================================================");
+}
+
 pub async fn run_import_legacy_memory(args: ImportLegacyMemoryArgs) -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let config = Config::load();
+    warn_if_database_may_be_live(&config, args.bear_id);
+    // Sanctioned construction: `den import-legacy-memory` is a short-lived CLI
+    // process (ADR-0031 write topology: one owning process per Bear database —
+    // the target Bear's runtime must be stopped while importing).
     let stores = den_memory::MemoryStoreManager::new(&config);
     let store = stores
         .store_for_bear(args.bear_id)
@@ -205,5 +236,26 @@ mod tests {
         );
         assert!(parsed.include_workflow_artifacts);
         assert_eq!(parsed.report_path, PathBuf::from("report.json"));
+    }
+
+    #[test]
+    fn detects_wal_and_shm_sidecars() {
+        let bear_id = Uuid::new_v4();
+        let data_dir = PathBuf::from(format!("/tmp/bears-import-sidecars-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).expect("create data dir");
+
+        assert!(live_database_sidecars(&data_dir, bear_id).is_empty());
+
+        std::fs::write(data_dir.join(format!("{bear_id}.sqlite-wal")), b"").expect("write wal");
+        assert_eq!(live_database_sidecars(&data_dir, bear_id).len(), 1);
+
+        std::fs::write(data_dir.join(format!("{bear_id}.sqlite-shm")), b"").expect("write shm");
+        let sidecars = live_database_sidecars(&data_dir, bear_id);
+        assert_eq!(sidecars.len(), 2);
+
+        // Sidecars for a different Bear are ignored.
+        assert!(live_database_sidecars(&data_dir, Uuid::new_v4()).is_empty());
+
+        std::fs::remove_dir_all(&data_dir).expect("clean up data dir");
     }
 }

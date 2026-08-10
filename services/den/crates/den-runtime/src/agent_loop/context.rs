@@ -364,7 +364,8 @@ fn backfill_incomplete_tool_results(
         false,
     );
     for (tool_call_id, tool_name) in orphans {
-        tracing::info!(
+        tracing::warn!(
+            event = "orphan_tool_call_backfill",
             %tool_call_id,
             %tool_name,
             %conversation_id,

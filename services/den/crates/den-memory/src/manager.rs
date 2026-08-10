@@ -18,6 +18,12 @@ pub struct MemoryStoreManager {
 }
 
 impl MemoryStoreManager {
+    /// Construct the process-wide manager. Per the ADR-0031 write-topology
+    /// amendment there must be exactly **one** instance per owning process
+    /// (cloning shares the pool map): production code receives a clone of the
+    /// instance built at process startup rather than calling `new` again.
+    /// Sanctioned exceptions: short-lived CLI subcommands (`reindex`,
+    /// `import-legacy-memory`, `seed`) and test code.
     pub fn new(config: &Config) -> Self {
         Self {
             data_dir: PathBuf::from(&config.bear_sqlite_data_dir),

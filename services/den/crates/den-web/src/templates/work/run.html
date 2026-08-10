@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Work run{% endblock %}
+{% block title %}Docket run{% endblock %}
 {% block head %}
 {% if run.is_active %}<meta http-equiv="refresh" content="10" />{% endif %}
 {% endblock %}
 {% block content %}
-<p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_route_id }}" title="{{ run.job_title }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code></a></p>
-<h1>Work Run <code class="entity-reference-id">{{ run.display_id }}</code></h1>
+<p><a href="/bear/{{ bear_slug }}/jobs">← Docket</a> · <a href="/bear/{{ bear_slug }}/jobs/{{ run.job_route_id }}" title="{{ run.job_title }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code></a></p>
+<h1>Docket run <code class="entity-reference-id">{{ run.display_id }}</code></h1>
 <h2>{{ run.title }}</h2>
 {% if conversation_id %}
 <p><a href="/bear/{{ run.bear_slug | urlencode }}/?conversation_id={{ conversation_id | urlencode }}">Open headless conversation transcript →</a></p>
@@ -20,15 +20,21 @@
                 {{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}
                 {% if run.queue_position %}
                 — position {{ run.queue_position }} in the job's queue{% if run.waiting_on_run_id %},
-                waiting on run <a href="/work/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}
+                waiting on run <a href="/bear/{{ bear_slug }}/jobs/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}
                 (runs within a job execute one at a time)
                 {% endif %}
             </td></tr>
             <tr><th>Attempt</th><td>{{ run.attempt }}</td></tr>
-            <tr><th>Root / ref</th><td>{% if work_surface_link and run.root == work_surface_link.name %}<a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ run.root }}</code></a>{% else %}{{ run.root or "—" }}{% endif %} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
+            <tr><th>Work surface / ref</th><td>{% if work_surface_link %}<a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ work_surface_link.name }}</code></a>{% else %}—{% endif %} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
             <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>
             <tr><th>Sandbox</th><td>{{ run.sandbox_type or "—" }}</td></tr>
             <tr><th>Sandbox strength</th><td>{{ run.sandbox_strength or "—" }}</td></tr>
+            <tr><th>Execution target</th><td>{{ run.execution_target }}</td></tr>
+            {% if run.attached_client_session_id %}<tr><th>Attached session</th><td><code>{{ run.attached_client_session_id }}</code></td></tr>{% endif %}
+            {% if run.attachment_state %}<tr><th>Attachment state</th><td>{{ run.attachment_state }}</td></tr>{% endif %}
+            {% if run.attachment_warning %}<tr><th>Worktree warning</th><td role="status">⚠ {{ run.attachment_warning }}</td></tr>{% endif %}
+            {% if run.disconnected_at %}<tr><th>Disconnected</th><td>{{ run.disconnected_at }}</td></tr>{% endif %}
+            {% if run.disconnect_deadline_at %}<tr><th>Reconnect deadline</th><td>{{ run.disconnect_deadline_at }}</td></tr>{% endif %}
             <tr><th>Queued</th><td>{{ run.queued_at }}</td></tr>
             <tr><th>Started</th><td>{{ run.started_at or "—" }}</td></tr>
             <tr><th>Finished</th><td>{{ run.finished_at or "—" }}</td></tr>
@@ -37,14 +43,121 @@
             {% if run.cleanup_failed %}<tr><th>Cleanup</th><td>⚠ failed — sandbox resources may need manual removal</td></tr>{% endif %}
         </tbody>
     </table>
+    {% if can_pause %}
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/runs/{{ run.id }}/pause">
+        <button type="submit">Pause at boundary</button>
+    </form>
+    {% elif can_resume %}
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/runs/{{ run.id }}/resume">
+        <button type="submit">Resume run</button>
+    </form>
+    {% endif %}
     {% if run.is_active %}
-    <form method="post" action="/work/runs/{{ run.id }}/cancel">
-        <button type="submit">Cancel run</button>
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/runs/{{ run.id }}/cancel">
+        <button type="submit">Stop run</button>
     </form>
     {% elif can_retry %}
-    <form method="post" action="/work/runs/{{ run.id }}/retry">
-        <button type="submit">Retry (new attempt)</button>
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/runs/{{ run.id }}/retry">
+        <button type="submit">{% if run.execution_target == "attached_armature" %}Recover on attached armature{% else %}Retry (new attempt){% endif %}</button>
     </form>
+    {% endif %}
+</section>
+
+{% if watchdog_failure %}
+<section aria-labelledby="watchdog-failure-heading">
+    <h2 id="watchdog-failure-heading">What went wrong</h2>
+    <p role="status"><strong>The model continuation stopped responding before the work run finished.</strong> Den ended the stalled continuation rather than leaving the run active indefinitely.</p>
+    {% if watchdog_failure.task_title %}
+    <p><strong>Affected task:</strong> {{ watchdog_failure.task_title }} ({{ watchdog_failure.task_status }}).</p>
+    {% else %}
+    <p><strong>Affected task:</strong> Task attribution was not recorded before the continuation stalled.</p>
+    {% endif %}
+    <p><strong>Next step:</strong> Retry this run. If it recurs, use the safe evidence below and the run output to investigate the provider/runtime boundary.</p>
+    <details>
+        <summary>Safe watchdog evidence</summary>
+        <dl>
+            {% if watchdog_failure.tool_name %}<dt>Last requested tool</dt><dd><code>{{ watchdog_failure.tool_name }}</code></dd>{% endif %}
+            {% if watchdog_failure.request_class %}<dt>Request class</dt><dd>{{ watchdog_failure.request_class }}</dd>{% endif %}
+            {% if watchdog_failure.runtime_event_count is not none %}<dt>Runtime events before stall</dt><dd>{{ watchdog_failure.runtime_event_count }}</dd>{% endif %}
+            {% if watchdog_failure.idle_ms is not none %}<dt>Idle after last event</dt><dd>{{ watchdog_failure.idle_ms }} ms</dd>{% endif %}
+        </dl>
+        <p><small>Tool arguments and raw provider payloads are intentionally not retained here.</small></p>
+    </details>
+</section>
+{% endif %}
+
+<section aria-labelledby="run-activity-heading">
+    <h2 id="run-activity-heading">Activity</h2>
+    {% if activity %}
+    <ol>
+        {% for entry in activity %}
+        <li>
+            <strong>{{ entry.kind }}</strong>
+            {% if entry.tool_call_id %}<code>{{ entry.tool_call_id }}</code>{% endif %}
+            <p>{{ entry.text }}{% if entry.truncated %} <em>[truncated]</em>{% endif %}</p>
+            <small>events {{ entry.first_sequence }}{% if entry.last_sequence != entry.first_sequence %}–{{ entry.last_sequence }}{% endif %}</small>
+        </li>
+        {% endfor %}
+    </ol>
+    {% elif conversation_id %}
+    <p>No canonical activity events were recorded for this older run. The legacy conversation remains available above.</p>
+    {% else %}
+    <p>No activity has been recorded yet.</p>
+    {% endif %}
+</section>
+
+<section aria-labelledby="run-diagnostics-heading">
+    <h2 id="run-diagnostics-heading">Run diagnostics</h2>
+    <p role="status"><strong>{{ canonical_diagnostics.run_state }}</strong> — {{ canonical_diagnostics.explanation }}</p>
+    <dl>
+        <dt>Job state</dt><dd>{{ canonical_diagnostics.job_status }}</dd>
+        <dt>Run state</dt><dd>{{ canonical_diagnostics.run_state }}</dd>
+        <dt>Current execution task</dt>
+        <dd>{% if canonical_diagnostics.current_task %}{{ canonical_diagnostics.current_task.title }} ({{ canonical_diagnostics.current_task.status }}){% else %}—{% endif %}</dd>
+        {% if canonical_diagnostics.attention %}
+        <dt>Attention</dt><dd>{{ canonical_diagnostics.attention.cause }}</dd>
+        <dt>Recovery</dt><dd>{{ canonical_diagnostics.attention.recovery_action }}</dd>
+        {% endif %}
+        {% if canonical_diagnostics.attachment %}
+        <dt>Execution target</dt><dd>{{ canonical_diagnostics.attachment.execution_target }}</dd>
+        {% if canonical_diagnostics.attachment.state %}<dt>Attachment</dt><dd>{{ canonical_diagnostics.attachment.state }}</dd>{% endif %}
+        {% if canonical_diagnostics.attachment.warning %}<dt>Warning</dt><dd>⚠ {{ canonical_diagnostics.attachment.warning }}</dd>{% endif %}
+        {% if canonical_diagnostics.attachment.disconnected_at %}<dt>Disconnected</dt><dd>{{ canonical_diagnostics.attachment.disconnected_at }}</dd>{% endif %}
+        {% if canonical_diagnostics.attachment.deadline_at %}<dt>Deadline</dt><dd>{{ canonical_diagnostics.attachment.deadline_at }}</dd>{% endif %}
+        {% if canonical_diagnostics.attachment.source_work_run_id %}<dt>Recovered from</dt><dd><code>{{ canonical_diagnostics.attachment.source_work_run_id }}</code></dd>{% endif %}
+        {% if canonical_diagnostics.attachment.recovery_eligible %}<dt>Recovery</dt><dd>Reconnect the armature, then use the recovery action above.</dd>{% endif %}
+        {% endif %}
+    </dl>
+
+    {% if canonical_diagnostics.rollups %}
+    <h3>Parent-visible rollups</h3>
+    <ol>
+        {% for rollup in canonical_diagnostics.rollups %}
+        <li><p>{{ rollup.summary }}</p><details><summary>Evidence</summary><pre><code>{{ rollup.evidence }}</code></pre></details></li>
+        {% endfor %}
+    </ol>
+    {% endif %}
+
+    <h3>Timeline</h3>
+    {% if canonical_diagnostics.timeline %}
+    <ol>
+        {% for event in canonical_diagnostics.timeline %}
+        <li>
+            <strong>{{ event.kind }}</strong> — {{ event.summary }}
+            {% if event.outcome %}
+            <dl>
+                <dt>Outcome</dt><dd>{{ event.outcome.outcome }}</dd>
+                {% if event.outcome.cause %}<dt>Cause</dt><dd>{{ event.outcome.cause }}</dd>{% endif %}
+                {% if event.outcome.disposition %}<dt>Disposition</dt><dd>{{ event.outcome.disposition }}</dd>{% endif %}
+                {% if event.outcome.recovery_action %}<dt>Recovery</dt><dd>{{ event.outcome.recovery_action }}</dd>{% endif %}
+                {% if event.outcome.evidence %}<dt>Evidence</dt><dd><pre><code>{{ event.outcome.evidence }}</code></pre></dd>{% endif %}
+            </dl>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p>No routing or attempt events have been recorded yet.</p>
     {% endif %}
 </section>
 

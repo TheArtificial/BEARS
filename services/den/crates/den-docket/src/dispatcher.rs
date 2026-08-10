@@ -15,7 +15,7 @@ use crate::model::{
     DocketTaskDefinitionPatch, DocketTaskListFilter, DocketTaskProjection,
     DocketTaskRunStateUpdate, DocketTaskStatus, DocketTaskUpdate,
 };
-use crate::service::PgDocketService;
+use crate::service::{DocketService, PgDocketService};
 
 #[allow(async_fn_in_trait)]
 pub trait TaskDispatcher: Send + Sync {
@@ -120,7 +120,7 @@ fn first_pending_leaf_for_parent(
             .map(|state| state.status.as_str())
             .unwrap_or("pending")
         {
-            "done" | "cancelled" => continue,
+            "done" | "cancelled" => {}
             "pending" => return Ok(Some(index)),
             // Do not skip earlier claimed or blocked work to offer a later
             // sibling in the same sequential plan.
@@ -150,10 +150,30 @@ impl TaskDispatcher for PgDocketService {
         )
         .await?;
 
-        Ok(first_pending_leaves_in_plan_order(tasks)
-            .into_iter()
-            .take(scan_limit as usize)
-            .collect())
+        // ponytail: fetch each selected job until dispatch becomes a single
+        // queue query; the task scan is already capped at 500.
+        let mut runnable = Vec::new();
+        for task in first_pending_leaves_in_plan_order(tasks) {
+            let Some(job_id) = task.task.job_id else {
+                continue;
+            };
+            let Some(job) = db::get_job(&self.pool, bear_id, job_id).await? else {
+                continue;
+            };
+            if job.job.status == "blocked"
+                || job
+                    .current_run
+                    .as_ref()
+                    .is_some_and(|run| run.state == "blocked")
+            {
+                continue;
+            }
+            runnable.push(task);
+            if runnable.len() == scan_limit as usize {
+                break;
+            }
+        }
+        Ok(runnable)
     }
 
     async fn mark_task_started(
@@ -169,17 +189,21 @@ impl TaskDispatcher for PgDocketService {
                 "Docket task {task_id} is not the first eligible pending leaf in sibling order"
             )));
         }
-        update_run_state(
-            self,
+        let _ = (run_id, actor_agent_id);
+        self.list_tasks(
             bear_id,
-            task_id,
-            run_id,
-            DocketTaskStatus::InProgress,
-            None,
-            None,
-            actor_agent_id,
+            DocketTaskListFilter {
+                job_id: None,
+                parent_task_id: None,
+                session_anchor_id: None,
+                include_descendants: true,
+                limit: 500,
+            },
         )
-        .await
+        .await?
+        .into_iter()
+        .find(|task| task.task.id == task_id)
+        .ok_or_else(|| DenError::NotFound(format!("Docket task {task_id} not found")))
     }
 
     async fn record_task_success(
@@ -250,6 +274,7 @@ async fn update_run_state(
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
                 status,
+                outcome_disposition: None,
                 result_refs,
                 result_summary,
             }),

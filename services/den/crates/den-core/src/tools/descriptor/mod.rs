@@ -20,7 +20,9 @@ use crate::tools::{
         DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CAPABILITY_DESCRIBE,
         DEN_CAPABILITY_DESCRIBE_PROVIDER, DEN_CAPABILITY_SEARCH, DEN_CAPABILITY_SEARCH_PROVIDER,
         DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
-        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER,
+        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_APPEND_PROVIDER,
+        DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_LIST_PROVIDER, DEN_DOCKET_ENTRY_PROMOTE,
+        DEN_DOCKET_ENTRY_PROMOTE_PROVIDER, DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER,
         DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE,
         DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER,
         DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER, DEN_ENTITY_WRITE_ACCESS_RULE,
@@ -55,16 +57,18 @@ use crate::tools::{
         DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER,
         DEN_TASK_LISTS_UPDATE, DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT,
         DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC,
-        DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_REJECT_INTENT, DEN_TASK_UPDATE,
-        DEN_TASK_UPDATE_CURRENT_STATUS, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
-        DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ,
-        DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
+        DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_REJECT_INTENT, DEN_TASK_SELECT,
+        DEN_TASK_SELECT_PROVIDER, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS,
+        DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT,
+        DEN_TOOL_OUTPUT_READ, DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
         DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH,
         DEN_WEB_SEARCH_PROVIDER, DEN_WORK_CATALOG, DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH,
         DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_PREPARE_RUST_DEPENDENCIES,
         DEN_WORK_PREPARE_RUST_DEPENDENCIES_PROVIDER, DEN_WORK_RUN_CANCEL,
         DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_FIND, DEN_WORK_RUN_FIND_PROVIDER,
         DEN_WORK_RUN_GET, DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST, DEN_WORK_RUN_LIST_PROVIDER,
+        DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_RUN_RESOLVE_STALLED_PROVIDER,
+        DEN_WORK_SURFACE_CONFIRM, DEN_WORK_SURFACE_CONFIRM_PROVIDER,
     },
     display::ToolDisplayDescriptor,
     tool_descriptor_guidance::{
@@ -148,9 +152,13 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_TASK_LIST => return DEN_TASK_LIST_PROVIDER.to_string(),
         DEN_TASK_FIND => return DEN_TASK_FIND_PROVIDER.to_string(),
         DEN_TASK_UPDATE => return DEN_TASK_UPDATE_PROVIDER.to_string(),
+        DEN_TASK_SELECT => return DEN_TASK_SELECT_PROVIDER.to_string(),
         DEN_TASK_UPDATE_CURRENT_STATUS => {
             return DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER.to_string()
         }
+        DEN_DOCKET_ENTRY_APPEND => return DEN_DOCKET_ENTRY_APPEND_PROVIDER.to_string(),
+        DEN_DOCKET_ENTRY_PROMOTE => return DEN_DOCKET_ENTRY_PROMOTE_PROVIDER.to_string(),
+        DEN_DOCKET_ENTRY_LIST => return DEN_DOCKET_ENTRY_LIST_PROVIDER.to_string(),
         DEN_TASK_LIST_SYNC => return DEN_TASK_LIST_SYNC_PROVIDER.to_string(),
         DEN_TASK_LIST_CHECKOUT => return DEN_TASK_LIST_CHECKOUT_PROVIDER.to_string(),
         DEN_WORK_DISPATCH => return DEN_WORK_DISPATCH_PROVIDER.to_string(),
@@ -158,7 +166,9 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_WORK_RUN_GET => return DEN_WORK_RUN_GET_PROVIDER.to_string(),
         DEN_WORK_RUN_FIND => return DEN_WORK_RUN_FIND_PROVIDER.to_string(),
         DEN_WORK_RUN_CANCEL => return DEN_WORK_RUN_CANCEL_PROVIDER.to_string(),
+        DEN_WORK_RUN_RESOLVE_STALLED => return DEN_WORK_RUN_RESOLVE_STALLED_PROVIDER.to_string(),
         DEN_WORK_CATALOG => return DEN_WORK_CATALOG_PROVIDER.to_string(),
+        DEN_WORK_SURFACE_CONFIRM => return DEN_WORK_SURFACE_CONFIRM_PROVIDER.to_string(),
         DEN_WORK_PREPARE_RUST_DEPENDENCIES => {
             return DEN_WORK_PREPARE_RUST_DEPENDENCIES_PROVIDER.to_string()
         }
@@ -326,7 +336,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_STATUS,
             "Memory status",
-            "Return SQLite memory health and entry counts for the current Bear role/Workplace. Use session_info first when current role, work surface, or memory scope is unclear.",
+            "Return SQLite memory health and entry counts for the current Bear role/Workplace, plus a `recall` object reporting the recall-index consistency watermark (indexed_seq, canonical_seq, lag_count, fully_recallable, last_success_at, failed_run_count; `available: false` when semantic recall is not configured). Use this to answer truthfully what memory is currently recallable. Use session_info first when current role, work surface, or memory scope is unclear.",
             "bear.memory",
             &["memory.status.read"],
             MEMORY_READ_PROFILES,
@@ -430,6 +440,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["memory.tree.read", "memory.file.read"],
             MEMORY_READ_PROFILES,
             empty_schema(),
+        ),
+        descriptor(
+            DEN_WORK_SURFACE_CONFIRM,
+            "Confirm work surface",
+            "Record the user's explicit selection of an assigned managed work surface for this Pair session. Call only after the user has chosen; this does not create or dispatch a work job.",
+            "work",
+            &["work_surface.confirm"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"work_surface_id":{"type":"string","format":"uuid","description":"Managed work-surface ID selected explicitly by the user."}},"required":["work_surface_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
@@ -551,7 +570,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_LIST,
             "List task lists",
-            "List visible planning and task-list context for the current Bear/conversation, including checked-out Docket task-list projections, submitted plan-mode gates, and saved plan artifacts where available. Docket-backed task lists are user-visible, durable/resumable plans, checklists, next steps, and roadmap slices for Docket jobs or the current conversation objective. Call session_info first if current conversation/session/work-surface scope is unclear.",
+            "List visible planning and task-list context for the current Bear/conversation, including checked-out Docket task-list projections, submitted plan-mode gates, and saved plan artifacts where available. Docket-backed task lists are user-visible, durable/resumable plans, checklists, next steps, and roadmap slices for work jobs or the current Pair task tree. Call session_info first if current conversation/session/work-surface scope is unclear.",
             "bear.activity",
             &["task_list.read"],
             TASK_LIST_READ_PROFILES,
@@ -569,7 +588,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_UPDATE,
             "Update task list",
-            "Use durable Docket job/task tools for user-visible task and job state. For pair conversation-scoped plans, checklists, next steps, and roadmap slices, create or reuse the current conversation's implied Docket objective; create an explicit Docket job only for distinct objectives with their own lifecycle, focus, delegation, work surface, commit policy, or execution tracking. Keep session_anchor_id only for compatibility with legacy session task projections. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status with job_id and run_id when known; otherwise it infers the active run. Docket tools record durable state and do not authorize autonomous execution by themselves.",
+            "Use durable Docket job/task tools for user-visible task and job state. For pair conversation-scoped plans, checklists, next steps, and roadmap slices, create or reuse the current Pair task tree; create a work Docket job only for distinct objectives with their own lifecycle, managed work surface, commit policy, or execution tracking. session_anchor_id identifies the Pair task-tree root. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status with job_id and run_id when known; otherwise it infers the active run. Docket tools record durable state and do not authorize autonomous execution by themselves.",
             "bear.activity",
             &["task_list.write"],
             TASK_LIST_UPDATE_PROFILES,
@@ -587,11 +606,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_CREATE,
             "Create job",
-            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Use Jobs for distinct objectives needing their own lifecycle, work surface, commit policy, execution tracking, or background work; do not create one for a small change that Pair can finish here. For pair conversation-scoped plans or checklists, prefer the implied conversation objective. Every initial task requires concrete completion_criteria. Creating a Job does not execute or dispatch it.",
+            "Create a durable Docket work job with acceptance criteria and an optional initial task tree. A job may assign one or more managed work surfaces. The normal shorthand is work_surface_id, which creates one required mutation assignment; use work_surface_assignments only for multiple surfaces or optional/forbidden mutation policy. Every initial task requires concrete completion_criteria. Creating a Job does not execute or dispatch it. Keep returned full UUIDs for tool calls and evidence; in ordinary prose present a typed short handle such as `job e4e4797b` (extend the prefix if ambiguous). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.job.write"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"goal":{"type":"string","description":"Human-facing durable goal for the job."},"work_surface_ref":{"type":"string","description":"Managed work surface name (see get_work_catalog surfaces; the bear must be assigned to it) or a raw provider root name."},"commit_policy":{"enum":["none","per_task","per_job","propose_only"]},"work_branch":{"type":"string","description":"Upstream branch work runs publish to when commit_policy allows; defaults to a generated den/job-<short-id> name."},"status":{"enum":["draft","ready","running","blocked","completed","cancelled"]},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"criteria":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["narrative","command","check_ref"]},"description":{"type":"string"},"spec":{"type":"object"},"sibling_order":{"type":"integer"}},"required":["description"],"additionalProperties":false}},"tasks":{"type":"array","items":{"type":"object","properties":{"client_key":{"type":"string"},"parent_client_key":{"type":"string"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]}},"required":["title","body","completion_criteria"],"additionalProperties":false}}},"required":["goal"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"goal":{"type":"string","description":"Human-facing durable goal for the job."},"work_surface_id":{"type":"string","format":"uuid","description":"Simple common-case shorthand: one managed work surface with required mutation policy."},"work_surface_assignments":{"type":"array","description":"Use instead of work_surface_id for multiple surfaces or non-default mutation policy.","items":{"type":"object","properties":{"work_surface_id":{"type":"string","format":"uuid"},"mutation_policy":{"enum":["required","optional","forbidden"],"default":"required"}},"required":["work_surface_id"],"additionalProperties":false}},"commit_policy":{"enum":["none","per_task","per_job"]},"work_branch":{"type":"string","description":"Upstream branch work runs publish to when commit_policy allows; defaults to a generated den/job-<short-id> name."},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"supersedes_job_id":{"type":"string","format":"uuid","description":"Required only with overlap_resolution=supersede; the active matching job to replace."},"overlap_resolution":{"enum":["reject","independent","supersede"],"description":"For an exact active goal+surface overlap: reject (default), explicitly independent, or supersede the named predecessor."},"criteria":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["narrative","command","check_ref"]},"description":{"type":"string"},"spec":{"type":"object"},"sibling_order":{"type":"integer"}},"required":["description"],"additionalProperties":false}},"tasks":{"type":"array","items":{"type":"object","properties":{"client_key":{"type":"string"},"parent_client_key":{"type":"string"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]}},"required":["title","body","completion_criteria"],"additionalProperties":false}}},"required":["goal"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_JOB_LIST,
@@ -600,12 +619,12 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
-            json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["draft","ready","running","blocked","completed","cancelled"]}},"include_cancelled":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false}),
+            json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["draft","ready","running","blocked","completed","cancelled","archived"]}},"include_cancelled":{"type":"boolean"},"include_archived":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false}),
         ),
         descriptor(
             DEN_JOB_GET,
             "Get Docket job",
-            "Read one durable Docket job with criteria, task tree, current run, and run-scoped task state. Includes recent work runs (with queue placement) and work_attention: latest-attempt runs that ended blocked/failed and need triage, with their reasons.",
+            "Read one durable Docket job with criteria, task tree, current run, and run-scoped task state. Includes recent work runs (with queue placement) and work_attention: latest-attempt runs that ended blocked/failed and need triage, with their reasons. Treat this durable result as canonical status; keep full UUIDs for calls/evidence and use typed short handles in prose.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -623,11 +642,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_UPDATE,
             "Update Docket job",
-            "Update durable Docket job metadata or lifecycle status. Use for status transitions such as running, blocked, completed, or cancelled; does not execute task bodies.",
+            "Update durable Docket job metadata. Operational status is derived from task, criterion, run, and lifecycle state; this tool does not execute task bodies.",
             "bear.docket",
             &["docket.job.write"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"goal":{"type":"string"},"work_surface_ref":{"type":["string","null"]},"clear_work_surface_ref":{"type":"boolean"},"commit_policy":{"enum":["none","per_task","per_job","propose_only",null]},"clear_commit_policy":{"type":"boolean"},"status":{"enum":["draft","ready","running","blocked","completed","cancelled"]},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]}},"required":["job_id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"goal":{"type":"string"},"work_surface_id":{"type":"string","format":"uuid"},"commit_policy":{"enum":["none","per_task","per_job",null]},"clear_commit_policy":{"type":"boolean"},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_JOB_EXECUTE,
@@ -650,16 +669,16 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_CREATE,
             "Create Docket task",
-            "Create a durable Docket task under an explicit Docket job or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. session_anchor_id remains legacy compatibility only. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition.",
+            "Create a durable Docket task under an explicit work Docket job or, in pair conversation scope when job_id is omitted, the current Pair task tree. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. session_anchor_id identifies the Pair task-tree root. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition. Keep full UUIDs for tool calls and evidence; in prose use a typed unambiguous short handle such as `task e4e4797b` (extend the prefix if needed). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"created_in_run_id":{"type":"string","format":"uuid"}},"required":["title","body","completion_criteria"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"placement":{"oneOf":[{"type":"object","properties":{"kind":{"const":"first"}},"required":["kind"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"last"}},"required":["kind"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"before"},"task_id":{"type":"string","format":"uuid"}},"required":["kind","task_id"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"after"},"task_id":{"type":"string","format":"uuid"}},"required":["kind","task_id"],"additionalProperties":false}]},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"created_in_run_id":{"type":"string","format":"uuid"}},"required":["title","body","completion_criteria"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST,
             "List Docket tasks",
-            "List durable Docket task definitions for an explicit job/task subtree or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Includes current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for conversation/job working focus.",
+            "List durable Docket task definitions for an explicit job/task subtree or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Includes current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for conversation/job working focus. Treat returned full UUIDs as canonical identity/evidence and use typed unambiguous short task handles in prose.",
             "bear.docket",
             &["docket.task.read"],
             TASK_LIST_READ_PROFILES,
@@ -668,7 +687,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_FIND,
             "Find Docket task",
-            "Find one Docket task by its full UUID or an unambiguous UUID prefix; optionally limit the lookup to a job.",
+            "Find one Docket task by its full UUID or an unambiguous UUID prefix; optionally limit the lookup to a job. Keep the canonical UUID for follow-up calls and evidence; use a typed short task handle in prose.",
             "bear.docket",
             &["docket.task.read"],
             TASK_LIST_READ_PROFILES,
@@ -677,20 +696,56 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE,
             "Update Docket task definition",
-            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, in progress, done, blocked, or cancelled; pass job_id/run_id when known to avoid ambiguous active-run inference.",
+            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, done, blocked, or cancelled; pass job_id/run_id when known to avoid ambiguous active-run inference.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
             json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"description":"Replacement concrete criteria that define when this task is done."},"parent_task_id":{"type":["string","null"],"format":"uuid"},"clear_parent_task_id":{"type":"boolean"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"difficulty":{"enum":["trivial","moderate","hard","unknown",null]},"effort_hint":{"enum":["low","medium","high",null]}} ,"required":["task_id"],"additionalProperties":false}),
         ),
         descriptor(
+            DEN_TASK_SELECT,
+            "Select current Pair task",
+            "Select an actionable task anchored to this Pair session as its canonical current task. Omit task_id to clear the selection. This changes Pair context only; it does not execute or settle work and cannot affect Work runs, which remain Job-scoped. Do not call this merely because the conversational topic appears to change: first ask the user to confirm the proposed task switch. If several eligible tasks could match, ask which one to select. If none matches, ask whether to create a new session task or continue with no selected task. Never silently select, clear, replace, complete, or create a Pair task in response to redirection.",
+            "bear.docket",
+            &["docket.task.write"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"task_id":{"type":["string","null"],"format":"uuid"}},"additionalProperties":false}),
+        ),
+        descriptor(
             DEN_TASK_UPDATE_CURRENT_STATUS,
             "Update current task status",
-            "Update a Docket task's status/results in a Docket run. Prefer passing job_id and run_id from get_job/execute_job for unambiguous updates; when omitted, the tool falls back to the focused active job/run context. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not edit durable task definitions or execute task bodies.",
+            "Update a Docket task's status/results in a Docket run. Prefer passing job_id and run_id from get_job/execute_job for unambiguous updates; when omitted, the tool falls back to the focused active job/run context. Every terminal status (done, blocked, or cancelled) requires a non-empty result_summary; Den records it atomically as the durable task outcome. Use outcome_disposition when the default does not describe the result: done accepts completed, no_change, or delegated; blocked accepts blocked or failed; cancelled accepts only cancelled. For report-only work, result_summary is sufficient and result_refs may be omitted. If the task has a verified primary output, provide result_refs.primary_output {kind: git_commit|den_artifact, artifact_ref, immutable_identity} and result_refs.validation {primary_output_ref, immutable_identity, command, result: passed, execution_provenance}; validation must match the primary output exactly. Do not invent primary-output evidence for work that did not produce it. Does not edit durable task definitions or execute task bodies. For externally reported changes, tests, failures, or commits, record matching evidence from the execution surface that produced it; do not mark a cancelled/timed-out work run as verified completion.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id","status"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","done","blocked","cancelled"]},"outcome_disposition":{"enum":["completed","no_change","delegated","blocked","failed","cancelled"],"description":"Optional typed terminal outcome. done accepts completed, no_change, or delegated; blocked accepts blocked or failed; cancelled accepts cancelled. Omit to use the status default. Not allowed for pending."},"result_refs":{"type":"object","description":"Optional. Omit for report-only completion. When reporting a verified output, provide primary_output {kind: git_commit|den_artifact, artifact_ref, immutable_identity} and validation {primary_output_ref, immutable_identity, command, result: passed, execution_provenance}."},"result_summary":{"type":"string","description":"Required for terminal status done, blocked, or cancelled. Den records it atomically as the durable task outcome; describe what actually occurred."}},"required":["task_id","status"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_DOCKET_ENTRY_APPEND,
+            "Append Docket entry",
+            "Append a durable finding, decision, obstacle, follow-up, milestone, or question to a task journal or job notebook. Outcomes are settlement-owned and cannot be appended manually. Questions may be recorded only by Pair.",
+            "bear.docket",
+            &["docket.task.write"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"scope":{"enum":["task_journal","job_notebook"]},"kind":{"enum":["finding","decision","obstacle","follow_up","milestone","question"]},"summary":{"type":"string"},"body":{"type":"string"},"evidence_refs":{"type":"array","items":{}},"related_task_ids":{"type":"array","items":{"type":"string","format":"uuid"}},"tags":{"type":"array","items":{"type":"string"}}},"required":["scope","kind","summary"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_DOCKET_ENTRY_PROMOTE,
+            "Promote Docket entry",
+            "Promote one non-outcome task-journal entry into its job notebook by reference. The operation is idempotent and preserves the original entry and provenance rather than copying model-authored content.",
+            "bear.docket",
+            &["docket.task.write"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"entry_id":{"type":"string","format":"uuid"}},"required":["entry_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_DOCKET_ENTRY_LIST,
+            "List Docket entries",
+            "List durable task-journal or job-notebook entries for this Bear, filtered by job or task. Includes settlement outcomes and explicitly recorded findings, decisions, obstacles, follow-ups, milestones, and questions.",
+            "bear.docket",
+            &["docket.task.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST_CHECKOUT,
@@ -704,16 +759,16 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_DISPATCH,
             "Dispatch work job",
-            "Queue every runnable work-assigned task in a Docket job as one background-work package. Runs execute one at a time in task order and build on the shared job work branch. Requires a sandbox root or job work surface. Returns all work run ids.",
+            "Queue a ready Docket job for isolated background execution in a sandbox. `root` identifies the managed source or sandbox-provider root; `image` selects a sandbox toolchain image. Docket dispatch never modifies Pair's attached checkout. Keep full UUIDs for calls and evidence; use typed short handles only in prose.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface or provider root; defaults to the job work surface."},"git_ref":{"type":"string"},"image":{"type":"string","description":"Catalog image name."}},"required":["job_id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface or sandbox provider root."},"git_ref":{"type":"string"},"image":{"type":"string","description":"Catalog image name for sandbox execution."}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_WORK_RUN_LIST,
             "List work runs",
-            "List autonomous work runs (sandbox executions of work-assigned Docket tasks) for this Bear, optionally filtered by job, task, or state. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind) — runs serialize per job.",
+            "List autonomous work runs (sandbox executions of work-assigned Docket tasks) for this Bear, optionally filtered by job, task, or state. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind) — runs serialize per job. Keep full UUIDs for evidence/follow-up calls and present typed unambiguous short work-run handles in prose.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -722,7 +777,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_RUN_GET,
             "Get work run",
-            "Read one autonomous work run: state, attempt, sandbox type and strength, recognized work surface, result summary (including published branch/commit in result_refs), changed files, bounded log tail, and error/blockage reason. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind).",
+            "Read one autonomous work run: state, attempt, sandbox type and strength, recognized work surface, result summary (including published branch/commit in result_refs), changed files, bounded log tail, and error/blockage reason. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind). Use its terminal result and durable evidence for claims about changes, tests, or commits; a failed/cancelled run proves only the recorded partial progress. Its work surface is not implicitly accessible to Pair. Keep the full UUID for tool calls/evidence and present `work run e4e4797b`-style handles in prose.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -731,7 +786,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_RUN_FIND,
             "Find work run",
-            "Find one work run by full UUID or an unambiguous UUID prefix, or list runs for a job UUID or prefix.",
+            "Find one work run by full UUID or an unambiguous UUID prefix, or list runs for a job UUID or prefix. Keep canonical UUIDs for calls/evidence and use typed unambiguous short work-run handles in prose.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -740,16 +795,25 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_RUN_CANCEL,
             "Cancel work run",
-            "Request cancellation of an active work run. The dispatch worker tears the sandbox down and records the task as blocked; this tool only sets the cancel flag and never touches the sandbox host directly.",
+            "Request cancellation of an active work run. The dispatch worker tears the sandbox down and records the task as blocked; this tool only sets the cancel flag and never touches the sandbox host directly. After requesting cancellation, read the canonical work-run result before describing the outcome; its separate worktree may contain partial changes. Keep the full UUID for the call and use a typed short handle in prose.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
             json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"}},"required":["work_run_id"],"additionalProperties":false}),
         ),
         descriptor(
+            DEN_WORK_RUN_RESOLVE_STALLED,
+            "Resolve stalled work run",
+            "Record the operator's resolution of a stalled work run without changing its terminal outcome or diagnostic evidence. Use only after inspecting the stalled run and deciding how it was handled; retrying work creates a new attempt. A repeated request does not overwrite the original resolution.",
+            "bear.docket",
+            &["docket.job.execute"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"},"reason":{"type":"string","minLength":1,"maxLength":2000}},"required":["work_run_id"],"additionalProperties":false}),
+        ),
+        descriptor(
             DEN_WORK_CATALOG,
             "Get work catalog",
-            "Read what work can run on: managed work surfaces assigned to this bear (preferred for create_job.work_surface_ref / dispatch_work.root), the sandbox provider's roots, and the container images selectable for dispatch_work. Use this before dispatching when the surface or toolchain image is not obvious.",
+            "Read what work can run on: managed work surfaces assigned to this bear (preferred for create_job.work_surface_id / dispatch_work.root), the sandbox provider's roots, and the container images selectable for dispatch_work. Use this before dispatching when the surface or toolchain image is not obvious.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -941,6 +1005,8 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_TASK_LIST,
         DEN_TASK_UPDATE,
         DEN_TASK_UPDATE_CURRENT_STATUS,
+        DEN_DOCKET_ENTRY_APPEND,
+        DEN_DOCKET_ENTRY_LIST,
         DEN_TASK_LIST_SYNC,
         DEN_TASK_LIST_CHECKOUT,
         DEN_WORK_DISPATCH,
@@ -1039,7 +1105,7 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
             side_effect: ToolSideEffectKind::ActiveWorkState,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
-        DEN_JOB_LIST | DEN_JOB_GET => Some(ToolDescriptorGuidance {
+        DEN_JOB_LIST | DEN_JOB_GET | DEN_DOCKET_ENTRY_LIST => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
             side_effect: ToolSideEffectKind::ReadOnly,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
@@ -1051,6 +1117,8 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
         | DEN_TASK_CREATE
         | DEN_TASK_UPDATE
         | DEN_TASK_UPDATE_CURRENT_STATUS
+        | DEN_DOCKET_ENTRY_APPEND
+        | DEN_DOCKET_ENTRY_PROMOTE
         | DEN_TASK_LIST_SYNC
         | DEN_TASK_LIST_CHECKOUT => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
@@ -1117,7 +1185,11 @@ fn descriptor(
         availability: "available",
         permissions,
         allowed_roles,
-        approval_policy: "never",
+        approval_policy: if name == DEN_WEB_FETCH {
+            "always"
+        } else {
+            "never"
+        },
         display: den_tool_display(name, label).to_json(),
         input_schema,
     }
@@ -1264,6 +1336,16 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             target_arg_keys: &[],
             sensitive_arg_keys: &[],
             approval_summary: "Read work-surface memory anchors and orientation.",
+        },
+        DEN_WORK_SURFACE_CONFIRM => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Confirming work surface",
+            complete_verb: "Confirmed work surface",
+            target_arg_keys: &["work_surface_id"],
+            sensitive_arg_keys: &[],
+            approval_summary:
+                "Record the user's selected managed work surface for this Pair session.",
         },
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => ToolDisplayDescriptor {
             label,
@@ -1454,6 +1536,15 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &[],
             approval_summary: "Request cancellation of this work run.",
         },
+        DEN_WORK_RUN_RESOLVE_STALLED => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Recording stalled work-run resolution",
+            complete_verb: "Recorded stalled work-run resolution",
+            target_arg_keys: &["work_run_id"],
+            sensitive_arg_keys: &["reason"],
+            approval_summary: "Record how this stalled work run was resolved.",
+        },
         DEN_WORK_CATALOG => ToolDisplayDescriptor {
             label,
             category: "work",
@@ -1489,6 +1580,33 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             target_arg_keys: &["status", "task_id", "result_summary"],
             sensitive_arg_keys: &["result_refs", "result_summary"],
             approval_summary: "Record this task's run-scoped status and result.",
+        },
+        DEN_DOCKET_ENTRY_APPEND => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Recording Docket entry",
+            complete_verb: "Recorded Docket entry",
+            target_arg_keys: &["kind", "summary", "task_id", "job_id"],
+            sensitive_arg_keys: &["body", "evidence_refs"],
+            approval_summary: "Append a durable Docket journal or notebook entry.",
+        },
+        DEN_DOCKET_ENTRY_PROMOTE => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Promoting Docket entry",
+            complete_verb: "Promoted Docket entry",
+            target_arg_keys: &["entry_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Reference a task-journal entry from its job notebook.",
+        },
+        DEN_DOCKET_ENTRY_LIST => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Listing Docket entries",
+            complete_verb: "Listed Docket entries",
+            target_arg_keys: &["task_id", "job_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read durable Docket journal and notebook entries.",
         },
         DEN_TASK_UPDATE => ToolDisplayDescriptor {
             label,
@@ -1765,6 +1883,37 @@ mod tests {
             descriptor.input_schema["properties"]["preparation"]["enum"],
             json!(["check", "test_no_run"])
         );
+    }
+
+    #[test]
+    fn work_dispatch_descriptor_explains_isolation_and_publication() {
+        let descriptor = builtin_den_tool_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.name == DEN_WORK_DISPATCH)
+            .expect("descriptor");
+
+        assert!(descriptor
+            .description
+            .contains("isolated background execution in a sandbox"));
+        assert!(descriptor
+            .description
+            .contains("never modifies Pair's attached checkout"));
+        assert!(descriptor
+            .description
+            .contains("managed source or sandbox-provider root"));
+    }
+
+    #[test]
+    fn resolve_stalled_work_run_descriptor_is_operator_facing() {
+        let descriptor = builtin_den_tool_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.name == DEN_WORK_RUN_RESOLVE_STALLED)
+            .expect("descriptor");
+
+        assert_eq!(descriptor.provider_name, "resolve_stalled_work_run");
+        assert_eq!(descriptor.allowed_roles, CHAT_AND_PAIR_PROFILES);
+        assert_eq!(descriptor.input_schema["required"], json!(["work_run_id"]));
+        assert_eq!(descriptor.input_schema["additionalProperties"], false);
     }
 
     #[test]

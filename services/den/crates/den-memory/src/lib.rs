@@ -6,6 +6,7 @@
 pub mod access;
 pub mod admin_inspect;
 mod clock;
+mod conflicts;
 pub mod descriptors;
 pub mod entity;
 pub mod harvest;
@@ -31,6 +32,10 @@ pub use admin_inspect::{
     get_memory_record_by_id, get_memory_record_detail, head_entry_count, list_all_logical_paths,
     list_path_summaries, list_recent_memory_records, search_memory_records, BearMemoryAdminStats,
     MemoryCountBucket, MemoryRecordDetail, PathSummary,
+};
+pub use conflicts::{
+    conflict_candidates, detect_conflicts, memory_conflicts_among, record_conflict_observation,
+    ConflictCandidate, ConflictReason, MemoryConflict, MEMORY_CONFLICT_OBSERVATION_KIND,
 };
 pub use descriptors::{EntityTrust, HandleStrength, RecallEffect, RelationClass, ResolutionState};
 pub use entity::{

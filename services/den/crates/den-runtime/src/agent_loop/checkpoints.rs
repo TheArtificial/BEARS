@@ -119,7 +119,7 @@ impl LoopControlDecisionKind {
         }
     }
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "checkpoint_requested" => Some(Self::CheckpointRequested),
             "context_budget_pressure" => Some(Self::ContextBudgetPressure),
@@ -207,7 +207,7 @@ impl GroundingProbeSignalKind {
         }
     }
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "pass" => Some(Self::Pass),
             "fail" => Some(Self::Fail),
@@ -615,7 +615,7 @@ fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
 fn replay_observation_from_row(
     row: &LoopControlLedgerRow,
 ) -> Result<LoopControlReplayObservation, DenError> {
-    let decision_kind = LoopControlDecisionKind::from_str(&row.decision_kind).ok_or_else(|| {
+    let decision_kind = LoopControlDecisionKind::parse(&row.decision_kind).ok_or_else(|| {
         DenError::System(format!(
             "unknown loop-control decision kind in replay ledger: {}",
             row.decision_kind
@@ -889,6 +889,33 @@ pub async fn list_loop_control_decisions_for_run(
     Ok(rows.into_iter().map(row_to_ledger).collect())
 }
 
+/// Summarizes decisions recorded since `since` across all runs.
+///
+/// The caller owns the reporting window; this intentionally returns only
+/// transcript-free ledger aggregates rather than conversation content.
+pub async fn summarize_recent_loop_control_replay_profile(
+    pool: &PgPool,
+    since: OffsetDateTime,
+) -> Result<LoopControlReplayProfileSummary, DenError> {
+    let rows = sqlx::query(
+        r"
+        SELECT
+            id, run_id, turn_step_id, decision_id, decision_kind, control_level, reason,
+            orientation_kind, checkpoint_id, related_task_list_id, related_task_item_id,
+            related_docket_job_id, related_docket_task_id, evidence_refs, decision, created_at
+        FROM bear_loop_control_ledger
+        WHERE created_at >= $1
+        ORDER BY created_at ASC, run_id ASC, decision_id ASC
+        ",
+    )
+    .bind(since)
+    .fetch_all(pool)
+    .await?;
+    let rows = rows.into_iter().map(row_to_ledger).collect::<Vec<_>>();
+    let turns = aggregate_loop_control_replay_turns(&rows)?;
+    Ok(summarize_loop_control_replay_profile(&turns))
+}
+
 pub async fn latest_grounding_probe_signal_for_tool_call(
     pool: &PgPool,
     run_id: &str,
@@ -896,7 +923,7 @@ pub async fn latest_grounding_probe_signal_for_tool_call(
 ) -> Result<Option<GroundingProbeSignalKind>, DenError> {
     let evidence_ref = serde_json::json!([{ "kind": "tool_call", "id": tool_call_id }]);
     let row: Option<(Option<String>,)> = sqlx::query_as(
-        r#"
+        r"
         SELECT reason
         FROM bear_loop_control_ledger
         WHERE run_id = $1
@@ -904,7 +931,7 @@ pub async fn latest_grounding_probe_signal_for_tool_call(
           AND evidence_refs @> $2::jsonb
         ORDER BY created_at DESC, decision_id DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(evidence_ref)
@@ -913,7 +940,7 @@ pub async fn latest_grounding_probe_signal_for_tool_call(
 
     Ok(row
         .and_then(|(reason,)| reason)
-        .and_then(|reason| GroundingProbeSignalKind::from_str(&reason)))
+        .and_then(|reason| GroundingProbeSignalKind::parse(&reason)))
 }
 
 pub async fn latest_grounding_probe_signal_for_run(
@@ -939,7 +966,7 @@ pub async fn latest_grounding_probe_signal_for_run(
 
     Ok(row
         .and_then(|(reason,)| reason)
-        .and_then(|reason| GroundingProbeSignalKind::from_str(&reason)))
+        .and_then(|reason| GroundingProbeSignalKind::parse(&reason)))
 }
 
 pub async fn summarize_loop_control_replay_profile_for_run(
@@ -1243,6 +1270,65 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
+    async fn summarizes_only_recent_loop_control_decisions(pool: PgPool) {
+        let recent_run = format!("run-{}", Uuid::new_v4().simple());
+        let old_run = format!("run-{}", Uuid::new_v4().simple());
+        seed_run(&pool, &recent_run).await;
+        seed_run(&pool, &old_run).await;
+
+        for (run_id, decision_id, reason) in [
+            (&recent_run, "recent", "over_exploration"),
+            (&old_run, "old", "same_signature"),
+        ] {
+            record_loop_control_decision(
+                &pool,
+                LoopControlLedgerInput {
+                    run_id: run_id.to_string(),
+                    turn_step_id: None,
+                    decision_id: decision_id.to_string(),
+                    decision_kind: LoopControlDecisionKind::CheckpointRequested,
+                    control_level: "standard".to_string(),
+                    reason: Some(reason.to_string()),
+                    orientation_kind: Some("task_oriented".to_string()),
+                    checkpoint_id: None,
+                    related_task_list_id: None,
+                    related_task_item_id: None,
+                    related_docket_job_id: None,
+                    related_docket_task_id: None,
+                    evidence_refs: vec![],
+                    decision: serde_json::json!({}),
+                },
+            )
+            .await
+            .expect("record ledger decision");
+        }
+        sqlx::query(
+            "UPDATE bear_loop_control_ledger SET created_at = NOW() - INTERVAL '2 days' WHERE run_id = $1",
+        )
+        .bind(&old_run)
+        .execute(&pool)
+        .await
+        .expect("age old ledger decision");
+
+        let summary = summarize_recent_loop_control_replay_profile(
+            &pool,
+            OffsetDateTime::now_utc() - time::Duration::days(1),
+        )
+        .await
+        .expect("summarize recent ledger decisions");
+
+        assert_eq!(summary.turn_count, 1);
+        assert_eq!(summary.decision_count, 1);
+        assert_eq!(
+            summary.reason_counts,
+            vec![LoopControlReplayCount {
+                value: "over_exploration".to_string(),
+                count: 1,
+            }]
+        );
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
     async fn records_grounding_probe_result_decision(pool: PgPool) {
         let run_id = format!("run-{}", Uuid::new_v4().simple());
         seed_run(&pool, &run_id).await;
@@ -1301,6 +1387,7 @@ mod tests {
             estimate_precision: den_protocol::ContextBudgetEstimatePrecision::Approximate,
             near_budget: true,
             over_budget: false,
+            calibration: None,
             components: vec![],
         };
 

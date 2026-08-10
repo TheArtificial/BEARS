@@ -80,13 +80,23 @@ pub fn embedded_schema_version() -> i64 {
 }
 
 pub async fn ensure_database_schema_supported(pool: &PgPool) -> Result<(), StartupError> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        "SELECT MAX(version)::BIGINT AS version FROM public._sqlx_migrations WHERE success = TRUE",
+    // A fresh database has no SQLx bookkeeping table until the first migration
+    // runs. There is therefore no prior schema version to reject.
+    let database_version: Option<i64> = sqlx::query_scalar(
+        "SELECT MAX(version)::BIGINT FROM public._sqlx_migrations WHERE success = TRUE",
     )
     .fetch_optional(pool)
-    .await?;
+    .await
+    .or_else(|error| match &error {
+        sqlx::Error::Database(database_error)
+            if database_error.code().as_deref() == Some("42P01") =>
+        {
+            Ok(None)
+        }
+        _ => Err(error),
+    })?;
 
-    let Some((database_version,)) = row else {
+    let Some(database_version) = database_version else {
         return Ok(());
     };
     let binary_version = embedded_schema_version();

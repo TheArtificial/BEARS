@@ -91,17 +91,17 @@ impl TurnAuthority {
         self.session_policy.denied_tool_classes()
     }
 
-    pub fn read_only_runtime_context(&self) -> Option<String> {
+    pub fn read_only_runtime_context(&self) -> Option<serde_json::Value> {
         if self.tool_enablement().enables_non_read_tools() {
             return None;
         }
 
-        Some(format!(
-            "AUTHORITATIVE RUNTIME PERMISSION ENVELOPE for this turn: permission_mode=`{}`; tool_enablement=`read_only`; allowed_tool_classes={:?}; denied_tool_classes={:?}; state_authority=current turn capabilities override prior task orientation.\n\nYou are in a read-only/non-mutative run. Do not attempt workspace edits, file creation/deletion, commits, shell/process execution, browser actions with side effects, or other externally visible actions. If the user or focused task asks for execution that requires mutation, deliver analysis, diagnosis, a plan, a proposed patch, or an explicit permission-blocked status with evidence instead of repeatedly trying denied tools.",
-            self.mode_label(),
-            self.allowed_tool_classes(),
-            self.denied_tool_classes()
-        ))
+        Some(serde_json::json!({
+            "permission_mode": self.mode_label(),
+            "tool_enablement": "read_only",
+            "allowed_tool_classes": self.allowed_tool_classes(),
+            "denied_tool_classes": self.denied_tool_classes(),
+        }))
     }
 }
 
@@ -1131,7 +1131,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::ApplyPatch => object_schema(
             json!({
-                "patch": { "type": "string", "description": "Unified diff patch to apply within the workspace." },
+                "patch": { "type": "string", "description": "Standard unified diff: non-empty paired `--- a/path` and `+++ b/path` headers (or `/dev/null` for creates/deletes) followed by one or more `@@` hunks. Context and removed lines are validated against the current file before writing. Do not send prose or Markdown fences. For one exact replacement in one file, use fs_edit_file instead." },
                 "dry_run": { "type": "boolean", "default": false, "description": "Validate without writing changes." }
             }),
             vec!["patch"],
@@ -1549,8 +1549,8 @@ const ARMATURE_GIT_STATUS_POLICY: ToolPolicy = ToolPolicy {
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     execution_target: ExecutionTargetPolicy::ArmatureLocal,
-    approval_policy: ApprovalPolicy::Required,
-    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
     target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: None,
@@ -1572,8 +1572,8 @@ const ARMATURE_GIT_DIFF_POLICY: ToolPolicy = ToolPolicy {
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     execution_target: ExecutionTargetPolicy::ArmatureLocal,
-    approval_policy: ApprovalPolicy::Required,
-    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
     target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: None,
@@ -1595,8 +1595,8 @@ const ARMATURE_GIT_LOG_POLICY: ToolPolicy = ToolPolicy {
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     execution_target: ExecutionTargetPolicy::ArmatureLocal,
-    approval_policy: ApprovalPolicy::Required,
-    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
     target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: None,
@@ -1618,11 +1618,34 @@ const ARMATURE_GIT_SHOW_POLICY: ToolPolicy = ToolPolicy {
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
     execution_target: ExecutionTargetPolicy::ArmatureLocal,
-    approval_policy: ApprovalPolicy::Required,
-    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
     target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: None,
+    max_results: None,
+    max_bytes: Some(262_144),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
+const ARMATURE_GIT_ADD_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "client_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::None,
+    max_lines: None,
+    max_entries: Some(100),
     max_results: None,
     max_bytes: Some(262_144),
     recursive_default: None,
@@ -1725,7 +1748,7 @@ pub fn client_tool_policy(tool: ClientToolName) -> ToolPolicy {
         ClientToolName::GitDiff => ARMATURE_GIT_DIFF_POLICY,
         ClientToolName::GitLog => ARMATURE_GIT_LOG_POLICY,
         ClientToolName::GitShow => ARMATURE_GIT_SHOW_POLICY,
-        ClientToolName::GitAdd => ARMATURE_GIT_WRITE_POLICY,
+        ClientToolName::GitAdd => ARMATURE_GIT_ADD_POLICY,
         ClientToolName::GitRestore => ARMATURE_GIT_WRITE_POLICY,
         ClientToolName::GitCommit => ARMATURE_GIT_WRITE_POLICY,
         ClientToolName::GitStash => ARMATURE_GIT_WRITE_POLICY,

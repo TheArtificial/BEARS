@@ -527,7 +527,11 @@ fn invalid_reference_response(reference: &str) -> Response {
     )
 }
 
-/// Engine image store + disk usage, annotated with catalog membership.
+/// Engine image store, annotated with catalog membership.
+///
+/// `docker system df` walks substantially more engine state than image
+/// inventory and can stall while containerd cleans up dead shims. Do not run
+/// it on the management page's regular refresh path.
 async fn list_images(State(state): State<Arc<ProviderState>>) -> Response {
     let raw = match state.backend.image_ls_json().await {
         Ok(raw) => raw,
@@ -564,8 +568,7 @@ async fn list_images(State(state): State<Arc<ProviderState>>) -> Response {
             }
         })
         .collect();
-    let disk_usage = state.backend.system_df().await;
-    Json(crate::protocol::ImageStoreResponse { images, disk_usage }).into_response()
+    Json(crate::protocol::ImageStoreResponse { images }).into_response()
 }
 
 /// Start a background pull of a registry reference into the engine store.
@@ -897,8 +900,19 @@ async fn provision(
     image: String,
 ) -> Result<(), Response> {
     if root.upstream.is_some() {
-        if let Err(err) = roots.sync_root(root).await {
-            return Err(roots_error_response(&err));
+        let base_commit = roots
+            .sync_root(root)
+            .await
+            .map_err(|err| roots_error_response(&err))?;
+        if let (Some(branch), Some(base_commit)) =
+            (request.git_ref.as_deref(), base_commit.as_deref())
+        {
+            if branch.starts_with("den/job-") {
+                roots
+                    .ensure_work_branch(root, branch, base_commit)
+                    .await
+                    .map_err(|err| roots_error_response(&err))?;
+            }
         }
     }
 
@@ -1171,7 +1185,7 @@ async fn compute_diff(
         .collect();
     let mut spec = CommandSpec::new("git", &status_args);
     spec.cwd = Some(workspace);
-    spec.timeout = Duration::from_secs(60);
+    spec.timeout = Duration::from_mins(1);
     let status_out = run_command(spec).await.map_err(|e| e.to_string())?;
     if !status_out.success() {
         return Err(format!(
@@ -1197,7 +1211,7 @@ async fn compute_diff(
     let diff_args: Vec<String> = ["diff", "HEAD"].iter().map(|s| (*s).to_string()).collect();
     let mut spec = CommandSpec::new("git", &diff_args);
     spec.cwd = Some(workspace);
-    spec.timeout = Duration::from_secs(60);
+    spec.timeout = Duration::from_mins(1);
     spec.max_output_bytes = usize::try_from(max_patch_bytes).unwrap_or(usize::MAX);
     let diff_out = run_command(spec).await.map_err(|e| e.to_string())?;
     if !diff_out.success() {

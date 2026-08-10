@@ -109,6 +109,14 @@ pub const DEN_TASK_UPDATE: &str = "den.task.update";
 pub const DEN_TASK_UPDATE_PROVIDER: &str = "update_task";
 pub const DEN_TASK_UPDATE_CURRENT_STATUS: &str = "den.task.update_current_status";
 pub const DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER: &str = "update_current_task_status";
+pub const DEN_TASK_SELECT: &str = "den.task.select";
+pub const DEN_TASK_SELECT_PROVIDER: &str = "select_current_task";
+pub const DEN_DOCKET_ENTRY_APPEND: &str = "den.docket_entry.append";
+pub const DEN_DOCKET_ENTRY_APPEND_PROVIDER: &str = "append_docket_entry";
+pub const DEN_DOCKET_ENTRY_PROMOTE: &str = "den.docket_entry.promote";
+pub const DEN_DOCKET_ENTRY_PROMOTE_PROVIDER: &str = "promote_docket_entry";
+pub const DEN_DOCKET_ENTRY_LIST: &str = "den.docket_entry.list";
+pub const DEN_DOCKET_ENTRY_LIST_PROVIDER: &str = "list_docket_entries";
 pub const DEN_TASK_LIST_SYNC: &str = "den.task_list.sync";
 pub const DEN_TASK_LIST_SYNC_PROVIDER: &str = "sync_task_list";
 pub const DEN_TASK_LIST_CHECKOUT: &str = "den.task_list.checkout";
@@ -123,8 +131,12 @@ pub const DEN_WORK_RUN_FIND: &str = "den.work_run.find";
 pub const DEN_WORK_RUN_FIND_PROVIDER: &str = "find_work_run";
 pub const DEN_WORK_RUN_CANCEL: &str = "den.work_run.cancel";
 pub const DEN_WORK_RUN_CANCEL_PROVIDER: &str = "cancel_work_run";
+pub const DEN_WORK_RUN_RESOLVE_STALLED: &str = "den.work_run.resolve_stalled";
+pub const DEN_WORK_RUN_RESOLVE_STALLED_PROVIDER: &str = "resolve_stalled_work_run";
 pub const DEN_WORK_CATALOG: &str = "den.work.catalog";
 pub const DEN_WORK_CATALOG_PROVIDER: &str = "get_work_catalog";
+pub const DEN_WORK_SURFACE_CONFIRM: &str = "den.work_surface.confirm";
+pub const DEN_WORK_SURFACE_CONFIRM_PROVIDER: &str = "confirm_work_surface";
 /// Prepare one Rust package's dependencies outside the restricted work sandbox.
 /// This is intentionally a Den-hosted work action, not an Armature capability.
 pub const DEN_WORK_PREPARE_RUST_DEPENDENCIES: &str = "den.work.prepare_rust_dependencies";

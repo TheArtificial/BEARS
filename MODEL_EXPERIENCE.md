@@ -15,6 +15,7 @@ system:  compiled stance prompt            (pre-turn compiled, Postgres)
        + key memory projection             (bounded anchors from per-Bear SQLite)
        + derived recall                    (optional vector passages, labeled as recall)
        + runtime supplements               (prompt-memory blocks, compaction state,
+                                            capability guidance/recent discoveries,
                                             channel/tool reminders)
 messages: projected transcript incl. replayable tool calls/results + current step
 tools:    merged Den-hosted + client descriptors
@@ -26,7 +27,7 @@ tools:    merged Den-hosted + client descriptors
 | **Key memory projection** | A small, stance-scoped briefing of canonical memory: shared identity anchors, active work-surface anchors, stance-local highlights. Latest-head records only, under strict character budgets — never the whole memory store. | Context assembler over per-Bear SQLite |
 | **Derived recall** | Semantically retrieved passages when the vector index is configured. Explicitly labeled as recall — a search result over memory, not memory itself. | Derived recall index ([ADR-0038](docs/decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) |
 | **Prompt-memory blocks** | Editable standing context scoped by Bear/stance/session/work surface. Distinct from long-term memory and from transcript. | Den Postgres ([contract](docs/architecture/den-prompt-memory-block-contract.md)) |
-| **Runtime supplements** | Turn-local reminders rendered from typed runtime state: tool/memory scope for a trusted session, active Docket execution, date/budget reminders, compaction state. | Repository-owned runtime fragments |
+| **Runtime supplements** | Turn-local reminders rendered from typed runtime state: tool/memory scope for a trusted session, active Docket execution, capability-discovery guidance and a bounded recently-discovered working set, date/budget reminders, compaction state. Recently discovered capabilities are context only, not an authority grant. | Repository-owned runtime fragments |
 | **Transcript** | The model-replay projection of canonical conversation storage — a distinct projection from user-visible history. | Den conversation persistence |
 | **Tool/action descriptors** | The model-facing action surface and schemas for this stance and surface. Descriptors also carry runtime semantics: blocking tool, client obligation, non-blocking structured update, or ephemeral progress. | Descriptor registry + client capabilities |
 

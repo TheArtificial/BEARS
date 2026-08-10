@@ -16,6 +16,8 @@ pub(crate) struct ToolTaskRecord {
     pub(crate) turn_token: Option<Uuid>,
     pub(crate) phase: ToolTaskPhase,
     pub(crate) input_args: Option<Value>,
+    pub(crate) display: Option<Value>,
+    pub(crate) visible_summary: Option<String>,
     pub(crate) started_at: std::time::Instant,
     pub(crate) updated_at: std::time::Instant,
 }
@@ -47,6 +49,8 @@ impl ToolTaskRegistry {
                 turn_token,
                 phase: ToolTaskPhase::Received,
                 input_args: None,
+                display: None,
+                visible_summary: None,
                 started_at: now,
                 updated_at: now,
             },
@@ -54,12 +58,13 @@ impl ToolTaskRegistry {
         true
     }
 
-    pub(crate) async fn remember_input(
+    pub(crate) async fn remember_presentation(
         &self,
         session_id: &str,
         tool_call_id: &str,
         tool_name: &str,
         input_args: Value,
+        display: Option<Value>,
     ) {
         let mut tasks = self.tasks.lock().await;
         let Some(entry) = tasks.get_mut(&Self::key(session_id, tool_call_id)) else {
@@ -67,9 +72,27 @@ impl ToolTaskRegistry {
         };
         entry.tool_name = tool_name.to_string();
         entry.input_args = Some(input_args);
+        entry.display = display;
         entry.updated_at = std::time::Instant::now();
     }
 
+    pub(crate) async fn remember_visible_summary(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        text: &str,
+    ) {
+        let text = text.trim();
+        if text.is_empty() || text == "Completed." || is_generic_completion(text) {
+            return;
+        }
+        let mut tasks = self.tasks.lock().await;
+        let Some(entry) = tasks.get_mut(&Self::key(session_id, tool_call_id)) else {
+            return;
+        };
+        entry.visible_summary = Some(text.to_string());
+        entry.updated_at = std::time::Instant::now();
+    }
     pub(crate) async fn get(&self, session_id: &str, tool_call_id: &str) -> Option<ToolTaskRecord> {
         self.tasks
             .lock()
@@ -95,18 +118,17 @@ impl ToolTaskRegistry {
         let total_elapsed_ms = now.duration_since(entry.started_at).as_millis();
         entry.phase = phase;
         entry.updated_at = now;
-        if phase.should_log_to_stderr() || previous_phase.should_log_to_stderr() {
-            eprintln!(
-                "bear-armature: tool_task transition session_id={} tool_call_id={} tool_name={} from_phase={} to_phase={} phase_duration_ms={} total_duration_ms={}",
-                session_id,
-                tool_call_id,
-                tool_name,
-                previous_phase.as_str(),
-                phase.as_str(),
-                previous_elapsed_ms,
-                total_elapsed_ms,
-            );
-        }
+        tracing::debug!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            tool_call_id,
+            tool_name,
+            from_phase = previous_phase.as_str(),
+            to_phase = phase.as_str(),
+            phase_duration_ms = previous_elapsed_ms,
+            total_duration_ms = total_elapsed_ms,
+            "tool task phase transitioned"
+        );
     }
 
     pub(crate) async fn remove(
@@ -121,13 +143,14 @@ impl ToolTaskRegistry {
             .remove(&Self::key(session_id, tool_call_id));
         if let Some(record) = removed.as_ref() {
             if record.phase != ToolTaskPhase::ResultPosted {
-                eprintln!(
-                    "bear-armature: tool_task finished session_id={} tool_call_id={} tool_name={} final_phase={} total_duration_ms={}",
-                    record.session_id,
-                    record.tool_call_id,
-                    record.tool_name,
-                    record.phase.as_str(),
-                    record.started_at.elapsed().as_millis(),
+                tracing::debug!(
+                    target: "bear_armature::lifecycle",
+                    session_id = record.session_id,
+                    tool_call_id = record.tool_call_id,
+                    tool_name = record.tool_name,
+                    final_phase = record.phase.as_str(),
+                    total_duration_ms = record.started_at.elapsed().as_millis(),
+                    "tool task finished before posting a result"
                 );
             }
         }
@@ -148,18 +171,32 @@ impl ToolTaskRegistry {
                 return true;
             }
             if task.phase != ToolTaskPhase::ResultPosted {
-                eprintln!(
-                    "bear-armature: tool_task cancelled session_id={} turn_token={:?} tool_call_id={} tool_name={} from_phase={} total_duration_ms={}",
-                    task.session_id,
-                    task.turn_token,
-                    task.tool_call_id,
-                    task.tool_name,
-                    task.phase.as_str(),
-                    now.duration_since(task.started_at).as_millis(),
+                tracing::debug!(
+                    target: "bear_armature::lifecycle",
+                    session_id = task.session_id,
+                    turn_token = ?task.turn_token,
+                    tool_call_id = task.tool_call_id,
+                    tool_name = task.tool_name,
+                    from_phase = task.phase.as_str(),
+                    total_duration_ms = now.duration_since(task.started_at).as_millis(),
+                    "tool task cancelled"
                 );
             }
             false
         });
+    }
+
+    pub(crate) async fn has_active_execution(&self, session_id: &str) -> bool {
+        self.tasks.lock().await.values().any(|task| {
+            task.session_id == session_id
+                && matches!(
+                    task.phase,
+                    ToolTaskPhase::ExecutionStarted
+                        | ToolTaskPhase::ExecutionSucceeded
+                        | ToolTaskPhase::ExecutionFailed
+                        | ToolTaskPhase::ResultPostFailed
+                )
+        })
     }
 
     pub(crate) async fn list_for_session(&self, session_id: &str) -> Vec<ToolTaskRecord> {
@@ -173,6 +210,10 @@ impl ToolTaskRegistry {
     }
 }
 
+fn is_generic_completion(text: &str) -> bool {
+    let normalized = text.trim().trim_end_matches('.').to_ascii_lowercase();
+    normalized == "completed" || normalized.ends_with(" completed")
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ToolTaskPhase {
     Received,
@@ -189,17 +230,6 @@ pub(crate) enum ToolTaskPhase {
 }
 
 impl ToolTaskPhase {
-    pub(crate) fn should_log_to_stderr(self) -> bool {
-        matches!(
-            self,
-            Self::PermissionDenied
-                | Self::PermissionTimeout
-                | Self::ExecutionFailed
-                | Self::ResultPostFailed
-                | Self::Cancelled
-        )
-    }
-
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Received => "received",
@@ -223,21 +253,44 @@ pub(crate) fn log_tool_task_phase(
     tool_name: &str,
     phase: ToolTaskPhase,
 ) {
-    if !phase.should_log_to_stderr() {
-        return;
-    }
-    eprintln!(
-        "bear-armature: tool_task phase={} session_id={} tool_call_id={} tool_name={}",
-        phase.as_str(),
+    tracing::debug!(
+        target: "bear_armature::lifecycle",
         session_id,
         tool_call_id,
-        tool_name
+        tool_name,
+        phase = phase.as_str(),
+        "tool task phase reached"
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn active_execution_tracks_only_command_ownership_phases() {
+        let registry = ToolTaskRegistry::default();
+        assert!(
+            registry
+                .try_register("session-a", "call-a", "run_command", Some(Uuid::new_v4()))
+                .await
+        );
+        assert!(!registry.has_active_execution("session-a").await);
+
+        registry
+            .set_phase(
+                "session-a",
+                "call-a",
+                "run_command",
+                ToolTaskPhase::ExecutionStarted,
+            )
+            .await;
+        assert!(registry.has_active_execution("session-a").await);
+        assert!(!registry.has_active_execution("session-b").await);
+
+        registry.remove("session-a", "call-a").await;
+        assert!(!registry.has_active_execution("session-a").await);
+    }
 
     #[tokio::test]
     async fn cancelling_session_evicts_all_matching_task_records() {
@@ -277,11 +330,12 @@ mod tests {
         registry.cancel_session("session-a").await;
 
         registry
-            .remember_input(
+            .remember_presentation(
                 "session-a",
                 "call-a",
                 "fs_read_text_file",
                 serde_json::json!({"path":"README.md"}),
+                None,
             )
             .await;
         registry

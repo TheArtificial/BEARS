@@ -69,11 +69,12 @@ Conceptual registry fields:
 | Field | Purpose |
 |-------|---------|
 | `artifact_ref` | Opaque Den-minted ID. |
-| `kind` | `file`, `patch`, `report`, `test_report`, `memory_review`, `screenshot`, `attachment`, etc. |
+| `kind` | `file`, `patch`, `report`, `test_report`, `memory_review`, `screenshot`, `attachment`, `git_commit`, `cabinet_document_snapshot`, etc. |
 | `title` | Human-readable title or suggested filename. |
 | `storage_kind` | `garage_artifacts`, `garage_cabinet`, `db_text`, `external_ref`, etc. |
 | `object_key` / `external_ref` | Backend locator; not exposed as the protocol ref. |
-| `content_type`, `size_bytes`, `sha256` | Content metadata and integrity. |
+| `content_type`, `size_bytes`, `sha256` | Content metadata and integrity for Den-owned byte content. |
+| `external_identity` | Typed immutable identity for external references, such as repository identity, Git object format and commit OID, and declared output ref. |
 | `bear_id`, `user_id`, `conversation_id` | Scope and ownership. |
 | `parent_run_id`, `parent_task_id`, `job_id` | Docket/run provenance when applicable. |
 | `creating_stance` | `chat`, `pair`, `work`, `curate`, `watch`, `system`, etc. |
@@ -92,7 +93,13 @@ Artifact creation is two-phase when bytes are uploaded or generated asynchronous
 reserve artifact ref -> write/upload content -> finalize artifact
 ```
 
-A reserved artifact exists in `pending` lifecycle state. It is not readable as complete content until finalized. Finalization records size, hash, content type, backend locator, and provenance.
+A reserved artifact exists in `pending` lifecycle state. It is not readable as complete content until finalized. Finalization is storage-kind-specific:
+
+- Den-owned byte content records size, SHA-256, content type, backend locator, and provenance.
+- An external Git commit records repository identity, object format and commit OID, and the declared published output ref. The trusted publisher verifies immediately before finalization that the commit is reachable from that ref; the artifact's normal finalization time and task/work-run linkage record the provenance. No separate attestation or receipt is stored.
+- A Cabinet document snapshot records the immutable Cabinet item/version identity.
+
+A worker claim alone does not establish that external backing exists. When Den finalizes an artifact, the relevant service records the backing information it can observe. This confirms the identity and provenance of the cited output; it does not certify that the output is correct or complete for its intended purpose.
 
 ### 5. Finalized artifacts are stable snapshots
 
@@ -185,6 +192,21 @@ Artifacts may also be copied or mounted into work surfaces through explicit capa
 
 A work-surface path is provenance or a mount location, not an artifact ref.
 
+### 10a. Docket output evidence
+
+A Docket task records a primary output as structured evidence, rather than relying on worker narrative or an untyped result map. The record names one primary output for the task/run when the task produces a durable deliverable, plus task/job/run/work-surface provenance. Additional artifacts may be linked as `evidence`, `test_report`, or `completion_receipt`.
+
+A primary output may cite either:
+
+1. **Git commit artifact evidence** — a finalized external Git artifact with declared repository identity, object format and commit OID, and output ref. Finalization means the trusted publisher confirmed at that time that the commit was reachable from the recorded ref; it does not promise the ref will never later be rewritten.
+2. **Den-owned artifact evidence** — a finalized `artifact_...` ref with its byte digest and storage/provenance metadata when the artifact service owns the content.
+
+Docket's baseline settlement rule is deliberately evidence-oriented: it records the finalized primary artifact, its stable identity, and any validation attempt. Validation records the executed check, observed result, execution provenance, and durable diagnostic output where relevant. If the record names an immutable identity, the primary-output and validation records must agree on it; that prevents an accidental or misleading association between a check and different output. Task-output provenance is the finalized artifact, its `primary_output` link to the task, the validation record, and existing work-run data where applicable; Docket does not create a separate completion receipt. This is provenance and handoff integrity, **not** a certificate that the deliverable is technically correct, complete, published, or fit for every intended use.
+
+A task's policy may require a particular output kind, artifact lifecycle, work-surface observation, or successful validation. Those are explicit stronger requirements for that task/surface, not universal Docket settlement gates. Missing required evidence or a required failed/unavailable check leaves the task blocked with a structured reason while preserving candidate output and raw run evidence. If Git publication succeeded but artifact finalization failed, ordinary run/error data is retained and the task remains blocked; an authorized recovery operation may recheck the same commit/ref condition and finalize/link the artifact. Terminal work-run telemetry alone cannot complete or block a job.
+
+Cabinet items remain knowledge/document records, not task outputs by themselves. A Cabinet document version may be cited as `cabinet_document_snapshot` evidence with its version identity.
+
 ### 11. Promotion path
 
 Den may support moving or copying an ephemeral artifact into Cabinet with user confirmation and policy checks. Promotion creates or links a Cabinet-durable artifact/attachment and updates lifecycle so ephemeral GC no longer treats the content as disposable.
@@ -193,11 +215,13 @@ Den may support moving or copying an ephemeral artifact into Cabinet with user c
 
 ## Invariants
 
-- Artifact refs identify durable Den-managed content objects.
+- Artifact refs identify durable Den-managed content objects or verified immutable external references.
 - Den mints artifact refs; models and clients do not.
 - Artifact refs are not object-storage keys, URLs, filesystem paths, work-surface IDs, Cabinet records, conversations, jobs, tasks, or runs.
+- A Git commit artifact refers to a verified immutable commit; it is not a Den-owned copy of the Git object and its OID is not assumed to be a SHA-256 content digest.
 - Work surfaces may produce or consume artifacts, Cabinet items may attach artifacts, and runs may cite artifacts as evidence.
-- Finalized artifacts are stable snapshots. Mutable work belongs in work surfaces; durable evidence belongs in artifacts.
+- Finalized artifacts are stable snapshots or immutable verified external identities. Mutable work belongs in work surfaces; durable evidence belongs in artifacts.
+- A Docket completion record preserves the declared/observed primary output, available stable identity, and required validation attempt. It establishes provenance and handoff integrity, not semantic correctness of the output.
 - Cabinet-durable artifacts and ephemeral run artifacts may share the artifact-ref protocol, but they do not share GC policy.
 
 ---

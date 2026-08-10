@@ -108,6 +108,9 @@ pub struct AppState {
     pub bifrost_catalog: den_service::bifrost::BifrostCatalogStore,
     pub web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
     pub media: Option<crate::core::s3::MediaStore>,
+    /// Clone of the process-wide per-Bear memory store manager (ADR-0031:
+    /// one `MemoryStoreManager` instance per process; clones share pools).
+    pub memory_stores: den_memory::MemoryStoreManager,
 }
 
 impl AppState {
@@ -138,6 +141,7 @@ impl AppState {
     ) -> Self {
         let bifrost =
             std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref()));
+        let memory_stores = den_memory::MemoryStoreManager::new(config.as_ref());
         Self {
             sqlx_pool,
             template_env,
@@ -147,6 +151,7 @@ impl AppState {
             bifrost_catalog: den_service::bifrost::new_catalog_store(),
             web_chat_runtime,
             media: None,
+            memory_stores,
         }
     }
 }
@@ -192,11 +197,13 @@ pub async fn server_with_state(
     sqlx_pool: PgPool,
     session_store: PostgresStore,
     config: Arc<Config>,
+    memory_stores: den_memory::MemoryStoreManager,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     server_with_state_and_runtime(
         sqlx_pool,
         session_store,
         config,
+        memory_stores,
         crate::web_chat_runtime::unavailable_web_chat_runtime(),
     )
     .await
@@ -232,6 +239,7 @@ pub async fn server_with_state_and_runtime(
     sqlx_pool: PgPool,
     session_store: PostgresStore,
     config: Arc<Config>,
+    memory_stores: den_memory::MemoryStoreManager,
     web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
     let env = template_environment(config.as_ref());
@@ -259,6 +267,7 @@ pub async fn server_with_state_and_runtime(
             bifrost_catalog,
             web_chat_runtime,
             media,
+            memory_stores,
         },
         session_store,
     )
@@ -337,6 +346,7 @@ pub async fn server(
                 .merge(bear::manage::router())
                 .merge(onboarding::router())
                 .merge(work::router())
+                .nest("/bear/{bear_slug}", work::docket_router())
                 // TSR: conversation links use `/bear/{slug}/?conversation_id=…`; plain `/bear/{slug}` is the canonical chat URL.
                 .route_with_tsr("/bear/{slug}", get(bear::chat::bear_page))
                 .route_layer(login_required!(Backend, login_url = "/login")),
