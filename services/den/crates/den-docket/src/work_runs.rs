@@ -928,10 +928,25 @@ pub fn canonical_work_run_outcome(
             .filter(|status| *status == "pending")
             .count();
         if unfinished > 0 {
+            let missing_terminal_status =
+                refs.pointer("/turn_outcome/kind").and_then(Value::as_str) == Some("completed");
+            let (code, summary) = if missing_terminal_status {
+                (
+                    "task_status_not_recorded",
+                    format!(
+                        "Sandbox turn completed without recording a terminal task status for {unfinished} task(s)."
+                    ),
+                )
+            } else {
+                (
+                    "work_incomplete",
+                    format!("Work is incomplete: {unfinished} task(s) remain unfinished."),
+                )
+            };
             return json!({
                 "status": "incomplete",
-                "code": "work_incomplete",
-                "summary": format!("Work is incomplete: {unfinished} task(s) remain unfinished."),
+                "code": code,
+                "summary": summary,
                 "evidence_refs": ["task_run_states", "turn_outcome", "armature_report"],
             });
         }
@@ -1105,8 +1120,23 @@ mod outcome_tests {
     }
 
     #[test]
-    fn unfinished_tasks_prevent_completed_outcome() {
+    fn completed_turn_without_terminal_task_status_is_explicit() {
         let refs = json!({ "turn_outcome": { "kind": "completed" } });
+        let task_statuses = vec!["pending".to_string()];
+        let state = canonical_work_run_state(WorkRunState::Succeeded, &refs, &task_statuses);
+        let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);
+        assert_eq!(state, WorkRunState::Blocked);
+        assert_eq!(outcome["status"], "incomplete");
+        assert_eq!(outcome["code"], "task_status_not_recorded");
+        assert!(outcome["summary"]
+            .as_str()
+            .unwrap()
+            .contains("without recording a terminal task status"));
+    }
+
+    #[test]
+    fn unfinished_tasks_prevent_completed_outcome() {
+        let refs = json!({ "turn_outcome": { "kind": "failed" } });
         let task_statuses = vec!["done".to_string(), "pending".to_string()];
         let state = canonical_work_run_state(WorkRunState::Succeeded, &refs, &task_statuses);
         let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);

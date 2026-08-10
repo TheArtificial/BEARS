@@ -164,8 +164,14 @@ fn work_checkout_prompt_is_rendered_from_a_turn_fragment() {
             "work": {
                 "job_id": "00000000-0000-0000-0000-000000000000",
                 "run_id": "00000000-0000-0000-0000-000000000001",
+                "current_task_id": "00000000-0000-0000-0000-000000000002",
                 "goal": "Ship safely",
-                "tasks": [],
+                "tasks": [{
+                    "id": "00000000-0000-0000-0000-000000000002",
+                    "title": "Finish safely",
+                    "body": "Make the smallest safe change.",
+                    "completion_criteria": ["A terminal task status is recorded."]
+                }],
                 "commit_policy": null,
                 "notebook_entries": [{
                     "kind": "decision",
@@ -181,6 +187,9 @@ fn work_checkout_prompt_is_rendered_from_a_turn_fragment() {
     assert!(rendered.contains("Use &lt;boring&gt; &amp; safe code"));
     assert!(rendered.contains("deploy &quot;now&quot;"));
     assert!(!rendered.contains("Use <boring>"));
+    assert!(rendered.contains("Before ending this turn or reporting completion, you MUST call `update_current_task_status`"));
+    assert!(rendered.contains("outcome_disposition: no_change"));
+    assert!(rendered.contains("Do not end the turn, report completion, or stop silently while the current task remains pending."));
 }
 
 #[test]

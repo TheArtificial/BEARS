@@ -563,14 +563,14 @@ fn work_run_outcome_summary(
     }
 
     let status = task_status.unwrap_or("pending");
-    let blocked = format!(
-        "turn completed with unfinished job tasks (task run status: {status}); unfinished tasks remain pending"
+    let incomplete = format!(
+        "sandbox turn completed without recording a terminal task status (task run status: {status})"
     );
     match armature_summary {
         Some(summary) if !summary.trim().is_empty() => {
-            format!("{blocked}; armature: {summary}")
+            format!("{incomplete}; armature: {summary}")
         }
-        _ => blocked,
+        _ => incomplete,
     }
 }
 
@@ -1068,7 +1068,7 @@ mod tests {
     }
 
     #[test]
-    fn blocked_summary_is_not_hidden_by_generic_armature_completion() {
+    fn incomplete_summary_identifies_missing_terminal_task_status() {
         let summary = work_run_outcome_summary(
             false,
             Some("headless turn reached a terminal run event".to_string()),
@@ -1076,8 +1076,7 @@ mod tests {
             Some("in_progress"),
         );
 
-        assert!(summary.contains("unfinished job tasks"));
-        assert!(summary.contains("unfinished tasks remain pending"));
+        assert!(summary.contains("without recording a terminal task status"));
         assert!(summary.contains("task run status: in_progress"));
         assert!(summary.contains("armature: headless turn reached"));
     }
