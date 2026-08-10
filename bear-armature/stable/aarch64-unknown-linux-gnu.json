@@ -1,13 +1,13 @@
 {
   "channel": "stable",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "platforms": {
     "aarch64-unknown-linux-gnu": {
       "binary_url": "https://bears-ai.github.io/bear-den/bear-armature/stable/bear-armature-aarch64-unknown-linux-gnu",
-      "sha256": "165ec93436f0b9c5bffa9bac48af80d5418fe001981be3baf35157d61e1ee6ca",
-      "size": 20753408
+      "sha256": "8b8676d7dbbeadfc08eb6213d6d897cb64882ca60974a9dce1ee4d08b3ce9705",
+      "size": 20756016
     }
   },
-  "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bear-armature/v0.1.8",
+  "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bear-armature/v0.1.9",
   "mandatory": false
 }

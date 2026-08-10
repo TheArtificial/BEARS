@@ -1,20 +1,20 @@
 {
   "channel": "stable",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "pkg_url": "https://bears-ai.github.io/bear-den/bear-armature/stable/bear-armature-aarch64-apple-darwin.pkg",
-  "sha256": "bd410e3ce3296ea74e92fa89996eb64b004354c74ca6868c9666e5110445553c",
+  "sha256": "e9b87cbff4a8e45845003d2200c95fda3a0371732d090bc35cf58ce235eeb18e",
   "min_macos": "13.0",
-  "size": 6531563,
+  "size": 6566553,
   "package_identifier": "ai.bears.acp-adapter",
   "platforms": {
     "aarch64-apple-darwin": {
       "pkg_url": "https://bears-ai.github.io/bear-den/bear-armature/stable/bear-armature-aarch64-apple-darwin.pkg",
-      "sha256": "bd410e3ce3296ea74e92fa89996eb64b004354c74ca6868c9666e5110445553c",
+      "sha256": "e9b87cbff4a8e45845003d2200c95fda3a0371732d090bc35cf58ce235eeb18e",
       "min_macos": "13.0",
-      "size": 6531563,
+      "size": 6566553,
       "package_identifier": "ai.bears.acp-adapter"
     }
   },
-  "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bear-armature/v0.1.8",
+  "release_notes_url": "https://github.com/bears-ai/bear-den/releases/tag/bear-armature/v0.1.9",
   "mandatory": false
 }
