@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT artifacts.metadata->'git'->>'commit_oid' AS commit_oid\n                 FROM artifacts\n                 JOIN artifact_links ON artifact_links.artifact_id = artifacts.id\n                 WHERE artifacts.bear_id = $1\n                   AND artifacts.artifact_ref = $2\n                   AND artifacts.lifecycle = 'finalized'\n                   AND artifacts.storage_kind = 'external_git_commit'\n                   AND artifact_links.target_kind = 'docket_task'\n                   AND artifact_links.target_id = $3\n                   AND artifact_links.role = 'primary_output'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "commit_oid",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b7070e2a1f0ff272a137fc540075a98e44369712b60d63d8caee7aa247750f6f"
+}

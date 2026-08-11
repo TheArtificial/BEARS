@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::{BearProfile, DenError};
@@ -85,10 +85,10 @@ pub(super) async fn create_job(
         (Some(job_id), super::model::DocketJobOverlapResolution::Supersede)
             if create.supersedes_job_id == Some(job_id) =>
         {
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE bear_jobs SET lifecycle_intent = 'cancelled', updated_at = NOW() WHERE id = $1",
-            )
-            .bind(job_id)
+
+job_id)
             .execute(&mut *tx)
             .await?;
         }
@@ -138,15 +138,15 @@ pub(super) async fn create_job(
     .await?;
 
     for assignment in &surface_assignments {
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO job_work_surface_assignments (job_id, work_surface_id, mutation_policy)
             VALUES ($1, $2, $3)
             ",
+            job_id,
+            assignment.work_surface_id,
+            assignment.mutation_policy.as_str()
         )
-        .bind(job_id)
-        .bind(assignment.work_surface_id)
-        .bind(assignment.mutation_policy.as_str())
         .execute(&mut *tx)
         .await?;
     }
@@ -193,14 +193,14 @@ pub(super) async fn create_job(
         .fetch_one(&mut *tx)
         .await?;
 
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO bear_job_criteria_state (run_id, criterion_id, status)
             VALUES ($1, $2, 'unmet')
             ",
+            run.id,
+            row.id
         )
-        .bind(run.id)
-        .bind(row.id)
         .execute(&mut *tx)
         .await?;
         criteria.push(row);
@@ -234,22 +234,22 @@ pub(super) async fn create_job(
         tasks.push(row);
     }
 
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_user_id, payload)
         VALUES ($1, $2, 'job_created', $3, $4, $5::jsonb)
         ",
+        job.id,
+        run.id,
+        create.created_by_role.trim(),
+        create.created_by_user_id,
+        json!({
+            "criteria_count": criteria.len(),
+            "task_count": tasks.len(),
+            "lifecycle_intent": job.lifecycle_intent,
+            "visibility": job.visibility,
+        })
     )
-    .bind(job.id)
-    .bind(run.id)
-    .bind(create.created_by_role.trim())
-    .bind(create.created_by_user_id)
-    .bind(json!({
-        "criteria_count": criteria.len(),
-        "task_count": tasks.len(),
-        "lifecycle_intent": job.lifecycle_intent,
-        "visibility": job.visibility,
-    }))
     .execute(&mut *tx)
     .await?;
 
@@ -357,46 +357,46 @@ async fn insert_task_for_job(
     .fetch_one(&mut **tx)
     .await?;
 
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_task_run_state (run_id, task_id, status)
         VALUES ($1, $2, 'pending')
         ",
+        run.id,
+        row.id
     )
-    .bind(run.id)
-    .bind(row.id)
     .execute(&mut **tx)
     .await?;
 
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
         VALUES ($1, $2, 'created', $3, $4, $5::jsonb)
         ",
+        row.id,
+        run.id,
+        create.created_by_role.trim(),
+        create.created_by_user_id,
+        json!({
+            "job_id": row.job_id,
+            "definition": docket_task_definition_payload(&row),
+        })
     )
-    .bind(row.id)
-    .bind(run.id)
-    .bind(create.created_by_role.trim())
-    .bind(create.created_by_user_id)
-    .bind(json!({
-        "job_id": row.job_id,
-        "definition": docket_task_definition_payload(&row),
-    }))
     .execute(&mut **tx)
     .await?;
 
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_job_events (job_id, run_id, event_type, task_id, by_role, by_user_id, payload)
         VALUES ($1, $2, 'task_added', $3, $4, $5, $6::jsonb)
         ",
-    )
-    .bind(job_id)
-    .bind(run.id)
-    .bind(row.id)
-    .bind(create.created_by_role.trim())
-    .bind(create.created_by_user_id)
-    .bind(json!({
+
+job_id,
+run.id,
+row.id,
+create.created_by_role.trim(),
+create.created_by_user_id,
+json!({
         "definition": docket_task_definition_payload(&row),
     }))
     .execute(&mut **tx)
@@ -416,15 +416,15 @@ pub(super) async fn create_task(
     create.sibling_order = sibling_order;
     let row = insert_task(&mut tx, &create).await?;
     if let Some(run_id) = create.created_in_run_id {
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO bear_task_run_state (run_id, task_id, status)
             VALUES ($1, $2, 'pending')
             ON CONFLICT (run_id, task_id) DO NOTHING
             ",
+            run_id,
+            row.id
         )
-        .bind(run_id)
-        .bind(row.id)
         .execute(&mut *tx)
         .await?;
     }
@@ -439,19 +439,18 @@ async fn place_task(
     // Serialize placement within a task tree; jobs and session anchors are the
     // stable roots available before a top-level task exists.
     if let Some(job_id) = create.job_id {
-        sqlx::query("SELECT id FROM bear_jobs WHERE id = $1 FOR UPDATE")
-            .bind(job_id)
+        sqlx::query!("SELECT id FROM bear_jobs WHERE id = $1 FOR UPDATE", job_id)
             .fetch_optional(&mut **tx)
             .await?
             .ok_or_else(|| DenError::ValidationError("Docket job not found".to_string()))?;
     } else if let Some(session_anchor_id) = create.session_anchor_id {
-        sqlx::query("SELECT id FROM client_sessions WHERE id = $1 FOR UPDATE")
-            .bind(session_anchor_id)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or_else(|| {
-                DenError::ValidationError("task session anchor not found".to_string())
-            })?;
+        sqlx::query!(
+            "SELECT id FROM client_sessions WHERE id = $1 FOR UPDATE",
+            session_anchor_id
+        )
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| DenError::ValidationError("task session anchor not found".to_string()))?;
     }
 
     let placement = create.placement.unwrap_or(DocketTaskPlacement::Last);
@@ -507,7 +506,7 @@ async fn place_task(
         }
     };
 
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE bear_tasks
         SET sibling_order = sibling_order + 1, updated_at = NOW()
@@ -517,12 +516,12 @@ async fn place_task(
           AND parent_task_id IS NOT DISTINCT FROM $4
           AND sibling_order >= $5
         ",
+        create.bear_id,
+        create.job_id,
+        create.session_anchor_id,
+        create.parent_task_id,
+        target_order
     )
-    .bind(create.bear_id)
-    .bind(create.job_id)
-    .bind(create.session_anchor_id)
-    .bind(create.parent_task_id)
-    .bind(target_order)
     .execute(&mut **tx)
     .await?;
 
@@ -782,7 +781,7 @@ pub(super) async fn update_job(
         DocketJobStatus::Archived => Some("archived"),
         _ => None,
     });
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE bear_jobs
         SET goal = $3,
@@ -793,30 +792,22 @@ pub(super) async fn update_job(
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         ",
-    )
-    .bind(update.bear_id)
-    .bind(update.job_id)
-    .bind(
+        update.bear_id,
+        update.job_id,
         update
             .goal
             .as_deref()
             .map(str::trim)
             .unwrap_or(&current.goal),
-    )
-    .bind(
         update
             .commit_policy
             .map(|policy| policy.map(|policy| policy.as_str().to_string()))
             .unwrap_or_else(|| current.commit_policy.clone()),
-    )
-    .bind(
         update
             .work_branch
             .clone()
             .unwrap_or_else(|| current.work_branch.clone()),
-    )
-    .bind(lifecycle_intent)
-    .bind(
+        lifecycle_intent,
         update
             .visibility
             .map(|visibility| visibility.as_str())
@@ -830,15 +821,17 @@ pub(super) async fn update_job(
                 "Docket work jobs cannot clear their required work surface".to_string(),
             )
         })?;
-        sqlx::query("DELETE FROM job_work_surface_assignments WHERE job_id = $1")
-            .bind(update.job_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(
-            "INSERT INTO job_work_surface_assignments (job_id, work_surface_id, mutation_policy) VALUES ($1, $2, 'required')",
+        sqlx::query!(
+            "DELETE FROM job_work_surface_assignments WHERE job_id = $1",
+            update.job_id
         )
-        .bind(update.job_id)
-        .bind(work_surface_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "INSERT INTO job_work_surface_assignments (job_id, work_surface_id, mutation_policy) VALUES ($1, $2, 'required')",
+
+update.job_id,
+work_surface_id)
         .execute(&mut *tx)
         .await?;
     }
@@ -850,19 +843,19 @@ pub(super) async fn update_job(
     .fetch_one(&mut *tx)
     .await?;
     let run_id = job.current_run_id;
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_agent_id, by_user_id, payload)
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
         ",
-    )
-    .bind(job.id)
-    .bind(run_id)
-    .bind(job_event_type_for_status(update.status))
-    .bind(update.actor_role.as_str())
-    .bind(update.actor_agent_id.as_deref())
-    .bind(update.actor_user_id)
-    .bind(json!({
+
+job.id,
+run_id,
+job_event_type_for_status(update.status),
+update.actor_role.as_str(),
+update.actor_agent_id.as_deref(),
+update.actor_user_id,
+json!({
         "lifecycle_intent": job.lifecycle_intent,
         "goal": job.goal,
         "visibility": job.visibility,
@@ -906,7 +899,7 @@ async fn update_run_for_job_status(
         _ => (None, false),
     };
     if let Some(state) = state {
-        sqlx::query(
+        sqlx::query!(
             r"
             UPDATE bear_job_runs
             SET state = $2,
@@ -915,10 +908,10 @@ async fn update_run_for_job_status(
                 updated_at = NOW()
             WHERE id = $1
             ",
-        )
-        .bind(run_id)
-        .bind(state)
-        .bind(finished)
+
+run_id,
+state,
+finished)
         .execute(&mut **tx)
         .await?;
     }
@@ -1044,7 +1037,7 @@ pub(super) async fn evaluate_criterion(
             update.criterion_id
         )));
     }
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_job_criteria_state (run_id, criterion_id, status, evaluated_at, evidence, updated_at)
         VALUES ($1, $2, $3, NOW(), $4::jsonb, NOW())
@@ -1054,25 +1047,25 @@ pub(super) async fn evaluate_criterion(
             evidence = EXCLUDED.evidence,
             updated_at = NOW()
         ",
-    )
-    .bind(update.run_id)
-    .bind(update.criterion_id)
-    .bind(update.status.as_str())
-    .bind(update.evidence.as_ref())
+
+update.run_id,
+update.criterion_id,
+update.status.as_str(),
+update.evidence.as_ref())
     .execute(&mut *tx)
     .await?;
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_agent_id, by_user_id, payload)
         VALUES ($1, $2, 'criterion_evaluated', $3, $4, $5, $6::jsonb)
         ",
-    )
-    .bind(update.job_id)
-    .bind(update.run_id)
-    .bind(update.actor_role.as_str())
-    .bind(update.actor_agent_id.as_deref())
-    .bind(update.actor_user_id)
-    .bind(json!({
+
+update.job_id,
+update.run_id,
+update.actor_role.as_str(),
+update.actor_agent_id.as_deref(),
+update.actor_user_id,
+json!({
         "criterion_id": update.criterion_id,
         "status": update.status.as_str(),
     }))
@@ -1142,7 +1135,7 @@ pub(super) async fn clear_active_execution_sessions(
 
     // ponytail: clear is lookup-based and marks matching active-like rows cancelled. The ceiling is
     // richer clear reasons/history; add a Docket event if operator-facing audit needs it.
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r"
         UPDATE docket_execution_sessions
         SET state = 'cancelled', updated_at = NOW()
@@ -1154,11 +1147,11 @@ pub(super) async fn clear_active_execution_sessions(
             OR ($4::TEXT IS NOT NULL AND source_client_session_id = $4)
           )
         ",
+        bear_id,
+        lookup.source_conversation_id,
+        lookup.session_id,
+        lookup.source_client_session_id
     )
-    .bind(bear_id)
-    .bind(lookup.source_conversation_id)
-    .bind(lookup.session_id)
-    .bind(lookup.source_client_session_id)
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
@@ -1289,7 +1282,7 @@ async fn retire_active_execution_session(
 ) -> Result<bool, DenError> {
     // ponytail: one execution session can have at most one active-like row today via the partial
     // unique index; update all matching rows anyway so future repair/backfill duplicates clear too.
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r"
         UPDATE docket_execution_sessions
         SET source_conversation_id = $4,
@@ -1304,16 +1297,16 @@ async fn retire_active_execution_session(
           AND session_id = $3
           AND state IN ('active', 'blocked', 'completing', 'paused')
         ",
+        request.bear_id,
+        request.actor_role.as_str(),
+        session_id,
+        request.source_conversation_id.as_ref(),
+        request.source_client_session_id.as_ref(),
+        request.job_id,
+        run_id,
+        task_id,
+        state
     )
-    .bind(request.bear_id)
-    .bind(request.actor_role.as_str())
-    .bind(session_id)
-    .bind(request.source_conversation_id.as_ref())
-    .bind(request.source_client_session_id.as_ref())
-    .bind(request.job_id)
-    .bind(run_id)
-    .bind(task_id)
-    .bind(state)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() > 0)
@@ -1351,19 +1344,19 @@ async fn record_execution_session(
         )
         .await?;
     }
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_job_events (job_id, run_id, event_type, task_id, by_role, by_agent_id, by_user_id, payload)
         VALUES ($1, $2, 'focus_selected', $3, $4, $5, $6, $7::jsonb)
         ",
-    )
-    .bind(request.job_id)
-    .bind(run_id)
-    .bind(task_id)
-    .bind(request.actor_role.as_str())
-    .bind(request.actor_agent_id.as_deref())
-    .bind(request.actor_user_id)
-    .bind(json!({
+
+request.job_id,
+run_id,
+task_id,
+request.actor_role.as_str(),
+request.actor_agent_id.as_deref(),
+request.actor_user_id,
+json!({
         "session_id": session_id,
         "source_conversation_id": request.source_conversation_id,
         "source_client_session_id": request.source_client_session_id,
@@ -1560,28 +1553,28 @@ async fn mark_job_running(
     let mut tx = pool.begin().await?;
     // Job status is derived from run/task/criterion evidence. Starting this run
     // is the only status transition needed here.
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE bear_job_runs
         SET state = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
         WHERE id = $1
         ",
+        run_id
     )
-    .bind(run_id)
     .execute(&mut *tx)
     .await?;
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_agent_id, by_user_id, payload)
         VALUES ($1, $2, 'run_started', $3, $4, $5, $6::jsonb)
         ",
-    )
-    .bind(request.job_id)
-    .bind(run_id)
-    .bind(request.actor_role.as_str())
-    .bind(request.actor_agent_id.as_deref())
-    .bind(request.actor_user_id)
-    .bind(json!({"status": "running"}))
+
+request.job_id,
+run_id,
+request.actor_role.as_str(),
+request.actor_agent_id.as_deref(),
+request.actor_user_id,
+json!({"status": "running"}))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -2170,7 +2163,7 @@ async fn validate_primary_output_registry(
     let kind = required_string(primary_output, "kind", "primary_output")?;
     match kind {
         "den_artifact" => {
-            let artifact = sqlx::query(
+            let artifact = sqlx::query!(
                 "SELECT content_sha256
                  FROM artifacts
                  JOIN artifact_links ON artifact_links.artifact_id = artifacts.id
@@ -2181,10 +2174,10 @@ async fn validate_primary_output_registry(
                    AND artifact_links.target_kind = 'docket_task'
                    AND artifact_links.target_id = $3
                    AND artifact_links.role = 'primary_output'",
+                task.bear_id,
+                artifact_ref,
+                task.id.to_string()
             )
-            .bind(task.bear_id)
-            .bind(artifact_ref)
-            .bind(task.id.to_string())
             .fetch_optional(&mut **tx)
             .await?;
             let Some(artifact) = artifact else {
@@ -2192,7 +2185,7 @@ async fn validate_primary_output_registry(
                     "Docket den_artifact primary_output must be finalized and linked to this task as primary_output".to_string(),
                 ));
             };
-            let content_sha256: Option<String> = artifact.try_get("content_sha256")?;
+            let content_sha256 = artifact.content_sha256;
             if content_sha256.as_deref() != Some(immutable_identity) {
                 return Err(DenError::ValidationError(
                     "Docket den_artifact primary_output immutable_identity must equal its finalized content SHA-256"
@@ -2201,7 +2194,7 @@ async fn validate_primary_output_registry(
             }
         }
         "git_commit" => {
-            let artifact = sqlx::query(
+            let artifact = sqlx::query!(
                 "SELECT artifacts.metadata->'git'->>'commit_oid' AS commit_oid
                  FROM artifacts
                  JOIN artifact_links ON artifact_links.artifact_id = artifacts.id
@@ -2212,10 +2205,10 @@ async fn validate_primary_output_registry(
                    AND artifact_links.target_kind = 'docket_task'
                    AND artifact_links.target_id = $3
                    AND artifact_links.role = 'primary_output'",
+                task.bear_id,
+                artifact_ref,
+                task.id.to_string()
             )
-            .bind(task.bear_id)
-            .bind(artifact_ref)
-            .bind(task.id.to_string())
             .fetch_optional(&mut **tx)
             .await?;
             let Some(artifact) = artifact else {
@@ -2223,7 +2216,7 @@ async fn validate_primary_output_registry(
                     "Docket git_commit primary_output must be a finalized Git commit artifact linked to this task as primary_output".to_string(),
                 ));
             };
-            let commit_oid: Option<String> = artifact.try_get("commit_oid")?;
+            let commit_oid = artifact.commit_oid;
             if commit_oid.as_deref() != Some(immutable_identity) {
                 return Err(DenError::ValidationError(
                     "Docket git_commit primary_output immutable_identity must equal its finalized commit OID"
@@ -2254,7 +2247,7 @@ async fn record_completion_receipt(
     let primary_output_ref = required_string(primary_output, "artifact_ref", "primary_output")?;
     let immutable_identity =
         required_string(primary_output, "immutable_identity", "primary_output")?;
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO docket_task_completion_receipts
              (task_id, run_id, primary_output_ref, immutable_identity, validation)
          VALUES ($1, $2, $3, $4, $5)
@@ -2263,12 +2256,12 @@ async fn record_completion_receipt(
              immutable_identity = EXCLUDED.immutable_identity,
              validation = EXCLUDED.validation,
              recorded_at = now()",
+        task.id,
+        run_state.run_id,
+        primary_output_ref,
+        immutable_identity,
+        Value::Object(validation.clone())
     )
-    .bind(task.id)
-    .bind(run_state.run_id)
-    .bind(primary_output_ref)
-    .bind(immutable_identity)
-    .bind(Value::Object(validation.clone()))
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -2339,7 +2332,7 @@ async fn roll_up_completed_parents(
             break;
         }
 
-        sqlx::query(
+        sqlx::query!(
             r"
             UPDATE bear_task_run_state
             SET status = 'done',
@@ -2348,9 +2341,9 @@ async fn roll_up_completed_parents(
                 updated_at = NOW()
             WHERE run_id = $1 AND task_id = $2 AND status NOT IN ('done', 'cancelled')
             ",
-        )
-        .bind(run_id)
-        .bind(task_id)
+
+run_id,
+task_id)
         .execute(&mut **tx)
         .await?;
         parent_id = sqlx::query_scalar("SELECT parent_task_id FROM bear_tasks WHERE id = $1")
@@ -2664,37 +2657,37 @@ async fn append_task_updated_events(
     task: &DocketTaskRow,
     update: &DocketTaskUpdate,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_agent_id, by_user_id, payload)
         VALUES ($1, $2, 'updated', $3, $4, $5, $6::jsonb)
         ",
-    )
-    .bind(task.id)
-    .bind(update.run_state.as_ref().map(|state| state.run_id))
-    .bind(update.actor_role.as_str())
-    .bind(update.actor_agent_id.as_deref())
-    .bind(update.actor_user_id)
-    .bind(json!({
+
+task.id,
+update.run_state.as_ref().map(|state| state.run_id),
+update.actor_role.as_str(),
+update.actor_agent_id.as_deref(),
+update.actor_user_id,
+json!({
         "definition": docket_task_definition_payload(task),
     }))
     .execute(&mut **tx)
     .await?;
 
     if let Some(job_id) = task.job_id {
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO bear_job_events (job_id, run_id, event_type, task_id, by_role, by_agent_id, by_user_id, payload)
             VALUES ($1, $2, 'task_updated', $3, $4, $5, $6, $7::jsonb)
             ",
-        )
-        .bind(job_id)
-        .bind(update.run_state.as_ref().map(|state| state.run_id))
-        .bind(task.id)
-        .bind(update.actor_role.as_str())
-        .bind(update.actor_agent_id.as_deref())
-        .bind(update.actor_user_id)
-        .bind(json!({
+
+job_id,
+update.run_state.as_ref().map(|state| state.run_id),
+task.id,
+update.actor_role.as_str(),
+update.actor_agent_id.as_deref(),
+update.actor_user_id,
+json!({
             "title": task.title,
             "parent_task_id": task.parent_task_id,
             "scope": task.scope,
@@ -2779,7 +2772,7 @@ async fn should_append_terminal_outcome(
             ))
         })?;
     let evidence_refs = terminal_evidence_refs(run_state.result_refs.as_ref());
-    let existing = sqlx::query(
+    let existing = sqlx::query!(
         r"
         SELECT summary, disposition, evidence_refs
         FROM bear_docket_entries
@@ -2787,9 +2780,9 @@ async fn should_append_terminal_outcome(
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         ",
+        task.id,
+        run_state.run_id
     )
-    .bind(task.id)
-    .bind(run_state.run_id)
     .fetch_optional(&mut **tx)
     .await?;
     let Some(existing) = existing else {
@@ -2797,11 +2790,11 @@ async fn should_append_terminal_outcome(
         // remove this fallback once all pre-journal runs have aged out.
         return Ok(true);
     };
-    let existing_summary: String = existing.try_get("summary")?;
-    let existing_disposition: String = existing.try_get("disposition")?;
-    let existing_evidence: Value = existing.try_get("evidence_refs")?;
+    let existing_summary = existing.summary;
+    let existing_disposition = existing.disposition;
+    let existing_evidence = existing.evidence_refs;
     if existing_summary == summary
-        && existing_disposition == disposition
+        && existing_disposition.as_deref() == Some(disposition)
         && existing_evidence == evidence_refs
     {
         return Ok(false);
@@ -2888,11 +2881,13 @@ async fn append_terminal_outcome(
     .bind(update.actor_user_id)
     .fetch_one(&mut **tx)
     .await?;
-    sqlx::query("UPDATE bear_tasks SET settled_by_entry_id = $2, updated_at = NOW() WHERE id = $1")
-        .bind(task.id)
-        .bind(entry_id)
-        .execute(&mut **tx)
-        .await?;
+    sqlx::query!(
+        "UPDATE bear_tasks SET settled_by_entry_id = $2, updated_at = NOW() WHERE id = $1",
+        task.id,
+        entry_id
+    )
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 

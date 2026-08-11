@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE bear_jobs\n        SET goal = $3,\n            commit_policy = $4,\n            work_branch = $5,\n            lifecycle_intent = COALESCE($6, lifecycle_intent),\n            visibility = $7,\n            updated_at = NOW()\n        WHERE bear_id = $1 AND id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dba7431416ac53feab804d22e75928c57ab0531b3cca37a2f54bb273ea5277bd"
+}
