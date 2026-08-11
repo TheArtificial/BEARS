@@ -62,7 +62,8 @@ use den_core::{config::Config, governance::Governance, profile::BearProfile, Den
 use den_docket::TaskListProjection;
 
 use super::transcript::{
-    spawn_persist_abandoned_native_tool_results, spawn_persist_native_agent_step,
+    persist_native_assistant_output_with_id, spawn_persist_abandoned_native_tool_results,
+    spawn_persist_native_agent_step,
 };
 use super::{session_store::AgentLoopSession, ObjectiveOrientation, OrientationTaskRef};
 
@@ -101,6 +102,8 @@ type FinalGateFocusFuture = Pin<
 >;
 type PausePersistenceFuture =
     Pin<Box<dyn Future<Output = Result<RuntimeSemanticEvent, DenError>> + Send>>;
+type FinalGateMessagePersistenceFuture =
+    Pin<Box<dyn Future<Output = Result<Option<Uuid>, DenError>> + Send>>;
 
 fn render_final_gate_continuation_guidance(next_task: &str) -> Result<String, DenError> {
     // Keep reusable final-gate steering in the fragment registry; this helper is
@@ -264,6 +267,7 @@ pub struct SessionTrackingStream {
     pending_server_tool_continuation: Option<String>,
     pending_final_gate_continuation: Option<FinalGateContinuationFuture>,
     pending_final_gate_focus: Option<FinalGateFocusFuture>,
+    pending_final_gate_message_persistence: Option<FinalGateMessagePersistenceFuture>,
     pending_pause_persistence: Option<PausePersistenceFuture>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
@@ -318,6 +322,7 @@ impl SessionTrackingStream {
             pending_server_tool_continuation: None,
             pending_final_gate_continuation: None,
             pending_final_gate_focus: None,
+            pending_final_gate_message_persistence: None,
             pending_pause_persistence: None,
             dispatch_mode,
             config,
@@ -1266,12 +1271,31 @@ impl SessionTrackingStream {
                 .cached_activity_plan_projection
                 .clone_from(&current_task_list);
         });
-        self.evaluate_final_gate_or_complete(current_task_list);
+        let pool = self.pool.clone();
+        let bear_id = self.bear_id;
+        let user_id = self.user_id;
+        let conversation_id = self.conversation_id.clone();
+        let client_session_id = self.client_session_id.clone();
+        let request_id = self.request_id.clone();
+        let assistant_text = self.assistant_text.clone();
+        self.pending_final_gate_message_persistence = Some(Box::pin(async move {
+            persist_native_assistant_output_with_id(
+                pool,
+                bear_id,
+                user_id,
+                conversation_id,
+                client_session_id,
+                request_id,
+                assistant_text,
+            )
+            .await
+        }));
     }
 
     fn evaluate_final_gate_or_complete(
         &mut self,
         cached_activity_plan_projection: Option<TaskListProjection>,
+        conversation_message_id: Option<Uuid>,
     ) {
         let recent_texts = self
             .store
@@ -1309,7 +1333,15 @@ impl SessionTrackingStream {
                     final_response_kind = ?final_response_kind,
                     "native runtime converted premature terminal response into continuation nudge"
                 );
-                self.begin_final_gate_continuation(&next_task);
+                if let Err(error) = self.begin_final_gate_continuation(
+                    &next_task,
+                    format!("{reason:?}"),
+                    format!("{final_response_kind:?}"),
+                    conversation_message_id,
+                ) {
+                    self.pending_pause_persistence = Some(Box::pin(async move { Err(error) }));
+                    return;
+                }
                 self.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunProgress {
                     kind: "autonomous_continuation_gate".to_string(),
                     text: Some(format!(
@@ -1340,7 +1372,10 @@ impl SessionTrackingStream {
                     repeated_objection_kind = ?loop_detection.repeated_objection_kind,
                     "native runtime task-focus loop detected; pausing active task instead of accepting terminal objection"
                 );
-                self.begin_repeated_terminal_objection_pause(&loop_detection);
+                self.begin_repeated_terminal_objection_pause(
+                    &loop_detection,
+                    conversation_message_id,
+                );
                 return;
             }
             TurnCompletionDecision::Complete {
@@ -1369,7 +1404,11 @@ impl SessionTrackingStream {
         self.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
     }
 
-    fn begin_repeated_terminal_objection_pause(&mut self, loop_detection: &TaskFocusLoopDetection) {
+    fn begin_repeated_terminal_objection_pause(
+        &mut self,
+        loop_detection: &TaskFocusLoopDetection,
+        conversation_message_id: Option<Uuid>,
+    ) {
         let run_id = match self
             .store
             .get(&self.session_key)
@@ -1409,7 +1448,7 @@ impl SessionTrackingStream {
                 LoopControlLedgerInput {
                     run_id,
                     turn_step_id: None,
-                    conversation_message_id: None,
+                    conversation_message_id,
                     decision_id: format!("active-task-pause-{}", Uuid::new_v4()),
                     decision_kind: LoopControlDecisionKind::ActiveTaskPause,
                     control_level: "standard".to_string(),
@@ -1491,7 +1530,13 @@ impl SessionTrackingStream {
         }));
     }
 
-    fn begin_final_gate_continuation(&mut self, next_task: &str) {
+    fn begin_final_gate_continuation(
+        &mut self,
+        next_task: &str,
+        reason: String,
+        final_response_kind: String,
+        conversation_message_id: Option<Uuid>,
+    ) -> Result<(), DenError> {
         let model_message = render_final_gate_continuation_guidance(next_task).unwrap_or_else(|err| {
             tracing::warn!(
                 error = %err,
@@ -1512,12 +1557,58 @@ impl SessionTrackingStream {
             });
         });
 
+        let session = self
+            .store
+            .get(&self.session_key)
+            .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
+        let run_id = session.run_id.ok_or_else(|| {
+            DenError::System(
+                "active Pair execution cannot continue without a persisted run ID".to_string(),
+            )
+        })?;
+        let task_list = session.cached_activity_plan_projection;
+        let next_task = next_task.to_string();
         let store = self.store.clone();
         let session_key = self.session_key.clone();
         let config = self.config.clone();
         let pool = self.pool.clone();
         let profile = self.profile;
         self.pending_final_gate_continuation = Some(Box::pin(async move {
+            let task_list_id = task_list.as_ref().map(|list| list.id.to_string());
+            let active_item = task_list
+                .as_ref()
+                .and_then(|list| list.current_item.as_ref());
+            record_loop_control_decision(
+                &pool,
+                LoopControlLedgerInput {
+                    run_id,
+                    turn_step_id: None,
+                    conversation_message_id,
+                    decision_id: format!("final-gate-continuation-{}", Uuid::new_v4()),
+                    decision_kind: LoopControlDecisionKind::FinalGateContinuation,
+                    control_level: "standard".to_string(),
+                    reason: Some(reason),
+                    orientation_kind: Some(profile.as_str().to_string()),
+                    checkpoint_id: None,
+                    related_task_list_id: task_list_id,
+                    related_task_item_id: active_item.map(|item| item.id.clone()),
+                    related_docket_job_id: task_list
+                        .as_ref()
+                        .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok()),
+                    related_docket_task_id: active_item
+                        .and_then(|item| Uuid::parse_str(&item.id).ok()),
+                    evidence_refs: vec![LedgerEvidenceRef {
+                        kind: "final_response_kind".to_string(),
+                        id: final_response_kind.clone(),
+                    }],
+                    decision: serde_json::json!({
+                        "action": "continue",
+                        "next_task": next_task,
+                        "final_response_kind": final_response_kind,
+                    }),
+                },
+            )
+            .await?;
             let session = store.get(&session_key).ok_or_else(|| {
                 DenError::System("native agent loop session not found".to_string())
             })?;
@@ -1530,6 +1621,7 @@ impl SessionTrackingStream {
             };
             run_agent_step_stream(&llm, &session, Some(overflow)).await
         }));
+        Ok(())
     }
 }
 
@@ -1636,6 +1728,29 @@ impl Stream for SessionTrackingStream {
                 }
                 Poll::Ready(Err(error)) => {
                     self.pending_pause_persistence = None;
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        if let Some(fut) = self.pending_final_gate_message_persistence.as_mut() {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(conversation_message_id)) => {
+                    self.pending_final_gate_message_persistence = None;
+                    let current_task_list = self
+                        .store
+                        .get(&self.session_key)
+                        .and_then(|session| session.cached_activity_plan_projection);
+                    self.evaluate_final_gate_or_complete(
+                        current_task_list,
+                        conversation_message_id,
+                    );
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_final_gate_message_persistence = None;
                     return Poll::Ready(Some(Err(error)));
                 }
                 Poll::Pending => return Poll::Pending,
@@ -2525,7 +2640,7 @@ mod tests {
         let mut stream = test_tracking_stream_with_session(&session);
         stream.assistant_text = "I need approval before continuing.".to_string();
 
-        stream.evaluate_final_gate_or_complete(Some(focused));
+        stream.evaluate_final_gate_or_complete(Some(focused), None);
 
         assert!(stream.finished);
         assert!(matches!(
@@ -2543,7 +2658,7 @@ mod tests {
         session.cached_activity_plan_projection = Some(completed_task_list_projection());
         let mut stream = test_tracking_stream_with_session(&session);
 
-        stream.evaluate_final_gate_or_complete(Some(completed_task_list_projection()));
+        stream.evaluate_final_gate_or_complete(Some(completed_task_list_projection()), None);
 
         let stored = stream
             .store

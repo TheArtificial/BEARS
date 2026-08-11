@@ -3,9 +3,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_service::conversation::events::{
-    canonical_persistence_context, spawn_persist_assistant_output, spawn_persist_tool_request,
-    spawn_persist_tool_result, CanonicalToolRequestRecord, CanonicalToolResultRecord,
-    ConversationEventProvenance,
+    canonical_persistence_context, persist_canonical_conversation_record_with_id,
+    spawn_persist_assistant_output, spawn_persist_tool_request, spawn_persist_tool_result,
+    CanonicalToolRequestRecord, CanonicalToolResultRecord, ConversationEventProvenance,
 };
 
 use crate::llm::{ChatMessage, ChatToolCall};
@@ -22,6 +22,41 @@ fn parse_tool_arguments(arguments: &str) -> Value {
 
 fn native_policy_reason(approval_required: bool) -> Option<String> {
     approval_required.then(|| "native runtime policy".to_string())
+}
+
+pub async fn persist_native_assistant_output_with_id(
+    pool: PgPool,
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    conversation_id: String,
+    client_session_id: String,
+    request_id: Option<String>,
+    assistant_text: String,
+) -> Result<Option<Uuid>, den_core::DenError> {
+    if assistant_text.trim().is_empty() {
+        return Ok(None);
+    }
+    let provenance = ConversationEventProvenance::client_session(client_session_id.clone());
+    let context = canonical_persistence_context(
+        pool,
+        bear_id,
+        user_id,
+        conversation_id,
+        Some(client_session_id.clone()),
+        request_id.clone(),
+        client_session_id,
+        false,
+    );
+    persist_canonical_conversation_record_with_id(
+        &context,
+        &den_service::conversation::events::CanonicalConversationRecord::assistant_output(
+            assistant_text,
+            &provenance,
+            None,
+            request_id,
+        ),
+    )
+    .await
 }
 
 pub fn spawn_persist_native_agent_step(

@@ -578,6 +578,35 @@ async fn canonical_record_already_persisted(
     Ok(false)
 }
 
+pub async fn persist_canonical_conversation_record_with_id(
+    context: &ConversationPersistenceContext,
+    record: &CanonicalConversationRecord,
+) -> Result<Option<Uuid>, DenError> {
+    if context.skip_persistence
+        || !canonical_persistence_enabled_for_conversation(&context.external_conversation_id)
+    {
+        return Ok(None);
+    }
+    let canonical = ensure_conversation_for_external_id(
+        &context.pool,
+        context.bear_id,
+        context.user_id,
+        &context.external_conversation_id,
+        context.source_session_id.as_deref(),
+        None,
+    )
+    .await?;
+    let source_event_id = canonical_record_source_event_id(record);
+    if source_event_id.is_none()
+        && canonical_record_already_persisted(context, canonical.id, record).await?
+    {
+        return Ok(None);
+    }
+    let write = record.to_write(source_event_id);
+    let appended = append_message(&context.pool, canonical.id, &write).await?;
+    Ok(Some(appended.id))
+}
+
 pub async fn persist_canonical_conversation_record(
     context: &ConversationPersistenceContext,
     record: &CanonicalConversationRecord,
