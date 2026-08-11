@@ -62,6 +62,7 @@ use crate::{
         materialize_runtime_conversation_if_needed, RunRecoveryDisposition, TurnContinueRequest,
         TurnStartRequest,
     },
+    turn_runs,
 };
 use den_core::DenError;
 use den_docket::{
@@ -924,6 +925,16 @@ async fn build_session(
     } else {
         None
     };
+    let run_id = ensure_pair_execution_run(
+        deps.pool,
+        profile.profile,
+        &cached_activity_plan_projection,
+        client_session_id,
+        bear_id,
+        user_id,
+        run_id,
+    )
+    .await?;
     tracing::info!(
         bear_id = %bear_id,
         profile = %profile.profile.as_str(),
@@ -952,7 +963,7 @@ async fn build_session(
         ),
         recently_discovered_capabilities: vec![],
         request_id: request_id.map(|id| id.to_string()),
-        run_id: run_id.map(str::to_string),
+        run_id,
         messages,
         tools,
         budget_components,
@@ -989,6 +1000,114 @@ async fn build_session(
     };
     SESSION_STORE.insert(session.clone());
     Ok(session)
+}
+
+async fn ensure_pair_execution_run(
+    pool: &PgPool,
+    profile: BearProfile,
+    task_list: &Option<TaskListProjection>,
+    client_session_id: &str,
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    supplied_run_id: Option<&str>,
+) -> Result<Option<String>, DenError> {
+    if profile != BearProfile::Pair {
+        return Ok(supplied_run_id.map(str::to_string));
+    }
+
+    let Some(task_list) = task_list else {
+        return Ok(supplied_run_id.map(str::to_string));
+    };
+    if !pair_execution_needs_run(task_list, client_session_id) {
+        return Ok(supplied_run_id.map(str::to_string));
+    }
+
+    if let Some(run_id) = supplied_run_id {
+        if turn_runs::get_run(pool, run_id).await?.is_some() {
+            return Ok(Some(run_id.to_string()));
+        }
+        tracing::warn!(
+            run_id,
+            client_session_id,
+            "Pair execution received an unknown run ID; creating a durable Pair run instead"
+        );
+    }
+    if let Some(run) = turn_runs::active_run_for_session(pool, client_session_id).await? {
+        return Ok(Some(run.run_id));
+    }
+
+    let user_id = user_id.ok_or_else(|| {
+        DenError::ValidationError(
+            "Pair execution requires an authenticated user to create its durable run".to_string(),
+        )
+    })?;
+    let run_id = format!("pair-{}", Uuid::new_v4());
+    turn_runs::create_run(pool, &run_id, client_session_id, bear_id, user_id).await?;
+    Ok(Some(run_id))
+}
+
+fn pair_execution_needs_run(task_list: &TaskListProjection, client_session_id: &str) -> bool {
+    task_list.source_client_session_id.as_deref() == Some(client_session_id)
+        && task_list.current_item.is_some()
+        && !matches!(
+            task_list.status.as_str(),
+            "blocked" | "completed" | "cancelled" | "archived"
+        )
+}
+
+#[cfg(test)]
+mod pair_execution_run_tests {
+    use super::*;
+
+    fn list(status: &str, session_id: Option<&str>, current: bool) -> TaskListProjection {
+        TaskListProjection {
+            id: Uuid::nil(),
+            bear_id: Uuid::nil(),
+            title: "t".to_string(),
+            summary: String::new(),
+            owner_profile: "pair".to_string(),
+            visibility: "private".to_string(),
+            status: status.to_string(),
+            version: 1,
+            source_ref: den_docket::TaskListSourceRef::local(vec![]),
+            items: vec![],
+            current_item: current.then(|| den_docket::TaskListItem {
+                id: "task".to_string(),
+                title: "task".to_string(),
+                summary: None,
+                status: den_docket::TaskListItemStatus::InProgress,
+                blocked_reason: None,
+                source_ref: den_docket::TaskListSourceRef::local(vec![]),
+                sync_state: den_docket::TaskListSyncState::LocalOnly,
+            }),
+            source_conversation_id: None,
+            source_client_session_id: session_id.map(str::to_string),
+            handoff_intent_path: None,
+            handoff_task_id: None,
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn pair_execution_run_requires_session_connected_current_item_in_active_list() {
+        assert!(pair_execution_needs_run(
+            &list("active", Some("s"), true),
+            "s"
+        ));
+        assert!(!pair_execution_needs_run(
+            &list("active", Some("other"), true),
+            "s"
+        ));
+        assert!(!pair_execution_needs_run(
+            &list("active", Some("s"), false),
+            "s"
+        ));
+        assert!(!pair_execution_needs_run(
+            &list("blocked", Some("s"), true),
+            "s"
+        ));
+    }
 }
 
 pub async fn run_native_profile_turn_collect_assistant_text(
