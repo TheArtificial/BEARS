@@ -1,0 +1,60 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT latest.id AS run_id, latest.job_id, j.goal AS job_goal,\n                latest.state, latest.result_summary, latest.error, latest.finished_at\n         FROM (\n             SELECT DISTINCT ON (job_id)\n                    id, job_id, state, result_summary, error, finished_at\n             FROM bear_work_runs\n             WHERE bear_id = $1 AND ($2::uuid IS NULL OR job_id = $2)\n             ORDER BY job_id, queued_at DESC, id DESC\n         ) latest\n         JOIN bear_jobs j ON j.id = latest.job_id\n         WHERE latest.state IN ('stalled', 'blocked', 'failed', 'timed_out')\n         ORDER BY latest.finished_at DESC NULLS LAST\n         LIMIT $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_goal",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "result_summary",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "f0127c27e6b6d1c78c3d06fd2ee8485f19cdd9b9be643c900e1f8f656c5a6402"
+}

@@ -61,15 +61,44 @@ pub async fn ensure_attention(
             "attention requires cause and recovery action".into(),
         ));
     }
-    sqlx::query_as("INSERT INTO docket_attention (run_id, task_id, cause_code, recovery_action, evidence_refs) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (run_id) WHERE resolved_at IS NULL DO UPDATE SET task_id=EXCLUDED.task_id, cause_code=EXCLUDED.cause_code, recovery_action=EXCLUDED.recovery_action, evidence_refs=EXCLUDED.evidence_refs RETURNING id, run_id, task_id, cause_code, recovery_action, evidence_refs, resolved_at, created_at")
-        .bind(run_id).bind(task_id).bind(cause_code.trim()).bind(recovery_action.trim()).bind(evidence_refs).fetch_one(pool).await.map_err(Into::into)
+    sqlx::query_as!(
+        DocketAttention,
+        r#"
+        INSERT INTO docket_attention (
+            run_id, task_id, cause_code, recovery_action, evidence_refs
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (run_id) WHERE resolved_at IS NULL DO UPDATE
+        SET task_id = EXCLUDED.task_id,
+            cause_code = EXCLUDED.cause_code,
+            recovery_action = EXCLUDED.recovery_action,
+            evidence_refs = EXCLUDED.evidence_refs
+        RETURNING
+            id AS "id!: Uuid",
+            run_id AS "run_id!: Uuid",
+            task_id AS "task_id?: Uuid",
+            cause_code AS "cause_code!: String",
+            recovery_action AS "recovery_action!: String",
+            evidence_refs AS "evidence_refs!: Value",
+            resolved_at AS "resolved_at?: OffsetDateTime",
+            created_at AS "created_at!: OffsetDateTime"
+        "#,
+        run_id,
+        task_id,
+        cause_code.trim(),
+        recovery_action.trim(),
+        evidence_refs
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn resolve_attention(pool: &PgPool, run_id: Uuid) -> Result<bool, DenError> {
-    let result = sqlx::query(
-        "UPDATE docket_attention SET resolved_at=now() WHERE run_id=$1 AND resolved_at IS NULL",
+    let result = sqlx::query!(
+        "UPDATE docket_attention SET resolved_at = now() WHERE run_id = $1 AND resolved_at IS NULL",
+        run_id
     )
-    .bind(run_id)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -85,12 +114,12 @@ pub async fn set_work_run_paused(
     } else {
         ("paused", "running")
     };
-    let result = sqlx::query(
-        "UPDATE bear_work_runs SET state=$3, updated_at=now() WHERE id=$1 AND state=$2",
+    let result = sqlx::query!(
+        "UPDATE bear_work_runs SET state = $3, updated_at = now() WHERE id = $1 AND state = $2",
+        work_run_id,
+        from,
+        to
     )
-    .bind(work_run_id)
-    .bind(from)
-    .bind(to)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)

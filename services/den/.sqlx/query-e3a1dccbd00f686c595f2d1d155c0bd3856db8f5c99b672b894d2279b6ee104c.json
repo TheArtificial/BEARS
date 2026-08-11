@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs\n         SET cancel_requested = TRUE,\n             cancel_requested_by = COALESCE(cancel_requested_by, $3),\n             cancel_reason = COALESCE(cancel_reason, $4),\n             cancel_requested_at = COALESCE(cancel_requested_at, now()),\n             updated_at = now()\n         WHERE id = $1 AND bear_id = $2\n           AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e3a1dccbd00f686c595f2d1d155c0bd3856db8f5c99b672b894d2279b6ee104c"
+}

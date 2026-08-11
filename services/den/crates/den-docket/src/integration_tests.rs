@@ -53,68 +53,68 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     let suffix = Uuid::new_v4().simple().to_string();
     let username = format!("u{}", &suffix[..20]);
     let email = format!("{label}-{suffix}@example.test");
-    let (user_id,): (i32,) = sqlx::query_as(
+    let user_id = sqlx::query_scalar!(
         r"
         INSERT INTO users (email, username, display_name)
         VALUES ($1, $2, $3)
         RETURNING id
         ",
+        email,
+        username,
+        "Docket Test",
     )
-    .bind(email)
-    .bind(username)
-    .bind("Docket Test")
     .fetch_one(pool)
     .await
     .expect("seed user");
 
     let slug = format!("docket-{label}-{}", &suffix[..12]);
-    let (bear_id,): (Uuid,) = sqlx::query_as(
+    let bear_id = sqlx::query_scalar!(
         r"
         INSERT INTO bears (slug, name, description)
         VALUES ($1, $2, $3)
         RETURNING id
         ",
+        slug,
+        "Docket Test Bear",
+        "integration test bear",
     )
-    .bind(slug)
-    .bind("Docket Test Bear")
-    .bind("integration test bear")
     .fetch_one(pool)
     .await
     .expect("seed bear");
 
     let surface_id = test_work_surface_id(bear_id);
     let surface_name = format!("surface-{}", &surface_id.simple().to_string()[..12]);
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
         VALUES ($1, $2, 'git_workspace', $3, NOW(), NOW())
         ",
+        surface_id,
+        surface_name,
+        user_id,
     )
-    .bind(surface_id)
-    .bind(surface_name)
-    .bind(user_id)
     .execute(pool)
     .await
     .expect("seed work surface");
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO git_work_surface_details (id, upstream_url)
         VALUES ($1, $2)
         ",
+        surface_id,
+        "https://example.test/docket.git",
     )
-    .bind(surface_id)
-    .bind("https://example.test/docket.git")
     .execute(pool)
     .await
     .expect("seed git work surface details");
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO work_surface_bears (surface_id, bear_id)
         VALUES ($1, $2)
         ",
+        surface_id,
+        bear_id,
     )
-    .bind(surface_id)
-    .bind(bear_id)
     .execute(pool)
     .await
     .expect("assign work surface");
@@ -188,7 +188,7 @@ async fn creates_session_anchored_task_without_job() {
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task").await;
     let service = PgDocketService::from_pool(&pool);
-    let (session_anchor_id,): (Uuid,) = sqlx::query_as(
+    let session_anchor_id = sqlx::query_scalar!(
         r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
@@ -196,14 +196,14 @@ async fn creates_session_anchored_task_without_job() {
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id
         ",
+        user_id,
+        bear_id,
+        "docket-session-task",
+        "session-task-client",
+        "session-task-runtime",
+        "session-task-conversation",
+        "test",
     )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind("docket-session-task")
-    .bind("session-task-client")
-    .bind("session-task-runtime")
-    .bind("session-task-conversation")
-    .bind("test")
     .fetch_one(&pool)
     .await
     .expect("seed client session");
@@ -258,16 +258,17 @@ async fn creates_session_anchored_task_without_job() {
         .task
         .settled_by_entry_id
         .expect("task points to its settlement entry");
-    let outcome: (Option<Uuid>, Option<Uuid>, String, String) =
-        sqlx::query_as("SELECT job_id, run_id, scope, kind FROM bear_docket_entries WHERE id = $1")
-            .bind(entry_id)
-            .fetch_one(&pool)
-            .await
-            .expect("read settlement entry");
-    assert_eq!(outcome.0, None);
-    assert_eq!(outcome.1, None);
-    assert_eq!(outcome.2, "task_journal");
-    assert_eq!(outcome.3, "outcome");
+    let outcome = sqlx::query!(
+        "SELECT job_id, run_id, scope, kind FROM bear_docket_entries WHERE id = $1",
+        entry_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read settlement entry");
+    assert_eq!(outcome.job_id, None);
+    assert_eq!(outcome.run_id, None);
+    assert_eq!(outcome.scope, "task_journal");
+    assert_eq!(outcome.kind, "outcome");
 
     let other_session_id = Uuid::new_v4();
     let error = service
@@ -296,7 +297,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task-state").await;
     let service = PgDocketService::from_pool(&pool);
-    let (session_anchor_id,): (Uuid,) = sqlx::query_as(
+    let session_anchor_id = sqlx::query_scalar!(
         r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
@@ -304,14 +305,14 @@ async fn lists_session_anchored_task_with_latest_run_state() {
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id
         ",
+        user_id,
+        bear_id,
+        "docket-session-task-state",
+        "session-task-state-client",
+        "session-task-state-runtime",
+        "session-task-state-conversation",
+        "test",
     )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind("docket-session-task-state")
-    .bind("session-task-state-client")
-    .bind("session-task-state-runtime")
-    .bind("session-task-state-conversation")
-    .bind("test")
     .fetch_one(&pool)
     .await
     .expect("seed client session");
@@ -518,7 +519,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     assert_eq!(active_execution.task_id, Some(first_task_id));
     assert_eq!(active_execution.state, "active");
 
-    let (focus_event_count,): (i64,) = sqlx::query_as(
+    let focus_event_count = sqlx::query_scalar!(
         r"
         SELECT count(*)
         FROM bear_job_events
@@ -530,16 +531,16 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
           AND payload->>'source_client_session_id' = 'pair-integration-session'
           AND payload->>'state' = 'active'
         ",
+        created.job.id,
+        run_id,
+        first_task_id,
     )
-    .bind(created.job.id)
-    .bind(run_id)
-    .bind(first_task_id)
     .fetch_one(&pool)
     .await
     .expect("query focus event");
     assert_eq!(focus_event_count, 1);
 
-    let (task_definition_count,): (i64,) = sqlx::query_as(
+    let task_definition_count = sqlx::query_scalar!(
         r"
         SELECT count(*)
         FROM bear_task_events
@@ -550,9 +551,9 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
           AND payload->'definition'->>'body' = 'Do first task'
           AND payload->'definition'->'completion_criteria'->>0 = 'First task is actually done'
         ",
+        first_task_id,
+        run_id,
     )
-    .bind(first_task_id)
-    .bind(run_id)
     .fetch_one(&pool)
     .await
     .expect("query task definition event");
@@ -578,21 +579,23 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .await;
     assert!(report_only_completion.is_ok());
 
-    let (outcome_summary, outcome_disposition, evidence_count): (String, String, i64) =
-        sqlx::query_as(
-            r"
-            SELECT summary, disposition, jsonb_array_length(evidence_refs)
-            FROM bear_docket_entries
-            WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'
-            ORDER BY created_at DESC
-            LIMIT 1
-            ",
-        )
-        .bind(first_task_id)
-        .bind(run_id)
-        .fetch_one(&pool)
-        .await
-        .expect("query terminal outcome journal entry");
+    let outcome = sqlx::query!(
+        r"
+        SELECT summary, disposition, jsonb_array_length(evidence_refs) AS evidence_count
+        FROM bear_docket_entries
+        WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'
+        ORDER BY created_at DESC
+        LIMIT 1
+        ",
+        first_task_id,
+        run_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query terminal outcome journal entry");
+    let outcome_summary = outcome.summary;
+    let outcome_disposition = outcome.disposition;
+    let evidence_count = outcome.evidence_count;
     assert_eq!(
         outcome_summary,
         "Inventory findings recorded in the task result."
@@ -619,11 +622,11 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         })
         .await;
     assert!(identical_retry.is_ok());
-    let (outcome_count,): (i64,) = sqlx::query_as(
+    let outcome_count = sqlx::query_scalar!(
         "SELECT count(*) FROM bear_docket_entries WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'",
+        first_task_id,
+        run_id,
     )
-    .bind(first_task_id)
-    .bind(run_id)
     .fetch_one(&pool)
     .await
     .expect("count terminal outcomes after retry");
@@ -687,11 +690,11 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         })
         .await
         .expect("resettle reopened task");
-    let (outcome_count,): (i64,) = sqlx::query_as(
+    let outcome_count = sqlx::query_scalar!(
         "SELECT count(*) FROM bear_docket_entries WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'",
+        first_task_id,
+        run_id,
     )
-    .bind(first_task_id)
-    .bind(run_id)
     .fetch_one(&pool)
     .await
     .expect("count terminal outcomes after resettlement");
@@ -916,7 +919,7 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         .await
         .expect("execute after reconnect");
 
-    let (active_rows,): (i64,) = sqlx::query_as(
+    let active_rows = sqlx::query_scalar!(
         r"
         SELECT count(*)
         FROM docket_execution_sessions
@@ -925,8 +928,8 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
           AND source_conversation_id = 'conversation-1'
           AND state IN ('active', 'blocked', 'completing', 'paused')
         ",
+        bear_id,
     )
-    .bind(bear_id)
     .fetch_one(&pool)
     .await
     .expect("count active conversation rows");
@@ -1057,12 +1060,12 @@ async fn docket_execute_rejects_stale_later_active_task() {
     // Simulate an active-task record written by the pre-ordering scheduler.
     // The public dispatcher rejects this transition now; direct SQL preserves
     // the historical stale-state case at the execute/resume boundary.
-    sqlx::query(
+    sqlx::query!(
         "UPDATE bear_task_run_state SET status = 'in_progress', started_at = NOW() \
          WHERE run_id = $1 AND task_id = $2",
+        run_id,
+        stale_phase_nine_id,
     )
-    .bind(run_id)
-    .bind(stale_phase_nine_id)
     .execute(&pool)
     .await
     .expect("seed stale later active task");
@@ -1082,11 +1085,11 @@ async fn docket_execute_rejects_stale_later_active_task() {
         .expect_err("resume rejects Phase 9 while Phase 0 is pending");
     assert!(error.to_string().contains("refusing stale active task"));
 
-    let state: Option<String> = sqlx::query_scalar(
+    let state = sqlx::query_scalar!(
         "SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
+        run_id,
+        phase_zero_id,
     )
-    .bind(run_id)
-    .bind(phase_zero_id)
     .fetch_optional(&pool)
     .await
     .expect("read Phase 0 state");

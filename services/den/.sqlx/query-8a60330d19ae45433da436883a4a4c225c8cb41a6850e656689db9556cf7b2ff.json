@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE docket_turn_attempts\n         SET last_activity_at = now(), evidence_refs = COALESCE(evidence_refs, '{}'::jsonb) || $2::jsonb\n         WHERE id = $1 AND state = 'executing'\n           AND EXISTS (\n               SELECT 1 FROM docket_turn_claims\n               WHERE id = docket_turn_attempts.claim_id\n                 AND state = 'executing' AND lease_expires_at > now()\n           )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8a60330d19ae45433da436883a4a4c225c8cb41a6850e656689db9556cf7b2ff"
+}

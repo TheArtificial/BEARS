@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            created_at AS \"created_at!: OffsetDateTime\",\n            task_id AS \"task_id!: Uuid\",\n            conversation_strategy AS \"conversation_strategy!: String\",\n            resolved_profile AS \"resolved_profile?: String\",\n            reason AS \"reason!: String\"\n        FROM docket_routing_decisions\n        WHERE run_id = $1\n        ORDER BY created_at, id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at!: OffsetDateTime",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 1,
+        "name": "task_id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "conversation_strategy!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "resolved_profile?: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "reason!: String",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "0a3f33aa6ee94f2ccebabe03a6374f9da71b1a886ee2a04978fa08c9d70e70ab"
+}
