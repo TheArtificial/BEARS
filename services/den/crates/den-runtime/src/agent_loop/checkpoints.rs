@@ -287,6 +287,7 @@ pub fn non_empty_diff_grounding_probe(
 pub struct LoopControlLedgerInput {
     pub run_id: String,
     pub turn_step_id: Option<Uuid>,
+    pub conversation_message_id: Option<Uuid>,
     pub decision_id: String,
     pub decision_kind: LoopControlDecisionKind,
     pub control_level: String,
@@ -312,6 +313,8 @@ pub struct LoopControlLedgerRow {
     pub id: Uuid,
     pub run_id: String,
     pub turn_step_id: Option<Uuid>,
+    /// Canonical transcript row that caused this controller decision, when applicable.
+    pub conversation_message_id: Option<Uuid>,
     pub decision_id: String,
     pub decision_kind: String,
     pub control_level: String,
@@ -746,6 +749,7 @@ pub async fn record_context_budget_pressure_decision(
         LoopControlLedgerInput {
             run_id: run_id.to_string(),
             turn_step_id,
+            conversation_message_id: None,
             decision_id: format!("context_budget:{}:{turn_step_id:?}", level.as_str()),
             decision_kind: LoopControlDecisionKind::ContextBudgetPressure,
             control_level: "standard".to_string(),
@@ -800,6 +804,7 @@ pub async fn record_grounding_probe_result_decision(
         LoopControlLedgerInput {
             run_id: input.run_id,
             turn_step_id: input.turn_step_id,
+            conversation_message_id: None,
             decision_id: format!("grounding_probe:{}", input.probe_id),
             decision_kind: LoopControlDecisionKind::GroundingProbeResult,
             control_level: "standard".to_string(),
@@ -826,13 +831,14 @@ pub async fn record_loop_control_decision(
     let row = sqlx::query(
         r"
         INSERT INTO bear_loop_control_ledger (
-            run_id, turn_step_id, decision_id, decision_kind, control_level, reason,
+            run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,
             orientation_kind, checkpoint_id, related_task_list_id, related_task_item_id,
             related_docket_job_id, related_docket_task_id, evidence_refs, decision
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (run_id, decision_id) DO UPDATE SET
             turn_step_id = EXCLUDED.turn_step_id,
+            conversation_message_id = EXCLUDED.conversation_message_id,
             decision_kind = EXCLUDED.decision_kind,
             control_level = EXCLUDED.control_level,
             reason = EXCLUDED.reason,
@@ -845,13 +851,14 @@ pub async fn record_loop_control_decision(
             evidence_refs = EXCLUDED.evidence_refs,
             decision = EXCLUDED.decision
         RETURNING
-            id, run_id, turn_step_id, decision_id, decision_kind, control_level, reason,
+            id, run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,
             orientation_kind, checkpoint_id, related_task_list_id, related_task_item_id,
             related_docket_job_id, related_docket_task_id, evidence_refs, decision, created_at
         ",
     )
     .bind(&input.run_id)
     .bind(input.turn_step_id)
+    .bind(input.conversation_message_id)
     .bind(&input.decision_id)
     .bind(input.decision_kind.as_str())
     .bind(&input.control_level)
@@ -877,7 +884,7 @@ pub async fn list_loop_control_decisions_for_run(
     let rows = sqlx::query(
         r"
         SELECT
-            id, run_id, turn_step_id, decision_id, decision_kind, control_level, reason,
+            id, run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,
             orientation_kind, checkpoint_id, related_task_list_id, related_task_item_id,
             related_docket_job_id, related_docket_task_id, evidence_refs, decision, created_at
         FROM bear_loop_control_ledger
@@ -903,7 +910,7 @@ pub async fn summarize_recent_loop_control_replay_profile(
     let rows = sqlx::query(
         r"
         SELECT
-            id, run_id, turn_step_id, decision_id, decision_kind, control_level, reason,
+            id, run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,
             orientation_kind, checkpoint_id, related_task_list_id, related_task_item_id,
             related_docket_job_id, related_docket_task_id, evidence_refs, decision, created_at
         FROM bear_loop_control_ledger
@@ -1027,6 +1034,7 @@ fn checkpoint_request_ledger_input(
     Ok(LoopControlLedgerInput {
         run_id: request.run_id.clone(),
         turn_step_id,
+        conversation_message_id: None,
         decision_id: format!("checkpoint:{}", request.checkpoint_id),
         decision_kind: LoopControlDecisionKind::CheckpointRequested,
         control_level: request.control_level.as_str().to_string(),
@@ -1054,6 +1062,7 @@ fn row_to_ledger(row: sqlx::postgres::PgRow) -> LoopControlLedgerRow {
         id: row.get("id"),
         run_id: row.get("run_id"),
         turn_step_id: row.get("turn_step_id"),
+        conversation_message_id: row.get("conversation_message_id"),
         decision_id: row.get("decision_id"),
         decision_kind: row.get("decision_kind"),
         control_level: row.get("control_level"),
@@ -1288,6 +1297,7 @@ mod tests {
                 LoopControlLedgerInput {
                     run_id: run_id.to_string(),
                     turn_step_id: None,
+                    conversation_message_id: None,
                     decision_id: decision_id.to_string(),
                     decision_kind: LoopControlDecisionKind::CheckpointRequested,
                     control_level: "standard".to_string(),
@@ -1441,6 +1451,7 @@ mod tests {
             LoopControlLedgerInput {
                 run_id: run_id.clone(),
                 turn_step_id: Some(turn_step_id),
+                conversation_message_id: None,
                 decision_id: "multi:checkpoint".to_string(),
                 decision_kind: LoopControlDecisionKind::CheckpointRequested,
                 control_level: "careful".to_string(),
@@ -1465,6 +1476,7 @@ mod tests {
             LoopControlLedgerInput {
                 run_id: run_id.clone(),
                 turn_step_id: Some(turn_step_id),
+                conversation_message_id: None,
                 decision_id: "multi:context_budget".to_string(),
                 decision_kind: LoopControlDecisionKind::ContextBudgetPressure,
                 control_level: "standard".to_string(),
@@ -1697,6 +1709,7 @@ mod tests {
         let expected = vec![LoopControlReplayObservation {
             run_id: run_id.clone(),
             turn_step_id: None,
+            conversation_message_id: None,
             decision_id: "checkpoint:ckpt-1".to_string(),
             decision_kind: LoopControlDecisionKind::CheckpointRequested,
             control_level: "careful".to_string(),

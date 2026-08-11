@@ -45,7 +45,10 @@ operation.
 first executable task, and create the Pair run, but a generic status edit must
 not do so incidentally. Once selected, the current task—not the presence of a
 run—drives Pair execution focus. A Pair run records a bounded execution attempt
-and its checkpoint/resume history; it does not authorize execution. A run that
+and its checkpoint/resume history; it does not authorize execution. A non-draft,
+session-connected current task must have a persisted Pair run before entering
+execution. `RunPaused` is valid only when it identifies that persisted run; a
+missing run is execution-initialization failure, not a runless pause. A run that
 hits a budget boundary is paused while the selected task remains current, so
 the controller can resume a successor slice without asking the user to say
 "continue."
@@ -369,7 +372,7 @@ A Pair session's current task is session-scoped and may be local or Docket-backe
 | --- | --- |
 | Persist current session task | **Complete.** `client_sessions.current_task_id` persists Pair's optional selected session task across turns/reconnects; a valid session-anchored selection is canonical. |
 | Project current task | **Complete.** BearWire and ACP project an optional explicit selected task; ACP's agent plan is the selected task's sibling scope (or one root task). |
-| Snapshot task into Pair runs | **Complete.** Pair runtime resolves the persisted selected task before legacy compatibility state. |
+| Snapshot task into Pair runs | **In progress.** Pair runtime resolves the persisted selected task before legacy compatibility state. Before a non-draft session-connected current task enters Pair execution, runtime must create or reuse a persisted Pair execution run; `RunPaused` is invalid without that run identity, and pause preserves the selected task for a defined resume/successor-slice transition. |
 | Bind Work Job | **Complete.** Each WorkRun persists one explicit durable Docket Job assignment. |
 | Enforce Work Job binding | **Complete.** A Work run without an assigned Job is rejected before model-driving continuation begins. |
 | Derive task behavior | **In progress.** Pair and Work context are separated; remaining orientation/diagnostic cleanup follows Phase 2c. |
@@ -377,6 +380,43 @@ A Pair session's current task is session-scoped and may be local or Docket-backe
 | Add tests | **Partially complete.** Pair selection/clear, legacy precedence, Work Job scope, BearWire projection, and ACP sibling-scope projection are covered; complete orientation coverage remains. |
 
 **Exit gate:** loop control has explicit governance and session-task/worker-assignment inputs, with no client-facing focus mode.
+
+### Phase 2d — Pair runtime interrogation and transcript correlation
+
+**Goal:** make active Pair task execution inspectable end-to-end before Phase 2
+is closed. This is mandatory Phase 2 validation work, not a deferred
+observability phase.
+
+The runtime must expose stable transcript message identifiers to Pair review
+and persist an append-only history that joins those messages to the actual
+Pair execution run, selected task, budget state, and runtime-owned loop
+controller decisions. This is a diagnostic record, not a second task,
+continuation, or completion authority. It may reference transcript content by
+identifier; it must not duplicate raw conversation text by default.
+
+Required correlation path:
+
+```text
+transcript message id
+  -> Pair execution run id
+  -> current task / session-connected root
+  -> loop-control decision and budget snapshot
+  -> continuation, pause, resume, or settlement evidence
+```
+
+| Task | Done when |
+| --- | --- |
+| Define stable transcript IDs | Pair transcript review exposes stable message IDs for user, assistant, and relevant runtime/tool boundaries. |
+| Define append-only Pair runtime history | History rows have a Pair run ID, event/decision kind, timestamp, and typed payload/evidence references; they can reference a message ID and task/root identifiers where applicable. |
+| Record controller boundaries | Candidate final response, completion classification and decision, budget snapshot, continuation, pause, resume, task-focus resolution, and settlement are recorded with the same canonical meanings used by runtime behavior. |
+| Provide interrogation reads | Authorized Pair diagnostics can query the joined history by message ID, Pair run ID, session, and current task without exposing raw secrets or inventing state. |
+| Define retention and redaction | Pair diagnostic retention, payload size limits, sensitive-field redaction, and deletion/expiry behavior are explicit. Raw transcript duplication is prohibited unless separately authorized. |
+| Test the evidence chain | A session-connected selected task is traced through execution, a controller decision, and a pause/resume or terminal settlement; the test proves message-to-run-to-task correlation and no `RunPaused` without a persisted run. |
+
+**Exit gate:** an operator or Pair can diagnose why an execution-focused turn
+continued, paused, resumed, or completed from durable correlated evidence.
+Phase 2 cannot close until this gate and the Phase 2a Pair-run invariant are
+validated against an active Pair session.
 
 ## Phase 2b — Client projection for current task
 

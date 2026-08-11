@@ -99,6 +99,8 @@ type FinalGateFocusFuture = Pin<
             + Send,
     >,
 >;
+type PausePersistenceFuture =
+    Pin<Box<dyn Future<Output = Result<RuntimeSemanticEvent, DenError>> + Send>>;
 
 fn render_final_gate_continuation_guidance(next_task: &str) -> Result<String, DenError> {
     // Keep reusable final-gate steering in the fragment registry; this helper is
@@ -262,6 +264,7 @@ pub struct SessionTrackingStream {
     pending_server_tool_continuation: Option<String>,
     pending_final_gate_continuation: Option<FinalGateContinuationFuture>,
     pending_final_gate_focus: Option<FinalGateFocusFuture>,
+    pending_pause_persistence: Option<PausePersistenceFuture>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
     stores: MemoryStoreManager,
@@ -315,6 +318,7 @@ impl SessionTrackingStream {
             pending_server_tool_continuation: None,
             pending_final_gate_continuation: None,
             pending_final_gate_focus: None,
+            pending_pause_persistence: None,
             dispatch_mode,
             config,
             stores,
@@ -1336,12 +1340,7 @@ impl SessionTrackingStream {
                     repeated_objection_kind = ?loop_detection.repeated_objection_kind,
                     "native runtime task-focus loop detected; pausing active task instead of accepting terminal objection"
                 );
-                self.record_repeated_terminal_objection_pause(&loop_detection);
-                self.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunPaused {
-                    reason: "active_task_repeated_terminal_objection".to_string(),
-                    resume_token: None,
-                    expires_at: None,
-                });
+                self.begin_repeated_terminal_objection_pause(&loop_detection);
                 return;
             }
             TurnCompletionDecision::Complete {
@@ -1370,17 +1369,21 @@ impl SessionTrackingStream {
         self.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
     }
 
-    fn record_repeated_terminal_objection_pause(&self, loop_detection: &TaskFocusLoopDetection) {
-        let Some(run_id) = self
+    fn begin_repeated_terminal_objection_pause(&mut self, loop_detection: &TaskFocusLoopDetection) {
+        let run_id = match self
             .store
             .get(&self.session_key)
             .and_then(|session| session.run_id)
-        else {
-            tracing::warn!(
-                client_session_id = %self.client_session_id,
-                "active-task repeated-objection pause has no runtime run ID; emitting semantic pause without ledger record"
-            );
-            return;
+        {
+            Some(run_id) => run_id,
+            None => {
+                self.pending_pause_persistence = Some(Box::pin(async {
+                    Err(DenError::System(
+                        "active Pair execution cannot pause without a persisted run ID".to_string(),
+                    ))
+                }));
+                return;
+            }
         };
         let pool = self.pool.clone();
         let profile = self.profile;
@@ -1391,7 +1394,7 @@ impl SessionTrackingStream {
         let terminal_objections = loop_detection.terminal_objections;
         let continuation_nudges = loop_detection.continuation_nudges;
         let repeated_objection_kind = format!("{:?}", loop_detection.repeated_objection_kind);
-        tokio::spawn(async move {
+        self.pending_pause_persistence = Some(Box::pin(async move {
             let task_list_id = task_list.as_ref().map(|list| list.id.to_string());
             let active_item = task_list
                 .as_ref()
@@ -1401,11 +1404,12 @@ impl SessionTrackingStream {
             let related_docket_job_id = task_list
                 .as_ref()
                 .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok());
-            if let Err(err) = record_loop_control_decision(
+            record_loop_control_decision(
                 &pool,
                 LoopControlLedgerInput {
                     run_id,
                     turn_step_id: None,
+                    conversation_message_id: None,
                     decision_id: format!("active-task-pause-{}", Uuid::new_v4()),
                     decision_kind: LoopControlDecisionKind::ActiveTaskPause,
                     control_level: "standard".to_string(),
@@ -1428,11 +1432,13 @@ impl SessionTrackingStream {
                     }),
                 },
             )
-            .await
-            {
-                tracing::warn!(error = %err, "failed to persist active-task pause ledger decision");
-            }
-        });
+            .await?;
+            Ok(RuntimeSemanticEvent::RunPaused {
+                reason: "active_task_repeated_terminal_objection".to_string(),
+                resume_token: None,
+                expires_at: None,
+            })
+        }));
     }
 
     fn begin_final_gate_focus_resolution(&mut self) {
@@ -1614,6 +1620,22 @@ impl Stream for SessionTrackingStream {
                     if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
                         self.remove_recent_server_tool_chain_from_session(&tool_call_id);
                     }
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        if let Some(fut) = self.pending_pause_persistence.as_mut() {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(pause)) => {
+                    self.pending_pause_persistence = None;
+                    self.pending_pause_after_tool = Some(pause);
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_pause_persistence = None;
                     return Poll::Ready(Some(Err(error)));
                 }
                 Poll::Pending => return Poll::Pending,
