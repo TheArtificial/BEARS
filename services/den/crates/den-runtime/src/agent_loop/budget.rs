@@ -245,6 +245,18 @@ impl TurnBudgetWarning {
 }
 
 impl TurnBudgetStopReason {
+    /// Returns whether this is a technical execution-slice boundary rather than a
+    /// safety/real-world gate that should require intervention.
+    pub const fn resumes_pair_execution_automatically(&self) -> bool {
+        matches!(
+            self,
+            Self::WallClockLimit { .. }
+                | Self::TotalToolCallLimit { .. }
+                | Self::ToolClassCallLimit { .. }
+                | Self::EmergencyHardStepLimit { .. }
+        )
+    }
+
     pub fn persistence_reason(&self) -> &'static str {
         match self {
             Self::WallClockLimit { .. } => "wall_clock_limit",
@@ -955,6 +967,45 @@ mod tests {
             Some(TurnBudgetStopReason::ContextBudgetLimit { .. })
         ));
         assert!(evaluation.warning.is_none());
+    }
+
+    #[test]
+    fn technical_slice_limits_resume_pair_execution_but_safety_gates_do_not() {
+        assert!(TurnBudgetStopReason::WallClockLimit {
+            elapsed_ms: 60_000,
+            limit_ms: 60_000,
+        }
+        .resumes_pair_execution_automatically());
+        assert!(TurnBudgetStopReason::TotalToolCallLimit {
+            count: 20,
+            limit: 20,
+        }
+        .resumes_pair_execution_automatically());
+        assert!(!TurnBudgetStopReason::ConsecutiveToolFailures {
+            count: 3,
+            limit: 3,
+            tool_name: None,
+        }
+        .resumes_pair_execution_automatically());
+        assert!(!TurnBudgetStopReason::RuleOfKo {
+            repeats: 3,
+            limit: 3,
+            tool_name: None,
+        }
+        .resumes_pair_execution_automatically());
+    }
+
+    #[test]
+    fn context_budget_limit_requires_compaction_not_blind_auto_resume() {
+        let reason = TurnBudgetStopReason::ContextBudgetLimit {
+            model: "test-model".to_string(),
+            estimated_input_tokens: 95,
+            reserved_output_tokens: 10,
+            estimated_total_tokens: 105,
+            context_window: Some(100),
+        };
+
+        assert!(!reason.resumes_pair_execution_automatically());
     }
 
     #[test]

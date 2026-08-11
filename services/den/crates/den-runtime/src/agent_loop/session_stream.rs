@@ -45,6 +45,7 @@ use crate::{
     native_runtime::is_task_definition_or_delegation_tool_provider_name,
     runtime_compaction::enqueue_compaction_after_turn,
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
+    turn_runs,
     turn_state::TaskFocusLoopDetection,
 };
 use den_core::tools::{
@@ -814,35 +815,116 @@ impl SessionTrackingStream {
                 store.update(&session_key, |session| {
                     session.turn_budget_state = evaluation.next_state.clone();
                 });
+                let mut claimed_budget_continuation = false;
                 if let Some(reason) = evaluation.stop_reason {
-                    tracing::warn!(
-                        event = "native_turn_budget_fuse",
-                        session_key = %session_key,
-                        conversation_id = %session.conversation_id,
-                        client_session_id = %session.client_session_id,
-                        request_id = ?session.request_id,
-                        run_id = ?session.run_id,
-                        step = session.step,
-                        limit = session.turn_budget.emergency_hard_steps,
-                        "server-side continuation stopped by turn budget"
-                    );
-                    store.update(&session_key, |session| {
-                        session.turn_budget_state = Default::default();
-                    });
-                    return Ok(Box::pin(stream::iter(vec![
-                        Ok(RuntimeStreamEvent::Semantic(
-                            RuntimeSemanticEvent::AssistantTextDelta {
-                                text: reason.user_message(),
+                    if profile == BearProfile::Pair && reason.resumes_pair_execution_automatically()
+                    {
+                        let run_id = session.run_id.clone().ok_or_else(|| {
+                            DenError::System(
+                                "active Pair execution cannot resume without a persisted run ID"
+                                    .to_string(),
+                            )
+                        })?;
+                        let task_list = session.cached_activity_plan_projection.clone();
+                        let reason_code = reason.persistence_reason();
+                        let active_item = task_list
+                            .as_ref()
+                            .and_then(|list| list.current_item.as_ref());
+                        let Some(transitioned) =
+                            turn_runs::claim_run_continuation(&pool, &run_id, Some(reason_code))
+                                .await?
+                        else {
+                            return Err(DenError::System(format!(
+                                "Pair run {run_id} was not running when budget continuation was claimed"
+                            )));
+                        };
+                        if let Err(error) = record_loop_control_decision(
+                            &pool,
+                            LoopControlLedgerInput {
+                                run_id: run_id.clone(),
+                                turn_step_id: None,
+                                conversation_message_id: None,
+                                decision_id: format!(
+                                    "budget-slice-continuation-{}",
+                                    Uuid::new_v4()
+                                ),
+                                decision_kind: LoopControlDecisionKind::BudgetSliceContinuation,
+                                control_level: "standard".to_string(),
+                                reason: Some(reason_code.to_string()),
+                                orientation_kind: Some(profile.as_str().to_string()),
+                                checkpoint_id: None,
+                                related_task_list_id: task_list
+                                    .as_ref()
+                                    .map(|list| list.id.to_string()),
+                                related_task_item_id: active_item.map(|item| item.id.clone()),
+                                related_docket_job_id: task_list
+                                    .as_ref()
+                                    .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok()),
+                                related_docket_task_id: active_item
+                                    .and_then(|item| Uuid::parse_str(&item.id).ok()),
+                                evidence_refs: vec![LedgerEvidenceRef {
+                                    kind: "turn_run_state".to_string(),
+                                    id: transitioned.state,
+                                }],
+                                decision: serde_json::json!({
+                                    "action": "continue",
+                                    "reason": reason_code,
+                                    "same_run": true,
+                                }),
                             },
-                        )),
-                        Ok(RuntimeStreamEvent::Semantic(
-                            RuntimeSemanticEvent::TurnCompleted { turn: None },
-                        )),
-                    ])) as RuntimeEventStream);
+                        )
+                        .await
+                        {
+                            let _ =
+                                turn_runs::release_claimed_run_continuation(&pool, &run_id).await;
+                            return Err(error);
+                        }
+                        store.update(&session_key, |session| {
+                            session.turn_budget_state = Default::default();
+                        });
+                        claimed_budget_continuation = true;
+                    } else {
+                        tracing::warn!(
+                            event = "native_turn_budget_fuse",
+                            session_key = %session_key,
+                            conversation_id = %session.conversation_id,
+                            client_session_id = %session.client_session_id,
+                            request_id = ?session.request_id,
+                            run_id = ?session.run_id,
+                            step = session.step,
+                            limit = session.turn_budget.emergency_hard_steps,
+                            "server-side continuation stopped by turn budget"
+                        );
+                        store.update(&session_key, |session| {
+                            session.turn_budget_state = Default::default();
+                        });
+                        return Ok(Box::pin(stream::iter(vec![
+                            Ok(RuntimeStreamEvent::Semantic(
+                                RuntimeSemanticEvent::AssistantTextDelta {
+                                    text: reason.user_message(),
+                                },
+                            )),
+                            Ok(RuntimeStreamEvent::Semantic(
+                                RuntimeSemanticEvent::TurnCompleted { turn: None },
+                            )),
+                        ])) as RuntimeEventStream);
+                    }
                 }
                 session = store.get(&session_key).ok_or_else(|| {
                     DenError::System("native agent loop session not found".to_string())
                 })?;
+                if claimed_budget_continuation {
+                    let run_id = session.run_id.as_deref().expect(
+                        "budget continuation claim requires the persisted run ID checked above",
+                    );
+                    turn_runs::begin_claimed_run_continuation(&pool, run_id)
+                        .await?
+                        .ok_or_else(|| {
+                            DenError::System(format!(
+                                "Pair run {run_id} was not continuing when its successor slice began"
+                            ))
+                        })?;
+                }
                 tracing::warn!(
                     event = "native_server_tool_continuation",
                     session_key = %session_key,

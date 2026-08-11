@@ -110,6 +110,7 @@ pub enum LoopControlDecisionKind {
     GroundingProbeResult,
     FinalGateContinuation,
     ActiveTaskPause,
+    BudgetSliceContinuation,
 }
 
 impl LoopControlDecisionKind {
@@ -120,6 +121,7 @@ impl LoopControlDecisionKind {
             Self::GroundingProbeResult => "grounding_probe_result",
             Self::FinalGateContinuation => "final_gate_continuation",
             Self::ActiveTaskPause => "active_task_pause",
+            Self::BudgetSliceContinuation => "budget_slice_continuation",
         }
     }
 
@@ -130,6 +132,7 @@ impl LoopControlDecisionKind {
             "grounding_probe_result" => Some(Self::GroundingProbeResult),
             "final_gate_continuation" => Some(Self::FinalGateContinuation),
             "active_task_pause" => Some(Self::ActiveTaskPause),
+            "budget_slice_continuation" => Some(Self::BudgetSliceContinuation),
             _ => None,
         }
     }
