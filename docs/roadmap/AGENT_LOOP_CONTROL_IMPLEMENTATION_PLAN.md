@@ -18,6 +18,38 @@ Worker run ── explicit Docket Job assignment ──► work-execution behavi
 Docket Job ── optional durable outcome/task-tree container
 ```
 
+### Pair planning and execution gate
+
+A Pair session has at most one session-connected root task. Its ordinary task
+status is the only planning gate: **planning mode is derived**, never persisted
+as an independent mode.
+
+```text
+session-connected root is draft
+    => planning mode; construct, edit, reorder, and remove its task tree
+    => no current execution task and no Pair execution run
+
+root is non-draft + an executable task is explicitly selected current
+    => Pair task-oriented execution focus
+    => create or resume a Pair execution run
+```
+
+Children may be fully specified and non-draft while their session-connected
+root remains `draft`; the draft ancestor makes them non-executable. Selection
+for execution must reject a draft task or a task beneath a draft ancestor.
+A UI-only navigation highlight must not call the durable current-task selection
+operation.
+
+`ready` means eligible to execute, not an implicit start command. A deliberate
+**start** operation may atomically move the root out of `draft`, select the
+first executable task, and create the Pair run, but a generic status edit must
+not do so incidentally. Once selected, the current task—not the presence of a
+run—drives Pair execution focus. A Pair run records a bounded execution attempt
+and its checkpoint/resume history; it does not authorize execution. A run that
+hits a budget boundary is paused while the selected task remains current, so
+the controller can resume a successor slice without asking the user to say
+"continue."
+
 - A Pair session has zero or one current task. It is session-owned. Having a current task gives the session its objective; it neither creates a worker nor changes trust/permissions.
 - A Work loop has one bounded, explicit Docket Job assignment. Its authority to execute and settle applies within that Job's approved task tree, not to whichever task Pair happens to have current.
 - A Docket Job is for explicitly requested durable planning/tracking, journals, recovery, delivery contracts, or isolated background execution. Do not create one merely to give Pair ordinary work.
