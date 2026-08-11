@@ -425,11 +425,13 @@ mod tests {
         assert_eq!(diagnostics.task_id.as_deref(), Some("task-1"));
         assert_eq!(diagnostics.limit, 10);
 
-        assert!(serde_json::from_value::<ConversationDiagnosticsRequest>(serde_json::json!({
-            "conversation_id": "conv-1",
-            "unexpected": true
-        }))
-        .is_err());
+        assert!(
+            serde_json::from_value::<ConversationDiagnosticsRequest>(serde_json::json!({
+                "conversation_id": "conv-1",
+                "unexpected": true
+            }))
+            .is_err()
+        );
 
         let run: RunStartRequest = serde_json::from_value(serde_json::json!({
             "session_id": "s-1",

@@ -406,12 +406,14 @@ transcript message id
 
 | Task | Done when |
 | --- | --- |
-| Define stable transcript IDs | Pair transcript review exposes stable message IDs for user, assistant, and relevant runtime/tool boundaries. |
-| Define append-only Pair runtime history | History rows have a Pair run ID, event/decision kind, timestamp, and typed payload/evidence references; they can reference a message ID and task/root identifiers where applicable. |
-| Record controller boundaries | Candidate final response, completion classification and decision, budget snapshot, continuation, pause, resume, task-focus resolution, and settlement are recorded with the same canonical meanings used by runtime behavior. |
-| Provide interrogation reads | Authorized Pair diagnostics can query the joined history by message ID, Pair run ID, session, and current task without exposing raw secrets or inventing state. |
-| Define retention and redaction | Pair diagnostic retention, payload size limits, sensitive-field redaction, and deletion/expiry behavior are explicit. Raw transcript duplication is prohibited unless separately authorized. |
-| Test the evidence chain | A session-connected selected task is traced through execution, a controller decision, and a pause/resume or terminal settlement; the test proves message-to-run-to-task correlation and no `RunPaused` without a persisted run. |
+| Define stable transcript IDs | **Implemented.** Canonical `append_message` returns immutable message UUID plus sequence number, including idempotent/retry paths, for user, assistant, tool, warning, and error records. |
+| Define append-only Pair runtime history | **Implemented at the existing ledger boundary.** `bear_loop_control_ledger` has Pair run, typed decision, bounded payload/evidence refs, task/list refs, and optional canonical `conversation_message_id`; it stores no raw transcript. |
+| Record controller boundaries | **Implemented for final-gate enforcement.** Terminal assistant output persists before final-gate evaluation; suppressed final responses record `FinalGateContinuation`, and repeated objections record `ActiveTaskPause` before `RunPaused` is emitted. Budget, resume, task-focus resolution, and settlement correlation remain separately incomplete. |
+| Provide interrogation reads | **Implemented.** Authenticated BearWire `conversation.diagnostics` provides bounded, transcript-free reads scoped to the Bear conversation/session and filters by run, message, and task. |
+| Define retention and redaction | **Partially complete.** The ledger is transcript-free and diagnostic reads clamp to 1–100 records; explicit retention/expiry and field-redaction policy remain pending. |
+| Test the evidence chain | **Partially complete.** Unit coverage proves a runless repeated-objection path fails before persistence or `RunPaused`; database-backed validation must prove the persisted message-to-run-to-task join and pause ordering against a reachable PostgreSQL instance. |
+
+**Current evidence (2026-08-11):** `cargo fmt --check`, `SQLX_OFFLINE=true cargo check -p den-runtime`, `SQLX_OFFLINE=true cargo check -p den-bearwire`, and `SQLX_OFFLINE=true cargo test -p bearwire-protocol` pass. DB-backed tests remain unavailable in this environment because the configured PostgreSQL hostname does not resolve.
 
 **Exit gate:** an operator or Pair can diagnose why an execution-focused turn
 continued, paused, resumed, or completed from durable correlated evidence.

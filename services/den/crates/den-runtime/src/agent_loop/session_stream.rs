@@ -2549,7 +2549,14 @@ mod tests {
         session.governance = Governance::Interactive;
         let mut stream = test_tracking_stream_with_session(&session);
 
-        stream.begin_final_gate_continuation("finish the task");
+        stream
+            .begin_final_gate_continuation(
+                "finish the task",
+                "test".to_string(),
+                "progress_only".to_string(),
+                None,
+            )
+            .expect("continuation setup");
 
         let stored = stream
             .store
@@ -2602,53 +2609,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repeated_terminal_objection_emits_structured_pause() {
+    async fn repeated_terminal_objection_rejects_runless_pause_before_persistence() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         let focused = pending_task_list_projection();
+        session.run_id = None;
         session.governance = Governance::AutonomousContinuation;
-        session.cached_activity_plan_projection = Some(focused.clone());
-        session.messages = vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: Some("Active task incomplete. Do not final-answer yet; continue with: Continue implementation.".to_string()),
-                tool_call_id: None,
-                name: None,
-                tool_calls: None,
-            },
-            ChatMessage {
-                role: "assistant".to_string(),
-                content: Some("I need approval before continuing.".to_string()),
-                tool_call_id: None,
-                name: None,
-                tool_calls: None,
-            },
-            ChatMessage {
-                role: "system".to_string(),
-                content: Some("Active task incomplete. Do not final-answer yet; continue with: Continue implementation.".to_string()),
-                tool_call_id: None,
-                name: None,
-                tool_calls: None,
-            },
-            ChatMessage {
-                role: "assistant".to_string(),
-                content: Some("I need approval before continuing.".to_string()),
-                tool_call_id: None,
-                name: None,
-                tool_calls: None,
-            },
-        ];
+        session.cached_activity_plan_projection = Some(focused);
         let mut stream = test_tracking_stream_with_session(&session);
-        stream.assistant_text = "I need approval before continuing.".to_string();
 
-        stream.evaluate_final_gate_or_complete(Some(focused), None);
+        stream.begin_repeated_terminal_objection_pause(
+            &TaskFocusLoopDetection {
+                detected: true,
+                continuation_nudges: 2,
+                terminal_objections: 2,
+                repeated_objection_kind: None,
+            },
+            None,
+        );
 
-        assert!(stream.finished);
-        assert!(matches!(
-            stream.next().await.expect("pause event").expect("ok event"),
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { ref reason, .. })
-                if reason == "active_task_repeated_terminal_objection"
-        ));
-        assert!(stream.next().await.is_none());
+        let error = stream
+            .next()
+            .await
+            .expect("runless pause error")
+            .expect_err("RunPaused must not be emitted without a persisted run");
+        assert!(error
+            .to_string()
+            .contains("cannot pause without a persisted run ID"));
     }
 
     #[tokio::test]

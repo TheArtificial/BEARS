@@ -1712,7 +1712,6 @@ mod tests {
         let expected = vec![LoopControlReplayObservation {
             run_id: run_id.clone(),
             turn_step_id: None,
-            conversation_message_id: None,
             decision_id: "checkpoint:ckpt-1".to_string(),
             decision_kind: LoopControlDecisionKind::CheckpointRequested,
             control_level: "careful".to_string(),
