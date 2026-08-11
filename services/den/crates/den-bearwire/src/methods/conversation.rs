@@ -7,7 +7,7 @@ use sqlx::types::time::OffsetDateTime;
 use uuid::Uuid;
 
 use bearwire_protocol::{
-    methods::ConversationHistoryRequest,
+    methods::{ConversationDiagnosticsRequest, ConversationHistoryRequest},
     surface::{SurfaceHistoryEvent, SurfaceResourceRef},
 };
 use den_http::errors::CustomError;
@@ -233,6 +233,98 @@ fn surface_text_with_resource_refs(text: String, resources: &[SurfaceResourceRef
         }
     }
     rendered
+}
+
+pub(crate) async fn conversation_diagnostics_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: ConversationDiagnosticsRequest = parse_params(params)?;
+    let limit = request.limit.clamp(1, 100);
+    let Some(conversation) = persistence::get_conversation_for_external_id(
+        &state.sqlx_pool,
+        bear.id,
+        &request.conversation_id,
+    )
+    .await?
+    else {
+        return Ok(json!({
+            "kind": "conversation_diagnostics",
+            "conversation_id": request.conversation_id,
+            "missing": true,
+            "records": [],
+        }));
+    };
+
+    let Some(session) = client_sessions::find_latest_for_bear_conversation(
+        &state.sqlx_pool,
+        bear.id,
+        &request.conversation_id,
+    )
+    .await?
+    else {
+        return Ok(json!({
+            "kind": "conversation_diagnostics",
+            "conversation_id": request.conversation_id,
+            "missing": false,
+            "records": [],
+        }));
+    };
+    let run_id = request.run_id.as_deref();
+    let run = match run_id {
+        Some(run_id) => den_runtime::turn_runs::get_run(&state.sqlx_pool, run_id).await?,
+        None => {
+            den_runtime::turn_runs::active_run_for_session(
+                &state.sqlx_pool,
+                &session.client_session_id,
+            )
+            .await?
+        }
+    };
+    let Some(run) = run.filter(|run| {
+        run.bear_id == bear.id
+            && run.user_id == user_id
+            && run.session_id == session.client_session_id
+    }) else {
+        return Ok(json!({
+            "kind": "conversation_diagnostics",
+            "conversation_id": request.conversation_id,
+            "missing": false,
+            "records": [],
+        }));
+    };
+
+    let message_id = request
+        .message_id
+        .as_deref()
+        .map(Uuid::parse_str)
+        .transpose()
+        .map_err(|_| CustomError::ValidationError("message_id must be a UUID".to_string()))?;
+    let task_id = request
+        .task_id
+        .as_deref()
+        .map(Uuid::parse_str)
+        .transpose()
+        .map_err(|_| CustomError::ValidationError("task_id must be a UUID".to_string()))?;
+    let records =
+        den_runtime::agent_loop::list_loop_control_decisions_for_run(&state.sqlx_pool, &run.run_id)
+            .await?
+            .into_iter()
+            .filter(|record| {
+                message_id.is_none_or(|id| record.conversation_message_id == Some(id))
+                    && task_id.is_none_or(|id| record.related_docket_task_id == Some(id))
+            })
+            .take(limit as usize)
+            .collect::<Vec<_>>();
+
+    Ok(json!({
+        "kind": "conversation_diagnostics",
+        "conversation_id": conversation.external_conversation_id,
+        "run_id": run.run_id,
+        "records": records,
+    }))
 }
 
 pub(crate) async fn conversation_history_result(

@@ -111,6 +111,16 @@ pub(crate) async fn rpc(
             .await,
             "BearWire conversation.surface_history failed",
         ),
+        "conversation.diagnostics" => method_response(
+            request.id,
+            methods::conversation::conversation_diagnostics_result(
+                &state,
+                &headers,
+                &request.params,
+            )
+            .await,
+            "BearWire conversation.diagnostics failed",
+        ),
         "docket.jobs.list" => method_response(
             request.id,
             methods::docket::docket_jobs_list_result(&state, &headers, &request.params).await,
