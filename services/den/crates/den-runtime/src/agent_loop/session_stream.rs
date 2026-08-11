@@ -10,10 +10,15 @@ use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
 use futures::{stream, Stream};
+use uuid::Uuid;
 
+use crate::agent_loop::{
+    record_loop_control_decision, LedgerEvidenceRef, LoopControlDecisionKind,
+    LoopControlLedgerInput,
+};
 use crate::runtime::completion_policy::{
     decide_turn_completion, TurnCompletionCompleteReason, TurnCompletionDecision,
-    TurnCompletionPolicyInput,
+    TurnCompletionPauseReason, TurnCompletionPolicyInput,
 };
 use crate::runtime::task_context::{
     resolve_runtime_task_context, RuntimeTaskContext, RuntimeTaskResolveRequest,
@@ -40,6 +45,7 @@ use crate::{
     native_runtime::is_task_definition_or_delegation_tool_provider_name,
     runtime_compaction::enqueue_compaction_after_turn,
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
+    turn_state::TaskFocusLoopDetection,
 };
 use den_core::tools::{
     arguments::DenToolChannelContext,
@@ -1316,9 +1322,9 @@ impl SessionTrackingStream {
                 });
                 return;
             }
-            TurnCompletionDecision::Complete {
-                reason: TurnCompletionCompleteReason::RepeatedTerminalObjection,
-                loop_detection: Some(loop_detection),
+            TurnCompletionDecision::Pause {
+                reason: TurnCompletionPauseReason::RepeatedTerminalObjection,
+                loop_detection,
                 ..
             } => {
                 self.finished = true;
@@ -1328,10 +1334,14 @@ impl SessionTrackingStream {
                     terminal_objections = loop_detection.terminal_objections,
                     continuation_nudges = loop_detection.continuation_nudges,
                     repeated_objection_kind = ?loop_detection.repeated_objection_kind,
-                    "native runtime task-focus loop detected; accepting terminal objection instead of issuing another continuation nudge"
+                    "native runtime task-focus loop detected; pausing active task instead of accepting terminal objection"
                 );
-                self.pending_pause_after_tool =
-                    Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
+                self.record_repeated_terminal_objection_pause(&loop_detection);
+                self.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunPaused {
+                    reason: "active_task_repeated_terminal_objection".to_string(),
+                    resume_token: None,
+                    expires_at: None,
+                });
                 return;
             }
             TurnCompletionDecision::Complete {
@@ -1358,6 +1368,71 @@ impl SessionTrackingStream {
         });
         self.finished = true;
         self.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
+    }
+
+    fn record_repeated_terminal_objection_pause(&self, loop_detection: &TaskFocusLoopDetection) {
+        let Some(run_id) = self
+            .store
+            .get(&self.session_key)
+            .and_then(|session| session.run_id)
+        else {
+            tracing::warn!(
+                client_session_id = %self.client_session_id,
+                "active-task repeated-objection pause has no runtime run ID; emitting semantic pause without ledger record"
+            );
+            return;
+        };
+        let pool = self.pool.clone();
+        let profile = self.profile;
+        let task_list = self
+            .store
+            .get(&self.session_key)
+            .and_then(|session| session.cached_activity_plan_projection);
+        let terminal_objections = loop_detection.terminal_objections;
+        let continuation_nudges = loop_detection.continuation_nudges;
+        let repeated_objection_kind = format!("{:?}", loop_detection.repeated_objection_kind);
+        tokio::spawn(async move {
+            let task_list_id = task_list.as_ref().map(|list| list.id.to_string());
+            let active_item = task_list
+                .as_ref()
+                .and_then(|list| list.current_item.as_ref());
+            let related_docket_task_id =
+                active_item.and_then(|item| Uuid::parse_str(&item.id).ok());
+            let related_docket_job_id = task_list
+                .as_ref()
+                .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok());
+            if let Err(err) = record_loop_control_decision(
+                &pool,
+                LoopControlLedgerInput {
+                    run_id,
+                    turn_step_id: None,
+                    decision_id: format!("active-task-pause-{}", Uuid::new_v4()),
+                    decision_kind: LoopControlDecisionKind::ActiveTaskPause,
+                    control_level: "standard".to_string(),
+                    reason: Some("repeated_terminal_objection".to_string()),
+                    orientation_kind: Some(profile.as_str().to_string()),
+                    checkpoint_id: None,
+                    related_task_list_id: task_list_id,
+                    related_task_item_id: active_item.map(|item| item.id.clone()),
+                    related_docket_job_id,
+                    related_docket_task_id,
+                    evidence_refs: vec![LedgerEvidenceRef {
+                        kind: "loop_detection".to_string(),
+                        id: "repeated_terminal_objection".to_string(),
+                    }],
+                    decision: serde_json::json!({
+                        "terminal_objections": terminal_objections,
+                        "continuation_nudges": continuation_nudges,
+                        "repeated_objection_kind": repeated_objection_kind,
+                        "resume_semantics": "manual_or_scheduler_resume_required",
+                    }),
+                },
+            )
+            .await
+            {
+                tracing::warn!(error = %err, "failed to persist active-task pause ledger decision");
+            }
+        });
     }
 
     fn begin_final_gate_focus_resolution(&mut self) {
@@ -2379,6 +2454,64 @@ mod tests {
             created_at: time::OffsetDateTime::UNIX_EPOCH,
             updated_at: time::OffsetDateTime::UNIX_EPOCH,
         }
+    }
+
+    fn pending_task_list_projection() -> den_docket::TaskListProjection {
+        let mut task_list = completed_task_list_projection();
+        task_list.status = "active".to_string();
+        task_list.items[0].status = den_docket::TaskListItemStatus::Pending;
+        task_list.items[0].title = "Continue implementation".to_string();
+        task_list
+    }
+
+    #[tokio::test]
+    async fn repeated_terminal_objection_emits_structured_pause() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let focused = pending_task_list_projection();
+        session.governance = Governance::AutonomousContinuation;
+        session.cached_activity_plan_projection = Some(focused.clone());
+        session.messages = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: Some("Active task incomplete. Do not final-answer yet; continue with: Continue implementation.".to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: Some("I need approval before continuing.".to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "system".to_string(),
+                content: Some("Active task incomplete. Do not final-answer yet; continue with: Continue implementation.".to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: Some("I need approval before continuing.".to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            },
+        ];
+        let mut stream = test_tracking_stream_with_session(&session);
+        stream.assistant_text = "I need approval before continuing.".to_string();
+
+        stream.evaluate_final_gate_or_complete(Some(focused));
+
+        assert!(stream.finished);
+        assert!(matches!(
+            stream.next().await.expect("pause event").expect("ok event"),
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { ref reason, .. })
+                if reason == "active_task_repeated_terminal_objection"
+        ));
+        assert!(stream.next().await.is_none());
     }
 
     #[tokio::test]

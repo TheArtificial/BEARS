@@ -108,6 +108,7 @@ pub enum LoopControlDecisionKind {
     CheckpointRequested,
     ContextBudgetPressure,
     GroundingProbeResult,
+    ActiveTaskPause,
 }
 
 impl LoopControlDecisionKind {
@@ -116,6 +117,7 @@ impl LoopControlDecisionKind {
             Self::CheckpointRequested => "checkpoint_requested",
             Self::ContextBudgetPressure => "context_budget_pressure",
             Self::GroundingProbeResult => "grounding_probe_result",
+            Self::ActiveTaskPause => "active_task_pause",
         }
     }
 
@@ -124,6 +126,7 @@ impl LoopControlDecisionKind {
             "checkpoint_requested" => Some(Self::CheckpointRequested),
             "context_budget_pressure" => Some(Self::ContextBudgetPressure),
             "grounding_probe_result" => Some(Self::GroundingProbeResult),
+            "active_task_pause" => Some(Self::ActiveTaskPause),
             _ => None,
         }
     }
