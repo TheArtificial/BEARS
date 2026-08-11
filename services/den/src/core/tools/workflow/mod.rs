@@ -2470,6 +2470,7 @@ mod test {
                 created_by_user_id: None,
                 created_by_agent_id: None,
                 created_in_run_id: None,
+                settled_by_entry_id: None,
                 created_at: now,
                 updated_at: now,
             },

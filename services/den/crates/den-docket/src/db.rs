@@ -323,8 +323,9 @@ async fn insert_task_for_job(
     parent_task_id: Option<Uuid>,
     sibling_order: i32,
 ) -> Result<DocketTaskRow, DenError> {
-    let row = sqlx::query_as::<_, DocketTaskRow>(
-        r"
+    let row = sqlx::query_as!(
+        DocketTaskRow,
+        r#"
         INSERT INTO bear_tasks (
             bear_id, job_id, parent_task_id, sibling_order, kind, scope, title, body,
             completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
@@ -332,29 +333,27 @@ async fn insert_task_for_job(
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16)
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                  kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   settled_by_entry_id, created_at, updated_at
-        ",
+        "#,
+        create.bear_id,
+        job_id,
+        parent_task_id,
+        sibling_order,
+        task.kind.as_str(),
+        task.scope.as_str(),
+        task.title.trim(),
+        task.body.trim(),
+        serde_json::to_value(normalize_completion_criteria(&task.completion_criteria))?,
+        task.difficulty.map(|difficulty| difficulty.as_str()),
+        task.effort_hint.map(|effort| effort.as_str()),
+        task.routing_strategy.as_str(),
+        task.expected_context_size,
+        task.result_rollup_policy.map(|policy| policy.as_str()),
+        create.created_by_role.trim(),
+        create.created_by_user_id,
     )
-    .bind(create.bear_id)
-    .bind(job_id)
-    .bind(parent_task_id)
-    .bind(sibling_order)
-    .bind(task.kind.as_str())
-    .bind(task.scope.as_str())
-    .bind(task.title.trim())
-    .bind(task.body.trim())
-    .bind(serde_json::to_value(normalize_completion_criteria(
-        &task.completion_criteria,
-    ))?)
-    .bind(task.difficulty.map(|difficulty| difficulty.as_str()))
-    .bind(task.effort_hint.map(|effort| effort.as_str()))
-    .bind(task.routing_strategy.as_str())
-    .bind(task.expected_context_size)
-    .bind(task.result_rollup_policy.map(|policy| policy.as_str()))
-    .bind(create.created_by_role.trim())
-    .bind(create.created_by_user_id)
     .fetch_one(&mut **tx)
     .await?;
 
@@ -477,19 +476,20 @@ async fn place_task(
             .await?
         }
         DocketTaskPlacement::Before { task_id } | DocketTaskPlacement::After { task_id } => {
-            let anchor: DocketTaskRow = sqlx::query_as(
-                r"
+            let anchor: DocketTaskRow = sqlx::query_as!(
+                DocketTaskRow,
+                r#"
                 SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                       kind, scope, title, body, completion_criteria, difficulty, effort_hint,
+                       kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint,
                        routing_strategy, expected_context_size, result_rollup_policy,
                        created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                        settled_by_entry_id, created_at, updated_at
                 FROM bear_tasks
                 WHERE id = $1 AND bear_id = $2
-                ",
+                "#,
+                task_id,
+                create.bear_id,
             )
-            .bind(task_id)
-            .bind(create.bear_id)
             .fetch_optional(&mut **tx)
             .await?
             .ok_or_else(|| {
@@ -533,8 +533,9 @@ async fn insert_task(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     create: &DocketTaskCreate,
 ) -> Result<DocketTaskRow, DenError> {
-    sqlx::query_as::<_, DocketTaskRow>(
-        r"
+    sqlx::query_as!(
+        DocketTaskRow,
+        r#"
         INSERT INTO bear_tasks (
             bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope,
             title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
@@ -543,32 +544,30 @@ async fn insert_task(
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17, $18, $19)
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                  kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   settled_by_entry_id, created_at, updated_at
-        ",
+        "#,
+        create.bear_id,
+        create.job_id,
+        create.session_anchor_id,
+        create.parent_task_id,
+        create.sibling_order,
+        create.kind.as_str(),
+        create.scope.as_str(),
+        create.title.trim(),
+        create.body.trim(),
+        serde_json::to_value(normalize_completion_criteria(&create.completion_criteria))?,
+        create.difficulty.map(|difficulty| difficulty.as_str()),
+        create.effort_hint.map(|effort| effort.as_str()),
+        create.routing_strategy.as_str(),
+        create.expected_context_size,
+        create.result_rollup_policy.map(|policy| policy.as_str()),
+        create.created_by_role.trim(),
+        create.created_by_user_id,
+        create.created_by_agent_id.as_deref(),
+        create.created_in_run_id,
     )
-    .bind(create.bear_id)
-    .bind(create.job_id)
-    .bind(create.session_anchor_id)
-    .bind(create.parent_task_id)
-    .bind(create.sibling_order)
-    .bind(create.kind.as_str())
-    .bind(create.scope.as_str())
-    .bind(create.title.trim())
-    .bind(create.body.trim())
-    .bind(serde_json::to_value(normalize_completion_criteria(
-        &create.completion_criteria,
-    ))?)
-    .bind(create.difficulty.map(|difficulty| difficulty.as_str()))
-    .bind(create.effort_hint.map(|effort| effort.as_str()))
-    .bind(create.routing_strategy.as_str())
-    .bind(create.expected_context_size)
-    .bind(create.result_rollup_policy.map(|policy| policy.as_str()))
-    .bind(create.created_by_role.trim())
-    .bind(create.created_by_user_id)
-    .bind(create.created_by_agent_id.as_deref())
-    .bind(create.created_in_run_id)
     .fetch_one(&mut **tx)
     .await
     .map_err(Into::into)
@@ -675,19 +674,20 @@ pub(super) async fn get_job(
     .fetch_all(pool)
     .await?;
 
-    let tasks = sqlx::query_as::<_, DocketTaskRow>(
-        r"
+    let tasks = sqlx::query_as!(
+        DocketTaskRow,
+        r#"
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+               kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                settled_by_entry_id, created_at, updated_at
         FROM bear_tasks
         WHERE bear_id = $1 AND job_id = $2
         ORDER BY COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), sibling_order, created_at
-        ",
+        "#,
+        bear_id,
+        job.id,
     )
-    .bind(bear_id)
-    .bind(job.id)
     .fetch_all(pool)
     .await?;
 
@@ -1637,10 +1637,11 @@ pub(super) async fn list_tasks(
     let tasks = if filter.include_descendants {
         list_tasks_with_descendants(pool, bear_id, &filter, limit).await?
     } else {
-        sqlx::query_as::<_, DocketTaskRow>(
-            r"
+        sqlx::query_as!(
+            DocketTaskRow,
+            r#"
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                   kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                    result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id,
                    created_at, updated_at
             FROM bear_tasks
@@ -1653,13 +1654,13 @@ pub(super) async fn list_tasks(
               )
             ORDER BY sibling_order, created_at
             LIMIT $5
-            ",
+            "#,
+            bear_id,
+            filter.job_id,
+            filter.session_anchor_id,
+            filter.parent_task_id,
+            limit,
         )
-        .bind(bear_id)
-        .bind(filter.job_id)
-        .bind(filter.session_anchor_id)
-        .bind(filter.parent_task_id)
-        .bind(limit)
         .fetch_all(pool)
         .await?
     };
@@ -1905,8 +1906,9 @@ async fn list_tasks_with_descendants(
     filter: &DocketTaskListFilter,
     limit: i64,
 ) -> Result<Vec<DocketTaskRow>, DenError> {
-    sqlx::query_as::<_, DocketTaskRow>(
-        r"
+    sqlx::query_as!(
+        DocketTaskRow,
+        r#"
         WITH RECURSIVE task_tree AS (
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                    kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
@@ -1930,20 +1932,39 @@ async fn list_tasks_with_descendants(
             FROM bear_tasks child
             JOIN task_tree parent ON child.parent_task_id = parent.id
         )
-        SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
-               result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
-               settled_by_entry_id, created_at, updated_at
+        SELECT id AS "id!: _",
+               bear_id AS "bear_id!: _",
+               job_id,
+               session_anchor_id,
+               parent_task_id,
+               sibling_order AS "sibling_order!: _",
+               kind AS "kind!: _",
+               scope AS "scope!: _",
+               title AS "title!: _",
+               body AS "body!: _",
+               completion_criteria AS "completion_criteria!: _",
+               difficulty,
+               effort_hint,
+               routing_strategy AS "routing_strategy!: _",
+               expected_context_size,
+               result_rollup_policy,
+               created_by_role AS "created_by_role!: _",
+               created_by_user_id,
+               created_by_agent_id,
+               created_in_run_id,
+               settled_by_entry_id,
+               created_at AS "created_at!: _",
+               updated_at AS "updated_at!: _"
         FROM task_tree
         ORDER BY COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), sibling_order, created_at
         LIMIT $5
-        ",
+        "#,
+        bear_id,
+        filter.job_id,
+        filter.session_anchor_id,
+        filter.parent_task_id,
+        limit,
     )
-    .bind(bear_id)
-    .bind(filter.job_id)
-    .bind(filter.session_anchor_id)
-    .bind(filter.parent_task_id)
-    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -2116,11 +2137,12 @@ pub(super) async fn settle_session_task(
     .bind(settlement.actor_user_id)
     .fetch_one(&mut *tx)
     .await?;
-    let task = sqlx::query_as::<_, DocketTaskRow>(
-        "UPDATE bear_tasks SET settled_by_entry_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size, result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id, created_at, updated_at",
+    let task = sqlx::query_as!(
+        DocketTaskRow,
+        r#"UPDATE bear_tasks SET settled_by_entry_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size, result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id, created_at, updated_at"#,
+        task.id,
+        entry_id,
     )
-    .bind(task.id)
-    .bind(entry_id)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -2459,19 +2481,20 @@ async fn select_task(
     bear_id: Uuid,
     task_id: Uuid,
 ) -> Result<DocketTaskRow, DenError> {
-    sqlx::query_as::<_, DocketTaskRow>(
-        r"
+    sqlx::query_as!(
+        DocketTaskRow,
+        r#"
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+               kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                settled_by_entry_id, created_at, updated_at
         FROM bear_tasks
         WHERE bear_id = $1 AND id = $2
         FOR UPDATE
-        ",
+        "#,
+        bear_id,
+        task_id,
     )
-    .bind(bear_id)
-    .bind(task_id)
     .fetch_optional(&mut **tx)
     .await?
     .ok_or_else(|| {
@@ -2575,8 +2598,9 @@ async fn update_task_definition(
     current: &DocketTaskRow,
     patch: &DocketTaskDefinitionPatch,
 ) -> Result<DocketTaskRow, DenError> {
-    sqlx::query_as::<_, DocketTaskRow>(
-        r"
+    sqlx::query_as!(
+        DocketTaskRow,
+        r#"
         UPDATE bear_tasks
         SET title = $3,
             body = $4,
@@ -2593,72 +2617,38 @@ async fn update_task_definition(
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                  kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   settled_by_entry_id, created_at, updated_at
-        ",
-    )
-    .bind(current.bear_id)
-    .bind(current.id)
-    .bind(
-        patch
-            .title
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or(&current.title),
-    )
-    .bind(
-        patch
-            .body
-            .as_deref()
-            .map(str::trim)
-            .unwrap_or(&current.body),
-    )
-    .bind(serde_json::to_value(
-        patch
-            .completion_criteria
-            .as_ref()
-            .map(|criteria| normalize_completion_criteria(criteria))
-            .unwrap_or_else(|| current.completion_criteria.0.clone()),
-    )?)
-    .bind(patch.parent_task_id.unwrap_or(current.parent_task_id))
-    .bind(patch.sibling_order.unwrap_or(current.sibling_order))
-    .bind(
-        patch
-            .kind
-            .map(|kind| kind.as_str())
-            .unwrap_or(&current.kind),
-    )
-    .bind(
-        patch
-            .scope
-            .map(|scope| scope.as_str())
-            .unwrap_or(&current.scope),
-    )
-    .bind(
+        "#,
+        current.bear_id,
+        current.id,
+        patch.title.as_deref().map(str::trim).unwrap_or(&current.title),
+        patch.body.as_deref().map(str::trim).unwrap_or(&current.body),
+        serde_json::to_value(
+            patch
+                .completion_criteria
+                .as_ref()
+                .map(|criteria| normalize_completion_criteria(criteria))
+                .unwrap_or_else(|| current.completion_criteria.0.clone()),
+        )?,
+        patch.parent_task_id.unwrap_or(current.parent_task_id),
+        patch.sibling_order.unwrap_or(current.sibling_order),
+        patch.kind.map(|kind| kind.as_str()).unwrap_or(&current.kind),
+        patch.scope.map(|scope| scope.as_str()).unwrap_or(&current.scope),
         patch
             .difficulty
             .map(|value| value.map(|difficulty| difficulty.as_str().to_string()))
             .unwrap_or_else(|| current.difficulty.clone()),
-    )
-    .bind(
         patch
             .effort_hint
             .map(|value| value.map(|effort| effort.as_str().to_string()))
             .unwrap_or_else(|| current.effort_hint.clone()),
-    )
-    .bind(
         patch
             .routing_strategy
             .map(|strategy| strategy.as_str())
             .unwrap_or(&current.routing_strategy),
-    )
-    .bind(
-        patch
-            .expected_context_size
-            .unwrap_or(current.expected_context_size),
-    )
-    .bind(
+        patch.expected_context_size.unwrap_or(current.expected_context_size),
         patch
             .result_rollup_policy
             .map(|value| value.map(|policy| policy.as_str().to_string()))

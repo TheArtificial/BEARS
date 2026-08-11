@@ -1,4 +1,5 @@
 use axum::http::HeaderMap;
+use den_core::DenError;
 use den_docket::{DocketService, PgDocketService, TaskListItem, TaskListItemStatus};
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -235,23 +236,33 @@ async fn session_state_payload(
         &session.client_session_id,
     );
     let runtime_task_context = if work_enabled {
-        Some(
-            resolve_runtime_task_context(
-                &state.sqlx_pool,
-                RuntimeTaskResolveRequest {
-                    bear_id: session.bear_id,
-                    profile: BearProfile::Pair,
-                    user_id: Some(session.user_id),
-                    conversation_id: conversation_runtime_id.clone(),
-                    client_session_id: session.client_session_id.clone(),
-                    cached_activity_plan_projection: den_runtime::native_runtime::native_client_session_cached_activity_plan_projection(
-                        &conversation_runtime_id,
-                        &session.client_session_id,
-                    ),
-                },
-            )
-            .await?,
+        let context = resolve_runtime_task_context(
+            &state.sqlx_pool,
+            RuntimeTaskResolveRequest {
+                bear_id: session.bear_id,
+                profile: BearProfile::Pair,
+                user_id: Some(session.user_id),
+                conversation_id: conversation_runtime_id.clone(),
+                client_session_id: session.client_session_id.clone(),
+                cached_activity_plan_projection: den_runtime::native_runtime::native_client_session_cached_activity_plan_projection(
+                    &conversation_runtime_id,
+                    &session.client_session_id,
+                ),
+            },
         )
+        .await
+        .map_err(|error| match error {
+            DenError::Database(message) => CustomError::Database(format!(
+                "resolve Pair runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
+                session.bear_id, session.client_session_id, conversation_runtime_id
+            )),
+            DenError::DatabaseUnavailable(message) => CustomError::DatabaseUnavailable(format!(
+                "resolve Pair runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
+                session.bear_id, session.client_session_id, conversation_runtime_id
+            )),
+            error => error.into(),
+        })?;
+        Some(context)
     } else {
         None
     };

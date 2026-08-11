@@ -38,11 +38,31 @@ pub(crate) async fn rpc(
             methods::session::session_compact_result(&state, &headers, &request.params).await,
             "BearWire session.compact failed",
         ),
-        "session.state" => method_response(
-            request.id,
-            methods::session::session_state_result(&state, &headers, &request.params).await,
-            "BearWire session.state failed",
-        ),
+        "session.state" => {
+            let session_id = request
+                .params
+                .get("session_id")
+                .and_then(Value::as_str)
+                .unwrap_or("<not provided>");
+            let bear_slug = request
+                .params
+                .get("bear_slug")
+                .and_then(Value::as_str)
+                .unwrap_or("<not provided>");
+            let result =
+                methods::session::session_state_result(&state, &headers, &request.params).await;
+            if let Err(error) = &result {
+                tracing::error!(
+                    error = %error,
+                    rpc_method = "session.state",
+                    request_id = ?request.id,
+                    bear_slug,
+                    session_id,
+                    "BearWire session.state request failed"
+                );
+            }
+            method_response(request.id, result, "BearWire session.state failed")
+        }
         "session.current_task.selection_request" => method_response(
             request.id,
             methods::session::session_current_task_selection_request_result(
