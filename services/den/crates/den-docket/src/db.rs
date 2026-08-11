@@ -334,7 +334,7 @@ async fn insert_task_for_job(
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
-                  created_at, updated_at
+                  settled_by_entry_id, created_at, updated_at
         ",
     )
     .bind(create.bear_id)
@@ -483,7 +483,7 @@ async fn place_task(
                        kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                        routing_strategy, expected_context_size, result_rollup_policy,
                        created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
-                       created_at, updated_at
+                       settled_by_entry_id, created_at, updated_at
                 FROM bear_tasks
                 WHERE id = $1 AND bear_id = $2
                 ",
@@ -545,7 +545,7 @@ async fn insert_task(
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
-                  created_at, updated_at
+                  settled_by_entry_id, created_at, updated_at
         ",
     )
     .bind(create.bear_id)
@@ -680,7 +680,7 @@ pub(super) async fn get_job(
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
                result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
-               created_at, updated_at
+               settled_by_entry_id, created_at, updated_at
         FROM bear_tasks
         WHERE bear_id = $1 AND job_id = $2
         ORDER BY COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), sibling_order, created_at
@@ -2180,7 +2180,7 @@ async fn validate_primary_output_registry(
         }
         "git_commit" => {
             let artifact = sqlx::query(
-                "SELECT metadata->'git'->>'commit_oid' AS commit_oid
+                "SELECT artifacts.metadata->'git'->>'commit_oid' AS commit_oid
                  FROM artifacts
                  JOIN artifact_links ON artifact_links.artifact_id = artifacts.id
                  WHERE artifacts.bear_id = $1
@@ -2464,7 +2464,7 @@ async fn select_task(
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
                result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
-               created_at, updated_at
+               settled_by_entry_id, created_at, updated_at
         FROM bear_tasks
         WHERE bear_id = $1 AND id = $2
         FOR UPDATE
