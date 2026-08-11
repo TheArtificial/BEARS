@@ -373,13 +373,14 @@ A Pair session's current task is session-scoped and may be local or Docket-backe
 | Persist current session task | **Complete.** `client_sessions.current_task_id` persists Pair's optional selected session task across turns/reconnects; a valid session-anchored selection is canonical. |
 | Project current task | **Complete.** BearWire and ACP project an optional explicit selected task; ACP's agent plan is the selected task's sibling scope (or one root task). |
 | Snapshot task into Pair runs | **In progress.** Pair runtime resolves the persisted selected task before legacy compatibility state. Before a non-draft session-connected current task enters Pair execution, runtime must create or reuse a persisted Pair execution run; `RunPaused` is invalid without that run identity. Technical Pair slice limits atomically claim that same run, persist a continuation ledger record, and resume it in-process without clearing the selected task. This is not yet crash-recoverable: a process-loss recovery worker for a claimed `continuing` run remains required. |
+| Enter current-task Pair execution | **Planned.** An authenticated normal Pair client can explicitly start or continue its selected actionable session task. Den validates session ownership and task state, creates or reuses the persisted Pair execution run, transitions the task/run into active execution, and starts the native Pair stream. The operation does not create a Job, dispatch Work, or expand authority; duplicate start requests are idempotent. |
 | Bind Work Job | **Complete.** Each WorkRun persists one explicit durable Docket Job assignment. |
 | Enforce Work Job binding | **Complete.** A Work run without an assigned Job is rejected before model-driving continuation begins. |
 | Derive task behavior | **In progress.** Pair and Work context are separated; remaining orientation/diagnostic cleanup follows Phase 2c. |
 | Add diagnostics | **In progress.** New paths distinguish current task from Work assignment/progress; legacy focus diagnostics still need retirement. |
 | Add tests | **Partially complete.** Pair selection/clear, legacy precedence, Work Job scope, BearWire projection, and ACP sibling-scope projection are covered; complete orientation coverage remains. |
 
-**Exit gate:** loop control has explicit governance and session-task/worker-assignment inputs, with no client-facing focus mode.
+**Exit gate:** loop control has explicit governance and session-task/worker-assignment inputs, with no client-facing focus mode. A normal Pair client can start a selected actionable session task through an authenticated, idempotent path that creates or reuses its persisted Pair run; that run can then be observed, paused, continued, and settled.
 
 ### Phase 2d — Pair runtime interrogation and transcript correlation
 
