@@ -12,6 +12,25 @@ use uuid::Uuid;
 
 use den_core::{BearProfile, DenError};
 
+struct ActiveTaskIdRow {
+    executing_task_id: Uuid,
+}
+
+struct LockedJobRow {
+    _lifecycle_intent: Option<String>,
+    current_run_id: Option<Uuid>,
+}
+
+struct JobStatusCountsRow {
+    in_progress: i64,
+    blocked: i64,
+    unfinished: i64,
+}
+
+struct CriterionIdRow {
+    id: Uuid,
+}
+
 use super::model::{
     derived_docket_job_status, docket_job_surface_assignments, docket_parent_task_ref,
     docket_task_status_from_task_list_item_status, normalize_completion_criteria,
@@ -28,17 +47,6 @@ use super::model::{
     TaskListSyncRequest, TaskListSyncState,
 };
 
-// `work_surface_id` remains a compatibility projection for callers that only
-// understand one Git workspace. Assignments are the canonical relationship.
-const JOB_COLUMNS: &str = "j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal, \
-    (SELECT a.work_surface_id FROM job_work_surface_assignments a \
-     JOIN work_surfaces s ON s.id = a.work_surface_id \
-     WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden' \
-     ORDER BY a.created_at LIMIT 1) AS work_surface_id, \
-    j.commit_policy, j.work_branch, COALESCE(j.lifecycle_intent, 'draft') AS status, \
-    j.lifecycle_intent, j.visibility, j.source_conversation_id, j.objective_kind, \
-    j.supersedes_job_id, j.current_run_id, j.created_at, j.updated_at";
-
 pub(super) async fn create_job(
     pool: &PgPool,
     create: DocketJobCreate,
@@ -54,8 +62,8 @@ pub(super) async fn create_job(
     }
 
     let mut tx = pool.begin().await?;
-    let predecessor = sqlx::query_scalar::<_, Uuid>(
-        r"
+    let predecessor = sqlx::query_scalar!(
+        r#"
         SELECT j.id
         FROM bear_jobs j
         WHERE j.bear_id = $1
@@ -69,12 +77,12 @@ pub(super) async fn create_job(
         ORDER BY j.created_at DESC
         LIMIT 1
         FOR UPDATE
-        ",
+        "#,
+        create.bear_id,
+        create.goal.trim(),
+        create.work_surface_id,
+        create.supersedes_job_id
     )
-    .bind(create.bear_id)
-    .bind(create.goal.trim())
-    .bind(create.work_surface_id)
-    .bind(create.supersedes_job_id)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -106,8 +114,8 @@ job_id)
         (_, super::model::DocketJobOverlapResolution::Independent) | (None, _) => {}
     }
 
-    let job_id: Uuid = sqlx::query_scalar(
-        r"
+    let job_id: Uuid = sqlx::query_scalar!(
+        r#"
         INSERT INTO bear_jobs (
             bear_id, created_by_user_id, created_by_role, goal,
             commit_policy, work_branch, lifecycle_intent, visibility, source_conversation_id, objective_kind,
@@ -115,25 +123,23 @@ job_id)
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id
-        ",
-    )
-    .bind(create.bear_id)
-    .bind(create.created_by_user_id)
-    .bind(create.created_by_role.trim())
-    .bind(create.goal.trim())
-    .bind(DocketCommitPolicy::for_new_job(create.commit_policy).as_str())
-    .bind(
+        "#,
+        create.bear_id,
+        create.created_by_user_id,
+        create.created_by_role.trim(),
+        create.goal.trim(),
+        DocketCommitPolicy::for_new_job(create.commit_policy).as_str(),
         create
             .work_branch
             .as_deref()
             .map(str::trim)
             .filter(|branch| !branch.is_empty()),
+        Option::<&str>::None,
+        create.visibility.as_str(),
+        create.source_conversation_id.as_deref(),
+        create.objective_kind.as_deref(),
+        create.supersedes_job_id
     )
-    .bind(Option::<&str>::None)
-    .bind(create.visibility.as_str())
-    .bind(create.source_conversation_id.as_deref())
-    .bind(create.objective_kind.as_deref())
-    .bind(create.supersedes_job_id)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -151,45 +157,55 @@ job_id)
         .await?;
     }
 
-    let run = sqlx::query_as::<_, DocketJobRunRow>(
-        r"
+    let run = sqlx::query_as!(
+        DocketJobRunRow,
+        r#"
         INSERT INTO bear_job_runs (job_id, trigger, state)
         VALUES ($1, 'manual', 'dispatched')
         RETURNING id, job_id, trigger, schedule_ref, state, started_at, finished_at,
-                  outcome, created_at, updated_at
-        ",
+                  outcome AS "outcome: _", created_at, updated_at
+        "#,
+        job_id
     )
-    .bind(job_id)
     .fetch_one(&mut *tx)
     .await?;
 
-    let job = sqlx::query_as::<_, DocketJobRow>(&format!(
-        r"
+    let job = sqlx::query_as!(
+        DocketJobRow,
+        r#"
         UPDATE bear_jobs j
         SET current_run_id = $2, updated_at = NOW()
         WHERE j.id = $1
-        RETURNING {JOB_COLUMNS}
-        ",
-    ))
-    .bind(job_id)
-    .bind(run.id)
+        RETURNING j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal,
+                  (SELECT a.work_surface_id FROM job_work_surface_assignments a
+                   JOIN work_surfaces s ON s.id = a.work_surface_id
+                   WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden'
+                   ORDER BY a.created_at LIMIT 1) AS work_surface_id,
+                  j.commit_policy, j.work_branch, COALESCE(j.lifecycle_intent, 'draft') AS "status!: _",
+                  j.lifecycle_intent, j.visibility, j.source_conversation_id, j.objective_kind,
+                  j.supersedes_job_id, j.current_run_id, j.created_at, j.updated_at
+        "#,
+        job_id,
+        run.id
+    )
     .fetch_one(&mut *tx)
     .await?;
 
     let mut criteria = Vec::new();
     for criterion in &create.criteria {
-        let row = sqlx::query_as::<_, DocketJobCriterionRow>(
-            r"
+        let row = sqlx::query_as!(
+            DocketJobCriterionRow,
+            r#"
             INSERT INTO bear_job_criteria (job_id, kind, description, spec, sibling_order)
             VALUES ($1, $2, $3, $4::jsonb, $5)
-            RETURNING id, job_id, kind, description, spec, sibling_order, created_at, updated_at
-            ",
+            RETURNING id, job_id, kind, description, spec AS "spec: _", sibling_order, created_at, updated_at
+            "#,
+            job.id,
+            criterion.kind.as_str(),
+            criterion.description.trim(),
+            criterion.spec.as_ref(),
+            criterion.sibling_order
         )
-        .bind(job.id)
-        .bind(criterion.kind.as_str())
-        .bind(criterion.description.trim())
-        .bind(criterion.spec.as_ref())
-        .bind(criterion.sibling_order)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -457,20 +473,20 @@ async fn place_task(
     let target_order = match placement {
         DocketTaskPlacement::First => 0,
         DocketTaskPlacement::Last => {
-            sqlx::query_scalar::<_, i32>(
-                r"
-            SELECT COALESCE(MAX(sibling_order), -1) + 1
+            sqlx::query_scalar!(
+                r#"
+            SELECT COALESCE(MAX(sibling_order), -1) + 1 AS "sibling_order!: i32"
             FROM bear_tasks
             WHERE bear_id = $1
               AND job_id IS NOT DISTINCT FROM $2
               AND session_anchor_id IS NOT DISTINCT FROM $3
               AND parent_task_id IS NOT DISTINCT FROM $4
-            ",
+            "#,
+                create.bear_id,
+                create.job_id,
+                create.session_anchor_id,
+                create.parent_task_id
             )
-            .bind(create.bear_id)
-            .bind(create.job_id)
-            .bind(create.session_anchor_id)
-            .bind(create.parent_task_id)
             .fetch_one(&mut **tx)
             .await?
         }
@@ -582,19 +598,27 @@ pub(super) async fn list_jobs(
     } else {
         filter.limit.min(200)
     };
-    let rows = sqlx::query_as::<_, DocketJobRow>(&format!(
-        r"
-        SELECT {JOB_COLUMNS}
+    let rows = sqlx::query_as!(
+        DocketJobRow,
+        r#"
+        SELECT j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal,
+               (SELECT a.work_surface_id FROM job_work_surface_assignments a
+                JOIN work_surfaces s ON s.id = a.work_surface_id
+                WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden'
+                ORDER BY a.created_at LIMIT 1) AS work_surface_id,
+               j.commit_policy, j.work_branch, COALESCE(j.lifecycle_intent, 'draft') AS "status!: _",
+               j.lifecycle_intent, j.visibility, j.source_conversation_id, j.objective_kind,
+               j.supersedes_job_id, j.current_run_id, j.created_at, j.updated_at
         FROM bear_jobs j
         WHERE j.bear_id = $1
           AND ($2::text IS NULL OR j.source_conversation_id = $2)
         ORDER BY j.updated_at DESC
         LIMIT $3
-        ",
-    ))
-    .bind(bear_id)
-    .bind(filter.source_conversation_id.as_deref())
-    .bind(limit)
+        "#,
+        bear_id,
+        filter.source_conversation_id.as_deref(),
+        limit
+    )
     .fetch_all(pool)
     .await?;
 
@@ -629,15 +653,23 @@ pub(super) async fn get_job(
     bear_id: Uuid,
     job_id: Uuid,
 ) -> Result<Option<DocketJobProjection>, DenError> {
-    let Some(job) = sqlx::query_as::<_, DocketJobRow>(&format!(
-        r"
-        SELECT {JOB_COLUMNS}
+    let Some(job) = sqlx::query_as!(
+        DocketJobRow,
+        r#"
+        SELECT j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal,
+               (SELECT a.work_surface_id FROM job_work_surface_assignments a
+                JOIN work_surfaces s ON s.id = a.work_surface_id
+                WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden'
+                ORDER BY a.created_at LIMIT 1) AS work_surface_id,
+               j.commit_policy, j.work_branch, COALESCE(j.lifecycle_intent, 'draft') AS "status!: _",
+               j.lifecycle_intent, j.visibility, j.source_conversation_id, j.objective_kind,
+               j.supersedes_job_id, j.current_run_id, j.created_at, j.updated_at
         FROM bear_jobs j
         WHERE j.bear_id = $1 AND j.id = $2
-        ",
-    ))
-    .bind(bear_id)
-    .bind(job_id)
+        "#,
+        bear_id,
+        job_id
+    )
     .fetch_optional(pool)
     .await?
     else {
@@ -645,31 +677,33 @@ pub(super) async fn get_job(
     };
 
     let current_run = if let Some(run_id) = job.current_run_id {
-        sqlx::query_as::<_, DocketJobRunRow>(
-            r"
+        sqlx::query_as!(
+            DocketJobRunRow,
+            r#"
             SELECT id, job_id, trigger, schedule_ref, state, started_at, finished_at,
-                   outcome, created_at, updated_at
+                   outcome AS "outcome: _", created_at, updated_at
             FROM bear_job_runs
             WHERE job_id = $1 AND id = $2
-            ",
+            "#,
+            job.id,
+            run_id
         )
-        .bind(job.id)
-        .bind(run_id)
         .fetch_optional(pool)
         .await?
     } else {
         None
     };
 
-    let criteria = sqlx::query_as::<_, DocketJobCriterionRow>(
-        r"
-        SELECT id, job_id, kind, description, spec, sibling_order, created_at, updated_at
+    let criteria = sqlx::query_as!(
+        DocketJobCriterionRow,
+        r#"
+        SELECT id, job_id, kind, description, spec AS "spec: _", sibling_order, created_at, updated_at
         FROM bear_job_criteria
         WHERE job_id = $1
         ORDER BY sibling_order, created_at
-        ",
+        "#,
+        job.id
     )
-    .bind(job.id)
     .fetch_all(pool)
     .await?;
 
@@ -714,19 +748,20 @@ pub(super) async fn get_job(
 }
 
 async fn list_active_task_ids(pool: &PgPool, job_id: Uuid) -> Result<Vec<Uuid>, DenError> {
-    sqlx::query_as::<_, (Uuid,)>(
-        r"
-        SELECT DISTINCT executing_task_id
+    sqlx::query_as!(
+        ActiveTaskIdRow,
+        r#"
+        SELECT DISTINCT executing_task_id AS "executing_task_id!: _"
         FROM bear_work_runs
         WHERE job_id = $1
           AND executing_task_id IS NOT NULL
           AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
-        ",
+        "#,
+        job_id
     )
-    .bind(job_id)
     .fetch_all(pool)
     .await
-    .map(|rows| rows.into_iter().map(|(task_id,)| task_id).collect())
+    .map(|rows| rows.into_iter().map(|row| row.executing_task_id).collect())
     .map_err(Into::into)
 }
 
@@ -759,15 +794,23 @@ pub(super) async fn update_job(
         ));
     }
     let mut tx = pool.begin().await?;
-    let Some(current) = sqlx::query_as::<_, DocketJobRow>(&format!(
-        r"
-        SELECT {JOB_COLUMNS}
+    let Some(current) = sqlx::query_as!(
+        DocketJobRow,
+        r#"
+        SELECT j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal,
+               (SELECT a.work_surface_id FROM job_work_surface_assignments a
+                JOIN work_surfaces s ON s.id = a.work_surface_id
+                WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden'
+                ORDER BY a.created_at LIMIT 1) AS work_surface_id,
+               j.commit_policy, j.work_branch, COALESCE(j.lifecycle_intent, 'draft') AS "status!: _",
+               j.lifecycle_intent, j.visibility, j.source_conversation_id, j.objective_kind,
+               j.supersedes_job_id, j.current_run_id, j.created_at, j.updated_at
         FROM bear_jobs j
         WHERE j.bear_id = $1 AND j.id = $2
-        ",
-    ))
-    .bind(update.bear_id)
-    .bind(update.job_id)
+        "#,
+        update.bear_id,
+        update.job_id
+    )
     .fetch_optional(&mut *tx)
     .await?
     else {
@@ -835,11 +878,23 @@ work_surface_id)
         .execute(&mut *tx)
         .await?;
     }
-    let job = sqlx::query_as::<_, DocketJobRow>(&format!(
-        "SELECT {JOB_COLUMNS} FROM bear_jobs j WHERE j.bear_id = $1 AND j.id = $2",
-    ))
-    .bind(update.bear_id)
-    .bind(update.job_id)
+    let job = sqlx::query_as!(
+        DocketJobRow,
+        r#"
+        SELECT j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal,
+               (SELECT a.work_surface_id FROM job_work_surface_assignments a
+                JOIN work_surfaces s ON s.id = a.work_surface_id
+                WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden'
+                ORDER BY a.created_at LIMIT 1) AS work_surface_id,
+               j.commit_policy, j.work_branch, COALESCE(j.lifecycle_intent, 'draft') AS "status!: _",
+               j.lifecycle_intent, j.visibility, j.source_conversation_id, j.objective_kind,
+               j.supersedes_job_id, j.current_run_id, j.created_at, j.updated_at
+        FROM bear_jobs j
+        WHERE j.bear_id = $1 AND j.id = $2
+        "#,
+        update.bear_id,
+        update.job_id
+    )
     .fetch_one(&mut *tx)
     .await?;
     let run_id = job.current_run_id;
@@ -923,18 +978,28 @@ async fn reconcile_job_status(
     job_id: Uuid,
     run_id: Uuid,
 ) -> Result<(), DenError> {
-    let (_, current_run_id): (Option<String>, Option<Uuid>) = sqlx::query_as(
-        "SELECT lifecycle_intent, current_run_id FROM bear_jobs WHERE id = $1 FOR UPDATE",
+    let locked_job = sqlx::query_as!(
+        LockedJobRow,
+        r#"SELECT lifecycle_intent AS _lifecycle_intent, current_run_id FROM bear_jobs WHERE id = $1 FOR UPDATE"#,
+        job_id
     )
-    .bind(job_id)
     .fetch_one(&mut **tx)
     .await?;
+    let LockedJobRow {
+        _lifecycle_intent: _,
+        current_run_id,
+    } = locked_job;
     if current_run_id != Some(run_id) {
         return Ok(());
     }
 
-    let (in_progress, blocked, unfinished): (i64, i64, i64) = sqlx::query_as(
-        r"
+    let JobStatusCountsRow {
+        in_progress,
+        blocked,
+        unfinished,
+    } = sqlx::query_as!(
+        JobStatusCountsRow,
+        r#"
         SELECT
             COUNT(*) FILTER (
                 WHERE EXISTS (
@@ -943,31 +1008,31 @@ async fn reconcile_job_status(
                       AND work_run.executing_task_id = task.id
                       AND work_run.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')
                 )
-            ),
-            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'blocked'),
-            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled'))
+            ) AS "in_progress!: _",
+            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'blocked') AS "blocked!: _",
+            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled')) AS "unfinished!: _"
         FROM bear_tasks task
         LEFT JOIN bear_task_run_state state
           ON state.task_id = task.id AND state.run_id = $2
         WHERE task.job_id = $1
-        ",
+        "#,
+        job_id,
+        run_id
     )
-    .bind(job_id)
-    .bind(run_id)
     .fetch_one(&mut **tx)
     .await?;
-    let unmet_criteria: i64 = sqlx::query_scalar(
-        r"
-        SELECT COUNT(*)
+    let unmet_criteria: i64 = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) AS "count!: i64"
         FROM bear_job_criteria criterion
         LEFT JOIN bear_job_criteria_state state
           ON state.criterion_id = criterion.id AND state.run_id = $2
         WHERE criterion.job_id = $1
           AND COALESCE(state.status, 'unmet') NOT IN ('met', 'waived')
-        ",
+        "#,
+        job_id,
+        run_id
     )
-    .bind(job_id)
-    .bind(run_id)
     .fetch_one(&mut **tx)
     .await?;
 
@@ -1018,20 +1083,21 @@ pub(super) async fn evaluate_criterion(
     update: DocketCriterionStateUpdate,
 ) -> Result<DocketJobProjection, DenError> {
     let mut tx = pool.begin().await?;
-    let exists = sqlx::query_as::<_, (Uuid,)>(
-        r"
-        SELECT c.id
+    let exists = sqlx::query_as!(
+        CriterionIdRow,
+        r#"
+        SELECT c.id AS "id!: _"
         FROM bear_job_criteria c
         JOIN bear_jobs j ON j.id = c.job_id
         WHERE j.bear_id = $1 AND c.job_id = $2 AND c.id = $3
-        ",
+        "#,
+        update.bear_id,
+        update.job_id,
+        update.criterion_id
     )
-    .bind(update.bear_id)
-    .bind(update.job_id)
-    .bind(update.criterion_id)
     .fetch_optional(&mut *tx)
     .await?;
-    if exists.is_none() {
+    if exists.map(|row| row.id).is_none() {
         return Err(DenError::NotFound(format!(
             "Docket criterion not found: {}",
             update.criterion_id
@@ -1085,10 +1151,21 @@ pub(super) async fn get_active_execution_session(
     lookup: DocketExecutionLookup,
 ) -> Result<Option<DocketExecutionSessionRow>, DenError> {
     if let Some(source_conversation_id) = lookup.source_conversation_id {
-        let row = sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_CONVERSATION)
-            .bind(bear_id)
-            .bind(owner_profile.as_str())
-            .bind(source_conversation_id)
+        let row = sqlx::query_as!(
+            DocketExecutionSessionRow,
+            r#"
+            SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
+                   job_id, run_id, task_id, state, created_at, updated_at
+            FROM docket_execution_sessions
+            WHERE bear_id = $1 AND owner_profile = $2 AND source_conversation_id = $3
+              AND state IN ('active', 'blocked', 'completing', 'paused')
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
+            bear_id,
+            owner_profile.as_str(),
+            source_conversation_id
+        )
             .fetch_optional(pool)
             .await?;
         if row.is_some() {
@@ -1096,10 +1173,21 @@ pub(super) async fn get_active_execution_session(
         }
     }
     if let Some(session_id) = lookup.session_id {
-        let row = sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_SESSION)
-            .bind(bear_id)
-            .bind(owner_profile.as_str())
-            .bind(session_id)
+        let row = sqlx::query_as!(
+            DocketExecutionSessionRow,
+            r#"
+            SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
+                   job_id, run_id, task_id, state, created_at, updated_at
+            FROM docket_execution_sessions
+            WHERE bear_id = $1 AND owner_profile = $2 AND session_id = $3
+              AND state IN ('active', 'blocked', 'completing', 'paused')
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
+            bear_id,
+            owner_profile.as_str(),
+            session_id
+        )
             .fetch_optional(pool)
             .await?;
         if row.is_some() {
@@ -1107,10 +1195,21 @@ pub(super) async fn get_active_execution_session(
         }
     }
     if let Some(source_client_session_id) = lookup.source_client_session_id {
-        return sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_ACP_SESSION)
-            .bind(bear_id)
-            .bind(owner_profile.as_str())
-            .bind(source_client_session_id)
+        return sqlx::query_as!(
+            DocketExecutionSessionRow,
+            r#"
+            SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
+                   job_id, run_id, task_id, state, created_at, updated_at
+            FROM docket_execution_sessions
+            WHERE bear_id = $1 AND owner_profile = $2 AND source_client_session_id = $3
+              AND state IN ('active', 'blocked', 'completing', 'paused')
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
+            bear_id,
+            owner_profile.as_str(),
+            source_client_session_id
+        )
             .fetch_optional(pool)
             .await
             .map_err(Into::into);
@@ -1157,36 +1256,6 @@ pub(super) async fn clear_active_execution_sessions(
     Ok(result.rows_affected())
 }
 
-const SELECT_EXECUTION_BY_ACP_SESSION: &str = r"
-    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
-           job_id, run_id, task_id, state, created_at, updated_at
-    FROM docket_execution_sessions
-    WHERE bear_id = $1 AND owner_profile = $2 AND source_client_session_id = $3
-      AND state IN ('active', 'blocked', 'completing', 'paused')
-    ORDER BY updated_at DESC
-    LIMIT 1
-";
-
-const SELECT_EXECUTION_BY_SESSION: &str = r"
-    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
-           job_id, run_id, task_id, state, created_at, updated_at
-    FROM docket_execution_sessions
-    WHERE bear_id = $1 AND owner_profile = $2 AND session_id = $3
-      AND state IN ('active', 'blocked', 'completing', 'paused')
-    ORDER BY updated_at DESC
-    LIMIT 1
-";
-
-const SELECT_EXECUTION_BY_CONVERSATION: &str = r"
-    SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
-           job_id, run_id, task_id, state, created_at, updated_at
-    FROM docket_execution_sessions
-    WHERE bear_id = $1 AND owner_profile = $2 AND source_conversation_id = $3
-      AND state IN ('active', 'blocked', 'completing', 'paused')
-    ORDER BY updated_at DESC
-    LIMIT 1
-";
-
 pub(super) async fn upsert_execution_session(
     pool: &PgPool,
     upsert: DocketExecutionSessionUpsert,
@@ -1196,8 +1265,9 @@ pub(super) async fn upsert_execution_session(
             "Docket execution session_id must not be empty".to_string(),
         ));
     }
-    sqlx::query_as::<_, DocketExecutionSessionRow>(
-        r"
+    sqlx::query_as!(
+        DocketExecutionSessionRow,
+        r#"
         INSERT INTO docket_execution_sessions (
             bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
             job_id, run_id, task_id, state
@@ -1215,17 +1285,17 @@ pub(super) async fn upsert_execution_session(
             updated_at = NOW()
         RETURNING id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
                   job_id, run_id, task_id, state, created_at, updated_at
-        ",
+        "#,
+        upsert.bear_id,
+        upsert.owner_profile.as_str(),
+        upsert.session_id,
+        upsert.source_conversation_id,
+        upsert.source_client_session_id,
+        upsert.job_id,
+        upsert.run_id,
+        upsert.task_id,
+        upsert.state
     )
-    .bind(upsert.bear_id)
-    .bind(upsert.owner_profile.as_str())
-    .bind(upsert.session_id)
-    .bind(upsert.source_conversation_id)
-    .bind(upsert.source_client_session_id)
-    .bind(upsert.job_id)
-    .bind(upsert.run_id)
-    .bind(upsert.task_id)
-    .bind(upsert.state)
     .fetch_one(pool)
     .await
     .map_err(Into::into)
@@ -1585,15 +1655,16 @@ async fn list_criterion_states(
     pool: &PgPool,
     run_id: Uuid,
 ) -> Result<Vec<DocketCriterionStateRow>, DenError> {
-    sqlx::query_as::<_, DocketCriterionStateRow>(
-        r"
-        SELECT run_id, criterion_id, status, evaluated_at, evidence, updated_at
+    sqlx::query_as!(
+        DocketCriterionStateRow,
+        r#"
+        SELECT run_id, criterion_id, status, evaluated_at, evidence AS "evidence: _", updated_at
         FROM bear_job_criteria_state
         WHERE run_id = $1
         ORDER BY updated_at DESC
-        ",
+        "#,
+        run_id
     )
-    .bind(run_id)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -1603,15 +1674,16 @@ async fn list_task_run_states(
     pool: &PgPool,
     run_id: Uuid,
 ) -> Result<Vec<DocketTaskRunStateRow>, DenError> {
-    sqlx::query_as::<_, DocketTaskRunStateRow>(
-        r"
-        SELECT run_id, task_id, status, result_refs, result_summary, started_at, finished_at, updated_at
+    sqlx::query_as!(
+        DocketTaskRunStateRow,
+        r#"
+        SELECT run_id, task_id, status, result_refs AS "result_refs: _", result_summary, started_at, finished_at, updated_at
         FROM bear_task_run_state
         WHERE run_id = $1
         ORDER BY updated_at DESC
-        ",
+        "#,
+        run_id
     )
-    .bind(run_id)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -1691,11 +1763,11 @@ pub(super) async fn append_entry(
     let mut tx = pool.begin().await?;
     let task_job_id = if let Some(task_id) = create.task_id {
         Some(
-            sqlx::query_scalar::<_, Option<Uuid>>(
-                "SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2",
+            sqlx::query_scalar!(
+                r#"SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2"#,
+                task_id,
+                create.bear_id
             )
-            .bind(task_id)
-            .bind(create.bear_id)
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| DenError::NotFound(format!("Docket task `{task_id}` not found")))?
@@ -1716,11 +1788,11 @@ pub(super) async fn append_entry(
             "Docket entry task does not belong to job".to_string(),
         ));
     }
-    let job_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM bear_jobs WHERE id = $1 AND bear_id = $2)",
+    let job_exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM bear_jobs WHERE id = $1 AND bear_id = $2) AS "exists!: bool""#,
+        job_id,
+        create.bear_id
     )
-    .bind(job_id)
-    .bind(create.bear_id)
     .fetch_one(&mut *tx)
     .await?;
     if !job_exists {
@@ -1742,11 +1814,11 @@ pub(super) async fn append_entry(
         _ => {}
     }
     if let Some(run_id) = create.run_id {
-        let run_matches = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM bear_job_runs WHERE id = $1 AND job_id = $2)",
+        let run_matches = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM bear_job_runs WHERE id = $1 AND job_id = $2) AS "exists!: bool""#,
+            run_id,
+            job_id
         )
-        .bind(run_id)
-        .bind(job_id)
         .fetch_one(&mut *tx)
         .await?;
         if !run_matches {
@@ -1756,37 +1828,32 @@ pub(super) async fn append_entry(
         }
     }
 
-    let row = sqlx::query_as::<_, DocketEntryRow>(
-        r"
+    let row = sqlx::query_as!(
+        DocketEntryRow,
+        r#"
         INSERT INTO bear_docket_entries (
             job_id, task_id, run_id, scope, kind, summary, body, evidence_refs,
             related_task_ids, tags, by_role, by_agent_id, by_user_id
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13)
         RETURNING id, job_id, task_id, run_id, scope, kind, summary, body,
-                  disposition, evidence_refs, related_task_ids, tags, by_role,
+                  disposition, evidence_refs AS "evidence_refs: _", related_task_ids AS "related_task_ids: _", tags AS "tags: _", by_role,
                   by_agent_id, by_user_id, NULL::uuid AS source_entry_id, created_at
-        ",
+        "#,
+        job_id,
+        create.task_id,
+        create.run_id,
+        create.scope.as_str(),
+        create.kind.as_str(),
+        summary,
+        create.body.as_deref().map(str::trim).filter(|body| !body.is_empty()),
+        Value::Array(create.evidence_refs),
+        json!(create.related_task_ids),
+        json!(create.tags),
+        create.actor_role.as_str(),
+        create.actor_agent_id.as_deref(),
+        create.actor_user_id
     )
-    .bind(job_id)
-    .bind(create.task_id)
-    .bind(create.run_id)
-    .bind(create.scope.as_str())
-    .bind(create.kind.as_str())
-    .bind(summary)
-    .bind(
-        create
-            .body
-            .as_deref()
-            .map(str::trim)
-            .filter(|body| !body.is_empty()),
-    )
-    .bind(Value::Array(create.evidence_refs))
-    .bind(json!(create.related_task_ids))
-    .bind(json!(create.tags))
-    .bind(create.actor_role.as_str())
-    .bind(create.actor_agent_id.as_deref())
-    .bind(create.actor_user_id)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -1798,19 +1865,20 @@ pub(super) async fn promote_entry(
     promotion: DocketEntryPromotion,
 ) -> Result<DocketEntryRow, DenError> {
     let mut tx = pool.begin().await?;
-    let source = sqlx::query_as::<_, DocketEntryRow>(
-        r"
-        SELECT e.id, e.job_id, e.task_id, e.run_id, e.scope, e.kind, e.summary,
-               e.body, e.disposition, e.evidence_refs, e.related_task_ids, e.tags,
-               e.by_role, e.by_agent_id, e.by_user_id, e.source_entry_id, e.created_at
+    let source = sqlx::query_as!(
+        DocketEntryRow,
+        r#"
+        SELECT e.id AS "id!: _", e.job_id, e.task_id, e.run_id, e.scope AS "scope!: _", e.kind AS "kind!: _", e.summary AS "summary!: _",
+               e.body, e.disposition, e.evidence_refs AS "evidence_refs!: _", e.related_task_ids AS "related_task_ids!: _", e.tags AS "tags!: _",
+               e.by_role AS "by_role!: _", e.by_agent_id, e.by_user_id, e.source_entry_id, e.created_at AS "created_at!: _"
         FROM bear_docket_entries e
         JOIN bear_jobs j ON j.id = e.job_id
         WHERE e.id = $1 AND j.bear_id = $2
         FOR UPDATE OF e
-        ",
+        "#,
+        promotion.entry_id,
+        promotion.bear_id
     )
-    .bind(promotion.entry_id)
-    .bind(promotion.bear_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| {
@@ -1825,8 +1893,9 @@ pub(super) async fn promote_entry(
         ));
     }
 
-    let row = sqlx::query_as::<_, DocketEntryRow>(
-        r"
+    let row = sqlx::query_as!(
+        DocketEntryRow,
+        r#"
         INSERT INTO bear_docket_entries (
             job_id, task_id, run_id, scope, kind, summary, body, evidence_refs,
             related_task_ids, tags, by_role, by_agent_id, by_user_id, source_entry_id
@@ -1837,23 +1906,23 @@ pub(super) async fn promote_entry(
         ON CONFLICT (source_entry_id) WHERE source_entry_id IS NOT NULL DO UPDATE
         SET source_entry_id = EXCLUDED.source_entry_id
         RETURNING id, job_id, task_id, run_id, scope, kind, summary, body,
-                  disposition, evidence_refs, related_task_ids, tags, by_role,
+                  disposition, evidence_refs AS "evidence_refs: _", related_task_ids AS "related_task_ids: _", tags AS "tags: _", by_role,
                   by_agent_id, by_user_id, source_entry_id, created_at
-        ",
+        "#,
+        source.job_id,
+        source.task_id,
+        source.run_id,
+        source.kind,
+        source.summary,
+        source.body,
+        source.evidence_refs,
+        source.related_task_ids,
+        source.tags,
+        promotion.actor_role.as_str(),
+        promotion.actor_agent_id.as_deref(),
+        promotion.actor_user_id,
+        source.id
     )
-    .bind(source.job_id)
-    .bind(source.task_id)
-    .bind(source.run_id)
-    .bind(source.kind)
-    .bind(source.summary)
-    .bind(source.body)
-    .bind(source.evidence_refs)
-    .bind(source.related_task_ids)
-    .bind(source.tags)
-    .bind(promotion.actor_role.as_str())
-    .bind(promotion.actor_agent_id.as_deref())
-    .bind(promotion.actor_user_id)
-    .bind(source.id)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -1870,11 +1939,12 @@ pub(super) async fn list_entries(
     } else {
         filter.limit.min(500)
     };
-    sqlx::query_as::<_, DocketEntryRow>(
-        r"
-        SELECT e.id, e.job_id, e.task_id, e.run_id, e.scope, e.kind, e.summary,
-               e.body, e.disposition, e.evidence_refs, e.related_task_ids, e.tags,
-               e.by_role, e.by_agent_id, e.by_user_id, e.source_entry_id, e.created_at
+    sqlx::query_as!(
+        DocketEntryRow,
+        r#"
+        SELECT e.id AS "id!: _", e.job_id, e.task_id, e.run_id, e.scope AS "scope!: _", e.kind AS "kind!: _", e.summary AS "summary!: _",
+               e.body, e.disposition, e.evidence_refs AS "evidence_refs!: _", e.related_task_ids AS "related_task_ids!: _", e.tags AS "tags!: _",
+               e.by_role AS "by_role!: _", e.by_agent_id, e.by_user_id, e.source_entry_id, e.created_at AS "created_at!: _"
         FROM bear_docket_entries e
         JOIN bear_jobs j ON j.id = e.job_id
         WHERE j.bear_id = $1
@@ -1882,12 +1952,12 @@ pub(super) async fn list_entries(
           AND ($3::uuid IS NULL OR e.task_id = $3)
         ORDER BY e.created_at DESC, e.id DESC
         LIMIT $4
-        ",
+        "#,
+        bear_id,
+        filter.job_id,
+        filter.task_id,
+        limit
     )
-    .bind(bear_id)
-    .bind(filter.job_id)
-    .bind(filter.task_id)
-    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -1994,16 +2064,17 @@ async fn current_run_states_for_tasks(
     // support multiple simultaneously visible runs, thread the desired run id
     // through DocketTaskListFilter instead.
     let task_ids: Vec<Uuid> = tasks.iter().map(|task| task.id).collect();
-    sqlx::query_as::<_, DocketTaskRunStateRow>(
-        r"
+    sqlx::query_as!(
+        DocketTaskRunStateRow,
+        r#"
         SELECT DISTINCT ON (task_id)
-               run_id, task_id, status, result_refs, result_summary, started_at, finished_at, updated_at
+               run_id, task_id, status, result_refs AS "result_refs: _", result_summary, started_at, finished_at, updated_at
         FROM bear_task_run_state
         WHERE task_id = ANY($1)
         ORDER BY task_id, updated_at DESC
-        ",
+        "#,
+        &task_ids
     )
-    .bind(&task_ids)
     .fetch_all(pool)
     .await
     .map(|states| {
@@ -2116,18 +2187,18 @@ pub(super) async fn settle_session_task(
                 .to_string(),
         ));
     }
-    let entry_id = sqlx::query_scalar::<_, Uuid>(
-        r"INSERT INTO bear_docket_entries (job_id, task_id, run_id, scope, kind, summary, disposition, evidence_refs, by_role, by_agent_id, by_user_id)
+    let entry_id = sqlx::query_scalar!(
+        r#"INSERT INTO bear_docket_entries (job_id, task_id, run_id, scope, kind, summary, disposition, evidence_refs, by_role, by_agent_id, by_user_id)
            VALUES (NULL, $1, NULL, 'task_journal', 'outcome', $2, $3, $4::jsonb, $5, $6, $7)
-           RETURNING id",
+           RETURNING id"#,
+        task.id,
+        summary,
+        disposition.as_str(),
+        terminal_evidence_refs(settlement.result_refs.as_ref()),
+        settlement.actor_role.as_str(),
+        settlement.actor_agent_id.as_deref(),
+        settlement.actor_user_id
     )
-    .bind(task.id)
-    .bind(summary)
-    .bind(disposition.as_str())
-    .bind(terminal_evidence_refs(settlement.result_refs.as_ref()))
-    .bind(settlement.actor_role.as_str())
-    .bind(settlement.actor_agent_id.as_deref())
-    .bind(settlement.actor_user_id)
     .fetch_one(&mut *tx)
     .await?;
     let task = sqlx::query_as!(
@@ -2272,8 +2343,8 @@ async fn validate_parent_completion(
     task: &DocketTaskRow,
     run_id: Uuid,
 ) -> Result<(), DenError> {
-    let unfinished_children = sqlx::query_scalar::<_, i64>(
-        r"
+    let unfinished_children = sqlx::query_scalar!(
+        r#"
         WITH RECURSIVE descendants AS (
             SELECT id FROM bear_tasks WHERE parent_task_id = $1
             UNION ALL
@@ -2281,15 +2352,15 @@ async fn validate_parent_completion(
             FROM bear_tasks child
             JOIN descendants parent ON child.parent_task_id = parent.id
         )
-        SELECT COUNT(*)
+        SELECT COUNT(*) AS "count!: i64"
         FROM descendants
         LEFT JOIN bear_task_run_state state
           ON state.task_id = descendants.id AND state.run_id = $2
         WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled')
-        ",
+        "#,
+        task.id,
+        run_id
     )
-    .bind(task.id)
-    .bind(run_id)
     .fetch_one(&mut **tx)
     .await?;
 
@@ -2308,8 +2379,8 @@ async fn roll_up_completed_parents(
     run_id: Uuid,
 ) -> Result<(), DenError> {
     while let Some(task_id) = parent_id {
-        let unfinished_descendants = sqlx::query_scalar::<_, i64>(
-            r"
+        let unfinished_descendants = sqlx::query_scalar!(
+            r#"
             WITH RECURSIVE descendants AS (
                 SELECT id FROM bear_tasks WHERE parent_task_id = $1
                 UNION ALL
@@ -2317,15 +2388,15 @@ async fn roll_up_completed_parents(
                 FROM bear_tasks child
                 JOIN descendants parent ON child.parent_task_id = parent.id
             )
-            SELECT COUNT(*)
+            SELECT COUNT(*) AS "count!: i64"
             FROM descendants
             LEFT JOIN bear_task_run_state state
               ON state.task_id = descendants.id AND state.run_id = $2
             WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled')
-            ",
+            "#,
+            task_id,
+            run_id
         )
-        .bind(task_id)
-        .bind(run_id)
         .fetch_one(&mut **tx)
         .await?;
         if unfinished_descendants != 0 {
@@ -2346,10 +2417,12 @@ run_id,
 task_id)
         .execute(&mut **tx)
         .await?;
-        parent_id = sqlx::query_scalar("SELECT parent_task_id FROM bear_tasks WHERE id = $1")
-            .bind(task_id)
-            .fetch_one(&mut **tx)
-            .await?;
+        parent_id = sqlx::query_scalar!(
+            r#"SELECT parent_task_id FROM bear_tasks WHERE id = $1"#,
+            task_id
+        )
+        .fetch_one(&mut **tx)
+        .await?;
     }
     Ok(())
 }
@@ -2514,16 +2587,17 @@ async fn validate_task_update_scope(
             )));
         }
         if let Some(run_state) = update.run_state.as_ref() {
-            let run = sqlx::query_as::<_, DocketJobRunRow>(
-                r"
+            let run = sqlx::query_as!(
+                DocketJobRunRow,
+                r#"
                 SELECT id, job_id, trigger, schedule_ref, state, started_at, finished_at,
-                       outcome, created_at, updated_at
+                       outcome AS "outcome: _", created_at, updated_at
                 FROM bear_job_runs
                 WHERE job_id = $1 AND id = $2
-                ",
+                "#,
+                job_id,
+                run_state.run_id
             )
-            .bind(job_id)
-            .bind(run_state.run_id)
             .fetch_optional(&mut **tx)
             .await?;
             if run.is_none() {
@@ -2560,21 +2634,21 @@ async fn validate_in_progress_task_edit_is_paused(
     if !definition_changed {
         return Ok(());
     }
-    let active = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_run_id=$1 AND executing_task_id=$2 AND state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting'))",
+    let active = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_run_id=$1 AND executing_task_id=$2 AND state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')) AS "exists!: bool""#,
+        run_state.run_id,
+        current.id
     )
-    .bind(run_state.run_id)
-    .bind(current.id)
     .fetch_one(&mut **tx)
     .await?;
     if !active {
         return Ok(());
     }
-    let paused = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_run_id=$1 AND executing_task_id=$2 AND state='paused')",
+    let paused = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_run_id=$1 AND executing_task_id=$2 AND state='paused') AS "exists!: bool""#,
+        run_state.run_id,
+        current.id
     )
-    .bind(run_state.run_id)
-    .bind(current.id)
     .fetch_one(&mut **tx)
     .await?;
     if paused {
@@ -2703,8 +2777,9 @@ async fn upsert_task_run_state(
     task_id: Uuid,
     update: &super::model::DocketTaskRunStateUpdate,
 ) -> Result<DocketTaskRunStateRow, DenError> {
-    sqlx::query_as::<_, DocketTaskRunStateRow>(
-        r"
+    sqlx::query_as!(
+        DocketTaskRunStateRow,
+        r#"
         INSERT INTO bear_task_run_state (
             run_id, task_id, status, result_refs, result_summary, started_at, finished_at, updated_at
         )
@@ -2725,14 +2800,14 @@ async fn upsert_task_run_state(
                 ELSE bear_task_run_state.finished_at
             END,
             updated_at = NOW()
-        RETURNING run_id, task_id, status, result_refs, result_summary, started_at, finished_at, updated_at
-        ",
+        RETURNING run_id, task_id, status, result_refs AS "result_refs: _", result_summary, started_at, finished_at, updated_at
+        "#,
+        update.run_id,
+        task_id,
+        update.status.as_str(),
+        update.result_refs.as_ref(),
+        update.result_summary.as_deref()
     )
-    .bind(update.run_id)
-    .bind(task_id)
-    .bind(update.status.as_str())
-    .bind(update.result_refs.as_ref())
-    .bind(update.result_summary.as_deref())
     .fetch_one(&mut **tx)
     .await
     .map_err(Into::into)
@@ -2749,11 +2824,11 @@ async fn should_append_terminal_outcome(
     let Some(disposition) = terminal_outcome_disposition(run_state)? else {
         return Ok(false);
     };
-    let previous_status = sqlx::query_scalar::<_, String>(
-        "SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
+    let previous_status = sqlx::query_scalar!(
+        r#"SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2"#,
+        run_state.run_id,
+        task.id
     )
-    .bind(run_state.run_id)
-    .bind(task.id)
     .fetch_optional(&mut **tx)
     .await?;
     if previous_status.as_deref() != Some(run_state.status.as_str()) {
@@ -2860,25 +2935,25 @@ async fn append_terminal_outcome(
         })?;
     let evidence_refs = terminal_evidence_refs(run_state.result_refs.as_ref());
 
-    let entry_id = sqlx::query_scalar::<_, Uuid>(
-        r"
+    let entry_id = sqlx::query_scalar!(
+        r#"
         INSERT INTO bear_docket_entries (
             job_id, task_id, run_id, scope, kind, summary, disposition,
             evidence_refs, by_role, by_agent_id, by_user_id
         )
         VALUES ($1, $2, $3, 'task_journal', 'outcome', $4, $5, $6::jsonb, $7, $8, $9)
         RETURNING id
-        ",
+        "#,
+        task.job_id,
+        task.id,
+        run_state.run_id,
+        summary,
+        disposition,
+        evidence_refs,
+        update.actor_role.as_str(),
+        update.actor_agent_id.as_deref(),
+        update.actor_user_id
     )
-    .bind(task.job_id)
-    .bind(task.id)
-    .bind(run_state.run_id)
-    .bind(summary)
-    .bind(disposition)
-    .bind(evidence_refs)
-    .bind(update.actor_role.as_str())
-    .bind(update.actor_agent_id.as_deref())
-    .bind(update.actor_user_id)
     .fetch_one(&mut **tx)
     .await?;
     sqlx::query!(

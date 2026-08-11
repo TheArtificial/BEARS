@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_run_id=$1 AND executing_task_id=$2 AND state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')) AS \"exists!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!: bool",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2238ae661d9532a1759083a4ff47740dc89d07fd9c059b3081cdc5e999c82770"
+}
