@@ -241,6 +241,16 @@ pub struct SessionCurrentTaskClearRequest {
     pub session_id: String,
 }
 
+/// Starts native Pair execution for the already selected actionable session task.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionCurrentTaskStartRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub session_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecisionInput {

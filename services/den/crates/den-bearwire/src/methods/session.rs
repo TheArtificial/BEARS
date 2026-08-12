@@ -6,8 +6,9 @@ use sqlx::PgPool;
 
 use bearwire_protocol::{
     methods::{
-        SessionCurrentTaskClearRequest, SessionCurrentTaskSelectionRequest, SessionIdRequest,
-        SessionModelSetRequest, SessionOpenRequest, SessionStateRequest,
+        SessionCurrentTaskClearRequest, SessionCurrentTaskSelectionRequest,
+        SessionCurrentTaskStartRequest, SessionIdRequest, SessionModelSetRequest,
+        SessionOpenRequest, SessionStateRequest,
     },
     wire::BearWireEvent,
 };
@@ -856,6 +857,91 @@ pub(crate) async fn session_current_task_select_result(
     Ok(
         json!({"ok": true, "session_id": request.session_id, "current_task_id": task_id, "title": result.title, "task_list": result.task_list}),
     )
+}
+
+pub(crate) async fn session_current_task_start_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionCurrentTaskStartRequest = parse_params(params)?;
+    if !bear.work_enabled {
+        return Err(CustomError::ValidationError(
+            "Pair task controls are disabled".to_string(),
+        ));
+    }
+    let session = client_sessions::find_for_user_bear_session_id(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &request.session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+    let task_id = session.current_task_id.ok_or_else(|| {
+        CustomError::ValidationError(
+            "no current Pair task is selected for this session".to_string(),
+        )
+    })?;
+    let title = preview_pair_current_task_selection(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &request.session_id,
+        task_id,
+    )
+    .await?;
+
+    if let Some(run) =
+        den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, &request.session_id)
+            .await?
+            .filter(|run| run.bear_id == bear.id && run.user_id == user_id)
+    {
+        return Ok(json!({
+            "ok": true,
+            "started": false,
+            "reused": true,
+            "run_id": run.run_id,
+            "session_id": request.session_id,
+            "task_id": task_id,
+            "state": run.state,
+        }));
+    }
+
+    // ponytail: this delegates to the established run.start lifecycle so task-start
+    // cannot drift from Pair stream/event behavior. Concurrent starts can still race
+    // between the active-run read and run.start; make run creation session-unique if
+    // clients require concurrent idempotency rather than retry idempotency.
+    let mut start_params = serde_json::Map::new();
+    start_params.insert("bear_slug".to_string(), json!(bear.slug));
+    start_params.insert("session_id".to_string(), json!(request.session_id));
+    start_params.insert(
+        "prompt".to_string(),
+        json!(format!("Start working on the selected task: {title}")),
+    );
+    start_params.insert("client".to_string(), json!(session.client));
+    start_params.insert(
+        "conversation_id".to_string(),
+        json!(session.conversation_id),
+    );
+    if let Some(cwd) = session.cwd {
+        start_params.insert("cwd".to_string(), json!(cwd));
+    }
+    if let Some(client_context) = session.adapter_environment {
+        start_params.insert("client_context".to_string(), client_context);
+    }
+    let result = super::run::run_start_result(state, headers, &Value::Object(start_params)).await?;
+    Ok(json!({
+        "ok": true,
+        "started": true,
+        "reused": false,
+        "run_id": result["run_id"].clone(),
+        "session_id": request.session_id,
+        "task_id": task_id,
+        "state": result["state"].clone(),
+        "event_sequence": result["event_sequence"].clone(),
+    }))
 }
 
 pub(crate) async fn session_current_task_clear_result(

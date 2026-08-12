@@ -2717,6 +2717,70 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+
+    let missing_selection = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.start",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert!(
+        missing_selection.get("error").is_some(),
+        "{missing_selection}"
+    );
+
+    let task_id =
+        create_session_task(&pool, user_id, bear_id, &session_id, "Start Pair task").await;
+    let selected = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.select",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "task_id": task_id,
+        }),
+    )
+    .await;
+    assert_eq!(selected["result"]["current_task_id"], task_id.to_string());
+
+    let first = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.start",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(first["result"]["started"], true, "{first}");
+    assert_eq!(first["result"]["reused"], false, "{first}");
+
+    let second = rpc_value(
+        state,
+        &token,
+        "session.current_task.start",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(second["result"]["started"], false, "{second}");
+    assert_eq!(second["result"]["reused"], true, "{second}");
+    assert_eq!(second["result"]["run_id"], first["result"]["run_id"]);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn current_task_rpc_requires_confirmation_and_preserves_clear_title(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

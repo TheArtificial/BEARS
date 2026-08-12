@@ -79,6 +79,12 @@ pub(crate) async fn rpc(
                 .await,
             "BearWire session.current_task.select failed",
         ),
+        "session.current_task.start" => method_response(
+            request.id,
+            methods::session::session_current_task_start_result(&state, &headers, &request.params)
+                .await,
+            "BearWire session.current_task.start failed",
+        ),
         "session.current_task.clear" => method_response(
             request.id,
             methods::session::session_current_task_clear_result(&state, &headers, &request.params)
