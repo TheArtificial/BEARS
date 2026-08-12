@@ -161,6 +161,17 @@ On every relevant source change, `.github/workflows/den-image.yml` builds with *
 
 Each image receives an immutable `sha-<commit>` tag. Pushes to `test` also update `:testing`; pushes to `main` update `:latest`. After both images are available, `.github/workflows/coolify-deploy.yml` calls the environment-specific Coolify webhook.
 
+### Why two Den images?
+
+Both images contain the same Den server binary and use environment variables to select runtime behavior. They differ only in the container-level capabilities required by their Compose roles:
+
+| Image | Compose role | Additional contents |
+| --- | --- | --- |
+| `ghcr.io/<owner>/den` | `bears-den` and `bears-den-migrate` | Minimal Den runtime image. |
+| `ghcr.io/<owner>/den-sandbox-provider` | `bears-sandbox-provider` | Docker CLI plus the baked sandbox-image and `bear-armature` build contexts. |
+
+The sandbox provider needs those additional files to control the isolated Docker-in-Docker engine and support the admin sandbox-image build flow. The normal Den service deliberately does not carry Docker tooling or sandbox build assets, keeping its image smaller and its capability surface narrower.
+
 Set the matching image variables on each Coolify resource and disable Coolify Git-push auto-deploys. The Compose file sets `pull_policy: always` for these services so a webhook deployment pulls the new lane digest.
 
 If the GHCR packages are **private**, authenticate Docker on the Coolify server so it can pull the image. SSH in and run as root:
