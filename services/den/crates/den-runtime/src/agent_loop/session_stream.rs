@@ -2280,6 +2280,7 @@ mod tests {
             recently_discovered_capabilities: vec![],
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),
+            technical_budget_recovery_start_payload: None,
             messages: Vec::new(),
             tools: Vec::new(),
             budget_components: Default::default(),
@@ -2788,6 +2789,7 @@ mod tests {
             current_task_id: None,
             cached_activity_plan_projection: Some(completed_task_list_projection()),
         });
+        stream.evaluate_final_gate_or_complete(None, None);
 
         let stored = stream
             .store

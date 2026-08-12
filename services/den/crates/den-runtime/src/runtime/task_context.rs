@@ -85,6 +85,16 @@ pub fn active_docket_execution_lookup_for_session(
     active_docket_execution_lookup(Some(client_session_id), conversation_id)
 }
 
+fn durable_execution_current_task_id(
+    execution_task_id: Option<Uuid>,
+    plan: Option<&TaskListProjection>,
+) -> Option<Uuid> {
+    execution_task_id.or_else(|| {
+        plan.and_then(|task_list| task_list.current_item.as_ref())
+            .and_then(|task| Uuid::parse_str(&task.id).ok())
+    })
+}
+
 pub async fn resolve_runtime_task_context(
     pool: &PgPool,
     request: RuntimeTaskResolveRequest,
@@ -168,9 +178,10 @@ pub async fn resolve_runtime_task_context(
                 },
             )
             .await?;
+        let current_task_id = durable_execution_current_task_id(execution.task_id, plan.as_ref());
         return Ok(RuntimeTaskContext {
             source: RuntimeTaskSource::DurableDocketExecution,
-            current_task_id: None,
+            current_task_id,
             cached_activity_plan_projection: plan,
         });
     }
@@ -207,6 +218,15 @@ mod tests {
         };
         assert!(context.active_activity_plan().is_none());
         assert_eq!(context.source.as_str(), "session_current_task");
+    }
+
+    #[test]
+    fn durable_execution_prefers_its_persisted_task() {
+        let task_id = Uuid::new_v4();
+        assert_eq!(
+            durable_execution_current_task_id(Some(task_id), None),
+            Some(task_id)
+        );
     }
 
     #[test]

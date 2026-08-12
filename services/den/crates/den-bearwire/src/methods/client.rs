@@ -16,7 +16,6 @@ use bearwire_protocol::{
 };
 use den_core::{
     client_tools::{client_tool_policy_json_for_provider, ClientToolName},
-    DenError,
     tools::{
         constants::DEN_WEB_FETCH,
         result_compaction::{
@@ -24,6 +23,7 @@ use den_core::{
             ClientToolResultInput, ToolResultStatus,
         },
     },
+    DenError,
 };
 use den_http::{errors::CustomError, web_policy};
 use den_protocol::{
@@ -822,11 +822,12 @@ fn spawn_continuation_task(
                                 }
                             }
                             Err(err) => {
-                                let failure_reason = if matches!(err, DenError::RunStateConflict { .. }) {
-                                    RunFailureReason::ContinuationRunStateConflict
-                                } else {
-                                    RunFailureReason::ContinuationStreamError
-                                };
+                                let failure_reason =
+                                    if matches!(err, DenError::RunStateConflict { .. }) {
+                                        RunFailureReason::ContinuationRunStateConflict
+                                    } else {
+                                        RunFailureReason::ContinuationStreamError
+                                    };
                                 let err_message = err.to_string();
                                 let is_retryable =
                                     is_retryable_continuation_stream_error(&err_message);

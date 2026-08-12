@@ -2372,6 +2372,7 @@ mod tests {
             recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: None,
+            technical_budget_recovery_start_payload: None,
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
@@ -2452,6 +2453,7 @@ mod tests {
             recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: None,
+            technical_budget_recovery_start_payload: None,
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
@@ -2540,6 +2542,7 @@ mod tests {
             recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: None,
+            technical_budget_recovery_start_payload: None,
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
@@ -2599,6 +2602,7 @@ mod tests {
             recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: None,
+            technical_budget_recovery_start_payload: None,
             messages: vec![],
             tools: vec![],
             budget_components: Default::default(),
@@ -2736,6 +2740,7 @@ mod tests {
             recently_discovered_capabilities: vec![],
             request_id: None,
             run_id: Some("run-max-step".to_string()),
+            technical_budget_recovery_start_payload: None,
             messages: Vec::new(),
             tools: Vec::new(),
             budget_components: Default::default(),
@@ -2829,6 +2834,7 @@ mod tests {
             recently_discovered_capabilities: vec![],
             request_id: Some("request-before-tool".to_string()),
             run_id: Some("run-visible-tool".to_string()),
+            technical_budget_recovery_start_payload: None,
             messages: vec![
                 ChatMessage {
                     role: "user".to_string(),
@@ -3009,6 +3015,7 @@ mod tests {
             recently_discovered_capabilities: vec![],
             request_id: Some(request_id.clone()),
             run_id: Some("run-persisted-visible".to_string()),
+            technical_budget_recovery_start_payload: None,
             messages: vec![ChatMessage {
                 role: "assistant".to_string(),
                 content: None,
@@ -3169,6 +3176,7 @@ mod tests {
             recently_discovered_capabilities: vec![],
             request_id: Some(request_id.clone()),
             run_id: Some("run-load-history".to_string()),
+            technical_budget_recovery_start_payload: None,
             messages: vec![ChatMessage {
                 role: "assistant".to_string(),
                 content: None,

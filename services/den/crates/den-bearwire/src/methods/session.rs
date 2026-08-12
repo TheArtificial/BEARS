@@ -356,7 +356,11 @@ fn pair_current_task_projection(
     context: &den_runtime::runtime::task_context::RuntimeTaskContext,
 ) -> Option<Value> {
     let task_id = context.current_task_id?;
-    if context.source != den_runtime::runtime::task_context::RuntimeTaskSource::SessionCurrentTask {
+    if !matches!(
+        context.source,
+        den_runtime::runtime::task_context::RuntimeTaskSource::SessionCurrentTask
+            | den_runtime::runtime::task_context::RuntimeTaskSource::DurableDocketExecution
+    ) {
         return None;
     }
     let item = context
@@ -446,7 +450,7 @@ mod tests {
         let item = TaskListItem {
             id: task_id.to_string(),
             title: "Selected task".to_string(),
-            summary: Some("Only explicit selections project".to_string()),
+            summary: Some("Current Pair task".to_string()),
             status: TaskListItemStatus::Pending,
             blocked_reason: None,
             source_ref: TaskListSourceRef::local(vec![]),
@@ -478,10 +482,10 @@ mod tests {
     }
 
     #[test]
-    fn pair_current_task_projects_only_explicit_session_selection() {
+    fn pair_current_task_projects_session_and_durable_execution_focus() {
         let task_id = Uuid::new_v4();
         let projected = pair_current_task_projection(&session_current_task_context(task_id))
-            .expect("selected task should project");
+            .expect("session-selected task should project");
         assert_eq!(projected["id"], task_id.to_string());
         assert_eq!(projected["title"], "Selected task");
 
@@ -511,9 +515,11 @@ mod tests {
         );
         assert!(acp_without_selection["current_task"].is_null());
 
-        let mut legacy_execution = session_current_task_context(task_id);
-        legacy_execution.source = RuntimeTaskSource::DurableDocketExecution;
-        assert!(pair_current_task_projection(&legacy_execution).is_none());
+        let mut durable_execution = session_current_task_context(task_id);
+        durable_execution.source = RuntimeTaskSource::DurableDocketExecution;
+        let projected = pair_current_task_projection(&durable_execution)
+            .expect("scheduler-selected durable task should project");
+        assert_eq!(projected["id"], task_id.to_string());
     }
 }
 
