@@ -490,6 +490,15 @@ impl BifrostClient {
         Ok(snapshot)
     }
 
+    /// Returns the last successful Bear-scoped catalog snapshot, including a stale one.
+    /// Callers may use this only as a continuity fallback when live refresh is unavailable.
+    pub fn cached_bear_catalog_snapshot(&self, bear_id: Uuid) -> Option<BifrostCatalogSnapshot> {
+        self.bear_catalogs
+            .read()
+            .ok()
+            .and_then(|guard| guard.get(&bear_id).cloned())
+    }
+
     pub async fn bear_catalog_snapshot(
         &self,
         pool: &sqlx::PgPool,

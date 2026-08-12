@@ -287,6 +287,10 @@ enum ResolvedRunModelSource {
 }
 
 impl ResolvedRunModelSource {
+    const fn is_persisted_conversation_model(self) -> bool {
+        matches!(self, Self::ConversationExplicit | Self::ConversationAuto)
+    }
+
     const fn as_str(self) -> &'static str {
         match self {
             Self::ConversationExplicit => "conversation_explicit",
@@ -493,9 +497,53 @@ async fn preflight_pair_run_model(
     {
         Ok(snapshot) => snapshot,
         Err(err) => {
+            let cached_snapshot = state.bifrost.cached_bear_catalog_snapshot(bear.id);
+            if resolved.source.is_persisted_conversation_model() {
+                if let Some(snapshot) = cached_snapshot {
+                    if let Some(entry) = snapshot.resolve(&resolved.handle) {
+                        ensure_pair_model_capabilities(entry, &resolved.handle)?;
+                        tracing::warn!(
+                            error = %err,
+                            session_id,
+                            bear_id = %bear.id,
+                            conversation_id,
+                            model_handle = %resolved.handle,
+                            model_selection_source = %resolved.source,
+                            catalog_fetched_at = ?snapshot.fetched_at,
+                            catalog_stale = snapshot.stale,
+                            catalog_fallback = "stale_cached_snapshot",
+                            "Bifrost catalog refresh failed; continuing Pair with the persisted conversation model"
+                        );
+                        return Ok(ResolvedRunModel {
+                            api_style: pair_api_style_for_catalog_support(
+                                entry.supports_responses_api,
+                            ),
+                            ..resolved
+                        });
+                    }
+                }
+
+                tracing::warn!(
+                    error = %err,
+                    session_id,
+                    bear_id = %bear.id,
+                    conversation_id,
+                    model_handle = %resolved.handle,
+                    model_selection_source = %resolved.source,
+                    catalog_fallback = "persisted_conversation_model",
+                    "Bifrost catalog refresh failed with no usable cached snapshot; continuing Pair with the persisted conversation model"
+                );
+                return Ok(ResolvedRunModel {
+                    api_style: den_llm::LlmApiStyle::ResponsesStream,
+                    ..resolved
+                });
+            }
+
             tracing::error!(
                 error = %err,
                 bear_id = %bear.id,
+                model_handle = %resolved.handle,
+                model_selection_source = %resolved.source,
                 "Bear-scoped Bifrost catalog refresh before Pair preflight failed"
             );
             return Err(CustomError::System(format!(
@@ -2577,6 +2625,15 @@ mod tests {
             .iter()
             .filter_map(|item| item.get("name").and_then(Value::as_str))
             .collect()
+    }
+
+    #[test]
+    fn only_persisted_conversation_models_may_bypass_catalog_refresh() {
+        assert!(ResolvedRunModelSource::ConversationExplicit.is_persisted_conversation_model());
+        assert!(ResolvedRunModelSource::ConversationAuto.is_persisted_conversation_model());
+        assert!(!ResolvedRunModelSource::ProfileDefault.is_persisted_conversation_model());
+        assert!(!ResolvedRunModelSource::BearDefault.is_persisted_conversation_model());
+        assert!(!ResolvedRunModelSource::SystemDefault.is_persisted_conversation_model());
     }
 
     #[test]
