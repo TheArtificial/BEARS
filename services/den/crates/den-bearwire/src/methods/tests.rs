@@ -2781,6 +2781,69 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn run_recover_refuses_when_selected_pair_task_changed(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let task_id =
+        create_session_task(&pool, user_id, bear_id, &session_id, "Recover Pair task").await;
+    client_sessions::set_current_task(&pool, user_id, bear_id, &session_id, Some(task_id))
+        .await
+        .expect("select test task");
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
+        .await
+        .expect("transition run to running");
+    let snapshot = serde_json::to_value(turn_runs::TechnicalBudgetRecoverySnapshot::new(
+        session_id.clone(),
+        bear_id,
+        user_id,
+        Some(task_id),
+        json!({
+            "client": "test-client",
+            "cwd": null,
+            "conversation_id": "conversation-1",
+            "prompt": "Continue.",
+            "prompt_context": null,
+            "client_context": null,
+            "requested_mode": null,
+        }),
+    ))
+    .expect("serialize recovery snapshot");
+    turn_runs::claim_technical_budget_continuation(
+        &pool,
+        &run_id,
+        "emergency_hard_step_limit",
+        &snapshot,
+    )
+    .await
+    .expect("claim recovery continuation")
+    .expect("running run transitions to continuing");
+    client_sessions::set_current_task(&pool, user_id, bear_id, &session_id, None)
+        .await
+        .expect("clear selected task");
+
+    let response = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.recover",
+        json!({ "bear_slug": bear_slug, "run_id": run_id }),
+    )
+    .await;
+    assert!(response.get("error").is_some(), "{response}");
+    let stored = turn_runs::technical_budget_recovery_snapshot(&pool, &run_id)
+        .await
+        .expect("load recovery snapshot")
+        .expect("snapshot remains available after rejected recovery");
+    assert!(stored.recovery_lease_id.is_none());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn current_task_rpc_requires_confirmation_and_preserves_clear_title(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
@@ -2912,6 +2975,7 @@ async fn planned_v1_methods_are_recognized() {
         "run.state",
         "run.timeline",
         "run.cancel",
+        "run.recover",
         "client.tool.result",
         "client.permission.result",
         "resource.update",

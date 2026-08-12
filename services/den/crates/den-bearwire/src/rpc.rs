@@ -152,6 +152,11 @@ pub(crate) async fn rpc(
             methods::run::run_cancel_result(&state, &headers, &request.params).await,
             "BearWire run.cancel failed",
         ),
+        "run.recover" => method_response(
+            request.id,
+            methods::run::run_recover_result(&state, &headers, &request.params).await,
+            "BearWire run.recover failed",
+        ),
         "resource.update" => method_response(
             request.id,
             methods::resource::resource_update_result(&state, &headers, &request.params).await,

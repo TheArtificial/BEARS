@@ -41,6 +41,9 @@ pub struct TurnStartRequest<'a> {
     pub client_tools: Option<serde_json::Value>,
     pub runtime_context: Option<&'a str>,
     pub runtime_context_len: usize,
+    /// Sanitized adapter-owned inputs used only to recover a technical-budget
+    /// continuation after process loss.
+    pub technical_budget_recovery_start_payload: Option<serde_json::Value>,
     pub stream_tokens: bool,
     pub api_style: Option<LlmApiStyle>,
 }

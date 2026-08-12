@@ -831,9 +831,39 @@ impl SessionTrackingStream {
                         let active_item = task_list
                             .as_ref()
                             .and_then(|list| list.current_item.as_ref());
-                        let Some(transitioned) =
-                            turn_runs::claim_run_continuation(&pool, &run_id, Some(reason_code))
-                                .await?
+                        let selected_task_id =
+                            active_item.and_then(|item| Uuid::parse_str(&item.id).ok());
+                        let start_request = session
+                            .technical_budget_recovery_start_payload
+                            .clone()
+                            .ok_or_else(|| DenError::System(
+                                "Pair technical-budget continuation lacks its recovery start payload"
+                                    .to_string(),
+                            ))?;
+                        let snapshot = turn_runs::TechnicalBudgetRecoverySnapshot::new(
+                            session.client_session_id.clone(),
+                            session.bear_id,
+                            session.user_id.ok_or_else(|| {
+                                DenError::System(
+                                "Pair technical-budget continuation lacks an authenticated user"
+                                    .to_string(),
+                            )
+                            })?,
+                            selected_task_id,
+                            start_request,
+                        );
+                        let snapshot = serde_json::to_value(snapshot).map_err(|error| {
+                            DenError::System(format!(
+                                "serialize Pair technical-budget recovery snapshot failed: {error}"
+                            ))
+                        })?;
+                        let Some(transitioned) = turn_runs::claim_technical_budget_continuation(
+                            &pool,
+                            &run_id,
+                            reason_code,
+                            &snapshot,
+                        )
+                        .await?
                         else {
                             return Err(DenError::System(format!(
                                 "Pair run {run_id} was not running when budget continuation was claimed"

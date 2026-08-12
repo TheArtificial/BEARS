@@ -103,6 +103,9 @@ pub struct AgentLoopSession {
     pub recently_discovered_capabilities: Vec<RecentCapability>,
     pub request_id: Option<String>,
     pub run_id: Option<String>,
+    /// Sanitized adapter payload captured at turn start and persisted only at
+    /// a technical-budget continuation boundary.
+    pub technical_budget_recovery_start_payload: Option<Value>,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<LlmToolDefinition>,
     pub budget_components: AssembledTurnBudgetComponents,

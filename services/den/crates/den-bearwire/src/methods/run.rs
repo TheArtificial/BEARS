@@ -6,7 +6,7 @@ use std::{
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{types::time::OffsetDateTime, Row};
 use uuid::Uuid;
@@ -19,6 +19,7 @@ use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
     bearwire_events,
+    current_task::preview_pair_current_task_selection,
     native_runtime::start_native_profile_turn_event_stream,
     runtime::bearwire_projection::wire::runtime_stream_event_to_bearwire_events,
     runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
@@ -46,6 +47,43 @@ use crate::methods::{parse_params, DEFAULT_CLIENT};
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// BearWire-owned, durable subset of a normal start request. Reject unknown
+/// fields on recovery so a future runtime-only field cannot become durable by
+/// accident.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct TechnicalBudgetRecoveryStartPayload {
+    client: String,
+    cwd: Option<String>,
+    conversation_id: String,
+    prompt: String,
+    prompt_context: Option<Value>,
+    client_context: Option<Value>,
+    requested_mode: Option<String>,
+}
+
+/// Sanitized replayable request fields. Recovery runs these through the normal
+/// `run.start` lifecycle, which re-resolves server-owned configuration and authority.
+fn technical_budget_recovery_start_payload(
+    client: &str,
+    cwd: Option<&str>,
+    conversation_id: &str,
+    prompt: &str,
+    prompt_context: Option<&Value>,
+    client_context: Option<&Value>,
+    requested_mode: Option<&str>,
+) -> Value {
+    json!(TechnicalBudgetRecoveryStartPayload {
+        client: client.to_string(),
+        cwd: cwd.map(str::to_string),
+        conversation_id: conversation_id.to_string(),
+        prompt: prompt.to_string(),
+        prompt_context: prompt_context.cloned(),
+        client_context: client_context.cloned(),
+        requested_mode: requested_mode.map(str::to_string),
+    })
+}
+
 #[derive(Debug, Deserialize)]
 struct RunStateRequest {
     bear_slug: String,
@@ -54,6 +92,13 @@ struct RunStateRequest {
     session_id: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunRecoverRequest {
+    #[serde(rename = "bear_slug")]
+    _bear_slug: String,
+    run_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1383,10 +1428,27 @@ async fn settle_active_run_for_session(
     user_id: i32,
     reason: &str,
     superseded_by_run_id: Option<&str>,
+    preserve_run_id: Option<&str>,
 ) -> Result<SettledRunLifecycle, CustomError> {
+    let active_run = turn_runs::active_run_for_session(&state.sqlx_pool, session_id).await?;
+    // Recovery starts a successor while its source stays `continuing` until the
+    // successor is accepted. Do not let ordinary start supersession cancel that
+    // leased source before the recovery lease can be consumed.
+    if active_run
+        .as_ref()
+        .is_some_and(|run| Some(run.run_id.as_str()) == preserve_run_id)
+    {
+        return Ok(SettledRunLifecycle {
+            run: None,
+            stream_run_ids: Vec::new(),
+            cancelled_stream: false,
+            cancelled_tool_turn: false,
+            settled_obligations: 0,
+            event_sequence: None,
+        });
+    }
     let stream_cancel = state.turn_cancellations.cancel_session(session_id);
     let active_turn = state.tool_turns.cancel_active_turn(session_id);
-    let active_run = turn_runs::active_run_for_session(&state.sqlx_pool, session_id).await?;
     let stream_run_ids = stream_cancel
         .as_ref()
         .map(|turn| turn.run_ids.clone())
@@ -1784,6 +1846,120 @@ async fn update_run_state_for_runtime_event(
     }
 }
 
+pub(crate) async fn run_recover_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: RunRecoverRequest = parse_params(params)?;
+    let row = turn_runs::technical_budget_recovery_snapshot(&state.sqlx_pool, &request.run_id)
+        .await?
+        .ok_or_else(|| {
+            CustomError::NotFound("recoverable technical-budget run not found".to_string())
+        })?;
+    let snapshot: turn_runs::TechnicalBudgetRecoverySnapshot = serde_json::from_value(row.snapshot)
+        .map_err(|_| CustomError::ValidationError("recovery snapshot is invalid".to_string()))?;
+    if snapshot.version != turn_runs::TECHNICAL_BUDGET_RECOVERY_SNAPSHOT_VERSION
+        || snapshot.bear_id != bear.id
+        || snapshot.user_id != user_id
+    {
+        return Err(CustomError::NotFound(
+            "recoverable technical-budget run not found".to_string(),
+        ));
+    }
+    let payload: TechnicalBudgetRecoveryStartPayload =
+        serde_json::from_value(snapshot.start_request).map_err(|_| {
+            CustomError::ValidationError("recovery start payload is invalid".to_string())
+        })?;
+    let session = client_sessions::find_for_user_bear_session_id(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &snapshot.session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+    let task_id = snapshot.selected_task_id.ok_or_else(|| {
+        CustomError::ValidationError(
+            "technical-budget recovery requires a selected Pair task".to_string(),
+        )
+    })?;
+    if session.current_task_id != Some(task_id) {
+        return Err(CustomError::ValidationError(
+            "current Pair task changed; refusing recovery".to_string(),
+        ));
+    }
+    preview_pair_current_task_selection(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &snapshot.session_id,
+        task_id,
+    )
+    .await?;
+    let lease_id = Uuid::new_v4();
+    turn_runs::lease_technical_budget_recovery(&state.sqlx_pool, &request.run_id, lease_id)
+        .await?
+        .ok_or_else(|| {
+            CustomError::ValidationError("recovery is already in progress".to_string())
+        })?;
+
+    let mut start_params = serde_json::Map::new();
+    start_params.insert("bear_slug".to_string(), json!(bear.slug));
+    start_params.insert("session_id".to_string(), json!(snapshot.session_id));
+    start_params.insert("client".to_string(), json!(payload.client));
+    start_params.insert(
+        "conversation_id".to_string(),
+        json!(payload.conversation_id),
+    );
+    start_params.insert("prompt".to_string(), json!(payload.prompt));
+    if let Some(cwd) = payload.cwd {
+        start_params.insert("cwd".to_string(), json!(cwd));
+    }
+    if let Some(context) = payload.prompt_context {
+        start_params.insert("prompt_context".to_string(), context);
+    }
+    if let Some(context) = payload.client_context {
+        start_params.insert("client_context".to_string(), context);
+    }
+    if let Some(mode) = payload.requested_mode {
+        start_params.insert("requested_mode".to_string(), json!(mode));
+    }
+    let recovery_start: RunStartRequest = serde_json::from_value(Value::Object(start_params))
+        .map_err(|_| {
+            CustomError::ValidationError("recovery start payload is invalid".to_string())
+        })?;
+    let result = match run_start_with_recovery_source(
+        state,
+        recovery_start,
+        user_id,
+        bear.clone(),
+        Some(&request.run_id),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = turn_runs::release_technical_budget_recovery(
+                &state.sqlx_pool,
+                &request.run_id,
+                lease_id,
+            )
+            .await;
+            return Err(error);
+        }
+    };
+    if !turn_runs::complete_technical_budget_recovery(&state.sqlx_pool, &request.run_id, lease_id)
+        .await?
+    {
+        return Err(CustomError::ValidationError(
+            "recovery lease was lost".to_string(),
+        ));
+    }
+    Ok(json!({"ok": true, "recovered_run_id": request.run_id, "run_id": result["run_id"].clone()}))
+}
+
 pub(crate) async fn run_start_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -1791,6 +1967,16 @@ pub(crate) async fn run_start_result(
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: RunStartRequest = parse_params(params)?;
+    run_start_with_recovery_source(state, request, user_id, bear, None).await
+}
+
+async fn run_start_with_recovery_source(
+    state: &DenState,
+    request: RunStartRequest,
+    user_id: i32,
+    bear: den_service::bears::Bear,
+    recovery_source_run_id: Option<&str>,
+) -> Result<Value, CustomError> {
     let session_id = request.session_id;
     let prompt = request.prompt;
     let prompt_context = request.prompt_context;
@@ -1906,6 +2092,7 @@ pub(crate) async fn run_start_result(
         user_id,
         "superseded_by_new_run",
         Some(run_id.as_str()),
+        recovery_source_run_id,
     )
     .await?;
     if superseded.settled() {
@@ -2052,12 +2239,23 @@ pub(crate) async fn run_start_result(
                 upstream_target: &upstream_target_for_task,
                 prompt: &prompt_for_task,
                 prompt_context: prompt_context.clone(),
-                client_tools: Some(client_tools_for_task),
+                client_tools: Some(client_tools_for_task.clone()),
                 runtime_context: read_only_runtime_context_for_task.as_deref(),
                 runtime_context_len: read_only_runtime_context_for_task
                     .as_deref()
                     .map(str::len)
                     .unwrap_or(0),
+                technical_budget_recovery_start_payload: Some(
+                    technical_budget_recovery_start_payload(
+                        &client,
+                        cwd.as_deref(),
+                        &conversation_id,
+                        &prompt,
+                        prompt_context.as_ref(),
+                        client_context.as_ref(),
+                        requested_mode.as_deref(),
+                    ),
+                ),
                 stream_tokens: true,
                 api_style: Some(api_style_for_task),
             },
@@ -2596,6 +2794,7 @@ pub(crate) async fn run_cancel_result(
         user_id,
         "client_requested",
         None,
+        None,
     )
     .await?;
     let cancelled = settled.settled();
@@ -2625,6 +2824,45 @@ mod tests {
             .iter()
             .filter_map(|item| item.get("name").and_then(Value::as_str))
             .collect()
+    }
+
+    #[test]
+    fn technical_budget_recovery_payload_preserves_restart_inputs_only() {
+        let payload = technical_budget_recovery_start_payload(
+            "test-client",
+            Some("/workspace/project"),
+            "conversation-1",
+            "Continue the task.",
+            Some(&json!({"source": "user"})),
+            Some(&json!({"mcp": {"client_tools": []}})),
+            Some("ask"),
+        );
+
+        assert_eq!(payload["client"], "test-client");
+        assert_eq!(payload["conversation_id"], "conversation-1");
+        assert_eq!(payload["requested_mode"], "ask");
+        assert!(payload.get("request_id").is_none());
+        assert!(payload.get("api_key").is_none());
+        let decoded: TechnicalBudgetRecoveryStartPayload = serde_json::from_value(payload).unwrap();
+        assert_eq!(decoded.client, "test-client");
+        assert_eq!(decoded.prompt, "Continue the task.");
+    }
+
+    #[test]
+    fn technical_budget_recovery_payload_rejects_unknown_fields() {
+        let error = serde_json::from_value::<TechnicalBudgetRecoveryStartPayload>(json!({
+            "client": "test-client",
+            "cwd": null,
+            "conversation_id": "conversation-1",
+            "prompt": "Continue the task.",
+            "prompt_context": null,
+            "client_context": null,
+            "requested_mode": null,
+            "api_key": "must-not-be-durable"
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("api_key"));
     }
 
     #[test]

@@ -741,6 +741,7 @@ struct BuildSessionInput<'a> {
     run_id: Option<&'a str>,
     stream_tokens: bool,
     api_style: Option<crate::llm::LlmApiStyle>,
+    technical_budget_recovery_start_payload: Option<serde_json::Value>,
     tool_messages: Vec<ChatMessage>,
 }
 
@@ -766,6 +767,7 @@ async fn build_session(
         run_id,
         stream_tokens,
         api_style,
+        technical_budget_recovery_start_payload,
         tool_messages,
     } = input;
     let llm = LlmClient::new(deps.config);
@@ -964,6 +966,7 @@ async fn build_session(
         recently_discovered_capabilities: vec![],
         request_id: request_id.map(|id| id.to_string()),
         run_id,
+        technical_budget_recovery_start_payload,
         messages,
         tools,
         budget_components,
@@ -1139,6 +1142,7 @@ pub async fn run_native_profile_turn_collect_assistant_text(
             run_id: None,
             stream_tokens: false,
             api_style: None,
+            technical_budget_recovery_start_payload: None,
             tool_messages: Vec::new(),
         },
     )
@@ -1201,6 +1205,7 @@ pub async fn start_native_web_chat_turn_event_stream(
             run_id: None,
             stream_tokens: true,
             api_style: None,
+            technical_budget_recovery_start_payload: None,
             tool_messages: Vec::new(),
         },
     )
@@ -1292,6 +1297,8 @@ pub async fn start_native_profile_turn_event_stream(
             run_id: request.run_id,
             stream_tokens: request.stream_tokens,
             api_style: request.api_style,
+            technical_budget_recovery_start_payload: request
+                .technical_budget_recovery_start_payload,
             tool_messages: Vec::new(),
         },
     )

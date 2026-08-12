@@ -546,6 +546,44 @@ pub async fn finish_run_with_bearwire_event(
     }))
 }
 
+pub const TECHNICAL_BUDGET_RECOVERY_SNAPSHOT_VERSION: u64 = 1;
+
+/// Sanitized, versioned inputs needed to restart a Pair turn after a
+/// technical budget boundary survives process loss. The caller must not place
+/// credentials, provider continuation tokens, or live stream handles here.
+///
+/// `start_request` intentionally remains JSON at this persistence boundary:
+/// BearWire owns the concrete `TurnStartRequest` type and is responsible for
+/// validating and reconstructing it before a fresh stream starts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TechnicalBudgetRecoverySnapshot {
+    pub version: u64,
+    pub session_id: String,
+    pub bear_id: Uuid,
+    pub user_id: i32,
+    pub selected_task_id: Option<Uuid>,
+    pub start_request: Value,
+}
+
+impl TechnicalBudgetRecoverySnapshot {
+    pub fn new(
+        session_id: String,
+        bear_id: Uuid,
+        user_id: i32,
+        selected_task_id: Option<Uuid>,
+        start_request: Value,
+    ) -> Self {
+        Self {
+            version: TECHNICAL_BUDGET_RECOVERY_SNAPSHOT_VERSION,
+            session_id,
+            bear_id,
+            user_id,
+            selected_task_id,
+            start_request,
+        }
+    }
+}
+
 pub struct TurnRunRecoverySnapshotRow {
     pub run_id: String,
     pub reason: String,
@@ -599,6 +637,33 @@ pub async fn claim_technical_budget_continuation(
     Ok(row)
 }
 
+/// Reads an unconsumed technical-budget recovery snapshot so the caller can
+/// authenticate and validate its ownership before attempting a lease.
+pub async fn technical_budget_recovery_snapshot(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<Option<TurnRunRecoverySnapshotRow>, DenError> {
+    let row = sqlx::query_as!(
+        TurnRunRecoverySnapshotRow,
+        r#"
+        SELECT snapshots.run_id, snapshots.reason, snapshots.snapshot,
+               snapshots.recovery_lease_id AS "recovery_lease_id?",
+               snapshots.recovery_lease_expires_at AS "recovery_lease_expires_at?",
+               snapshots.recovered_at AS "recovered_at?", snapshots.created_at,
+               snapshots.updated_at
+        FROM turn_run_recovery_snapshots AS snapshots
+        JOIN turn_runs AS runs ON runs.run_id = snapshots.run_id
+        WHERE snapshots.run_id = $1
+          AND runs.state = 'continuing'
+          AND snapshots.recovered_at IS NULL
+        "#,
+        run_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
 /// Atomically leases an eligible, stranded technical-budget continuation.
 /// Callers must still authenticate and revalidate current-task authority
 /// before rebuilding execution from the returned snapshot.
@@ -635,6 +700,60 @@ pub async fn lease_technical_budget_recovery(
     Ok(row)
 }
 
+/// Releases a recovery lease when rebuilding its replacement run fails. The
+/// snapshot remains eligible for a later authenticated retry.
+pub async fn release_technical_budget_recovery(
+    pool: &PgPool,
+    run_id: &str,
+    lease_id: Uuid,
+) -> Result<bool, DenError> {
+    let affected = sqlx::query!(
+        r#"
+        UPDATE turn_run_recovery_snapshots
+        SET recovery_lease_id = NULL,
+            recovery_lease_expires_at = NULL,
+            updated_at = NOW()
+        WHERE run_id = $1
+          AND recovery_lease_id = $2
+          AND recovered_at IS NULL
+        "#,
+        run_id,
+        lease_id,
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(affected == 1)
+}
+
+/// Marks a leased technical-budget snapshot consumed after its replacement
+/// turn has been accepted. The lease id prevents a stale recovery worker from
+/// consuming another worker's claim.
+pub async fn complete_technical_budget_recovery(
+    pool: &PgPool,
+    run_id: &str,
+    lease_id: Uuid,
+) -> Result<bool, DenError> {
+    let affected = sqlx::query!(
+        r#"
+        UPDATE turn_run_recovery_snapshots
+        SET recovered_at = NOW(),
+            recovery_lease_id = NULL,
+            recovery_lease_expires_at = NULL,
+            updated_at = NOW()
+        WHERE run_id = $1
+          AND recovery_lease_id = $2
+          AND recovered_at IS NULL
+        "#,
+        run_id,
+        lease_id,
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(affected == 1)
+}
+
 pub async fn claim_run_continuation(
     pool: &PgPool,
     run_id: &str,
@@ -665,14 +784,17 @@ pub async fn claim_run_continuation(
     Ok(row)
 }
 
-/// Starts work after a successful `claim_run_continuation`.
+/// Starts work after a successful continuation claim.
 ///
 /// This deliberately requires `continuing`: it consumes the one-shot continuation
-/// claim, so a duplicate budget boundary cannot start another successor slice.
+/// claim, so a duplicate budget boundary cannot start another successor slice. A
+/// technical-budget snapshot is only for process-loss recovery; consume it in the
+/// same transaction when the in-process successor successfully starts.
 pub async fn begin_claimed_run_continuation(
     pool: &PgPool,
     run_id: &str,
 ) -> Result<Option<TurnRunRow>, DenError> {
+    let mut tx = pool.begin().await?;
     let row = sqlx::query_as!(
         TurnRunRow,
         r#"
@@ -685,8 +807,17 @@ pub async fn begin_claimed_run_continuation(
         "#,
         run_id,
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
+    if row.is_some() {
+        sqlx::query!(
+            "DELETE FROM turn_run_recovery_snapshots WHERE run_id = $1",
+            run_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
     Ok(row)
 }
 
