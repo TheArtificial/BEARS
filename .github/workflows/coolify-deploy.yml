@@ -1,27 +1,25 @@
 name: Coolify deploy
 
 on:
-    push:
-        branches: [main, test]
-        paths:
-            - "docker-compose.yaml"
-            - ".github/workflows/coolify-deploy.yml"
-            - "services/den/**"
-            - "services/bifrost/**"
-            - "services/preflight/**"
-    workflow_dispatch:
+    workflow_run:
+        workflows: ["Den – publish images"]
+        types: [completed]
 
 permissions:
     contents: read
 
 concurrency:
-    group: coolify-deploy-${{ github.ref_name }}
+    group: coolify-deploy-${{ github.event.workflow_run.head_branch }}
     cancel-in-progress: true
 
 jobs:
     deploy:
         name: Trigger Coolify deploy
+        if: >-
+            github.event.workflow_run.conclusion == 'success' &&
+            (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'test')
         runs-on: ubuntu-24.04
+        environment: ${{ github.event.workflow_run.head_branch == 'main' && 'production' || 'testing' }}
         steps:
             - name: Trigger Coolify deploy
               env:
@@ -35,24 +33,29 @@ jobs:
                     exit 1
                   fi
 
+                  headers=()
+                  if [ -n "${COOLIFY_TOKEN}" ]; then
+                    headers+=(-H "Authorization: Bearer ${COOLIFY_TOKEN}")
+                  fi
+
                   curl -X GET "${COOLIFY_WEBHOOK}" \
-                    -H "Authorization: Bearer ${COOLIFY_TOKEN}" \
+                    "${headers[@]}" \
                     --fail --silent --show-error
 
-            - name: Verify deployed Den revision
+            - name: Verify deployment readiness and Den revision
               env:
                   BEARS_DEPLOY_URL: ${{ secrets.BEARS_DEPLOY_URL }}
-                  EXPECTED_SHA: ${{ github.sha }}
+                  EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
               run: |
                   set -euo pipefail
 
                   if [ -z "${BEARS_DEPLOY_URL}" ]; then
-                    echo "BEARS_DEPLOY_URL not set; skipping post-deploy SHA verify."
+                    echo "BEARS_DEPLOY_URL not set; skipping post-deploy verification."
                     exit 0
                   fi
 
                   base="${BEARS_DEPLOY_URL%/}"
-                  echo "Waiting for ${base}/status.json to report git_sha=${EXPECTED_SHA}"
+                  echo "Waiting for ${base}/health/ready and ${base}/status.json to report git_sha=${EXPECTED_SHA}"
 
                   sha_matches() {
                     local deployed="$1"
@@ -65,7 +68,7 @@ jobs:
                   }
 
                   for attempt in $(seq 1 90); do
-                    if body="$(curl -fsS "${base}/status.json" 2>/dev/null)"; then
+                    if curl -fsS "${base}/health/ready" >/dev/null 2>&1 && body="$(curl -fsS "${base}/status.json" 2>/dev/null)"; then
                       deployed="$(printf '%s' "${body}" | jq -r '.den_version.git_sha // empty')"
                       if sha_matches "${deployed}" "${EXPECTED_SHA}"; then
                         echo "Deploy verified after ${attempt} attempt(s): den git_sha=${deployed}"
@@ -73,10 +76,10 @@ jobs:
                       fi
                       echo "Attempt ${attempt}: live git_sha=${deployed:-<empty>} (expected ${EXPECTED_SHA})"
                     else
-                      echo "Attempt ${attempt}: /status.json not ready yet"
+                      echo "Attempt ${attempt}: service is not ready yet"
                     fi
                     sleep 30
                   done
 
-                  echo "Timed out after 45 minutes: Den never reported expected git_sha."
+                  echo "Timed out after 45 minutes: Den never became ready with the expected git SHA."
                   exit 1

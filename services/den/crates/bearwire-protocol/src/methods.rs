@@ -72,6 +72,22 @@ pub struct ConversationHistoryRequest {
     pub limit: i64,
 }
 
+/// Bounded, transcript-free controller evidence for one authenticated conversation.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationDiagnosticsRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub conversation_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub run_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub message_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub task_id: Option<String>,
+    #[serde(default = "default_history_limit")]
+    pub limit: i64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ResourceUpdateRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
@@ -209,6 +225,20 @@ pub struct SessionModelSetRequest {
         deserialize_with = "deserialize_optional_string"
     )]
     pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionCurrentTaskSelectionRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub task_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionCurrentTaskClearRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -382,6 +412,26 @@ mod tests {
         .unwrap();
         assert_eq!(history.before, Some(42));
         assert_eq!(history.limit, 50);
+
+        let diagnostics: ConversationDiagnosticsRequest =
+            serde_json::from_value(serde_json::json!({
+                "conversation_id": "conv-1",
+                "message_id": " message-1 ",
+                "task_id": " task-1 ",
+                "limit": 10
+            }))
+            .unwrap();
+        assert_eq!(diagnostics.message_id.as_deref(), Some("message-1"));
+        assert_eq!(diagnostics.task_id.as_deref(), Some("task-1"));
+        assert_eq!(diagnostics.limit, 10);
+
+        assert!(
+            serde_json::from_value::<ConversationDiagnosticsRequest>(serde_json::json!({
+                "conversation_id": "conv-1",
+                "unexpected": true
+            }))
+            .is_err()
+        );
 
         let run: RunStartRequest = serde_json::from_value(serde_json::json!({
             "session_id": "s-1",

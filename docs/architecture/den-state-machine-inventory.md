@@ -253,6 +253,8 @@ Work run     -> assigned Docket Job              -> work-execution behavior
 ```
 
 - `client_sessions.current_task_id` is the sole Pair selection authority. It may identify a session-local task or a Docket task reference. A valid explicit selection has precedence over legacy Docket-execution compatibility context; no cached task list or implicit next task may manufacture it.
+- A Pair session has at most one session-connected root task. **Planning mode is derived solely from that root's `draft` status**; it is not an independent persisted flag. While the root is draft, every descendant is non-executable even if its own status is otherwise ready/pending, Pair must have no execution current task, and no Pair execution run is created. Selecting a draft task or a descendant of a draft ancestor for execution is rejected.
+- An explicit execution current-task selection is Pair's start signal once its root is non-draft. It drives execution focus; a Pair execution run is created or resumed to record the attempt, budget slices, and checkpoint/resume history. The run does not grant execution authority. A non-draft session-connected current task must have that persisted run before execution begins. `RunPaused` requires its persisted run ID; absence of one is execution-initialization failure, not a valid runless pause. A real budget boundary pauses the run while preserving the selected task, so the controller resumes a subsequent slice rather than requiring the user to say "continue." UI navigation focus is client-local and must not mutate this selection.
 - A Work run's explicit assigned Job is the sole Work execution boundary. Its optional `executing_task_id` is in-run progress within that Job, never a replacement assignment and never sourced from Pair.
 - Legacy `docket_execution_sessions` may supply compatibility context only when Pair has no valid current task. It is not a continuation authority, client current-task projection, or title source.
 - Pair task orientation is `freeform` without a resolved current task and task-oriented with one. A Docket-backed Pair task remains task-oriented; it does not acquire Work execution authority. Work derives execution orientation only from its assigned Job.
@@ -300,7 +302,7 @@ Continuation inputs should be treated as:
 
 | Source | May affect continuation? | Notes |
 | --- | --- | --- |
-| Pair resolved current task | yes, for Pair task-oriented behavior | Must originate in a valid persisted explicit selection. |
+| Pair resolved current task | yes, for Pair task-oriented behavior | Must originate in a valid persisted explicit selection of a non-draft executable task. Planning mode is derived from the sole session-connected root task being `draft`; it is not a separate continuation authority. Before execution, runtime creates or reuses a persisted Pair execution run; a pause without that run identity is invalid. |
 | Work assigned Job | yes, for Work execution behavior | The WorkRun assignment bounds the task tree; in-run task progress stays within it. |
 | Legacy execution record | compatibility context only | May be rendered only when Pair has no valid current task; never selects continuation. |
 | Runtime/session cached task list or client/prompt projection | no | Display/context only; cannot manufacture selection, assignment, or continuation. |

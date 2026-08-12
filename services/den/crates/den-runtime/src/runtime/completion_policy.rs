@@ -8,8 +8,9 @@
 //!
 //! Invariant: while a resolved current task-list has incomplete, unblocked
 //! items, a runtime-limit final response is not accepted as completion. The
-//! runtime must either continue the next actionable slice or, in a future
-//! upgrade, record an explicit pause/resume state.
+//! runtime must either continue the next actionable slice or pause with a
+//! structured resumable reason; it must not accept an ordinary terminal
+//! response merely because the model described a limit.
 
 use den_core::profile::BearProfile;
 use den_docket::TaskListProjection;
@@ -34,6 +35,12 @@ pub enum TurnCompletionDecision {
         gate: AutonomousExecutionGate,
         final_response_kind: AutonomousFinalResponseKind,
     },
+    Pause {
+        reason: TurnCompletionPauseReason,
+        gate: AutonomousExecutionGate,
+        final_response_kind: AutonomousFinalResponseKind,
+        loop_detection: TaskFocusLoopDetection,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +55,11 @@ pub enum TurnCompletionCompleteReason {
 pub enum TurnCompletionContinueReason {
     FocusedWorkRemains,
     RuntimeLimitIsNotFocusedCompletion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnCompletionPauseReason {
+    RepeatedTerminalObjection,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,11 +101,11 @@ pub fn decide_turn_completion(input: TurnCompletionPolicyInput<'_>) -> TurnCompl
         if loop_detection.detected
             && final_response_kind != AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
         {
-            return TurnCompletionDecision::Complete {
-                reason: TurnCompletionCompleteReason::RepeatedTerminalObjection,
+            return TurnCompletionDecision::Pause {
+                reason: TurnCompletionPauseReason::RepeatedTerminalObjection,
                 gate,
                 final_response_kind,
-                loop_detection: Some(loop_detection),
+                loop_detection,
             };
         }
 
@@ -231,26 +243,52 @@ mod tests {
     }
 
     #[test]
-    fn completed_focused_job_allows_finalization() {
+    fn blocked_sibling_does_not_stop_an_executable_focused_task() {
         let focused = task_list(
-            "completed",
+            "active",
+            vec![
+                task_list_item("Needs approval", TaskListItemStatus::Blocked),
+                task_list_item("Independent follow-up", TaskListItemStatus::Pending),
+            ],
+        );
+
+        let decision = decide_turn_completion(TurnCompletionPolicyInput {
+            profile: BearProfile::Pair,
+            current_task_list: Some(&focused),
+            assistant_text: "Blocked waiting for approval.",
+            recent_texts: &[],
+        });
+
+        assert!(matches!(
+            decision,
+            TurnCompletionDecision::Continue {
+                ref next_task,
+                ..
+            } if next_task == "Independent follow-up"
+        ));
+    }
+
+    #[test]
+    fn scope_escalation_prose_does_not_stop_executable_focused_work() {
+        let focused = task_list(
+            "active",
             vec![task_list_item(
-                "Verify completion",
-                TaskListItemStatus::Completed,
+                "Implement the bounded change",
+                TaskListItemStatus::Pending,
             )],
         );
 
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
             profile: BearProfile::Pair,
             current_task_list: Some(&focused),
-            assistant_text: "Job completed. Final answer follows.",
+            assistant_text: "This requires a separate migration, so I will stop here.",
             recent_texts: &[],
         });
 
         assert!(matches!(
             decision,
-            TurnCompletionDecision::Complete {
-                reason: TurnCompletionCompleteReason::FocusedWorkCompleteFinalizationDrain,
+            TurnCompletionDecision::Continue {
+                final_response_kind: AutonomousFinalResponseKind::ScopeEscalationFinal,
                 ..
             }
         ));
@@ -355,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_runtime_limit_objection_still_does_not_complete_focused_work() {
+    fn repeated_terminal_objection_pauses_instead_of_completing_focused_work() {
         let focused = task_list(
             "active",
             vec![task_list_item(
@@ -365,9 +403,9 @@ mod tests {
         );
         let recent_texts = vec![
             "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet.".to_string(),
-            "Terminal status: blocked by runtime limits. The write budget is exhausted; continuing requires a fresh turn.".to_string(),
+            "I am blocked and cannot continue because the required approval is absent.".to_string(),
             "Continue with: Continue next slice.".to_string(),
-            "Terminal status: blocked by runtime limits. The write budget is exhausted; continuing requires a fresh turn.".to_string(),
+            "I am blocked and cannot continue because the required approval is absent.".to_string(),
         ];
 
         let decision = decide_turn_completion(TurnCompletionPolicyInput {
@@ -379,8 +417,8 @@ mod tests {
 
         assert!(matches!(
             decision,
-            TurnCompletionDecision::Continue {
-                reason: TurnCompletionContinueReason::RuntimeLimitIsNotFocusedCompletion,
+            TurnCompletionDecision::Pause {
+                reason: TurnCompletionPauseReason::RepeatedTerminalObjection,
                 ..
             }
         ));

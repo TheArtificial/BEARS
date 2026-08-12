@@ -18,7 +18,42 @@ Worker run ── explicit Docket Job assignment ──► work-execution behavi
 Docket Job ── optional durable outcome/task-tree container
 ```
 
-- A Pair session has zero or one current task. It may be session-local or reference a task in an explicitly created Docket Job. Having a current task gives the session its objective; it neither creates a worker nor changes trust/permissions.
+### Pair planning and execution gate
+
+A Pair session has at most one session-connected root task. Its ordinary task
+status is the only planning gate: **planning mode is derived**, never persisted
+as an independent mode.
+
+```text
+session-connected root is draft
+    => planning mode; construct, edit, reorder, and remove its task tree
+    => no current execution task and no Pair execution run
+
+root is non-draft + an executable task is explicitly selected current
+    => Pair task-oriented execution focus
+    => create or resume a Pair execution run
+```
+
+Children may be fully specified and non-draft while their session-connected
+root remains `draft`; the draft ancestor makes them non-executable. Selection
+for execution must reject a draft task or a task beneath a draft ancestor.
+A UI-only navigation highlight must not call the durable current-task selection
+operation.
+
+`ready` means eligible to execute, not an implicit start command. A deliberate
+**start** operation may atomically move the root out of `draft`, select the
+first executable task, and create the Pair run, but a generic status edit must
+not do so incidentally. Once selected, the current task—not the presence of a
+run—drives Pair execution focus. A Pair run records a bounded execution attempt
+and its checkpoint/resume history; it does not authorize execution. A non-draft,
+session-connected current task must have a persisted Pair run before entering
+execution. `RunPaused` is valid only when it identifies that persisted run; a
+missing run is execution-initialization failure, not a runless pause. A run that
+hits a budget boundary is paused while the selected task remains current, so
+the controller can resume a successor slice without asking the user to say
+"continue."
+
+- A Pair session has zero or one current task. It is session-owned. Having a current task gives the session its objective; it neither creates a worker nor changes trust/permissions.
 - A Work loop has one bounded, explicit Docket Job assignment. Its authority to execute and settle applies within that Job's approved task tree, not to whichever task Pair happens to have current.
 - A Docket Job is for explicitly requested durable planning/tracking, journals, recovery, delivery contracts, or isolated background execution. Do not create one merely to give Pair ordinary work.
 - **Pair works its current task directly by default.** Task delegation is deferred; do not expose `delegate_task` until its real end-to-end lifecycle, shared Pair/Work execution path, and workspace-safety requirements can ship together. See [Task delegation lifecycle plan](TASK_DELEGATION_LIFECYCLE_PLAN.md).
@@ -27,7 +62,7 @@ Docket Job ── optional durable outcome/task-tree container
 
 Migration requirements:
 
-1. Replace `ConversationSnapshot.durable_focus_pointer` and `ResolvedFocus` with a resolved `current_task` model that can represent a session-local task or a Docket task reference.
+1. Replace `ConversationSnapshot.durable_focus_pointer` and `ResolvedFocus` with a resolved session-owned `current_task` model.
 2. Replace client-facing Focus/Focused UI and `/focus` with current-task projection and task assignment/clear actions. Do not retain a distinct “Focused” permission/mode.
 3. Bind every WorkRun to one explicit Docket Job. Work execution may advance that Job's approved task tree; it does not require or derive a per-task sandbox assignment, and it never follows conversation focus.
 4. Preserve existing focus records only as migration input/compatibility state; they must not remain a second canonical continuation authority.
@@ -337,14 +372,54 @@ A Pair session's current task is session-scoped and may be local or Docket-backe
 | --- | --- |
 | Persist current session task | **Complete.** `client_sessions.current_task_id` persists Pair's optional selected session task across turns/reconnects; a valid session-anchored selection is canonical. |
 | Project current task | **Complete.** BearWire and ACP project an optional explicit selected task; ACP's agent plan is the selected task's sibling scope (or one root task). |
-| Snapshot task into Pair runs | **Complete.** Pair runtime resolves the persisted selected task before legacy compatibility state. |
+| Snapshot task into Pair runs | **In progress.** Pair runtime resolves the persisted selected task before legacy compatibility state. Before a non-draft session-connected current task enters Pair execution, runtime must create or reuse a persisted Pair execution run; `RunPaused` is invalid without that run identity. Technical Pair slice limits atomically claim that same run, persist a continuation ledger record, and resume it in-process without clearing the selected task. This is not yet crash-recoverable: a process-loss recovery worker for a claimed `continuing` run remains required. |
+| Enter current-task Pair execution | **Planned.** An authenticated normal Pair client can explicitly start or continue its selected actionable session task. Den validates session ownership and task state, creates or reuses the persisted Pair execution run, transitions the task/run into active execution, and starts the native Pair stream. The operation does not create a Job, dispatch Work, or expand authority; duplicate start requests are idempotent. |
 | Bind Work Job | **Complete.** Each WorkRun persists one explicit durable Docket Job assignment. |
 | Enforce Work Job binding | **Complete.** A Work run without an assigned Job is rejected before model-driving continuation begins. |
 | Derive task behavior | **In progress.** Pair and Work context are separated; remaining orientation/diagnostic cleanup follows Phase 2c. |
 | Add diagnostics | **In progress.** New paths distinguish current task from Work assignment/progress; legacy focus diagnostics still need retirement. |
 | Add tests | **Partially complete.** Pair selection/clear, legacy precedence, Work Job scope, BearWire projection, and ACP sibling-scope projection are covered; complete orientation coverage remains. |
 
-**Exit gate:** loop control has explicit governance and session-task/worker-assignment inputs, with no client-facing focus mode.
+**Exit gate:** loop control has explicit governance and session-task/worker-assignment inputs, with no client-facing focus mode. A normal Pair client can start a selected actionable session task through an authenticated, idempotent path that creates or reuses its persisted Pair run; that run can then be observed, paused, continued, and settled.
+
+### Phase 2d — Pair runtime interrogation and transcript correlation
+
+**Goal:** make active Pair task execution inspectable end-to-end before Phase 2
+is closed. This is mandatory Phase 2 validation work, not a deferred
+observability phase.
+
+The runtime must expose stable transcript message identifiers to Pair review
+and persist an append-only history that joins those messages to the actual
+Pair execution run, selected task, budget state, and runtime-owned loop
+controller decisions. This is a diagnostic record, not a second task,
+continuation, or completion authority. It may reference transcript content by
+identifier; it must not duplicate raw conversation text by default.
+
+Required correlation path:
+
+```text
+transcript message id
+  -> Pair execution run id
+  -> current task / session-connected root
+  -> loop-control decision and budget snapshot
+  -> continuation, pause, resume, or settlement evidence
+```
+
+| Task | Done when |
+| --- | --- |
+| Define stable transcript IDs | **Implemented.** Canonical `append_message` returns immutable message UUID plus sequence number, including idempotent/retry paths, for user, assistant, tool, warning, and error records. |
+| Define append-only Pair runtime history | **Implemented at the existing ledger boundary.** `bear_loop_control_ledger` has Pair run, typed decision, bounded payload/evidence refs, task/list refs, and optional canonical `conversation_message_id`; it stores no raw transcript. |
+| Record controller boundaries | **Implemented for final-gate enforcement and in-process technical budget continuation.** Terminal assistant output persists before final-gate evaluation; suppressed final responses record `FinalGateContinuation`, repeated objections record `ActiveTaskPause` before `RunPaused` is emitted, and technical Pair slice boundaries atomically claim `running → continuing`, record `BudgetSliceContinuation`, then consume that claim as `continuing → running` before the same-run successor step. Tool-failure, Rule-of-Ko, and unrecovered context exhaustion remain real non-auto-resume stops. Process-loss recovery for a persisted `continuing` run, task-focus resolution, and settlement correlation remain separately incomplete. |
+| Provide interrogation reads | **Implemented.** Authenticated BearWire `conversation.diagnostics` provides bounded, transcript-free reads scoped to the Bear conversation/session and filters by run, message, and task. |
+| Define retention and redaction | **Partially complete.** The ledger is transcript-free and diagnostic reads clamp to 1–100 records; explicit retention/expiry and field-redaction policy remain pending. |
+| Test the evidence chain | **Partially complete.** Unit coverage proves a runless repeated-objection path fails before persistence or `RunPaused`; database-backed validation must prove the persisted message-to-run-to-task join and pause ordering against a reachable PostgreSQL instance. |
+
+**Current evidence (2026-08-11):** `cargo fmt --check`, `SQLX_OFFLINE=true cargo check -p den-runtime`, `SQLX_OFFLINE=true cargo check -p den-bearwire`, and `SQLX_OFFLINE=true cargo test -p bearwire-protocol` pass. DB-backed tests remain unavailable in this environment because the configured PostgreSQL hostname does not resolve.
+
+**Exit gate:** an operator or Pair can diagnose why an execution-focused turn
+continued, paused, resumed, or completed from durable correlated evidence.
+Phase 2 cannot close until this gate and the Phase 2a Pair-run invariant are
+validated against an active Pair session.
 
 ## Phase 2b — Client projection for current task
 
@@ -365,8 +440,8 @@ When a current task exists:
 | --- | --- |
 | Define current-task projection | **Complete.** BearWire and ACP project only an explicit Pair current task; ACP scopes its plan to the selected task's siblings or the one root task. |
 | Keep Den authoritative | **Complete.** Clients request selection/clear through Den; persistence and validation remain server-owned. |
-| Add current-task affordance | **Partially complete.** Pair has explicit select/clear with confirmation-first redirection guidance; client affordance wiring remains. |
-| Preserve session-local tasks | **In progress.** Session-anchored current tasks persist; dedicated session-local creation policy remains part of Phase 2c. |
+| Add current-task affordance | **Complete for BearWire/Armature.** Pair clients use confirmation-first `session.current_task.selection_request`, followed by explicit `select`, or direct `clear`; all operations route through Den's shared Pair/session authority. Web chat is explicitly deferred until it is BearWire-backed. |
+| Preserve session-local tasks | **Planned.** A jobless Pair task must be anchored by Den to the authenticated current session, then may become that session's current task under the user's explicit instruction. Pair-facing tools never expose raw session-anchor identifiers; a Job-owned task requires an explicit `job_id`. Task ownership is exclusive: exactly one of session or Job. |
 | Ask before durable escalation | **Complete.** Redirection guidance requires asking; Job creation/dispatch is not implicit. |
 | Update titles | **Complete.** Selecting a Pair current task updates the conversation title through the existing title-sync path; clearing leaves the title intact. |
 | Prevent permission laundering | **Complete.** Selection changes only Pair's objective; it grants neither authority nor Work scope. |
@@ -409,7 +484,7 @@ Resolution is deterministic:
 2. otherwise, a resolved session current task resolves `task_oriented`;
 3. otherwise resolve `freeform` with the run's `FreeformPolicy`.
 
-The freeform task-definition policy controls whether the model may establish a lightweight session task. It does **not** authorize Job creation, durable dispatch, or local delegation without the separate user-request/approval rules described above.
+The freeform task-definition policy controls whether the model may establish a lightweight session task. For Pair, a jobless task is server-anchored to the authenticated current session; the model does not receive or supply a session-anchor identifier. Under explicit user instruction to focus the conversation, the newly created session task may become the current task. It does **not** authorize Job creation, durable dispatch, or local delegation without the separate user-request/approval rules described above.
 
 - `may_define_task: false`: do not expose task-definition or delegation affordances; defensively reject them.
 - `may_define_task: true`: the model may establish a concrete session task with completion criteria when sustained work is needed. It works that task directly by default.
@@ -665,10 +740,13 @@ Bounded delegation is allowed only through approved symbolic model refs. Capable
 
 Pair behavior:
 
-- the optional current task is the session objective and may be session-local or a Docket task reference;
+- the optional current task is a session-owned task and is the session objective; Job-owned Docket tasks remain Job execution state rather than Pair focus;
+- a jobless Pair task is anchored by Den to the authenticated current session; Pair never handles a raw session-anchor identifier;
+- every durable Docket task has exactly one owner: its session or its Job; an unowned or jointly owned task is invalid;
 - Pair works its current task directly by default;
 - establishing a session-local task does not create a Job, dispatch Work, or change permissions;
 - attaching a Docket task, creating a Job, or dispatching durable background work requires the explicit user request/approval boundary from the architecture revision;
+- promotion/delegation creates a new Job-owned task after explicit approval; it does not mutate a session task into a jointly owned task;
 - task delegation is deferred. Do not expose `delegate_task` until its real end-to-end lifecycle can ship as described in the [Task delegation lifecycle plan](TASK_DELEGATION_LIFECYCLE_PLAN.md); do not add a read-only or intent-only placeholder.
 
 Work behavior:
@@ -685,9 +763,9 @@ Checkpoint requests include the relevant current-task or assignment reference wh
 | Task | Done when |
 | --- | --- |
 | Attach objective context | Checkpoint requests include the resolved session current-task or Work-assignment refs when available. |
-| Preserve session-local boundary | Session task creation/replacement/clear never creates a Job or run implicitly. |
+| Preserve session-local boundary | A jobless Pair task is anchored server-side to the authenticated current session; creating, replacing, or clearing a session task never creates a Job or run implicitly. Pair-facing tools do not expose `session_anchor_id`; a Job-owned task requires an explicit `job_id`. |
 | Require explicit Work Job binding | Work cannot continue without an assigned Docket Job. |
-| Keep delegation deferred | Do not expose `delegate_task` until the real shared Pair/Work execution, lifecycle, and workspace-safety requirements in the task delegation lifecycle plan can ship together; do not add a read-only or intent-only placeholder. |
+| Keep delegation deferred | Do not expose `delegate_task` until the real shared Pair/Work execution, lifecycle, and workspace-safety requirements in the task delegation lifecycle plan can ship together. Delegation/promotion must create a new Job-owned task after explicit approval, never give a session task a second owner; do not add a read-only or intent-only placeholder. |
 | Validate task-state intent | Checkpoint reports can recommend update/sync/handoff but cannot mutate task state. |
 | Require tool call for state changes | Runtime requires the relevant task-management tool when a state change is needed. |
 | Add audit correlation | Work checkpoint artifacts can be queried by run/job/assignment refs. |

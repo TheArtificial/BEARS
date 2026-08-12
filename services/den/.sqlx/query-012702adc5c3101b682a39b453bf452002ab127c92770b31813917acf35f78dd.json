@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO docket_attention (run_id, task_id, cause_code, recovery_action, evidence_refs)\n         VALUES ($1,$2,$3,$4,$5)\n         ON CONFLICT (run_id) WHERE resolved_at IS NULL DO UPDATE\n         SET task_id = EXCLUDED.task_id, cause_code = EXCLUDED.cause_code,\n             recovery_action = EXCLUDED.recovery_action, evidence_refs = EXCLUDED.evidence_refs",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "012702adc5c3101b682a39b453bf452002ab127c92770b31813917acf35f78dd"
+}

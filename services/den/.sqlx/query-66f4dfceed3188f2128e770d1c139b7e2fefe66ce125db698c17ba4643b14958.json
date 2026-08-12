@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs\n         SET attachment_state = 'attached', updated_at = now()\n         WHERE attached_client_session_id = $1\n           AND execution_target = 'attached_armature'\n           AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')\n           AND attachment_state = 'permission_required'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "66f4dfceed3188f2128e770d1c139b7e2fefe66ce125db698c17ba4643b14958"
+}

@@ -64,6 +64,16 @@ pub enum ConversationHistoryProjection {
     ModelTranscript,
 }
 
+/// Identity and ordering assigned to a canonical conversation message.
+///
+/// `id` is stable across idempotent retries; `sequence_no` orders messages within
+/// one conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppendedConversationMessage {
+    pub id: Uuid,
+    pub sequence_no: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct PersistedConversationMessage {
     pub sequence_no: i64,
@@ -973,7 +983,7 @@ pub async fn append_message(
     pool: &PgPool,
     conversation_id: Uuid,
     message: &ConversationMessageWrite,
-) -> Result<i64, DenError> {
+) -> Result<AppendedConversationMessage, DenError> {
     let message_type = message.message_type.as_str();
     let role = message.role.map(|r| r.as_str());
     let visibility = message.visibility.as_str();
@@ -988,14 +998,9 @@ pub async fn append_message(
         .map_err(db_err("begin append conversation message tx"))?;
 
     if let Some(source_event_id) = source_event_id {
-        if let Some(existing_sequence_no) = sqlx::query_scalar::<_, i64>(
-            r"
-            SELECT sequence_no
-            FROM conversation_messages
-            WHERE conversation_id = $1
-              AND source_event_id = $2
-            LIMIT 1
-            ",
+        if let Some(existing) = sqlx::query(
+            r"SELECT id, sequence_no FROM conversation_messages
+               WHERE conversation_id = $1 AND source_event_id = $2 LIMIT 1",
         )
         .bind(conversation_id)
         .bind(source_event_id)
@@ -1004,55 +1009,34 @@ pub async fn append_message(
         .map_err(db_err("lookup conversation message source_event_id"))?
         {
             rollback_append_message_tx(tx).await?;
-            return Ok(existing_sequence_no);
+            return Ok(AppendedConversationMessage {
+                id: existing.try_get("id").map_err(db_decode("message id"))?,
+                sequence_no: existing
+                    .try_get("sequence_no")
+                    .map_err(db_decode("message sequence_no"))?,
+            });
         }
     }
 
     let allocator_row = sqlx::query(
-        r"
-        UPDATE conversations
-        SET next_message_sequence = next_message_sequence + 1,
-            updated_at = NOW()
-        WHERE id = $1
-        RETURNING next_message_sequence - 1 AS sequence_no
-        ",
+        r"UPDATE conversations SET next_message_sequence = next_message_sequence + 1,
+           updated_at = NOW() WHERE id = $1
+           RETURNING next_message_sequence - 1 AS sequence_no",
     )
     .bind(conversation_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(db_err("allocate conversation message sequence"))?;
-
     let sequence_no: i64 = allocator_row
         .try_get("sequence_no")
         .map_err(db_decode("allocated sequence_no"))?;
 
-    if let Err(err) = sqlx::query(
-        r"
-        INSERT INTO conversation_messages (
-            conversation_id,
-            sequence_no,
-            message_type,
-            role,
-            visibility,
-            content_text,
-            content_json,
-            source_event_id,
-            provider_message_id,
-            created_at
-        )
-        VALUES (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            $7,
-            $8,
-            $9,
-            COALESCE($10::timestamptz, NOW())
-        )
-        ",
+    let inserted = sqlx::query(
+        r"INSERT INTO conversation_messages (
+             conversation_id, sequence_no, message_type, role, visibility,
+             content_text, content_json, source_event_id, provider_message_id, created_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10::timestamptz, NOW()))
+           RETURNING id",
     )
     .bind(conversation_id)
     .bind(sequence_no)
@@ -1064,44 +1048,45 @@ pub async fn append_message(
     .bind(source_event_id)
     .bind(provider_message_id)
     .bind(created_at)
-    .execute(&mut *tx)
-    .await
-    {
-        rollback_append_message_tx(tx).await?;
+    .fetch_one(&mut *tx)
+    .await;
 
-        let duplicate_sequence_no = if source_event_id.is_some() {
-            sqlx::query_scalar::<_, i64>(
-                r"
-                SELECT sequence_no
-                FROM conversation_messages
-                WHERE conversation_id = $1
-                  AND source_event_id = $2
-                LIMIT 1
-                ",
-            )
-            .bind(conversation_id)
-            .bind(source_event_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(db_err(
-                "reload duplicate conversation message sequence after insert error",
-            ))?
-        } else {
-            None
-        };
-        if let Some(existing_sequence_no) = duplicate_sequence_no {
-            return Ok(existing_sequence_no);
+    let id = match inserted {
+        Ok(row) => row
+            .try_get("id")
+            .map_err(db_decode("inserted message id"))?,
+        Err(err) => {
+            rollback_append_message_tx(tx).await?;
+            if let Some(source_event_id) = source_event_id {
+                if let Some(existing) = sqlx::query(
+                    r"SELECT id, sequence_no FROM conversation_messages
+                       WHERE conversation_id = $1 AND source_event_id = $2 LIMIT 1",
+                )
+                .bind(conversation_id)
+                .bind(source_event_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(db_err(
+                    "reload duplicate conversation message after insert error",
+                ))? {
+                    return Ok(AppendedConversationMessage {
+                        id: existing.try_get("id").map_err(db_decode("message id"))?,
+                        sequence_no: existing
+                            .try_get("sequence_no")
+                            .map_err(db_decode("message sequence_no"))?,
+                    });
+                }
+            }
+            return Err(DenError::Database(format!(
+                "append conversation message: {err}"
+            )));
         }
-        return Err(DenError::Database(format!(
-            "append conversation message: {err}"
-        )));
-    }
+    };
 
     tx.commit()
         .await
         .map_err(db_err("commit append conversation message tx"))?;
-
-    Ok(sequence_no)
+    Ok(AppendedConversationMessage { id, sequence_no })
 }
 
 pub async fn insert_message_if_absent(

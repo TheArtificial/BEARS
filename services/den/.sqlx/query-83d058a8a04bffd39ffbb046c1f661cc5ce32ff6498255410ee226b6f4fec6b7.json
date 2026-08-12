@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE bear_tasks\n        SET sibling_order = sibling_order + 1, updated_at = NOW()\n        WHERE bear_id = $1\n          AND job_id IS NOT DISTINCT FROM $2\n          AND session_anchor_id IS NOT DISTINCT FROM $3\n          AND parent_task_id IS NOT DISTINCT FROM $4\n          AND sibling_order >= $5\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "83d058a8a04bffd39ffbb046c1f661cc5ce32ff6498255410ee226b6f4fec6b7"
+}

@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            execution_target AS \"execution_target!: String\",\n            attached_client_session_id AS \"client_session_id?: String\",\n            attachment_state AS \"state?: String\",\n            attachment_warning AS \"warning?: String\",\n            disconnected_at AS \"disconnected_at?: OffsetDateTime\",\n            disconnect_deadline_at AS \"deadline_at?: OffsetDateTime\",\n            result_refs #>> '{recovery,source_work_run_id}' AS \"source_work_run_id?: String\",\n            (execution_target = 'attached_armature' AND attachment_state = 'timed_out'\n             AND result_refs #>> '{outcome,code}' = 'armature_disconnect_timeout')\n                AS \"recovery_eligible!: bool\"\n        FROM bear_work_runs\n        WHERE job_run_id = $1\n        ORDER BY attempt DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "execution_target!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "client_session_id?: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "state?: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "warning?: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "disconnected_at?: OffsetDateTime",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "deadline_at?: OffsetDateTime",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "source_work_run_id?: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "recovery_eligible!: bool",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "296915ac96ac0c8caba917284423d25a5468c1d3eeb1172f95a40f477b292bc2"
+}

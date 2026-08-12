@@ -1,0 +1,90 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,\n                   job_id, run_id, task_id, state, created_at, updated_at\n            FROM docket_execution_sessions\n            WHERE bear_id = $1 AND owner_profile = $2 AND source_conversation_id = $3\n              AND state IN ('active', 'blocked', 'completing', 'paused')\n            ORDER BY updated_at DESC\n            LIMIT 1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_profile",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "source_conversation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "source_client_session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 8,
+        "name": "task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 9,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "351123fd747f494627646794ac219ae983843874281b94e006856e3ce76af55a"
+}

@@ -559,6 +559,77 @@ pub async fn finish_run_with_bearwire_event(
     }))
 }
 
+pub async fn claim_run_continuation(
+    pool: &PgPool,
+    run_id: &str,
+    terminal_reason: Option<&str>,
+) -> Result<Option<TurnRunRow>, DenError> {
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(&format!(
+        r"
+        UPDATE turn_runs
+        SET state = 'continuing',
+            terminal_reason = $2,
+            updated_at = NOW(),
+            completed_at = completed_at
+        WHERE run_id = $1
+          AND state = 'running'
+        RETURNING {RUN_RETURNING}
+        "
+    ))
+    .bind(run_id)
+    .bind(terminal_reason)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(row.map(row_to_run))
+}
+
+/// Starts work after a successful `claim_run_continuation`.
+///
+/// This deliberately requires `continuing`: it consumes the one-shot continuation
+/// claim, so a duplicate budget boundary cannot start another successor slice.
+pub async fn begin_claimed_run_continuation(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<Option<TurnRunRow>, DenError> {
+    let row = sqlx::query(&format!(
+        r"
+        UPDATE turn_runs
+        SET state = 'running', terminal_reason = NULL, updated_at = NOW()
+        WHERE run_id = $1 AND state = 'continuing'
+        RETURNING {RUN_RETURNING}
+        "
+    ))
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_run))
+}
+
+/// Releases a continuation claim when durable setup fails before the successor
+/// step begins. The caller will surface the failure, so `running` accurately
+/// means the normal run-failure path may settle it rather than advertising a
+/// resumable successor that was never started.
+pub async fn release_claimed_run_continuation(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<Option<TurnRunRow>, DenError> {
+    let row = sqlx::query(&format!(
+        r"
+        UPDATE turn_runs
+        SET state = 'running', terminal_reason = NULL, updated_at = NOW()
+        WHERE run_id = $1 AND state = 'continuing'
+        RETURNING {RUN_RETURNING}
+        "
+    ))
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_run))
+}
+
 pub async fn transition_run(
     pool: &PgPool,
     run_id: &str,

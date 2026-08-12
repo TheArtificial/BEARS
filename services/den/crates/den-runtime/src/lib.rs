@@ -36,6 +36,8 @@ pub mod bearwire_events;
 pub mod client_obligation_coordinator;
 /// Final-request context budget estimation and component attribution.
 pub mod context_budget;
+/// Canonical Pair-session current-task selection shared by client and tool transports.
+pub mod current_task;
 /// Surface-agnostic runtime failure/warning UX policy projections.
 pub mod runtime_error_ux;
 /// Surface projection contracts for turn obligations.
@@ -62,6 +64,7 @@ pub mod turn_runner;
 
 /// The native agent loop: assembly, step streaming, approvals, transcript projection.
 pub mod agent_loop;
+pub use agent_loop::summarize_recent_loop_control_replay_profile;
 
 /// The native runtime provider: profile turns, OpenAI streaming, web-chat loop.
 pub mod native_runtime;

@@ -457,6 +457,57 @@ async fn canonical_record_already_persisted(
     Ok(false)
 }
 
+async fn canonical_record_existing_message_id(
+    context: &ConversationPersistenceContext,
+    conversation_id: Uuid,
+    record: &CanonicalConversationRecord,
+) -> Result<Option<Uuid>, DenError> {
+    sqlx::query_scalar::<_, Uuid>(
+        r"
+        SELECT id
+        FROM conversation_messages
+        WHERE conversation_id = $1
+          AND content_json = $2
+        ORDER BY sequence_no DESC
+        LIMIT 1
+        ",
+    )
+    .bind(conversation_id)
+    .bind(record.storage_json())
+    .fetch_optional(&context.pool)
+    .await
+    .map_err(|err| DenError::Database(format!("load canonical conversation message id: {err}")))
+}
+
+pub async fn persist_canonical_conversation_record_with_id(
+    context: &ConversationPersistenceContext,
+    record: &CanonicalConversationRecord,
+) -> Result<Option<Uuid>, DenError> {
+    if context.skip_persistence
+        || !canonical_persistence_enabled_for_conversation(&context.external_conversation_id)
+    {
+        return Ok(None);
+    }
+    let canonical = ensure_conversation_for_external_id(
+        &context.pool,
+        context.bear_id,
+        context.user_id,
+        &context.external_conversation_id,
+        context.source_session_id.as_deref(),
+        None,
+    )
+    .await?;
+    let source_event_id = canonical_record_source_event_id(record);
+    if source_event_id.is_none()
+        && canonical_record_already_persisted(context, canonical.id, record).await?
+    {
+        return canonical_record_existing_message_id(context, canonical.id, record).await;
+    }
+    let write = record.to_write(source_event_id);
+    let appended = append_message(&context.pool, canonical.id, &write).await?;
+    Ok(Some(appended.id))
+}
+
 pub async fn persist_canonical_conversation_record(
     context: &ConversationPersistenceContext,
     record: &CanonicalConversationRecord,

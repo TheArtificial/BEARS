@@ -122,37 +122,32 @@ pub fn autonomous_execution_gate_for_plan(
 
     let items = &plan.items;
     let acceptance_criteria_met = acceptance_criteria_met(plan);
-    let has_hard_blocker = items
-        .iter()
-        .any(|item| item.status == TaskListItemStatus::Blocked)
-        || matches!(plan.status.as_str(), "blocked");
+    // A blocked sibling is not a global stop condition: continue any independent
+    // pending work. Only the durable list-level blocked state represents a
+    // structured execution gate for the whole focused plan.
+    let has_hard_blocker = matches!(plan.status.as_str(), "blocked");
     let next_incomplete_task_title =
         next_incomplete_unblocked_item(items).map(|item| item.title.clone());
     let has_incomplete_unblocked_items = next_incomplete_task_title.is_some();
+    // Runtime limits and prose-only scope claims do not settle active work.
+    // They must lead to a continuation or a separately persisted structured
+    // pause/blocker, never authorize a normal terminal response by themselves.
     let may_stop = if acceptance_criteria_met {
         final_response_kind == AutonomousFinalResponseKind::CompletionFinal
+    } else if has_incomplete_unblocked_items {
+        false
     } else if has_hard_blocker {
         matches!(
             final_response_kind,
             AutonomousFinalResponseKind::BlockedFinal
                 | AutonomousFinalResponseKind::ReasonedNonActionFinal
-                | AutonomousFinalResponseKind::ScopeEscalationFinal
-                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
                 | AutonomousFinalResponseKind::UnsafeActionPermissionRequest
-        )
-    } else if has_incomplete_unblocked_items {
-        matches!(
-            final_response_kind,
-            AutonomousFinalResponseKind::ScopeEscalationFinal
-                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
         )
     } else {
         matches!(
             final_response_kind,
             AutonomousFinalResponseKind::CompletionFinal
                 | AutonomousFinalResponseKind::ReasonedNonActionFinal
-                | AutonomousFinalResponseKind::ScopeEscalationFinal
-                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
         )
     };
 
@@ -331,37 +326,32 @@ pub fn autonomous_execution_gate_for_task_list(
     };
 
     let acceptance_criteria_met = task_list_acceptance_criteria_met(task_list);
-    let has_hard_blocker = task_list
-        .items
-        .iter()
-        .any(|item| item.status == TaskListItemStatus::Blocked)
-        || matches!(task_list.status.as_str(), "blocked");
+    // A blocked sibling is not a global stop condition: continue any independent
+    // pending work. Only the durable list-level blocked state represents a
+    // structured execution gate for the whole focused plan.
+    let has_hard_blocker = matches!(task_list.status.as_str(), "blocked");
     let next_incomplete_task_title =
         next_incomplete_unblocked_task_list_item(&task_list.items).map(|item| item.title.clone());
     let has_incomplete_unblocked_items = next_incomplete_task_title.is_some();
+    // Runtime limits and prose-only scope claims do not settle active work.
+    // They must lead to a continuation or a separately persisted structured
+    // pause/blocker, never authorize a normal terminal response by themselves.
     let may_stop = if acceptance_criteria_met {
         final_response_kind == AutonomousFinalResponseKind::CompletionFinal
+    } else if has_incomplete_unblocked_items {
+        false
     } else if has_hard_blocker {
         matches!(
             final_response_kind,
             AutonomousFinalResponseKind::BlockedFinal
                 | AutonomousFinalResponseKind::ReasonedNonActionFinal
-                | AutonomousFinalResponseKind::ScopeEscalationFinal
-                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
                 | AutonomousFinalResponseKind::UnsafeActionPermissionRequest
-        )
-    } else if has_incomplete_unblocked_items {
-        matches!(
-            final_response_kind,
-            AutonomousFinalResponseKind::ScopeEscalationFinal
         )
     } else {
         matches!(
             final_response_kind,
             AutonomousFinalResponseKind::CompletionFinal
                 | AutonomousFinalResponseKind::ReasonedNonActionFinal
-                | AutonomousFinalResponseKind::ScopeEscalationFinal
-                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
         )
     };
 
@@ -878,9 +868,9 @@ mod tests {
     }
 
     #[test]
-    fn blocked_remaining_task_allows_blocker_final() {
+    fn blocked_list_state_allows_blocker_final() {
         let task_list = task_list(
-            "active",
+            "blocked",
             vec![
                 task_list_item("Implement change", TaskListItemStatus::Completed),
                 task_list_item("Commit changes", TaskListItemStatus::Blocked),
@@ -900,7 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn scope_escalation_final_allows_terminal_response_with_remaining_work() {
+    fn scope_escalation_prose_does_not_allow_terminal_response_with_remaining_work() {
         let task_list = task_list(
             "active",
             vec![
@@ -924,7 +914,7 @@ mod tests {
         );
 
         assert!(gate.has_incomplete_unblocked_items);
-        assert!(gate.may_stop);
+        assert!(!gate.may_stop);
     }
 
     #[test]

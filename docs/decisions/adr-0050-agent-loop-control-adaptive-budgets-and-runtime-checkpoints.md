@@ -34,7 +34,10 @@
 >
 > **2026-07-14 journal integration.** A checkpoint remains a tactical continuation-focus evaluation: it asks what changed, what remains, and what smallest next bounded action could credibly justify continuing. It neither establishes task output nor automatically writes durable task/job history. Per ADR-0034, it may deliberately append or promote a typed Docket entry only when it yields a durable finding, decision, obstacle, follow-up, milestone, or outcome. Routine checkpoint narration remains run-loop telemetry; checkpoint text and entry creation never alone justify additional budget.
 
-## Context
+> **2026-08-10 Pair planning update.** The target Pair model is the
+> session-connected current-task model in
+> [AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md), not this ADR's older focused-Job examples. A Pair session has at most one session-connected root task; **planning mode is derived solely from that root task being `draft`**, never stored as a separate flag. A draft root makes descendants non-executable. Once the root is non-draft, explicit current-task selection begins Pair execution focus; a Pair run records the resulting execution attempt and checkpoint/resume history but does not authorize execution. This supersedes conflicting Pair/focused-Job wording below until the ADR is fully reconciled.
+>
 
 The Den-native loop historically used a small, mostly flat `max_steps` ceiling as its primary protection against runaway tool loops. That protected infrastructure and user experience, but in practice it also strangled useful multi-step work.
 

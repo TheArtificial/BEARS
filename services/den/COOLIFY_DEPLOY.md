@@ -12,12 +12,12 @@
 
 - Coolify v4+
 - A **PostgreSQL** instance (Coolify managed database, external managed Postgres, or another service on a shared Docker network).
-- **Git** access to this monorepo if you use the **Dockerfile** build pack (recommended for GitOps).
+- For the recommended GitHub-built image path, GHCR pull access configured on the Coolify host when packages are private. Git repository access remains necessary for the root Compose resource because it supplies stack configuration.
 - **Bifrost** reachable from Den for model calls (`LLM_API_URL`, defaulting to the compose service URL in the root stack).
 
 ---
 
-## Option A: Build from Git — Dockerfile build pack
+## Option A: Build from Git — Dockerfile build pack (legacy/direct path)
 
 ### 1. Database (before first deploy)
 
@@ -28,7 +28,7 @@
 
 1. Open your Coolify **project** → **Add New Resource**.
 2. Connect **this** repository (public or private, per your hosting setup).
-3. Choose the **Dockerfile** build pack (not “Docker Image” alone — you want Coolify to **build** from the repo).
+3. Choose the **Dockerfile** build pack only when intentionally using this direct source-build path. The recommended root-stack path is [Option B](#option-b-github-built-image-deployment-recommended).
 
 ### 3. Point Coolify at `services/den/`
 
@@ -150,19 +150,20 @@ Use **Deploy** / **Redeploy** on the resource. Watch **Build logs** for compile 
 
 ---
 
-## Option B: Versioned image publish from CI
+## Option B: GitHub-built image deployment (recommended)
 
-The normal compose deployment builds Den from source on the deploy host. GitHub Actions only publishes a Den image when `services/den/Cargo.toml` changes and the Den crate `package.version` is different from the previous commit.
+GitHub Actions is the build authority for the root Compose stack's Den-derived services. Coolify pulls the published images; it does not compile Den during deployment.
 
-The workflow:
+On every relevant source change, `.github/workflows/den-image.yml` builds with **`SQLX_OFFLINE=true`** against the committed [`.sqlx/`](.sqlx/) metadata and publishes both:
 
-- Builds with **`SQLX_OFFLINE=true`** against the committed [`.sqlx/`](.sqlx/) metadata (no database needed at build time).
-- Tags images as **`ghcr.io/<owner>/den:<version>`**, **`ghcr.io/<owner>/den:v<version>`**, and the commit SHA. The default branch also gets `latest`.
-- Uses GitHub Actions layer cache (`type=gha`) so unchanged layers are reused across builds.
+- `ghcr.io/<owner>/den` for `bears-den` and `bears-den-migrate`;
+- `ghcr.io/<owner>/den-sandbox-provider` for `bears-sandbox-provider`.
 
-Use this path for pinned releases or external consumers. The root `docker-compose.yaml` does not depend on these images for normal deployment.
+Each image receives an immutable `sha-<commit>` tag. Pushes to `test` also update `:testing`; pushes to `main` update `:latest`. After both images are available, `.github/workflows/coolify-deploy.yml` calls the environment-specific Coolify webhook.
 
-If you do deploy one of these images directly and the GHCR package is **private**, authenticate Docker on the Coolify server so it can pull the image. SSH in and run as root:
+Set the matching image variables on each Coolify resource and disable Coolify Git-push auto-deploys. The Compose file sets `pull_policy: always` for these services so a webhook deployment pulls the new lane digest.
+
+If the GHCR packages are **private**, authenticate Docker on the Coolify server so it can pull the image. SSH in and run as root:
    ```
    echo "<GITHUB_PAT>" | docker login ghcr.io -u <GITHUB_USER> --password-stdin
    ```
@@ -176,14 +177,14 @@ When these images are used in the compose stack, `bears-den-migrate` still appli
 
 ---
 
-## Build caching (what is and isn't cached)
+## Build caching (GitHub Actions)
 
-Coolify builds Den from source on every deploy. The [`Dockerfile`](Dockerfile) uses three BuildKit cache mounts that persist on the deploy host across deployments (until `docker builder prune`):
+GitHub Actions builds Den images and owns the relevant cache. The [`Dockerfile`](Dockerfile) uses three BuildKit cache mounts:
 
 - `/usr/local/cargo/registry` + `/usr/local/cargo/git` — downloaded crate sources.
 - `/app/target` — compiled artifacts.
 
-**External dependencies** are not re-downloaded or recompiled unless `Cargo.lock` changes — resolved by the `/app/target` mount.
+**External dependencies** are not re-downloaded or recompiled unless `Cargo.lock` changes — resolved by the `/app/target` mount exported through the Actions and registry BuildKit caches.
 
 **Workspace crates** (`den-core`, `den-web`, …) are kept incremental with Cargo's `-Z checksum-freshness`, which decides freshness from file **content hashes** instead of mtimes. Without it, Docker's `COPY` stamps a fresh mtime on every file each build and Cargo recompiles the entire workspace every deploy. The feature is still [unstable](https://github.com/rust-lang/cargo/issues/14136), so the build stage installs a **pinned nightly toolchain** (`RUST_NIGHTLY` in the [`Dockerfile`](Dockerfile)) purely to enable it; the runtime image is unaffected.
 
@@ -191,7 +192,7 @@ Coolify builds Den from source on every deploy. The [`Dockerfile`](Dockerfile) u
 >
 > **Caveat:** files read by build scripts (e.g. `minijinja-embed` template embedding) still use mtimes even under `checksum-freshness`, so template-embedding edge crates (`den-web`, `den-http`, `den-api`) may still recompile when any file changes; the leaf crates get the full benefit.
 
-> **Avoiding the double build:** Coolify runs `docker compose build` then `docker compose up -d`, from two different directories. `bears-den` deliberately does **not** set `pull_policy: build` — that flag would force the `up` step to recompile the image a second time even though `build` already produced `bears-den:local`. Without it, `up` reuses the freshly built image. The `build` phase always runs first, so the reused image is always current. (The cache mounts are also shared across passes by `id=`, so even a forced second build reused dependencies — but the workspace would still recompile, which is what removing the flag avoids.)
+> **Deploy behavior:** Coolify does not build Den. The base Compose file uses `pull_policy: always` for the CI-published Den services, so every webhook deploy resolves the current `testing` or `latest` digest. Local source builds use [`docker-compose.dev.yaml`](../../docker-compose.dev.yaml), which restores the build sections and disables registry pulls.
 
 ---
 

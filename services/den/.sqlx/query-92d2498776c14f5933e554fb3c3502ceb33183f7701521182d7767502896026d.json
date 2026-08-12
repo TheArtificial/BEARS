@@ -1,0 +1,137 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO docket_routing_decisions (\n            idempotency_key, bear_id, job_id, run_id, task_id, turn_source,\n            conversation_strategy, conversation_id, parent_conversation_id,\n            routing_strategy, execution_surface, resolved_profile, attempt, reason\n        )\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)\n        RETURNING\n            id AS \"id!: Uuid\",\n            idempotency_key AS \"idempotency_key!: Uuid\",\n            bear_id AS \"bear_id!: Uuid\",\n            job_id AS \"job_id!: Uuid\",\n            run_id AS \"run_id!: Uuid\",\n            task_id AS \"task_id!: Uuid\",\n            turn_source AS \"turn_source!: String\",\n            conversation_strategy AS \"conversation_strategy!: String\",\n            conversation_id AS \"conversation_id!: String\",\n            parent_conversation_id AS \"parent_conversation_id?: String\",\n            routing_strategy AS \"routing_strategy!: String\",\n            execution_surface AS \"execution_surface!: String\",\n            resolved_profile AS \"resolved_profile?: String\",\n            attempt AS \"attempt!: i32\",\n            cursor_before AS \"cursor_before?: Value\",\n            cursor_after AS \"cursor_after?: Value\",\n            reason AS \"reason!: String\",\n            created_at AS \"created_at!: OffsetDateTime\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "idempotency_key!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "bear_id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "job_id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "run_id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "task_id!: Uuid",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "turn_source!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "conversation_strategy!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "conversation_id!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "parent_conversation_id?: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "routing_strategy!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "execution_surface!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "resolved_profile?: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "attempt!: i32",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "cursor_before?: Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 15,
+        "name": "cursor_after?: Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 16,
+        "name": "reason!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "created_at!: OffsetDateTime",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "92d2498776c14f5933e554fb3c3502ceb33183f7701521182d7767502896026d"
+}

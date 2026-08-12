@@ -15,10 +15,11 @@ use super::model::{
     task_list_projection_from_docket_job, DocketCriterionStateUpdate, DocketEntryCreate,
     DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketExecutionLookup,
     DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest,
-    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate,
-    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
-    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
+    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate,
+    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection,
+    DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest, TaskListCheckoutSource,
+    TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome,
+    TaskListSyncRequest,
 };
 
 /// Orchestration API for task and job state. The only public entry point to the
@@ -78,6 +79,11 @@ pub trait DocketService: Send + Sync {
 
     async fn update_task(&self, update: DocketTaskUpdate)
         -> Result<DocketTaskProjection, DenError>;
+
+    async fn settle_session_task(
+        &self,
+        settlement: DocketSessionTaskSettlement,
+    ) -> Result<DocketTaskProjection, DenError>;
 
     async fn append_entry(&self, create: DocketEntryCreate) -> Result<DocketEntryRow, DenError>;
 
@@ -202,6 +208,13 @@ impl DocketService for PgDocketService {
         update: DocketTaskUpdate,
     ) -> Result<DocketTaskProjection, DenError> {
         db::update_task(&self.pool, update).await
+    }
+
+    async fn settle_session_task(
+        &self,
+        settlement: DocketSessionTaskSettlement,
+    ) -> Result<DocketTaskProjection, DenError> {
+        db::settle_session_task(&self.pool, settlement).await
     }
 
     async fn append_entry(&self, create: DocketEntryCreate) -> Result<DocketEntryRow, DenError> {

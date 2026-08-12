@@ -10,10 +10,15 @@ use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
 use futures::{stream, Stream};
+use uuid::Uuid;
 
+use crate::agent_loop::{
+    record_loop_control_decision, LedgerEvidenceRef, LoopControlDecisionKind,
+    LoopControlLedgerInput,
+};
 use crate::runtime::completion_policy::{
     decide_turn_completion, TurnCompletionCompleteReason, TurnCompletionDecision,
-    TurnCompletionPolicyInput,
+    TurnCompletionPauseReason, TurnCompletionPolicyInput,
 };
 use crate::runtime::task_context::{
     resolve_runtime_task_context, RuntimeTaskContext, RuntimeTaskResolveRequest,
@@ -40,6 +45,8 @@ use crate::{
     native_runtime::is_task_definition_or_delegation_tool_provider_name,
     runtime_compaction::enqueue_compaction_after_turn,
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
+    turn_runs,
+    turn_state::TaskFocusLoopDetection,
 };
 use den_core::tools::{
     arguments::DenToolChannelContext,
@@ -56,7 +63,8 @@ use den_core::{config::Config, governance::Governance, profile::BearProfile, Den
 use den_docket::TaskListProjection;
 
 use super::transcript::{
-    spawn_persist_abandoned_native_tool_results, spawn_persist_native_agent_step,
+    persist_native_assistant_output_with_id, spawn_persist_abandoned_native_tool_results,
+    spawn_persist_native_agent_step,
 };
 use super::{session_store::AgentLoopSession, ObjectiveOrientation, OrientationTaskRef};
 
@@ -93,6 +101,10 @@ type FinalGateFocusFuture = Pin<
             + Send,
     >,
 >;
+type PausePersistenceFuture =
+    Pin<Box<dyn Future<Output = Result<RuntimeSemanticEvent, DenError>> + Send>>;
+type FinalGateMessagePersistenceFuture =
+    Pin<Box<dyn Future<Output = Result<Option<Uuid>, DenError>> + Send>>;
 
 fn render_final_gate_continuation_guidance(next_task: &str) -> Result<String, DenError> {
     // Keep reusable final-gate steering in the fragment registry; this helper is
@@ -256,6 +268,8 @@ pub struct SessionTrackingStream {
     pending_server_tool_continuation: Option<String>,
     pending_final_gate_continuation: Option<FinalGateContinuationFuture>,
     pending_final_gate_focus: Option<FinalGateFocusFuture>,
+    pending_final_gate_message_persistence: Option<FinalGateMessagePersistenceFuture>,
+    pending_pause_persistence: Option<PausePersistenceFuture>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
     stores: MemoryStoreManager,
@@ -309,6 +323,8 @@ impl SessionTrackingStream {
             pending_server_tool_continuation: None,
             pending_final_gate_continuation: None,
             pending_final_gate_focus: None,
+            pending_final_gate_message_persistence: None,
+            pending_pause_persistence: None,
             dispatch_mode,
             config,
             stores,
@@ -525,6 +541,9 @@ impl SessionTrackingStream {
             .get(&self.session_key)
             .map(|session| session.objective_orientation)?;
         match orientation {
+            ObjectiveOrientation::Freeform { policy } if !policy.may_define_task => {
+                Some("freeform task definition is disabled for this run".to_string())
+            }
             ObjectiveOrientation::DocketExecution { job } if !job.mutable => Some(
                 "objective orientation is immutable focused; task decomposition is not allowed"
                     .to_string(),
@@ -796,35 +815,116 @@ impl SessionTrackingStream {
                 store.update(&session_key, |session| {
                     session.turn_budget_state = evaluation.next_state.clone();
                 });
+                let mut claimed_budget_continuation = false;
                 if let Some(reason) = evaluation.stop_reason {
-                    tracing::warn!(
-                        event = "native_turn_budget_fuse",
-                        session_key = %session_key,
-                        conversation_id = %session.conversation_id,
-                        client_session_id = %session.client_session_id,
-                        request_id = ?session.request_id,
-                        run_id = ?session.run_id,
-                        step = session.step,
-                        limit = session.turn_budget.emergency_hard_steps,
-                        "server-side continuation stopped by turn budget"
-                    );
-                    store.update(&session_key, |session| {
-                        session.turn_budget_state = Default::default();
-                    });
-                    return Ok(Box::pin(stream::iter(vec![
-                        Ok(RuntimeStreamEvent::Semantic(
-                            RuntimeSemanticEvent::AssistantTextDelta {
-                                text: reason.user_message(),
+                    if profile == BearProfile::Pair && reason.resumes_pair_execution_automatically()
+                    {
+                        let run_id = session.run_id.clone().ok_or_else(|| {
+                            DenError::System(
+                                "active Pair execution cannot resume without a persisted run ID"
+                                    .to_string(),
+                            )
+                        })?;
+                        let task_list = session.cached_activity_plan_projection.clone();
+                        let reason_code = reason.persistence_reason();
+                        let active_item = task_list
+                            .as_ref()
+                            .and_then(|list| list.current_item.as_ref());
+                        let Some(transitioned) =
+                            turn_runs::claim_run_continuation(&pool, &run_id, Some(reason_code))
+                                .await?
+                        else {
+                            return Err(DenError::System(format!(
+                                "Pair run {run_id} was not running when budget continuation was claimed"
+                            )));
+                        };
+                        if let Err(error) = record_loop_control_decision(
+                            &pool,
+                            LoopControlLedgerInput {
+                                run_id: run_id.clone(),
+                                turn_step_id: None,
+                                conversation_message_id: None,
+                                decision_id: format!(
+                                    "budget-slice-continuation-{}",
+                                    Uuid::new_v4()
+                                ),
+                                decision_kind: LoopControlDecisionKind::BudgetSliceContinuation,
+                                control_level: "standard".to_string(),
+                                reason: Some(reason_code.to_string()),
+                                orientation_kind: Some(profile.as_str().to_string()),
+                                checkpoint_id: None,
+                                related_task_list_id: task_list
+                                    .as_ref()
+                                    .map(|list| list.id.to_string()),
+                                related_task_item_id: active_item.map(|item| item.id.clone()),
+                                related_docket_job_id: task_list
+                                    .as_ref()
+                                    .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok()),
+                                related_docket_task_id: active_item
+                                    .and_then(|item| Uuid::parse_str(&item.id).ok()),
+                                evidence_refs: vec![LedgerEvidenceRef {
+                                    kind: "turn_run_state".to_string(),
+                                    id: transitioned.state,
+                                }],
+                                decision: serde_json::json!({
+                                    "action": "continue",
+                                    "reason": reason_code,
+                                    "same_run": true,
+                                }),
                             },
-                        )),
-                        Ok(RuntimeStreamEvent::Semantic(
-                            RuntimeSemanticEvent::TurnCompleted { turn: None },
-                        )),
-                    ])) as RuntimeEventStream);
+                        )
+                        .await
+                        {
+                            let _ =
+                                turn_runs::release_claimed_run_continuation(&pool, &run_id).await;
+                            return Err(error);
+                        }
+                        store.update(&session_key, |session| {
+                            session.turn_budget_state = Default::default();
+                        });
+                        claimed_budget_continuation = true;
+                    } else {
+                        tracing::warn!(
+                            event = "native_turn_budget_fuse",
+                            session_key = %session_key,
+                            conversation_id = %session.conversation_id,
+                            client_session_id = %session.client_session_id,
+                            request_id = ?session.request_id,
+                            run_id = ?session.run_id,
+                            step = session.step,
+                            limit = session.turn_budget.emergency_hard_steps,
+                            "server-side continuation stopped by turn budget"
+                        );
+                        store.update(&session_key, |session| {
+                            session.turn_budget_state = Default::default();
+                        });
+                        return Ok(Box::pin(stream::iter(vec![
+                            Ok(RuntimeStreamEvent::Semantic(
+                                RuntimeSemanticEvent::AssistantTextDelta {
+                                    text: reason.user_message(),
+                                },
+                            )),
+                            Ok(RuntimeStreamEvent::Semantic(
+                                RuntimeSemanticEvent::TurnCompleted { turn: None },
+                            )),
+                        ])) as RuntimeEventStream);
+                    }
                 }
                 session = store.get(&session_key).ok_or_else(|| {
                     DenError::System("native agent loop session not found".to_string())
                 })?;
+                if claimed_budget_continuation {
+                    let run_id = session.run_id.as_deref().expect(
+                        "budget continuation claim requires the persisted run ID checked above",
+                    );
+                    turn_runs::begin_claimed_run_continuation(&pool, run_id)
+                        .await?
+                        .ok_or_else(|| {
+                            DenError::System(format!(
+                                "Pair run {run_id} was not continuing when its successor slice began"
+                            ))
+                        })?;
+                }
                 tracing::warn!(
                     event = "native_server_tool_continuation",
                     session_key = %session_key,
@@ -1253,12 +1353,31 @@ impl SessionTrackingStream {
                 .cached_activity_plan_projection
                 .clone_from(&current_task_list);
         });
-        self.evaluate_final_gate_or_complete(current_task_list);
+        let pool = self.pool.clone();
+        let bear_id = self.bear_id;
+        let user_id = self.user_id;
+        let conversation_id = self.conversation_id.clone();
+        let client_session_id = self.client_session_id.clone();
+        let request_id = self.request_id.clone();
+        let assistant_text = self.assistant_text.clone();
+        self.pending_final_gate_message_persistence = Some(Box::pin(async move {
+            persist_native_assistant_output_with_id(
+                pool,
+                bear_id,
+                user_id,
+                conversation_id,
+                client_session_id,
+                request_id,
+                assistant_text,
+            )
+            .await
+        }));
     }
 
     fn evaluate_final_gate_or_complete(
         &mut self,
         cached_activity_plan_projection: Option<TaskListProjection>,
+        conversation_message_id: Option<Uuid>,
     ) {
         let recent_texts = self
             .store
@@ -1296,7 +1415,15 @@ impl SessionTrackingStream {
                     final_response_kind = ?final_response_kind,
                     "native runtime converted premature terminal response into continuation nudge"
                 );
-                self.begin_final_gate_continuation(&next_task);
+                if let Err(error) = self.begin_final_gate_continuation(
+                    &next_task,
+                    format!("{reason:?}"),
+                    format!("{final_response_kind:?}"),
+                    conversation_message_id,
+                ) {
+                    self.pending_pause_persistence = Some(Box::pin(async move { Err(error) }));
+                    return;
+                }
                 self.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunProgress {
                     kind: "autonomous_continuation_gate".to_string(),
                     text: Some(format!(
@@ -1313,9 +1440,9 @@ impl SessionTrackingStream {
                 });
                 return;
             }
-            TurnCompletionDecision::Complete {
-                reason: TurnCompletionCompleteReason::RepeatedTerminalObjection,
-                loop_detection: Some(loop_detection),
+            TurnCompletionDecision::Pause {
+                reason: TurnCompletionPauseReason::RepeatedTerminalObjection,
+                loop_detection,
                 ..
             } => {
                 self.finished = true;
@@ -1325,10 +1452,12 @@ impl SessionTrackingStream {
                     terminal_objections = loop_detection.terminal_objections,
                     continuation_nudges = loop_detection.continuation_nudges,
                     repeated_objection_kind = ?loop_detection.repeated_objection_kind,
-                    "native runtime task-focus loop detected; accepting terminal objection instead of issuing another continuation nudge"
+                    "native runtime task-focus loop detected; pausing active task instead of accepting terminal objection"
                 );
-                self.pending_pause_after_tool =
-                    Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
+                self.begin_repeated_terminal_objection_pause(
+                    &loop_detection,
+                    conversation_message_id,
+                );
                 return;
             }
             TurnCompletionDecision::Complete {
@@ -1355,6 +1484,82 @@ impl SessionTrackingStream {
         });
         self.finished = true;
         self.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
+    }
+
+    fn begin_repeated_terminal_objection_pause(
+        &mut self,
+        loop_detection: &TaskFocusLoopDetection,
+        conversation_message_id: Option<Uuid>,
+    ) {
+        let run_id = match self
+            .store
+            .get(&self.session_key)
+            .and_then(|session| session.run_id)
+        {
+            Some(run_id) => run_id,
+            None => {
+                self.pending_pause_persistence = Some(Box::pin(async {
+                    Err(DenError::System(
+                        "active Pair execution cannot pause without a persisted run ID".to_string(),
+                    ))
+                }));
+                return;
+            }
+        };
+        let pool = self.pool.clone();
+        let profile = self.profile;
+        let task_list = self
+            .store
+            .get(&self.session_key)
+            .and_then(|session| session.cached_activity_plan_projection);
+        let terminal_objections = loop_detection.terminal_objections;
+        let continuation_nudges = loop_detection.continuation_nudges;
+        let repeated_objection_kind = format!("{:?}", loop_detection.repeated_objection_kind);
+        self.pending_pause_persistence = Some(Box::pin(async move {
+            let task_list_id = task_list.as_ref().map(|list| list.id.to_string());
+            let active_item = task_list
+                .as_ref()
+                .and_then(|list| list.current_item.as_ref());
+            let related_docket_task_id =
+                active_item.and_then(|item| Uuid::parse_str(&item.id).ok());
+            let related_docket_job_id = task_list
+                .as_ref()
+                .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok());
+            record_loop_control_decision(
+                &pool,
+                LoopControlLedgerInput {
+                    run_id,
+                    turn_step_id: None,
+                    conversation_message_id,
+                    decision_id: format!("active-task-pause-{}", Uuid::new_v4()),
+                    decision_kind: LoopControlDecisionKind::ActiveTaskPause,
+                    control_level: "standard".to_string(),
+                    reason: Some("repeated_terminal_objection".to_string()),
+                    orientation_kind: Some(profile.as_str().to_string()),
+                    checkpoint_id: None,
+                    related_task_list_id: task_list_id,
+                    related_task_item_id: active_item.map(|item| item.id.clone()),
+                    related_docket_job_id,
+                    related_docket_task_id,
+                    evidence_refs: vec![LedgerEvidenceRef {
+                        kind: "loop_detection".to_string(),
+                        id: "repeated_terminal_objection".to_string(),
+                    }],
+                    decision: serde_json::json!({
+                        "terminal_objections": terminal_objections,
+                        "continuation_nudges": continuation_nudges,
+                        "repeated_objection_kind": repeated_objection_kind,
+                        "resume_semantics": "manual_or_scheduler_resume_required",
+                    }),
+                },
+            )
+            .await?;
+            Ok(RuntimeSemanticEvent::RunPaused {
+                reason: "active_task_repeated_terminal_objection".to_string(),
+                resume_token: None,
+                expires_at: None,
+            })
+        }));
     }
 
     fn begin_final_gate_focus_resolution(&mut self) {
@@ -1407,7 +1612,13 @@ impl SessionTrackingStream {
         }));
     }
 
-    fn begin_final_gate_continuation(&mut self, next_task: &str) {
+    fn begin_final_gate_continuation(
+        &mut self,
+        next_task: &str,
+        reason: String,
+        final_response_kind: String,
+        conversation_message_id: Option<Uuid>,
+    ) -> Result<(), DenError> {
         let model_message = render_final_gate_continuation_guidance(next_task).unwrap_or_else(|err| {
             tracing::warn!(
                 error = %err,
@@ -1428,12 +1639,58 @@ impl SessionTrackingStream {
             });
         });
 
+        let session = self
+            .store
+            .get(&self.session_key)
+            .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
+        let run_id = session.run_id.ok_or_else(|| {
+            DenError::System(
+                "active Pair execution cannot continue without a persisted run ID".to_string(),
+            )
+        })?;
+        let task_list = session.cached_activity_plan_projection;
+        let next_task = next_task.to_string();
         let store = self.store.clone();
         let session_key = self.session_key.clone();
         let config = self.config.clone();
         let pool = self.pool.clone();
         let profile = self.profile;
         self.pending_final_gate_continuation = Some(Box::pin(async move {
+            let task_list_id = task_list.as_ref().map(|list| list.id.to_string());
+            let active_item = task_list
+                .as_ref()
+                .and_then(|list| list.current_item.as_ref());
+            record_loop_control_decision(
+                &pool,
+                LoopControlLedgerInput {
+                    run_id,
+                    turn_step_id: None,
+                    conversation_message_id,
+                    decision_id: format!("final-gate-continuation-{}", Uuid::new_v4()),
+                    decision_kind: LoopControlDecisionKind::FinalGateContinuation,
+                    control_level: "standard".to_string(),
+                    reason: Some(reason),
+                    orientation_kind: Some(profile.as_str().to_string()),
+                    checkpoint_id: None,
+                    related_task_list_id: task_list_id,
+                    related_task_item_id: active_item.map(|item| item.id.clone()),
+                    related_docket_job_id: task_list
+                        .as_ref()
+                        .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok()),
+                    related_docket_task_id: active_item
+                        .and_then(|item| Uuid::parse_str(&item.id).ok()),
+                    evidence_refs: vec![LedgerEvidenceRef {
+                        kind: "final_response_kind".to_string(),
+                        id: final_response_kind.clone(),
+                    }],
+                    decision: serde_json::json!({
+                        "action": "continue",
+                        "next_task": next_task,
+                        "final_response_kind": final_response_kind,
+                    }),
+                },
+            )
+            .await?;
             let session = store.get(&session_key).ok_or_else(|| {
                 DenError::System("native agent loop session not found".to_string())
             })?;
@@ -1446,6 +1703,7 @@ impl SessionTrackingStream {
             };
             run_agent_step_stream(&llm, &session, Some(overflow)).await
         }));
+        Ok(())
     }
 }
 
@@ -1536,6 +1794,45 @@ impl Stream for SessionTrackingStream {
                     if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
                         self.remove_recent_server_tool_chain_from_session(&tool_call_id);
                     }
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        if let Some(fut) = self.pending_pause_persistence.as_mut() {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(pause)) => {
+                    self.pending_pause_persistence = None;
+                    self.pending_pause_after_tool = Some(pause);
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_pause_persistence = None;
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        if let Some(fut) = self.pending_final_gate_message_persistence.as_mut() {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(conversation_message_id)) => {
+                    self.pending_final_gate_message_persistence = None;
+                    let current_task_list = self
+                        .store
+                        .get(&self.session_key)
+                        .and_then(|session| session.cached_activity_plan_projection);
+                    self.evaluate_final_gate_or_complete(
+                        current_task_list,
+                        conversation_message_id,
+                    );
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_final_gate_message_persistence = None;
                     return Poll::Ready(Some(Err(error)));
                 }
                 Poll::Pending => return Poll::Pending,
@@ -2007,6 +2304,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn closed_freeform_orientation_denies_task_definition() {
+        let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let stream = test_tracking_stream_with_session(&session);
+
+        let error = stream
+            .task_definition_policy_error("create_task", &serde_json::json!({}))
+            .expect("closed freeform task creation is rejected");
+
+        assert!(error.contains("freeform task definition is disabled"));
+    }
+
+    #[tokio::test]
     async fn immutable_focused_orientation_denies_task_decomposition() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         session.objective_orientation = crate::agent_loop::ObjectiveOrientation::DocketExecution {
@@ -2322,7 +2631,14 @@ mod tests {
         session.governance = Governance::Interactive;
         let mut stream = test_tracking_stream_with_session(&session);
 
-        stream.begin_final_gate_continuation("finish the task");
+        stream
+            .begin_final_gate_continuation(
+                "finish the task",
+                "test".to_string(),
+                "progress_only".to_string(),
+                None,
+            )
+            .expect("continuation setup");
 
         let stored = stream
             .store
@@ -2366,6 +2682,43 @@ mod tests {
         }
     }
 
+    fn pending_task_list_projection() -> den_docket::TaskListProjection {
+        let mut task_list = completed_task_list_projection();
+        task_list.status = "active".to_string();
+        task_list.items[0].status = den_docket::TaskListItemStatus::Pending;
+        task_list.items[0].title = "Continue implementation".to_string();
+        task_list
+    }
+
+    #[tokio::test]
+    async fn repeated_terminal_objection_rejects_runless_pause_before_persistence() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let focused = pending_task_list_projection();
+        session.run_id = None;
+        session.governance = Governance::AutonomousContinuation;
+        session.cached_activity_plan_projection = Some(focused);
+        let mut stream = test_tracking_stream_with_session(&session);
+
+        stream.begin_repeated_terminal_objection_pause(
+            &TaskFocusLoopDetection {
+                detected: true,
+                continuation_nudges: 2,
+                terminal_objections: 2,
+                repeated_objection_kind: None,
+            },
+            None,
+        );
+
+        let error = stream
+            .next()
+            .await
+            .expect("runless pause error")
+            .expect_err("RunPaused must not be emitted without a persisted run");
+        assert!(error
+            .to_string()
+            .contains("cannot pause without a persisted run ID"));
+    }
+
     #[tokio::test]
     async fn final_gate_completion_drains_completed_focus_state() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
@@ -2373,7 +2726,7 @@ mod tests {
         session.cached_activity_plan_projection = Some(completed_task_list_projection());
         let mut stream = test_tracking_stream_with_session(&session);
 
-        stream.evaluate_final_gate_or_complete(Some(completed_task_list_projection()));
+        stream.evaluate_final_gate_or_complete(Some(completed_task_list_projection()), None);
 
         let stored = stream
             .store

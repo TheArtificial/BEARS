@@ -669,11 +669,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_CREATE,
             "Create Docket task",
-            "Create a durable Docket task under an explicit work Docket job or, in pair conversation scope when job_id is omitted, the current Pair task tree. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. session_anchor_id identifies the Pair task-tree root. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition. Keep full UUIDs for tool calls and evidence; in prose use a typed unambiguous short handle such as `task e4e4797b` (extend the prefix if needed). Do not invent a web URL: use a UI link only when a tool result provides one.",
+            "Create a durable Docket task under an explicit work Docket job or, when job_id is omitted in Pair, under the authenticated current Pair session. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. A task has exactly one owner: its Job or its current Pair session. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Terminal task outcomes are recorded atomically in the task journal; Job-run evidence is required when the Job task's execution policy requires it. Keep full UUIDs for tool calls and evidence; in prose use a typed unambiguous short handle such as `task e4e4797b` (extend the prefix if needed). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"placement":{"oneOf":[{"type":"object","properties":{"kind":{"const":"first"}},"required":["kind"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"last"}},"required":["kind"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"before"},"task_id":{"type":"string","format":"uuid"}},"required":["kind","task_id"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"after"},"task_id":{"type":"string","format":"uuid"}},"required":["kind","task_id"],"additionalProperties":false}]},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"created_in_run_id":{"type":"string","format":"uuid"}},"required":["title","body","completion_criteria"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"placement":{"oneOf":[{"type":"object","properties":{"kind":{"const":"first"}},"required":["kind"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"last"}},"required":["kind"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"before"},"task_id":{"type":"string","format":"uuid"}},"required":["kind","task_id"],"additionalProperties":false},{"type":"object","properties":{"kind":{"const":"after"},"task_id":{"type":"string","format":"uuid"}},"required":["kind","task_id"],"additionalProperties":false}]},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"created_in_run_id":{"type":"string","format":"uuid"}},"required":["title","body","completion_criteria"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST,
@@ -696,7 +696,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE,
             "Update Docket task definition",
-            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, done, blocked, or cancelled; pass job_id/run_id when known to avoid ambiguous active-run inference.",
+            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort. Do not use for status or result changes; use update_current_task_status to settle a task and record its durable journal outcome.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
@@ -1004,6 +1004,9 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_TASK_CREATE,
         DEN_TASK_LIST,
         DEN_TASK_UPDATE,
+        // ACP has no client-owned task-picker UI. The Pair agent selects only on
+        // explicit user instruction; task-list visibility is not task authority.
+        DEN_TASK_SELECT,
         DEN_TASK_UPDATE_CURRENT_STATUS,
         DEN_DOCKET_ENTRY_APPEND,
         DEN_DOCKET_ENTRY_LIST,

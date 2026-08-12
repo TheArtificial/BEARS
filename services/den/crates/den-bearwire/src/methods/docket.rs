@@ -166,7 +166,20 @@ pub async fn docket_jobs_execute_result(
         })
         .await?;
 
-    Ok(json!(outcome))
+    let run = outcome.job.current_run.as_ref();
+    let execution_state = run
+        .map(|run| run.state.to_string())
+        .unwrap_or("not_started".to_owned());
+
+    Ok(json!({
+        "action": "execution_requested",
+        "execution": {
+            "requested": true,
+            "state": execution_state,
+            "run_id": run.map(|run| run.id),
+        },
+        "outcome": outcome,
+    }))
 }
 
 async fn source_conversation_id(

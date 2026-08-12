@@ -115,16 +115,6 @@ impl WorkRunState {
     }
 }
 
-const WORK_RUN_COLUMNS: &str =
-    "id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, \
-     runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, \
-     cancel_requested_at, git_ref, image_name, \
-     sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, \
-     execution_target, attached_client_session_id, attachment_state, attachment_warning, \
-     disconnected_at, disconnect_deadline_at, \
-     bearwire_session_id, result_summary, result_refs, usage, error, \
-     queued_at, started_at, finished_at, updated_at";
-
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct WorkRunRow {
     pub id: Uuid,
@@ -225,14 +215,14 @@ pub async fn enqueue_work_run(
     pool: &PgPool,
     enqueue: WorkRunEnqueue,
 ) -> Result<WorkRunRow, DenError> {
-    let job_id: Option<(Uuid,)> =
-        sqlx::query_as("SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2")
-            .bind(enqueue.task_id)
-            .bind(enqueue.bear_id)
-            .fetch_optional(pool)
-            .await?;
-    let (job_id,) = job_id
-        .ok_or_else(|| DenError::NotFound(format!("Docket task not found: {}", enqueue.task_id)))?;
+    let job_id = sqlx::query_scalar!(
+        "SELECT job_id AS \"job_id!\" FROM bear_tasks WHERE id = $1 AND bear_id = $2",
+        enqueue.task_id,
+        enqueue.bear_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DenError::NotFound(format!("Docket task not found: {}", enqueue.task_id)))?;
     enqueue_work_job(
         pool,
         WorkJobEnqueue {
@@ -257,23 +247,13 @@ pub async fn enqueue_work_job(
     enqueue: WorkJobEnqueue,
 ) -> Result<Vec<WorkRunRow>, DenError> {
     let mut tx = pool.begin().await?;
-    type JobEnqueueRow = (
-        Option<Uuid>,
-        Option<String>,
-        Option<String>,
-        Option<Uuid>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        bool,
-    );
-    let job: Option<JobEnqueueRow> = sqlx::query_as(
-        "SELECT a.work_surface_id, s.name, a.mutation_policy, j.current_run_id, j.lifecycle_intent,
-                    j.commit_policy, j.work_branch,
+    let job = sqlx::query!(
+        "SELECT a.work_surface_id AS \"work_surface_id?\", s.name AS \"surface_name?\", a.mutation_policy AS \"mutation_policy?\", j.current_run_id AS \"current_run_id?\", j.lifecycle_intent AS \"lifecycle_intent?\",
+                    j.commit_policy AS \"commit_policy?\", j.work_branch AS \"work_branch?\",
                     EXISTS (
                         SELECT 1 FROM work_surface_bears wsb
                         WHERE wsb.surface_id = a.work_surface_id AND wsb.bear_id = j.bear_id
-                    ) AS surface_assigned
+                    ) AS \"surface_assigned!\"
              FROM bear_jobs j
              LEFT JOIN LATERAL (
                  SELECT a.work_surface_id, a.mutation_policy
@@ -284,30 +264,18 @@ pub async fn enqueue_work_job(
                  LIMIT 1
              ) a ON true
              LEFT JOIN work_surfaces s ON s.id = a.work_surface_id
-             WHERE j.id = $1 AND j.bear_id = $2 FOR UPDATE OF j",
-    )
-    .bind(enqueue.job_id)
-    .bind(enqueue.bear_id)
+             WHERE j.id = $1 AND j.bear_id = $2 FOR UPDATE OF j", enqueue.job_id, enqueue.bear_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((
-        surface_id,
-        surface_name,
-        mutation_policy,
-        current_run_id,
-        lifecycle_intent,
-        commit_policy,
-        work_branch,
-        surface_assigned,
-    )) = job
-    else {
+    let Some(job) = job else {
         return Err(DenError::NotFound(format!(
             "Docket job not found: {}",
             enqueue.job_id
         )));
     };
-    if surface_id.is_none()
-        || surface_name
+    if job.work_surface_id.is_none()
+        || job
+            .surface_name
             .as_deref()
             .is_none_or(|name| name.trim().is_empty())
     {
@@ -315,26 +283,26 @@ pub async fn enqueue_work_job(
             "work_surface_required: this work job lacks a valid managed work-surface binding; select or rebind a surface before dispatch".into(),
         ));
     }
-    if mutation_policy.as_deref() == Some("forbidden") {
+    if job.mutation_policy.as_deref() == Some("forbidden") {
         return Err(DenError::ValidationError(format!(
             "managed work surface '{}' forbids mutation for this job",
-            surface_name.as_deref().unwrap_or("unknown")
+            job.surface_name.as_deref().unwrap_or("unknown")
         )));
     }
-    if !surface_assigned {
+    if !job.surface_assigned {
         return Err(DenError::ValidationError(format!(
             "managed work surface '{}' is not assigned to this Bear",
-            surface_name.as_deref().unwrap_or("unknown")
+            job.surface_name.as_deref().unwrap_or("unknown")
         )));
     }
-    if lifecycle_intent.is_some() {
+    if job.lifecycle_intent.is_some() {
         return Err(DenError::ValidationError(
             "job is not dispatchable; cancelled or archived work jobs cannot start work runs"
                 .into(),
         ));
     }
 
-    let commit_policy = match commit_policy.as_deref() {
+    let commit_policy = match job.commit_policy.as_deref() {
         Some("none") => Some(crate::DocketCommitPolicy::None),
         Some("per_task") => Some(crate::DocketCommitPolicy::PerTask),
         Some("per_job") => Some(crate::DocketCommitPolicy::PerJob),
@@ -344,7 +312,7 @@ pub async fn enqueue_work_job(
         &enqueue.execution_target,
         enqueue.durable_result,
         commit_policy,
-        work_branch.as_deref(),
+        job.work_branch.as_deref(),
     );
     if !preflight.dispatchable {
         return Err(DenError::ValidationError(
@@ -353,75 +321,61 @@ pub async fn enqueue_work_job(
         ));
     }
 
-    let provider_surface = effective_work_run_surface(surface_name.as_deref());
+    let provider_surface = effective_work_run_surface(job.surface_name.as_deref());
     if provider_surface.is_none() {
         return Err(DenError::ValidationError(
             "work_surface_required: this work job lacks a usable managed work-surface binding"
                 .into(),
         ));
     }
-    let runnable: bool = sqlx::query_scalar(
+    let runnable = sqlx::query_scalar!(
         "SELECT EXISTS (
              SELECT 1 FROM bear_tasks t
              LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
              WHERE t.job_id = $1
                AND COALESCE(s.status, 'pending') IN ('pending', 'blocked')
          )",
+        enqueue.job_id,
+        job.current_run_id
     )
-    .bind(enqueue.job_id)
-    .bind(current_run_id)
     .fetch_one(&mut *tx)
     .await?;
-    if !runnable {
+    if !runnable.unwrap_or(false) {
         return Err(DenError::ValidationError(
             "job has no runnable work tasks to dispatch".into(),
         ));
     }
 
-    let job_run_id = match current_run_id {
+    let job_run_id = match job.current_run_id {
         Some(run_id) => run_id,
         None => {
-            let run_id: Uuid = sqlx::query_scalar(
-                "INSERT INTO bear_job_runs (job_id, trigger, state) VALUES ($1, 'event', 'running') RETURNING id",
-            )
-            .bind(enqueue.job_id)
+            let run_id: Uuid = sqlx::query_scalar!(
+                "INSERT INTO bear_job_runs (job_id, trigger, state) VALUES ($1, 'event', 'running') RETURNING id", enqueue.job_id)
             .fetch_one(&mut *tx)
             .await?;
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE bear_jobs SET current_run_id = $2, updated_at = now() WHERE id = $1",
+                enqueue.job_id,
+                run_id
             )
-            .bind(enqueue.job_id)
-            .bind(run_id)
             .execute(&mut *tx)
             .await?;
             run_id
         }
     };
-    let attempt: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(attempt), 0) + 1 FROM bear_work_runs WHERE job_id = $1",
+    let attempt: i32 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(attempt), 0) + 1 AS \"attempt!\" FROM bear_work_runs WHERE job_id = $1",
+        enqueue.job_id
     )
-    .bind(enqueue.job_id)
     .fetch_one(&mut *tx)
     .await?;
     let execution_target = enqueue.execution_target.as_str();
     let attached_client_session_id = enqueue.execution_target.client_session_id();
     let attachment_state = attached_client_session_id.map(|_| "attached");
-    let run = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id, attempt, git_ref, image_name,
+    let run = sqlx::query_as!(WorkRunRow,        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id, attempt, git_ref, image_name,
                                      execution_target, attached_client_session_id, attachment_state,
                                      attachment_warning)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING {WORK_RUN_COLUMNS}"
-    ))
-    .bind(enqueue.bear_id)
-    .bind(enqueue.job_id)
-    .bind(job_run_id)
-    .bind(attempt)
-    .bind(enqueue.git_ref)
-    .bind(enqueue.image_name)
-    .bind(execution_target)
-    .bind(attached_client_session_id)
-    .bind(attachment_state)
-    .bind(enqueue.attachment_warning)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at", enqueue.bear_id, enqueue.job_id, job_run_id, attempt, enqueue.git_ref, enqueue.image_name, execution_target, attached_client_session_id, attachment_state, enqueue.attachment_warning)
     .fetch_one(&mut *tx)
     .await
     .map_err(|err| match err {
@@ -480,8 +434,7 @@ async fn claim_next_work_run_once(
     lease: std::time::Duration,
 ) -> Result<Option<WorkRunRow>, DenError> {
     let lease_secs = i64::try_from(lease.as_secs()).unwrap_or(i64::MAX);
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "WITH candidate AS (
+    let row = sqlx::query_as!(WorkRunRow,        "WITH candidate AS (
              SELECT id FROM bear_work_runs r
              WHERE (
                      r.state = 'queued'
@@ -510,15 +463,7 @@ async fn claim_next_work_run_once(
              updated_at = now()
          FROM candidate
          WHERE r.id = candidate.id
-         RETURNING {}",
-        WORK_RUN_COLUMNS
-            .split(", ")
-            .map(|c| format!("r.{c}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    ))
-    .bind(runner_id)
-    .bind(lease_secs as f64)
+         RETURNING r.id, r.bear_id, r.job_id, r.job_run_id, r.executing_task_id, r.attempt, r.state, r.runner_id, r.lease_expires_at, r.cancel_requested, r.cancel_requested_by, r.cancel_reason, r.cancel_requested_at, r.git_ref, r.image_name, r.sandbox_server_url, r.sandbox_id, r.sandbox_type, r.sandbox_strength, r.work_surface, r.execution_target, r.attached_client_session_id, r.attachment_state, r.attachment_warning, r.disconnected_at, r.disconnect_deadline_at, r.bearwire_session_id, r.result_summary, r.result_refs, r.usage, r.error, r.queued_at, r.started_at, r.finished_at, r.updated_at", runner_id, lease_secs as f64)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -528,7 +473,7 @@ async fn claim_next_work_run_once(
 /// (ties broken by id). Used by the claim recheck: when two workers race two
 /// queued runs of one job into flight, the younger one yields.
 async fn has_older_inflight_sibling(pool: &PgPool, run: &WorkRunRow) -> Result<bool, DenError> {
-    let (exists,): (bool,) = sqlx::query_as(
+    let exists = sqlx::query_scalar!(
         "SELECT EXISTS (
              SELECT 1 FROM bear_work_runs sibling
              WHERE sibling.job_id = $1
@@ -536,11 +481,11 @@ async fn has_older_inflight_sibling(pool: &PgPool, run: &WorkRunRow) -> Result<b
                AND sibling.state IN ('claimed', 'provisioning', 'running', 'reporting')
                AND (sibling.queued_at < $3
                     OR (sibling.queued_at = $3 AND sibling.id < $2))
-         )",
+         ) AS \"exists!\"",
+        run.job_id,
+        run.id,
+        run.queued_at
     )
-    .bind(run.job_id)
-    .bind(run.id)
-    .bind(run.queued_at)
     .fetch_one(pool)
     .await?;
     Ok(exists)
@@ -552,13 +497,13 @@ async fn release_work_run_claim(
     run_id: Uuid,
     runner_id: &str,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE bear_work_runs
          SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = now()
          WHERE id = $1 AND runner_id = $2 AND state = 'claimed' AND sandbox_id IS NULL",
+        run_id,
+        runner_id
     )
-    .bind(run_id)
-    .bind(runner_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -584,12 +529,13 @@ pub async fn queued_run_positions(
     if run_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let rows = sqlx::query_as::<_, WorkRunQueueInfo>(
+    let rows = sqlx::query_as!(
+        WorkRunQueueInfo,
         "SELECT r.id AS run_id,
                 (SELECT count(*) FROM bear_work_runs q
                  WHERE q.job_id = r.job_id AND q.state = 'queued'
                    AND (q.queued_at < r.queued_at
-                        OR (q.queued_at = r.queued_at AND q.id <= r.id))) AS position,
+                        OR (q.queued_at = r.queued_at AND q.id <= r.id))) AS \"position!\",
                 (SELECT s.id FROM bear_work_runs s
                  WHERE s.job_id = r.job_id
                    AND s.state IN ('claimed', 'provisioning', 'running', 'reporting')
@@ -597,8 +543,8 @@ pub async fn queued_run_positions(
                  LIMIT 1) AS waiting_on_run_id
          FROM bear_work_runs r
          WHERE r.id = ANY($1) AND r.state = 'queued'",
+        run_ids
     )
-    .bind(run_ids)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -625,7 +571,8 @@ pub async fn attention_work_runs(
     job_id: Option<Uuid>,
     limit: i64,
 ) -> Result<Vec<AttentionWorkRun>, DenError> {
-    let rows = sqlx::query_as::<_, AttentionWorkRun>(
+    let rows = sqlx::query_as!(
+        AttentionWorkRun,
         "SELECT latest.id AS run_id, latest.job_id, j.goal AS job_goal,
                 latest.state, latest.result_summary, latest.error, latest.finished_at
          FROM (
@@ -639,10 +586,10 @@ pub async fn attention_work_runs(
          WHERE latest.state IN ('stalled', 'blocked', 'failed', 'timed_out')
          ORDER BY latest.finished_at DESC NULLS LAST
          LIMIT $3",
+        bear_id,
+        job_id,
+        limit.clamp(1, 100)
     )
-    .bind(bear_id)
-    .bind(job_id)
-    .bind(limit.clamp(1, 100))
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -655,7 +602,7 @@ pub async fn jobs_awaiting_completion(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<crate::model::DocketJobRow>, DenError> {
-    let rows = sqlx::query_as::<_, crate::model::DocketJobRow>(
+    let rows = sqlx::query_as!(crate::model::DocketJobRow,
         "SELECT j.id, j.bear_id, j.created_by_user_id, j.created_by_role, j.goal,
                 (SELECT a.work_surface_id
                  FROM job_work_surface_assignments a
@@ -663,7 +610,7 @@ pub async fn jobs_awaiting_completion(
                  WHERE a.job_id = j.id AND s.kind = 'git_workspace' AND a.mutation_policy <> 'forbidden'
                  ORDER BY a.created_at LIMIT 1) AS work_surface_id,
                 j.commit_policy, j.work_branch,
-                COALESCE(j.lifecycle_intent, 'draft') AS status, j.lifecycle_intent, j.visibility,
+                COALESCE(j.lifecycle_intent, 'draft') AS \"status!\", j.lifecycle_intent, j.visibility,
                 j.source_conversation_id, j.objective_kind, j.current_run_id, j.supersedes_job_id,
                 j.created_at, j.updated_at
          FROM bear_jobs j
@@ -677,9 +624,7 @@ pub async fn jobs_awaiting_completion(
                WHERE t.job_id = j.id
                  AND COALESCE(s.status, 'pending') NOT IN ('done', 'cancelled')
            )
-         ORDER BY j.updated_at DESC",
-    )
-    .bind(bear_id)
+         ORDER BY j.updated_at DESC", bear_id)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -695,15 +640,15 @@ pub async fn heartbeat_work_run(
     lease: std::time::Duration,
 ) -> Result<bool, DenError> {
     let lease_secs = i64::try_from(lease.as_secs()).unwrap_or(i64::MAX);
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE bear_work_runs
          SET lease_expires_at = now() + make_interval(secs => $3), updated_at = now()
          WHERE id = $1 AND runner_id = $2
            AND state IN ('claimed', 'provisioning', 'running', 'reporting')",
+        run_id,
+        runner_id,
+        lease_secs as f64
     )
-    .bind(run_id)
-    .bind(runner_id)
-    .bind(lease_secs as f64)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -725,27 +670,22 @@ pub async fn record_work_run_provisioned(
     run_id: Uuid,
     provisioned: &WorkRunProvisioned,
 ) -> Result<WorkRunRow, DenError> {
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
+    let rust_dependency_preparation = provisioned
+        .rust_dependency_preparation
+        .as_ref()
+        .unwrap_or(&Value::Null);
+    let row = sqlx::query_as!(WorkRunRow,
         "UPDATE bear_work_runs
          SET state = 'running',
              sandbox_server_url = $2, sandbox_id = $3, sandbox_type = $4,
              sandbox_strength = $5, work_surface = $6,
-             result_refs = CASE
-                 WHEN $7::jsonb IS NULL THEN result_refs
-                 ELSE COALESCE(result_refs, '{{}}'::jsonb)
-                      || jsonb_build_object('rust_dependency_preparation', $7::jsonb)
-             END,
+             result_refs = CASE WHEN $8 THEN
+                 COALESCE(result_refs, '{}'::jsonb)
+                 || jsonb_build_object('rust_dependency_preparation', $7::jsonb)
+             ELSE result_refs END,
              started_at = COALESCE(started_at, now()), updated_at = now()
          WHERE id = $1 AND state IN ('claimed', 'provisioning')
-         RETURNING {WORK_RUN_COLUMNS}"
-    ))
-    .bind(run_id)
-    .bind(&provisioned.sandbox_server_url)
-    .bind(&provisioned.sandbox_id)
-    .bind(&provisioned.sandbox_type)
-    .bind(&provisioned.sandbox_strength)
-    .bind(&provisioned.work_surface)
-    .bind(&provisioned.rust_dependency_preparation)
+         RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at", run_id, &provisioned.sandbox_server_url, &provisioned.sandbox_id, &provisioned.sandbox_type, &provisioned.sandbox_strength, &provisioned.work_surface, rust_dependency_preparation, provisioned.rust_dependency_preparation.is_some())
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| {
@@ -763,16 +703,11 @@ pub async fn bind_work_run_session(
     bear_id: Uuid,
     session_id: &str,
 ) -> Result<WorkRunRow, DenError> {
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "UPDATE bear_work_runs
+    let row = sqlx::query_as!(WorkRunRow,        "UPDATE bear_work_runs
          SET bearwire_session_id = $3, updated_at = now()
          WHERE id = $1 AND bear_id = $2
            AND state IN ('claimed', 'provisioning', 'running')
-         RETURNING {WORK_RUN_COLUMNS}"
-    ))
-    .bind(run_id)
-    .bind(bear_id)
-    .bind(session_id)
+         RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at", run_id, bear_id, session_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| {
@@ -791,16 +726,12 @@ pub async fn record_work_run_turn_outcome(
     session_id: &str,
     outcome: &Value,
 ) -> Result<Option<WorkRunRow>, DenError> {
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "UPDATE bear_work_runs
+    let row = sqlx::query_as!(WorkRunRow,        "UPDATE bear_work_runs
          SET state = 'reporting',
-             result_refs = COALESCE(result_refs, '{{}}'::jsonb) || jsonb_build_object('turn_outcome', $2::jsonb),
+             result_refs = COALESCE(result_refs, '{}'::jsonb) || jsonb_build_object('turn_outcome', $2::jsonb),
              updated_at = now()
          WHERE bearwire_session_id = $1 AND state IN ('provisioning', 'running')
-         RETURNING {WORK_RUN_COLUMNS}"
-    ))
-    .bind(session_id)
-    .bind(outcome)
+         RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at", session_id, outcome)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -814,18 +745,18 @@ pub async fn record_work_run_report(
     status_hint: &str,
     summary: &str,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE bear_work_runs
          SET result_refs = COALESCE(result_refs, '{}'::jsonb)
                  || jsonb_build_object('armature_report',
                         jsonb_build_object('status_hint', $3::text, 'summary', $4::text)),
              updated_at = now()
          WHERE id = $1 AND bear_id = $2",
+        run_id,
+        bear_id,
+        status_hint,
+        summary
     )
-    .bind(run_id)
-    .bind(bear_id)
-    .bind(status_hint)
-    .bind(summary)
     .execute(pool)
     .await?;
     Ok(())
@@ -840,16 +771,16 @@ pub async fn record_work_run_dependency_preparation(
     bear_id: Uuid,
     result: &Value,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE bear_work_runs
          SET result_refs = COALESCE(result_refs, '{}'::jsonb)
                  || jsonb_build_object('rust_dependency_preparation', $3::jsonb),
              updated_at = now()
          WHERE id = $1 AND bear_id = $2",
+        run_id,
+        bear_id,
+        result
     )
-    .bind(run_id)
-    .bind(bear_id)
-    .bind(result)
     .execute(pool)
     .await?;
     Ok(())
@@ -988,11 +919,10 @@ pub async fn finalize_work_run(
         )));
     }
     let mut tx = pool.begin().await?;
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "UPDATE bear_work_runs
+    let row = sqlx::query_as!(WorkRunRow,        "UPDATE bear_work_runs
          SET state = $2,
              result_summary = COALESCE($3, result_summary),
-             result_refs = COALESCE(result_refs, '{{}}'::jsonb) || COALESCE($4::jsonb, '{{}}'::jsonb),
+             result_refs = COALESCE(result_refs, '{}'::jsonb) || COALESCE($4::jsonb, '{}'::jsonb),
              usage = COALESCE($5::jsonb, usage),
              error = COALESCE($6, error),
              runner_id = NULL,
@@ -1000,30 +930,22 @@ pub async fn finalize_work_run(
              finished_at = COALESCE(finished_at, now()),
              updated_at = now()
          WHERE id = $1 AND state NOT IN ('succeeded', 'stalled', 'blocked', 'failed', 'cancelled', 'timed_out')
-         RETURNING {WORK_RUN_COLUMNS}"
-    ))
-    .bind(run_id)
-    .bind(state.as_str())
-    .bind(finalize.result_summary.as_deref())
-    .bind(finalize.result_refs.as_ref())
-    .bind(finalize.usage.as_ref())
-    .bind(finalize.error.as_deref())
+         RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at", run_id, state.as_str(), finalize.result_summary.as_deref(), finalize.result_refs.as_ref(), finalize.usage.as_ref(), finalize.error.as_deref())
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| {
         DenError::ValidationError(format!("work run {run_id} is already finalized or unknown"))
     })?;
-    let task_statuses: Vec<(String,)> = sqlx::query_as(
-        "SELECT COALESCE(s.status, 'pending')
+    let task_statuses = sqlx::query_scalar!(
+        "SELECT COALESCE(s.status, 'pending') AS \"status!\"
          FROM bear_tasks t
          LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
          WHERE t.job_id = $1",
+        row.job_id,
+        row.job_run_id
     )
-    .bind(row.job_id)
-    .bind(row.job_run_id)
     .fetch_all(&mut *tx)
     .await?;
-    let task_statuses: Vec<String> = task_statuses.into_iter().map(|(status,)| status).collect();
     let result_refs = row.result_refs.as_ref().unwrap_or(&Value::Null);
     let mut canonical_state = canonical_work_run_state(state, result_refs, &task_statuses);
     if result_refs
@@ -1045,14 +967,14 @@ pub async fn finalize_work_run(
         .and_then(Value::as_str)
         == Some("continuation_watchdog_timeout")
     {
-        let affected_task: Option<(Uuid, String, String)> = sqlx::query_as(
-            "SELECT t.id, t.title, COALESCE(s.status, 'pending')
+        let affected_task = sqlx::query!(
+            "SELECT t.id AS \"id!\", t.title AS \"title!\", COALESCE(s.status, 'pending') AS \"status!\"
              FROM bear_tasks t
              LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
              WHERE t.id = $1",
+            row.executing_task_id,
+            row.job_run_id
         )
-        .bind(row.executing_task_id)
-        .bind(row.job_run_id)
         .fetch_optional(&mut *tx)
         .await?;
         let detail = result_refs.pointer("/turn_outcome/detail");
@@ -1061,28 +983,22 @@ pub async fn finalize_work_run(
             "code": "continuation_watchdog_timeout",
             "summary": "The model continuation stopped responding before this work run could finish.",
             "next_action": "Wait for evidence, retry the work run, cancel it, or resolve it as failed.",
-            "affected_task": affected_task.map(|(id, title, status)| json!({
-                "id": id,
-                "title": title,
-                "status": status,
+            "affected_task": affected_task.map(|task| json!({
+                "id": task.id,
+                "title": task.title,
+                "status": task.status,
             })),
             "forensics": detail.and_then(|detail| detail.get("forensics")).cloned(),
             "evidence_refs": ["turn_outcome", "task_run_states"],
         });
     }
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "UPDATE bear_work_runs
+    let row = sqlx::query_as!(WorkRunRow,        "UPDATE bear_work_runs
          SET state = $2,
              result_summary = $3,
-             result_refs = COALESCE(result_refs, '{{}}'::jsonb)
+             result_refs = COALESCE(result_refs, '{}'::jsonb)
                  || jsonb_build_object('outcome', $4::jsonb)
          WHERE id = $1
-         RETURNING {WORK_RUN_COLUMNS}"
-    ))
-    .bind(run_id)
-    .bind(canonical_state.as_str())
-    .bind(canonical_outcome["summary"].as_str())
-    .bind(&canonical_outcome)
+         RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at", run_id, canonical_state.as_str(), canonical_outcome["summary"].as_str(), &canonical_outcome)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -1198,7 +1114,7 @@ pub async fn request_work_run_cancel_with_provenance(
     bear_id: Uuid,
     request: &WorkRunCancelRequest,
 ) -> Result<bool, DenError> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE bear_work_runs
          SET cancel_requested = TRUE,
              cancel_requested_by = COALESCE(cancel_requested_by, $3),
@@ -1207,11 +1123,11 @@ pub async fn request_work_run_cancel_with_provenance(
              updated_at = now()
          WHERE id = $1 AND bear_id = $2
            AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')",
+        run_id,
+        bear_id,
+        &request.requested_by,
+        &request.reason
     )
-    .bind(run_id)
-    .bind(bear_id)
-    .bind(&request.requested_by)
-    .bind(&request.reason)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -1226,23 +1142,23 @@ pub async fn resolve_stalled_work_run(
     bear_id: Uuid,
     resolution: &StalledWorkRunResolution,
 ) -> Result<bool, DenError> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE bear_work_runs
          SET result_refs = COALESCE(result_refs, '{}'::jsonb) || jsonb_build_object(
                  'stalled_resolution', jsonb_build_object(
-                     'resolved_by', $3,
-                     'reason', $4,
+                     'resolved_by', $3::text,
+                     'reason', $4::text,
                      'resolved_at', now()
                  )
              ),
              updated_at = now()
          WHERE id = $1 AND bear_id = $2 AND state = 'stalled'
            AND NOT (COALESCE(result_refs, '{}'::jsonb) ? 'stalled_resolution')",
+        run_id,
+        bear_id,
+        &resolution.resolved_by,
+        &resolution.reason
     )
-    .bind(run_id)
-    .bind(bear_id)
-    .bind(&resolution.resolved_by)
-    .bind(&resolution.reason)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -1253,14 +1169,10 @@ pub async fn get_work_run_by_session(
     pool: &PgPool,
     session_id: &str,
 ) -> Result<Option<WorkRunRow>, DenError> {
-    // sqlx-dynamic: the shared typed work-run column projection is assembled centrally.
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs
+    let row = sqlx::query_as!(WorkRunRow,        "SELECT id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at FROM bear_work_runs
          WHERE bearwire_session_id = $1
          ORDER BY updated_at DESC
-         LIMIT 1"
-    ))
-    .bind(session_id)
+         LIMIT 1", session_id)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -1273,14 +1185,11 @@ pub async fn get_live_work_run_by_session(
     pool: &PgPool,
     session_id: &str,
 ) -> Result<Option<WorkRunRow>, DenError> {
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs
+    let row = sqlx::query_as!(WorkRunRow,        "SELECT id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at FROM bear_work_runs
          WHERE bearwire_session_id = $1
            AND state IN ('claimed', 'provisioning', 'running', 'reporting')
          ORDER BY updated_at DESC
-         LIMIT 1"
-    ))
-    .bind(session_id)
+         LIMIT 1", session_id)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -1295,16 +1204,15 @@ pub async fn mark_attached_work_run_permission_required(
 ) -> Result<bool, DenError> {
     // ponytail: runtime SQL until Phase 4 migration metadata can be prepared against Postgres;
     // upgrade to query! when cargo-sqlx and a migrated database are available.
-    // sqlx-dynamic: checked metadata cannot be generated in this database-free session.
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE bear_work_runs
          SET attachment_state = 'permission_required', updated_at = now()
          WHERE attached_client_session_id = $1
            AND execution_target = 'attached_armature'
            AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
            AND attachment_state IN ('attached', 'permission_required')",
+        session_id
     )
-    .bind(session_id)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -1319,16 +1227,15 @@ pub async fn settle_attached_work_run_permission(
 ) -> Result<bool, DenError> {
     // ponytail: runtime SQL until Phase 4 migration metadata can be prepared against Postgres;
     // upgrade to query! when cargo-sqlx and a migrated database are available.
-    // sqlx-dynamic: checked metadata cannot be generated in this database-free session.
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE bear_work_runs
          SET attachment_state = 'attached', updated_at = now()
          WHERE attached_client_session_id = $1
            AND execution_target = 'attached_armature'
            AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
            AND attachment_state = 'permission_required'",
+        session_id
     )
-    .bind(session_id)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -1342,9 +1249,7 @@ pub async fn disconnect_attached_work_run(
     let deadline = OffsetDateTime::now_utc()
         + time::Duration::try_from(timeout)
             .map_err(|_| DenError::ValidationError("disconnect timeout is too large".into()))?;
-    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "UPDATE bear_work_runs
+    let row = sqlx::query_as!(WorkRunRow,        "UPDATE bear_work_runs
          SET state = 'paused', attachment_state = 'disconnected',
              disconnected_at = COALESCE(disconnected_at, now()),
              disconnect_deadline_at = COALESCE(disconnect_deadline_at, $2),
@@ -1353,10 +1258,7 @@ pub async fn disconnect_attached_work_run(
            AND execution_target = 'attached_armature'
            AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
            AND attachment_state <> 'timed_out'
-         RETURNING {WORK_RUN_COLUMNS}"
-    ))
-    .bind(session_id)
-    .bind(deadline)
+         RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at", session_id, deadline)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -1366,30 +1268,24 @@ pub async fn reconnect_attached_work_run(
     pool: &PgPool,
     session_id: &str,
 ) -> Result<Option<WorkRunRow>, DenError> {
-    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "UPDATE bear_work_runs
+    let row = sqlx::query_as!(WorkRunRow,        "UPDATE bear_work_runs
          SET attachment_state = 'attached', disconnected_at = NULL,
              disconnect_deadline_at = NULL, updated_at = now()
          WHERE attached_client_session_id = $1
            AND execution_target = 'attached_armature'
            AND state = 'paused' AND attachment_state = 'disconnected'
            AND disconnect_deadline_at > now()
-         RETURNING {WORK_RUN_COLUMNS}"
-    ))
-    .bind(session_id)
+         RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at", session_id)
     .fetch_optional(pool)
     .await?;
     Ok(row)
 }
 
 pub async fn timeout_disconnected_work_runs(pool: &PgPool) -> Result<Vec<WorkRunRow>, DenError> {
-    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
-    let rows = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "UPDATE bear_work_runs
+    let rows = sqlx::query_as!(WorkRunRow,        "UPDATE bear_work_runs
          SET state = 'timed_out', attachment_state = 'timed_out',
              result_summary = 'Attached armature disconnected and did not reconnect before the deadline.',
-             result_refs = COALESCE(result_refs, '{{}}'::jsonb) || jsonb_build_object(
+             result_refs = COALESCE(result_refs, '{}'::jsonb) || jsonb_build_object(
                  'outcome', jsonb_build_object(
                      'status', 'timed_out',
                      'code', 'armature_disconnect_timeout',
@@ -1406,8 +1302,7 @@ pub async fn timeout_disconnected_work_runs(pool: &PgPool) -> Result<Vec<WorkRun
          WHERE execution_target = 'attached_armature'
            AND state = 'paused' AND attachment_state = 'disconnected'
            AND disconnect_deadline_at <= now()
-         RETURNING {WORK_RUN_COLUMNS}"
-    ))
+         RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at")
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -1432,13 +1327,8 @@ pub async fn recover_attached_work_run(
     bear_id: Uuid,
 ) -> Result<WorkRunRow, DenError> {
     let mut tx = pool.begin().await?;
-    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
-    let source = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs
-         WHERE id = $1 AND bear_id = $2 FOR UPDATE"
-    ))
-    .bind(source_run_id)
-    .bind(bear_id)
+    let source = sqlx::query_as!(WorkRunRow,        "SELECT id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at FROM bear_work_runs
+         WHERE id = $1 AND bear_id = $2 FOR UPDATE", source_run_id, bear_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| DenError::NotFound(format!("work run not found: {source_run_id}")))?;
@@ -1459,16 +1349,14 @@ pub async fn recover_attached_work_run(
         })?;
     // ponytail: runtime SQL until Phase 4 migration metadata can be prepared against Postgres;
     // upgrade to query_scalar! when cargo-sqlx and a migrated database are available.
-    // sqlx-dynamic: checked metadata cannot be generated in this database-free session.
-    let attempt: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(attempt), 0) + 1 FROM bear_work_runs WHERE job_id = $1",
+    let attempt = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(attempt), 0) + 1 AS \"attempt!\" FROM bear_work_runs WHERE job_id = $1",
+        source.job_id
     )
-    .bind(source.job_id)
     .fetch_one(&mut *tx)
     .await?;
-    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
-    let recovered = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "INSERT INTO bear_work_runs (
+    let source_work_run_id = source.id.to_string();
+    let recovered = sqlx::query_as!(WorkRunRow,        "INSERT INTO bear_work_runs (
              bear_id, job_id, job_run_id, attempt, git_ref, image_name,
              execution_target, attached_client_session_id, attachment_state,
              attachment_warning, result_refs
@@ -1477,20 +1365,9 @@ pub async fn recover_attached_work_run(
              'attached_armature', $7, 'attached', $8,
              jsonb_build_object('recovery', jsonb_build_object(
                  'source_work_run_id', $9::text,
-                 'source_outcome', COALESCE($10::jsonb, '{{}}'::jsonb)
+                 'source_outcome', COALESCE($10::jsonb, '{}'::jsonb)
              ))
-         ) RETURNING {WORK_RUN_COLUMNS}"
-    ))
-    .bind(source.bear_id)
-    .bind(source.job_id)
-    .bind(source.job_run_id)
-    .bind(attempt)
-    .bind(source.git_ref.as_deref())
-    .bind(source.image_name.as_deref())
-    .bind(session_id)
-    .bind(source.attachment_warning.as_deref())
-    .bind(source.id)
-    .bind(source.result_refs.as_ref())
+         ) RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at", source.bear_id, source.job_id, source.job_run_id, attempt, source.git_ref.as_deref(), source.image_name.as_deref(), session_id, source.attachment_warning.as_deref(), &source_work_run_id, source.result_refs.as_ref())
     .fetch_one(&mut *tx)
     .await
     .map_err(|err| match err {
@@ -1547,28 +1424,31 @@ pub async fn checkout_work_run_for_session(
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
 
-    type ActiveTaskRow = (
-        Uuid,
-        String,
-        String,
-        sqlx::types::Json<Vec<String>>,
-        Option<String>,
-    );
     // `job_id` is the durable Work-run assignment. `executing_task_id` is
     // only the current progress checkpoint inside that Job, so an absent
     // checkpoint selects the Job's next runnable task rather than changing
     // the run's assignment.
-    let active_task: Option<ActiveTaskRow> = sqlx::query_as(
-        "SELECT t.id, t.title, t.body, t.completion_criteria, t.difficulty
+    let active_task = sqlx::query!(
+        "SELECT t.id AS \"id!\", t.title AS \"title!\", t.body AS \"body!\", t.completion_criteria AS \"completion_criteria!\", t.difficulty AS \"difficulty?\"
          FROM bear_tasks t
          WHERE t.id = $1 AND t.job_id = $2",
+        run.executing_task_id,
+        run.job_id
     )
-    .bind(run.executing_task_id)
-    .bind(run.job_id)
     .fetch_optional(pool)
     .await?;
     let task = match active_task {
-        Some(task) => task,
+        Some(task) => (
+            task.id,
+            task.title,
+            task.body,
+            sqlx::types::Json(serde_json::from_value(task.completion_criteria).map_err(
+                |error| {
+                    DenError::ValidationError(format!("invalid task completion criteria: {error}"))
+                },
+            )?),
+            task.difficulty,
+        ),
         None => {
             let service = PgDocketService::from_pool(pool);
             let task = service
@@ -1592,11 +1472,11 @@ pub async fn checkout_work_run_for_session(
     };
     // A checkout records the selected task on the work run. Task state is
     // durable outcome only; active execution is derived from this live run.
-    sqlx::query(
+    sqlx::query!(
         "UPDATE bear_work_runs SET executing_task_id = $2, updated_at = NOW() WHERE id = $1",
+        run.id,
+        task.0
     )
-    .bind(run.id)
-    .bind(task.0)
     .execute(pool)
     .await?;
 
@@ -1634,11 +1514,14 @@ pub async fn checkout_work_run_for_session(
     )
     .await?;
     let tasks = vec![(task.0, task.1, task.2, task.3)];
-    let (goal, commit_policy): (String, Option<String>) =
-        sqlx::query_as("SELECT goal, commit_policy FROM bear_jobs WHERE id = $1")
-            .bind(run.job_id)
-            .fetch_one(pool)
-            .await?;
+    let job = sqlx::query!(
+        "SELECT goal AS \"goal!\", commit_policy AS \"commit_policy?\" FROM bear_jobs WHERE id = $1",
+        run.job_id
+    )
+    .fetch_one(pool)
+    .await?;
+    let goal = job.goal;
+    let commit_policy = job.commit_policy;
     crate::db::upsert_execution_session(
         pool,
         DocketExecutionSessionUpsert {
@@ -1706,10 +1589,7 @@ fn parse_task_difficulty(raw: &str) -> Option<DocketTaskDifficulty> {
 }
 
 pub async fn get_work_run(pool: &PgPool, run_id: Uuid) -> Result<Option<WorkRunRow>, DenError> {
-    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs WHERE id = $1"
-    ))
-    .bind(run_id)
+    let row = sqlx::query_as!(WorkRunRow,        "SELECT id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at FROM bear_work_runs WHERE id = $1", run_id)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -1732,18 +1612,12 @@ pub async fn list_work_runs(
     } else {
         filter.limit.min(200)
     };
-    let rows = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs
+    let rows = sqlx::query_as!(WorkRunRow,        "SELECT id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at FROM bear_work_runs
          WHERE ($1::uuid IS NULL OR bear_id = $1)
            AND ($2::uuid IS NULL OR job_id = $2)
            AND ($3::text IS NULL OR state = $3)
          ORDER BY queued_at DESC
-         LIMIT $4"
-    ))
-    .bind(filter.bear_id)
-    .bind(filter.job_id)
-    .bind(filter.state.as_deref())
-    .bind(limit)
+         LIMIT $4", filter.bear_id, filter.job_id, filter.state.as_deref(), limit)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -1755,13 +1629,10 @@ pub async fn list_owned_work_runs(
     pool: &PgPool,
     runner_id: &str,
 ) -> Result<Vec<WorkRunRow>, DenError> {
-    let rows = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs
+    let rows = sqlx::query_as!(WorkRunRow,        "SELECT id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at FROM bear_work_runs
          WHERE runner_id = $1
            AND state IN ('claimed', 'provisioning', 'running', 'reporting')
-         ORDER BY queued_at ASC"
-    ))
-    .bind(runner_id)
+         ORDER BY queued_at ASC", runner_id)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -1774,13 +1645,13 @@ pub async fn merge_work_run_result_refs(
     run_id: Uuid,
     refs: &Value,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE bear_work_runs
          SET result_refs = COALESCE(result_refs, '{}'::jsonb) || $2::jsonb, updated_at = now()
          WHERE id = $1",
+        run_id,
+        refs
     )
-    .bind(run_id)
-    .bind(refs)
     .execute(pool)
     .await?;
     Ok(())
@@ -1794,13 +1665,14 @@ pub async fn get_task_run_status(
     job_run_id: Uuid,
     task_id: Uuid,
 ) -> Result<Option<String>, DenError> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2")
-            .bind(job_run_id)
-            .bind(task_id)
-            .fetch_optional(pool)
-            .await?;
-    Ok(row.map(|(status,)| status))
+    sqlx::query_scalar!(
+        "SELECT status AS \"status!\" FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
+        job_run_id,
+        task_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
 }
 
 /// Run-scoped states for every unfinished task in a job. A job-scoped work run
@@ -1811,18 +1683,18 @@ pub async fn get_job_work_task_run_statuses(
     job_id: Uuid,
     job_run_id: Uuid,
 ) -> Result<Vec<(Uuid, String)>, DenError> {
-    sqlx::query_as(
-        "SELECT t.id, COALESCE(s.status, 'pending')
+    let rows = sqlx::query!(
+        "SELECT t.id AS \"id!\", COALESCE(s.status, 'pending') AS \"status!\"
          FROM bear_tasks t
          LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
          WHERE t.job_id = $1
          ORDER BY t.sibling_order, t.created_at",
+        job_id,
+        job_run_id
     )
-    .bind(job_id)
-    .bind(job_run_id)
     .fetch_all(pool)
-    .await
-    .map_err(Into::into)
+    .await?;
+    Ok(rows.into_iter().map(|row| (row.id, row.status)).collect())
 }
 
 /// Close the work-stance execution session opened by `work.checkout`.
@@ -1831,14 +1703,14 @@ pub async fn close_work_execution_session(
     bear_id: Uuid,
     session_id: &str,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE docket_execution_sessions
          SET state = 'completed', updated_at = now()
          WHERE bear_id = $1 AND owner_profile = 'work' AND session_id = $2
            AND state IN ('active', 'blocked', 'completing', 'paused')",
+        bear_id,
+        session_id
     )
-    .bind(bear_id)
-    .bind(session_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -1847,11 +1719,12 @@ pub async fn close_work_execution_session(
 /// Bears that have jobs with unfinished tasks, for the optional auto-enqueue
 /// sweep (`WORK_DISPATCH_AUTO`).
 pub async fn list_bears_with_work_tasks(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
-    let rows: Vec<(Uuid,)> =
-        sqlx::query_as("SELECT DISTINCT bear_id FROM bear_jobs WHERE lifecycle_intent IS NULL")
-            .fetch_all(pool)
-            .await?;
-    Ok(rows.into_iter().map(|(id,)| id).collect())
+    sqlx::query_scalar!(
+        "SELECT DISTINCT bear_id AS \"bear_id!\" FROM bear_jobs WHERE lifecycle_intent IS NULL"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
 }
 
 /// Everything the dispatch worker needs to provision a claimed run.
@@ -1882,10 +1755,10 @@ pub async fn get_work_run_dispatch_context(
     pool: &PgPool,
     run_id: Uuid,
 ) -> Result<WorkRunDispatchContext, DenError> {
-    sqlx::query_as::<_, WorkRunDispatchContext>(
+    sqlx::query_as!(WorkRunDispatchContext,
         "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, s.name AS work_surface_name,
                 j.commit_policy, j.work_branch,
-                COALESCE(j.work_branch = g.default_ref, FALSE) AS allow_default_ref,
+                COALESCE(j.work_branch = g.default_ref, FALSE) AS \"allow_default_ref!\",
                 COALESCE((
                     SELECT jsonb_agg(
                         jsonb_build_object('summary', rr.summary, 'evidence_refs', rr.evidence_refs)
@@ -1910,9 +1783,7 @@ pub async fn get_work_run_dispatch_context(
          ) assignment ON true
          LEFT JOIN work_surfaces s ON s.id = assignment.work_surface_id
          LEFT JOIN git_work_surface_details g ON g.id = s.id
-         WHERE r.id = $1",
-    )
-    .bind(run_id)
+         WHERE r.id = $1", run_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| DenError::NotFound(format!("work run not found: {run_id}")))
@@ -1923,14 +1794,14 @@ pub async fn get_work_run_dispatch_context(
 /// branch at job creation; this never overwrites one.
 pub async fn ensure_job_work_branch(pool: &PgPool, job_id: Uuid) -> Result<String, DenError> {
     let generated = format!("den/job-{}", &job_id.simple().to_string()[..8]);
-    let (branch,): (String,) = sqlx::query_as(
+    let branch = sqlx::query_scalar!(
         "UPDATE bear_jobs
          SET work_branch = COALESCE(work_branch, $2), updated_at = now()
          WHERE id = $1
-         RETURNING work_branch",
+         RETURNING work_branch AS \"work_branch!\"",
+        job_id,
+        &generated
     )
-    .bind(job_id)
-    .bind(&generated)
     .fetch_one(pool)
     .await?;
     Ok(branch)

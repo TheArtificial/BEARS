@@ -1,10 +1,14 @@
 use axum::http::HeaderMap;
+use den_core::DenError;
 use den_docket::{DocketService, PgDocketService, TaskListItem, TaskListItemStatus};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use bearwire_protocol::{
-    methods::{SessionIdRequest, SessionModelSetRequest, SessionOpenRequest, SessionStateRequest},
+    methods::{
+        SessionCurrentTaskClearRequest, SessionCurrentTaskSelectionRequest, SessionIdRequest,
+        SessionModelSetRequest, SessionOpenRequest, SessionStateRequest,
+    },
     wire::BearWireEvent,
 };
 use den_http::errors::CustomError;
@@ -14,6 +18,7 @@ use den_runtime::{
         ConversationReview, ConversationReviewFinding, ConversationReviewFindingDetail,
         ConversationReviewTrigger, FindingSource,
     },
+    current_task::{preview_pair_current_task_selection, select_pair_current_task},
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
     runtime::task_context::{
@@ -231,23 +236,33 @@ async fn session_state_payload(
         &session.client_session_id,
     );
     let runtime_task_context = if work_enabled {
-        Some(
-            resolve_runtime_task_context(
-                &state.sqlx_pool,
-                RuntimeTaskResolveRequest {
-                    bear_id: session.bear_id,
-                    profile: BearProfile::Pair,
-                    user_id: Some(session.user_id),
-                    conversation_id: conversation_runtime_id.clone(),
-                    client_session_id: session.client_session_id.clone(),
-                    cached_activity_plan_projection: den_runtime::native_runtime::native_client_session_cached_activity_plan_projection(
-                        &conversation_runtime_id,
-                        &session.client_session_id,
-                    ),
-                },
-            )
-            .await?,
+        let context = resolve_runtime_task_context(
+            &state.sqlx_pool,
+            RuntimeTaskResolveRequest {
+                bear_id: session.bear_id,
+                profile: BearProfile::Pair,
+                user_id: Some(session.user_id),
+                conversation_id: conversation_runtime_id.clone(),
+                client_session_id: session.client_session_id.clone(),
+                cached_activity_plan_projection: den_runtime::native_runtime::native_client_session_cached_activity_plan_projection(
+                    &conversation_runtime_id,
+                    &session.client_session_id,
+                ),
+            },
         )
+        .await
+        .map_err(|error| match error {
+            DenError::Database(message) => CustomError::Database(format!(
+                "resolve Pair runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
+                session.bear_id, session.client_session_id, conversation_runtime_id
+            )),
+            DenError::DatabaseUnavailable(message) => CustomError::DatabaseUnavailable(format!(
+                "resolve Pair runtime task context for BearWire session.state: bear_id={}, client_session_id={}, conversation_id={}: {message}",
+                session.bear_id, session.client_session_id, conversation_runtime_id
+            )),
+            error => error.into(),
+        })?;
+        Some(context)
     } else {
         None
     };
@@ -792,6 +807,80 @@ pub(crate) async fn session_state_result(
         "bear_slug": bear_slug,
         "sessions": sessions_payload,
     }))
+}
+
+pub(crate) async fn session_current_task_selection_request_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionCurrentTaskSelectionRequest = parse_params(params)?;
+    let task_id = uuid::Uuid::parse_str(&request.task_id)
+        .map_err(|_| CustomError::ValidationError("task_id must be a UUID".to_string()))?;
+    let title = preview_pair_current_task_selection(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &request.session_id,
+        task_id,
+    )
+    .await?;
+    Ok(
+        json!({"ok": true, "confirmation_required": true, "session_id": request.session_id, "task_id": task_id, "title": title}),
+    )
+}
+
+pub(crate) async fn session_current_task_select_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionCurrentTaskSelectionRequest = parse_params(params)?;
+    let task_id = uuid::Uuid::parse_str(&request.task_id)
+        .map_err(|_| CustomError::ValidationError("task_id must be a UUID".to_string()))?;
+    if !bear.work_enabled {
+        return Err(CustomError::ValidationError(
+            "Pair task controls are disabled".to_string(),
+        ));
+    }
+    let result = select_pair_current_task(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &request.session_id,
+        Some(task_id),
+    )
+    .await?;
+    Ok(
+        json!({"ok": true, "session_id": request.session_id, "current_task_id": task_id, "title": result.title, "task_list": result.task_list}),
+    )
+}
+
+pub(crate) async fn session_current_task_clear_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionCurrentTaskClearRequest = parse_params(params)?;
+    if !bear.work_enabled {
+        return Err(CustomError::ValidationError(
+            "Pair task controls are disabled".to_string(),
+        ));
+    }
+    let result = select_pair_current_task(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &request.session_id,
+        None,
+    )
+    .await?;
+    Ok(
+        json!({"ok": true, "session_id": request.session_id, "current_task_id": Value::Null, "task_list": result.task_list}),
+    )
 }
 
 async fn session_model_payload(

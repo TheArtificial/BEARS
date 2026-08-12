@@ -40,7 +40,7 @@ static DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// Cancel claimable leftovers (queued, or non-terminal with an expired lease)
 /// from earlier test runs so claim-order assertions see only this test's runs.
 async fn purge_claimable_runs(pool: &PgPool) {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE bear_work_runs
          SET state = 'cancelled', runner_id = NULL, lease_expires_at = NULL,
              finished_at = now(), updated_at = now()
@@ -68,21 +68,21 @@ async fn test_pool() -> Option<PgPool> {
 
 async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     let suffix = Uuid::new_v4().simple().to_string();
-    let (user_id,): (i32,) = sqlx::query_as(
+    let user_id = sqlx::query_scalar!(
         "INSERT INTO users (email, username, display_name) VALUES ($1, $2, $3) RETURNING id",
+        format!("{label}-{suffix}@example.test"),
+        format!("w{}", &suffix[..20]),
+        "Work Run Test",
     )
-    .bind(format!("{label}-{suffix}@example.test"))
-    .bind(format!("w{}", &suffix[..20]))
-    .bind("Work Run Test")
     .fetch_one(pool)
     .await
     .expect("seed user");
-    let (bear_id,): (Uuid,) = sqlx::query_as(
+    let bear_id = sqlx::query_scalar!(
         "INSERT INTO bears (slug, name, description) VALUES ($1, $2, $3) RETURNING id",
+        format!("workrun-{label}-{}", &suffix[..12]),
+        "Work Run Test Bear",
+        "work run test bear",
     )
-    .bind(format!("workrun-{label}-{}", &suffix[..12]))
-    .bind("Work Run Test Bear")
-    .bind("work run test bear")
     .fetch_one(pool)
     .await
     .expect("seed bear");
@@ -123,30 +123,32 @@ async fn seed_work_job_with_policy(
     let service = PgDocketService::from_pool(pool);
     let surface_id = Uuid::new_v4();
     let surface_name = format!("work-run-{}", Uuid::new_v4().simple());
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
          VALUES ($1, $2, 'git_workspace', $3, now(), now())",
+        surface_id,
+        surface_name,
+        user_id,
     )
-    .bind(surface_id)
-    .bind(surface_name)
-    .bind(user_id)
     .execute(pool)
     .await
     .expect("seed work surface");
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO git_work_surface_details (id, upstream_url)
          VALUES ($1, 'https://example.test/work-run.git')",
+        surface_id,
     )
-    .bind(surface_id)
     .execute(pool)
     .await
     .expect("seed git work surface details");
-    sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
-        .bind(surface_id)
-        .bind(bear_id)
-        .execute(pool)
-        .await
-        .expect("assign work surface");
+    sqlx::query!(
+        "INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)",
+        surface_id,
+        bear_id,
+    )
+    .execute(pool)
+    .await
+    .expect("assign work surface");
     let created = service
         .create_job(DocketJobCreate {
             bear_id,
@@ -200,11 +202,13 @@ async fn sandbox_repository_changes_without_publication_creates_no_run() {
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "sandbox-no-publication").await;
     let (job_id, _) = seed_work_job(&pool, user_id, bear_id).await;
-    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM bear_work_runs WHERE job_id = $1")
-        .bind(job_id)
-        .fetch_one(&pool)
-        .await
-        .expect("count runs before rejected dispatch");
+    let before = sqlx::query_scalar!(
+        "SELECT count(*) FROM bear_work_runs WHERE job_id = $1",
+        job_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count runs before rejected dispatch");
 
     let error = enqueue_work_job(
         &pool,
@@ -225,11 +229,13 @@ async fn sandbox_repository_changes_without_publication_creates_no_run() {
     assert!(error
         .to_string()
         .contains("repository_changes_without_publication"));
-    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM bear_work_runs WHERE job_id = $1")
-        .bind(job_id)
-        .fetch_one(&pool)
-        .await
-        .expect("count runs after rejected dispatch");
+    let after = sqlx::query_scalar!(
+        "SELECT count(*) FROM bear_work_runs WHERE job_id = $1",
+        job_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count runs after rejected dispatch");
     assert_eq!(
         after, before,
         "rejected dispatch must not create a work run"
@@ -245,10 +251,10 @@ async fn forbidden_surface_assignment_rejects_mutable_dispatch() {
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "forbidden-surface-dispatch").await;
     let (job_id, _) = seed_work_job(&pool, user_id, bear_id).await;
-    sqlx::query(
+    sqlx::query!(
         "UPDATE job_work_surface_assignments SET mutation_policy = 'forbidden' WHERE job_id = $1",
+        job_id,
     )
-    .bind(job_id)
     .execute(&pool)
     .await
     .expect("forbid the assigned work surface");
@@ -414,25 +420,27 @@ async fn enqueue_enforces_managed_surface_assignment() {
     let suffix = Uuid::new_v4().simple().to_string();
     let surface_name = format!("enq-surface-{}", &suffix[..12]);
     let surface_id = Uuid::new_v4();
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
          VALUES ($1, $2, 'git_workspace', $3, now(), now())",
+        surface_id,
+        &surface_name,
+        user_id,
     )
-    .bind(surface_id)
-    .bind(&surface_name)
-    .bind(user_id)
     .execute(&pool)
     .await
     .expect("seed surface");
 
     // Job bound to the surface; bear not assigned -> rejected.
     let (job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
-    sqlx::query("UPDATE job_work_surface_assignments SET work_surface_id = $2 WHERE job_id = $1")
-        .bind(job_id)
-        .bind(surface_id)
-        .execute(&pool)
-        .await
-        .expect("bind job to surface");
+    sqlx::query!(
+        "UPDATE job_work_surface_assignments SET work_surface_id = $2 WHERE job_id = $1",
+        job_id,
+        surface_id,
+    )
+    .execute(&pool)
+    .await
+    .expect("bind job to surface");
     let mut enqueue = enqueue_for(bear_id, task_ids[0], user_id);
     enqueue.root_name = None;
     let err = enqueue_work_run(&pool, enqueue.clone())
@@ -451,12 +459,14 @@ async fn enqueue_enforces_managed_surface_assignment() {
     assert!(matches!(err, DenError::ValidationError(_)), "{err:?}");
 
     // Assign the bear -> enqueue succeeds.
-    sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
-        .bind(surface_id)
-        .bind(bear_id)
-        .execute(&pool)
-        .await
-        .expect("assign bear");
+    sqlx::query!(
+        "INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)",
+        surface_id,
+        bear_id,
+    )
+    .execute(&pool)
+    .await
+    .expect("assign bear");
     let run = enqueue_work_run(&pool, enqueue)
         .await
         .expect("assigned bear enqueues");
@@ -609,13 +619,16 @@ async fn blocked_job_refuses_pair_dispatch_without_mutating_task_state() {
         .expect_err("blocked job must not dispatch");
     assert!(error.to_string().contains("recover its current run"));
 
-    let statuses: Vec<(Uuid, String)> = sqlx::query_as(
+    let statuses = sqlx::query!(
         "SELECT task_id, status FROM bear_task_run_state WHERE run_id = $1 ORDER BY task_id",
+        run.job_run_id,
     )
-    .bind(run.job_run_id)
     .fetch_all(&pool)
     .await
-    .unwrap();
+    .unwrap()
+    .into_iter()
+    .map(|row| (row.task_id, row.status))
+    .collect::<Vec<_>>();
     let mut expected = task_ids
         .into_iter()
         .map(|task_id| (task_id, "pending".to_string()))
@@ -722,12 +735,12 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
         .completion_criteria
         .iter()
         .any(|criterion| criterion.contains("Alpha work task is verifiably complete")));
-    let (execution_count,): (i64,) = sqlx::query_as(
+    let execution_count = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM docket_execution_sessions
          WHERE bear_id = $1 AND owner_profile = 'work' AND session_id = $2 AND state = 'active'",
+        bear_id,
+        &session_id,
     )
-    .bind(bear_id)
-    .bind(&session_id)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -787,30 +800,31 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .await
     .unwrap();
     assert_eq!(finalized.state, "blocked");
-    let (task_status, task_summary, task_refs): (
-        String,
-        Option<String>,
-        Option<serde_json::Value>,
-    ) = sqlx::query_as(
+    let task = sqlx::query!(
         "SELECT status, result_summary, result_refs FROM bear_task_run_state \
              WHERE run_id = $1 AND task_id = $2",
+        run.job_run_id,
+        task_ids[0],
     )
-    .bind(run.job_run_id)
-    .bind(task_ids[0])
     .fetch_one(&pool)
     .await
     .unwrap();
+    let task_status = task.status;
+    let task_summary = task.result_summary;
+    let task_refs = task.result_refs;
     assert_eq!(task_status, "in_progress");
     assert!(task_summary.is_none());
     assert!(task_refs.is_none());
-    let (job_status, job_run_state): (String, String) = sqlx::query_as(
+    let job = sqlx::query!(
         "SELECT j.status, r.state FROM bear_jobs j JOIN bear_job_runs r ON r.id = j.current_run_id \
          WHERE j.id = $1",
+        run.job_id,
     )
-    .bind(run.job_id)
     .fetch_one(&pool)
     .await
     .unwrap();
+    let job_status = job.status;
+    let job_run_state = job.state;
     assert_eq!(job_status, "blocked");
     assert_eq!(job_run_state, "blocked");
     assert!(finalized.runner_id.is_none());
@@ -836,10 +850,10 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
 
     // Finalizing a run must not synthesize task completion. Task status is
     // owned by explicit task events from the worker.
-    let (events,): (i64,) = sqlx::query_as(
+    let events = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM bear_task_events WHERE task_id = $1 AND event_type = 'completed'",
+        task_ids[0],
     )
-    .bind(task_ids[0])
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -847,11 +861,13 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
 
     // A recovered job run can enqueue a new work-run attempt; job state is
     // derived from its current run and never reset on bear_jobs.
-    sqlx::query("UPDATE bear_job_runs SET state = 'running', finished_at = NULL WHERE id = $1")
-        .bind(run.job_run_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query!(
+        "UPDATE bear_job_runs SET state = 'running', finished_at = NULL WHERE id = $1",
+        run.job_run_id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // A recovered task can be re-enqueued (attempt 2).
     let retry = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
@@ -881,26 +897,26 @@ async fn successful_work_run_settles_completed_docket_job() {
         .unwrap();
 
     for task_id in task_ids {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO bear_task_run_state (run_id, task_id, status, result_summary, finished_at)
              VALUES ($1, $2, 'done', 'completed', NOW())
              ON CONFLICT (run_id, task_id) DO UPDATE
              SET status = 'done', result_summary = 'completed', finished_at = NOW()",
+            run.job_run_id,
+            task_id,
         )
-        .bind(run.job_run_id)
-        .bind(task_id)
         .execute(&pool)
         .await
         .unwrap();
     }
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO bear_job_criteria_state (run_id, criterion_id, status, evaluated_at)
              SELECT $1, id, 'met', NOW() FROM bear_job_criteria WHERE job_id = $2
              ON CONFLICT (run_id, criterion_id) DO UPDATE
              SET status = 'met', evaluated_at = NOW()",
+        run.job_run_id,
+        job_id,
     )
-    .bind(run.job_run_id)
-    .bind(job_id)
     .execute(&pool)
     .await
     .unwrap();
@@ -918,12 +934,15 @@ async fn successful_work_run_settles_completed_docket_job() {
         .await
         .unwrap()
         .expect("job exists");
-    let (run_state, finished_at): (String, Option<OffsetDateTime>) =
-        sqlx::query_as("SELECT state, finished_at FROM bear_job_runs WHERE id = $1")
-            .bind(run.job_run_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let run = sqlx::query!(
+        "SELECT state, finished_at FROM bear_job_runs WHERE id = $1",
+        run.job_run_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let run_state = run.state;
+    let finished_at = run.finished_at;
     assert_eq!(projection.job.status, "completed");
     assert_eq!(run_state, "completed");
     assert!(finished_at.is_some());
@@ -965,12 +984,14 @@ async fn publish_wiring_image_branch_and_prompt() {
     assert_eq!(context.child_result_rollups, serde_json::json!([]));
 
     // Parent dispatch receives validated child rollups, never child transcripts.
-    sqlx::query("UPDATE bear_tasks SET parent_task_id = $1 WHERE id = $2")
-        .bind(task_ids[0])
-        .bind(task_ids[1])
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query!(
+        "UPDATE bear_tasks SET parent_task_id = $1 WHERE id = $2",
+        task_ids[0],
+        task_ids[1],
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     let rollup = ResultRollup {
         summary: "child completed safely".into(),
         evidence_refs: serde_json::json!({"artifact": "artifact:test"}),
@@ -997,12 +1018,14 @@ async fn publish_wiring_image_branch_and_prompt() {
         .unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].summary, "child completed safely");
-    sqlx::query("UPDATE bear_work_runs SET executing_task_id = $2 WHERE id = $1")
-        .bind(run.id)
-        .bind(task_ids[0])
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query!(
+        "UPDATE bear_work_runs SET executing_task_id = $2 WHERE id = $1",
+        run.id,
+        task_ids[0],
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     let context = get_work_run_dispatch_context(&pool, run.id).await.unwrap();
     assert_eq!(context.child_result_rollups.as_array().unwrap().len(), 1);
     assert_eq!(
@@ -1042,16 +1065,18 @@ async fn publish_wiring_image_branch_and_prompt() {
         .unwrap();
 
     // Attempt creation and terminalization are idempotent across replay/crash windows.
-    let (attempt_id, decision_id): (Uuid, Uuid) = sqlx::query_as(
+    let attempt = sqlx::query!(
         "SELECT a.id, a.routing_decision_id
          FROM docket_turn_attempts a
          JOIN docket_routing_decisions d ON d.id = a.routing_decision_id
          WHERE a.work_run_id = $1",
+        run.id,
     )
-    .bind(run.id)
     .fetch_one(&pool)
     .await
     .unwrap();
+    let attempt_id = attempt.id;
+    let decision_id = attempt.routing_decision_id;
     assert_eq!(
         claim_turn_attempt(
             &pool,
@@ -1116,11 +1141,13 @@ async fn publish_wiring_image_branch_and_prompt() {
     // An explicit branch set at creation is never overwritten.
     let (job2_id, _) =
         seed_work_job_with_policy(&pool, user_id, bear_id, DocketCommitPolicy::PerJob).await;
-    sqlx::query("UPDATE bear_jobs SET work_branch = 'feature/custom' WHERE id = $1")
-        .bind(job2_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query!(
+        "UPDATE bear_jobs SET work_branch = 'feature/custom' WHERE id = $1",
+        job2_id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     assert_eq!(
         ensure_job_work_branch(&pool, job2_id).await.unwrap(),
         "feature/custom"
@@ -1176,11 +1203,13 @@ async fn attention_and_completion_visibility() {
 
     // A running retry supersedes the failed attempt for attention purposes;
     // job status is derived from its run evidence.
-    sqlx::query("UPDATE bear_job_runs SET state = 'running', finished_at = NULL WHERE id = $1")
-        .bind(run.job_run_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query!(
+        "UPDATE bear_job_runs SET state = 'running', finished_at = NULL WHERE id = $1",
+        run.job_run_id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     let retry = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .unwrap();
@@ -1196,20 +1225,19 @@ async fn attention_and_completion_visibility() {
     assert!(awaiting.iter().all(|job| job.id != job_id), "{awaiting:?}");
 
     // …but once every task is done in the current run, it is.
-    let (current_run_id,): (Uuid,) =
-        sqlx::query_as("SELECT current_run_id FROM bear_jobs WHERE id = $1")
-            .bind(job_id)
+    let current_run_id =
+        sqlx::query_scalar!("SELECT current_run_id FROM bear_jobs WHERE id = $1", job_id,)
             .fetch_one(&pool)
             .await
             .unwrap();
     for task_id in &task_ids {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO bear_task_run_state (run_id, task_id, status)
              VALUES ($1, $2, 'done')
              ON CONFLICT (run_id, task_id) DO UPDATE SET status = 'done'",
+            current_run_id,
+            task_id,
         )
-        .bind(current_run_id)
-        .bind(task_id)
         .execute(&pool)
         .await
         .unwrap();

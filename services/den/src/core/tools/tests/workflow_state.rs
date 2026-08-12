@@ -309,31 +309,7 @@ async fn confirm_work_surface_requires_client_session_before_database_access() {
 }
 
 #[tokio::test]
-async fn create_task_preserves_explicit_session_anchor_without_current_session_lookup() {
-    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
-    let anchor = uuid::Uuid::new_v4();
-    let args: super::super::DocketTaskCreateArguments = serde_json::from_value(json!({
-        "session_anchor_id": anchor,
-        "title": "Session task",
-        "body": "Track the slice.",
-        "completion_criteria": ["task is tracked"]
-    }))
-    .unwrap();
-
-    let resolved = super::super::resolve_task_session_anchor_id(
-        &pool,
-        &pair_context(),
-        args.job_id,
-        args.session_anchor_id,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(resolved, Some(anchor));
-}
-
-#[tokio::test]
-async fn create_task_without_job_defaults_to_current_session_or_fails_before_db() {
+async fn create_task_without_job_requires_current_session_before_database_access() {
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let mut context = pair_context();
     context.client_session_id = None;
@@ -344,15 +320,10 @@ async fn create_task_without_job_defaults_to_current_session_or_fails_before_db(
     }))
     .unwrap();
 
-    let err = super::super::resolve_task_session_anchor_id(
-        &pool,
-        &context,
-        args.job_id,
-        args.session_anchor_id,
-    )
-    .await
-    .unwrap_err()
-    .to_string();
+    let err = super::super::resolve_task_session_anchor_id(&pool, &context, args.job_id)
+        .await
+        .unwrap_err()
+        .to_string();
 
     assert!(err.contains("current client session"));
 }

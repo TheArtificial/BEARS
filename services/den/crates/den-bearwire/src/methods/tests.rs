@@ -15,6 +15,10 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
+use den_docket::{
+    DocketEffortHint, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskKind,
+    DocketTaskScope, PgDocketService, RoutingStrategy,
+};
 use den_http::armature_tokens;
 use den_protocol::{
     ContextBudgetComponentReport, ContextBudgetEstimatePrecision, ContextBudgetReport,
@@ -214,6 +218,50 @@ async fn upsert_test_session(
     )
     .await
     .expect("upsert BearWire test session");
+}
+
+async fn create_session_task(
+    pool: &sqlx::PgPool,
+    user_id: i32,
+    bear_id: uuid::Uuid,
+    client_session_id: &str,
+    title: &str,
+) -> uuid::Uuid {
+    let (session_anchor_id,): (uuid::Uuid,) = sqlx::query_as(
+        "SELECT id FROM client_sessions WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3",
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(client_session_id)
+    .fetch_one(pool)
+    .await
+    .expect("load test session anchor");
+    PgDocketService::from_pool(pool)
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: None,
+            session_anchor_id: Some(session_anchor_id),
+            parent_task_id: None,
+            sibling_order: 0,
+            placement: None,
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Run,
+            title: title.to_string(),
+            body: "BearWire current-task test".to_string(),
+            completion_criteria: vec!["Selection is persisted".to_string()],
+            difficulty: Some(DocketTaskDifficulty::Trivial),
+            effort_hint: Some(DocketEffortHint::Low),
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: None,
+        })
+        .await
+        .expect("create session task")
+        .id
 }
 
 async fn rpc_value(state: DenState, token: &str, method: &str, params: Value) -> Value {
@@ -2666,6 +2714,104 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
         .expect("permission obligation exists");
     assert_eq!(tool.state, "cancelled");
     assert_eq!(permission.state, "cancelled");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn current_task_rpc_requires_confirmation_and_preserves_clear_title(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let task_id =
+        create_session_task(&pool, user_id, bear_id, &session_id, "Ship Pair controls").await;
+    let params = json!({
+        "bear_slug": bear_slug,
+        "session_id": session_id,
+        "task_id": task_id,
+    });
+
+    let preview = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "session.current_task.selection_request",
+        params.clone(),
+    )
+    .await;
+    assert_eq!(
+        preview["result"]["confirmation_required"], true,
+        "{preview}"
+    );
+    let current: Option<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT current_task_id FROM client_sessions WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3",
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load current task after preview");
+    assert_eq!(current, None);
+
+    let selected = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "session.current_task.select",
+        params,
+    )
+    .await;
+    assert_eq!(
+        selected["result"]["current_task_id"],
+        task_id.to_string(),
+        "{selected}"
+    );
+    assert_eq!(
+        selected["result"]["title"], "Ship Pair controls",
+        "{selected}"
+    );
+
+    let cleared = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "session.current_task.clear",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert!(cleared["result"]["current_task_id"].is_null(), "{cleared}");
+    let (current, title): (Option<uuid::Uuid>, Option<String>) = sqlx::query_as(
+        "SELECT current_task_id, conversation_title FROM client_sessions WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3",
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load cleared current task and title");
+    assert_eq!(current, None);
+    assert_eq!(title.as_deref(), Some("Ship Pair controls"));
+
+    let other_session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &other_session_id).await;
+    let other_task_id = create_session_task(
+        &pool,
+        user_id,
+        bear_id,
+        &other_session_id,
+        "Other session task",
+    )
+    .await;
+    let rejected = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "session.current_task.selection_request",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "task_id": other_task_id,
+        }),
+    )
+    .await;
+    assert!(rejected.get("error").is_some(), "{rejected}");
 }
 
 #[tokio::test]

@@ -1,0 +1,38 @@
+# Local-development override for docker-compose.yaml.
+#
+# The base Compose file is the Coolify deployment contract: Den-derived services
+# pull images published by GitHub Actions. Use this file for source builds:
+#   docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
+#
+# `pull_policy: never` lets local scripts use the image tags they built directly.
+services:
+    bears-den:
+        build:
+            context: ./services/den
+            dockerfile: Dockerfile
+            args:
+                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
+                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        pull_policy: never
+
+    bears-den-migrate:
+        build:
+            context: ./services/den
+            dockerfile: Dockerfile
+            args:
+                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
+                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        pull_policy: never
+
+    bears-sandbox-provider:
+        build:
+            context: ./services/den
+            dockerfile: Dockerfile
+            target: sandbox-provider
+            additional_contexts:
+                sandbox_packaging: ./packaging/sandbox-image
+                bear_armature: ./tools/bear-armature
+            args:
+                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
+                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        pull_policy: never

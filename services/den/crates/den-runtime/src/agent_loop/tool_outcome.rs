@@ -113,18 +113,14 @@ fn docket_tool_summary(tool_name: &str, content: Option<&str>) -> Option<String>
     let value: serde_json::Value = serde_json::from_str(content?).ok()?;
     match tool_name {
         "list_jobs" => summarize_docket_job_collection(&value),
-        "create_job" => {
-            docket_job_summary(&value).map(|summary| format!("Created Docket job: {summary}"))
-        }
+        "create_job" => docket_creation_summary(&value),
         "get_job" => {
             docket_job_summary(&value).map(|summary| format!("Read Docket job: {summary}"))
         }
         "update_job" => {
             docket_job_summary(&value).map(|summary| format!("Updated Docket job: {summary}"))
         }
-        "execute_job" => {
-            docket_job_summary(&value).map(|summary| format!("Executed Docket job: {summary}"))
-        }
+        "execute_job" => docket_execution_summary(&value),
         "list_tasks" => summarize_docket_task_collection(&value),
         "create_task" => {
             docket_task_summary(&value).map(|summary| format!("Created Docket task: {summary}"))
@@ -198,6 +194,57 @@ fn summarize_docket_task_collection(value: &serde_json::Value) -> Option<String>
         if tasks.len() == 1 { "" } else { "s" },
         title_text
     ))
+}
+
+fn docket_creation_summary(value: &serde_json::Value) -> Option<String> {
+    let outcome = value.get("outcome").unwrap_or(value);
+    // A persisted setup run is not user-visible execution; its internal state must not
+    // contradict the explicit `execution: not_started` contract for job creation.
+    let mut outcome = outcome.clone();
+    if let Some(object) = outcome.as_object_mut() {
+        object.remove("current_run");
+    }
+    let job_summary = docket_job_summary(&outcome)?;
+    let execution = value.get("execution");
+    let requested = execution
+        .and_then(|execution| execution.get("requested"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let state = execution
+        .and_then(|execution| execution.get("state"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("not_started");
+
+    Some(format!(
+        "Created Docket job; execution {} (state: {state}): {job_summary}",
+        if requested {
+            "requested"
+        } else {
+            "not requested"
+        }
+    ))
+}
+
+fn docket_execution_summary(value: &serde_json::Value) -> Option<String> {
+    let execution = value.get("execution")?;
+    let requested = execution
+        .get("requested")
+        .and_then(serde_json::Value::as_bool)?;
+    let state = execution
+        .get("state")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let job_summary = value.get("outcome").and_then(docket_job_summary);
+
+    let action = if requested {
+        format!("Requested Docket execution; state: {state}")
+    } else {
+        "Docket execution was not requested".to_string()
+    };
+    Some(match job_summary {
+        Some(summary) => format!("{action}: {summary}"),
+        None => action,
+    })
 }
 
 fn docket_job_summary(value: &serde_json::Value) -> Option<String> {
@@ -575,6 +622,40 @@ mod tests {
         assert_eq!(
             user_visible_tool_summary("get_job", ToolCallFinishStatus::Ok, Some(&content)),
             "Read Docket job: `Improve Docket outputs`, status: running, 2 tasks, 1 criterion, run: running"
+        );
+    }
+
+    #[test]
+    fn docket_creation_summary_reports_not_started_execution() {
+        let content = serde_json::json!({
+            "action": "job_created",
+            "execution": { "requested": false, "state": "not_started", "run_id": null },
+            "job": { "goal": "Improve Docket outputs", "status": "ready" },
+            "current_run": { "state": "dispatched" }
+        })
+        .to_string();
+
+        assert_eq!(
+            user_visible_tool_summary("create_job", ToolCallFinishStatus::Ok, Some(&content)),
+            "Created Docket job; execution not requested (state: not_started): `Improve Docket outputs`, status: ready"
+        );
+    }
+
+    #[test]
+    fn docket_execution_summary_reports_request_and_observed_state() {
+        let content = serde_json::json!({
+            "action": "execution_requested",
+            "execution": { "requested": true, "state": "queued", "run_id": "run-1" },
+            "outcome": {
+                "job": { "goal": "Improve Docket outputs", "status": "ready" },
+                "current_run": { "state": "queued" }
+            }
+        })
+        .to_string();
+
+        assert_eq!(
+            user_visible_tool_summary("execute_job", ToolCallFinishStatus::Ok, Some(&content)),
+            "Requested Docket execution; state: queued: `Improve Docket outputs`, status: ready, run: queued"
         );
     }
 

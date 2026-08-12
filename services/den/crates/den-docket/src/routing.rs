@@ -103,7 +103,12 @@ pub struct RoutingDecision {
     pub created_at: OffsetDateTime,
 }
 
-const DECISION_COLUMNS: &str = "id, idempotency_key, bear_id, job_id, run_id, task_id, turn_source, conversation_strategy, conversation_id, parent_conversation_id, routing_strategy, execution_surface, resolved_profile, attempt, cursor_before, cursor_after, reason, created_at";
+#[derive(sqlx::FromRow)]
+struct TaskRoutingRow {
+    routing_strategy: String,
+    expected_context_size: Option<i32>,
+    difficulty: Option<String>,
+}
 
 /// Resolve and persist placement before invoking a model. Replaying the same
 /// idempotency key returns the original immutable decision.
@@ -114,30 +119,76 @@ pub async fn route_turn(pool: &PgPool, intent: TurnIntent) -> Result<RoutingDeci
         ));
     }
     let mut tx = pool.begin().await?;
-    if let Some(existing) = sqlx::query_as::<_, RoutingDecision>(&format!(
-        "SELECT {DECISION_COLUMNS} FROM docket_routing_decisions WHERE idempotency_key = $1"
-    ))
-    .bind(intent.idempotency_key)
+    if let Some(existing) = sqlx::query_as!(
+        RoutingDecision,
+        r#"
+        SELECT
+            id AS "id!: Uuid",
+            idempotency_key AS "idempotency_key!: Uuid",
+            bear_id AS "bear_id!: Uuid",
+            job_id AS "job_id!: Uuid",
+            run_id AS "run_id!: Uuid",
+            task_id AS "task_id!: Uuid",
+            turn_source AS "turn_source!: String",
+            conversation_strategy AS "conversation_strategy!: String",
+            conversation_id AS "conversation_id!: String",
+            parent_conversation_id AS "parent_conversation_id?: String",
+            routing_strategy AS "routing_strategy!: String",
+            execution_surface AS "execution_surface!: String",
+            resolved_profile AS "resolved_profile?: String",
+            attempt AS "attempt!: i32",
+            cursor_before AS "cursor_before?: Value",
+            cursor_after AS "cursor_after?: Value",
+            reason AS "reason!: String",
+            created_at AS "created_at!: OffsetDateTime"
+        FROM docket_routing_decisions
+        WHERE idempotency_key = $1
+        "#,
+        intent.idempotency_key
+    )
     .fetch_optional(&mut *tx)
     .await?
     {
         tx.commit().await?;
         return Ok(existing);
     }
-    let task: Option<(String, Option<i32>, Option<String>)> = sqlx::query_as(
-        "SELECT routing_strategy, expected_context_size, difficulty FROM bear_tasks WHERE id = $1 AND job_id = $2 AND bear_id = $3 FOR SHARE")
-        .bind(intent.task_id).bind(intent.job_id).bind(intent.bear_id).fetch_optional(&mut *tx).await?;
-    let Some((raw_strategy, expected_context_size, difficulty)) = task else {
+    let task = sqlx::query_as!(
+        TaskRoutingRow,
+        r#"
+        SELECT
+            routing_strategy AS "routing_strategy!: String",
+            expected_context_size AS "expected_context_size?: i32",
+            difficulty AS "difficulty?: String"
+        FROM bear_tasks
+        WHERE id = $1 AND job_id = $2 AND bear_id = $3
+        FOR SHARE
+        "#,
+        intent.task_id,
+        intent.job_id,
+        intent.bear_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(TaskRoutingRow {
+        routing_strategy: raw_strategy,
+        expected_context_size,
+        difficulty,
+    }) = task
+    else {
         return Err(DenError::NotFound(format!(
             "Docket task not found: {}",
             intent.task_id
         )));
     };
     let configured = parse_routing_strategy(&raw_strategy)?;
-    let binding: Option<String> = sqlx::query_scalar(
-        "SELECT preferred_conversation_id FROM docket_conversation_bindings WHERE task_id = $1",
+    let binding: Option<String> = sqlx::query_scalar!(
+        r#"
+        SELECT preferred_conversation_id AS "preferred_conversation_id!: String"
+        FROM docket_conversation_bindings
+        WHERE task_id = $1
+        "#,
+        intent.task_id
     )
-    .bind(intent.task_id)
     .fetch_optional(&mut *tx)
     .await?;
     let (strategy, conversation_id, reason) = if let Some(bound) = binding {
@@ -167,17 +218,76 @@ pub async fn route_turn(pool: &PgPool, intent: TurnIntent) -> Result<RoutingDeci
         (resolved, conversation, reason)
     };
     if !matches!(strategy, ConversationStrategy::Inline) {
-        sqlx::query("INSERT INTO docket_conversation_bindings (task_id, preferred_conversation_id) VALUES ($1, $2) ON CONFLICT (task_id) DO NOTHING")
-            .bind(intent.task_id).bind(&conversation_id).execute(&mut *tx).await?;
+        sqlx::query!(
+            r#"
+            INSERT INTO docket_conversation_bindings (task_id, preferred_conversation_id)
+            VALUES ($1, $2)
+            ON CONFLICT (task_id) DO NOTHING
+            "#,
+            intent.task_id,
+            &conversation_id
+        )
+        .execute(&mut *tx)
+        .await?;
     }
-    sqlx::query("INSERT INTO docket_conversation_binding_runs (run_id, task_id, conversation_id) VALUES ($1, $2, $3) ON CONFLICT (run_id, task_id) DO NOTHING")
-        .bind(intent.run_id).bind(intent.task_id).bind(&conversation_id).execute(&mut *tx).await?;
-    let decision = sqlx::query_as::<_, RoutingDecision>(&format!(
-        "INSERT INTO docket_routing_decisions (idempotency_key, bear_id, job_id, run_id, task_id, turn_source, conversation_strategy, conversation_id, parent_conversation_id, routing_strategy, execution_surface, resolved_profile, attempt, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING {DECISION_COLUMNS}"))
-        .bind(intent.idempotency_key).bind(intent.bear_id).bind(intent.job_id).bind(intent.run_id).bind(intent.task_id)
-        .bind(intent.source.as_str()).bind(strategy.as_str()).bind(&conversation_id).bind(intent.parent_conversation_id.as_deref())
-        .bind(configured.as_str()).bind(intent.surface.as_str()).bind(intent.resolved_profile.as_deref()).bind(intent.attempt).bind(reason)
-        .fetch_one(&mut *tx).await?;
+    sqlx::query!(
+        r#"
+        INSERT INTO docket_conversation_binding_runs (run_id, task_id, conversation_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (run_id, task_id) DO NOTHING
+        "#,
+        intent.run_id,
+        intent.task_id,
+        &conversation_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    let decision = sqlx::query_as!(
+        RoutingDecision,
+        r#"
+        INSERT INTO docket_routing_decisions (
+            idempotency_key, bear_id, job_id, run_id, task_id, turn_source,
+            conversation_strategy, conversation_id, parent_conversation_id,
+            routing_strategy, execution_surface, resolved_profile, attempt, reason
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        RETURNING
+            id AS "id!: Uuid",
+            idempotency_key AS "idempotency_key!: Uuid",
+            bear_id AS "bear_id!: Uuid",
+            job_id AS "job_id!: Uuid",
+            run_id AS "run_id!: Uuid",
+            task_id AS "task_id!: Uuid",
+            turn_source AS "turn_source!: String",
+            conversation_strategy AS "conversation_strategy!: String",
+            conversation_id AS "conversation_id!: String",
+            parent_conversation_id AS "parent_conversation_id?: String",
+            routing_strategy AS "routing_strategy!: String",
+            execution_surface AS "execution_surface!: String",
+            resolved_profile AS "resolved_profile?: String",
+            attempt AS "attempt!: i32",
+            cursor_before AS "cursor_before?: Value",
+            cursor_after AS "cursor_after?: Value",
+            reason AS "reason!: String",
+            created_at AS "created_at!: OffsetDateTime"
+        "#,
+        intent.idempotency_key,
+        intent.bear_id,
+        intent.job_id,
+        intent.run_id,
+        intent.task_id,
+        intent.source.as_str(),
+        strategy.as_str(),
+        &conversation_id,
+        intent.parent_conversation_id.as_deref(),
+        configured.as_str(),
+        intent.surface.as_str(),
+        intent.resolved_profile.as_deref(),
+        intent.attempt,
+        reason
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(decision)
 }

@@ -116,7 +116,14 @@ pub struct TurnAttempt {
     pub finished_at: Option<OffsetDateTime>,
 }
 
-const ATTEMPT_COLUMNS: &str = "id, routing_decision_id, work_run_id, attempt, state, outcome, cause_code, retry_disposition, evidence_refs, resolved_profile, profile_provenance, latency_ms, cost_microusd, started_at, last_activity_at, finished_at";
+struct AttentionOutboxRow {
+    run_id: Uuid,
+    task_id: Uuid,
+    cause_code: String,
+    evidence_refs: Value,
+    supervisor_disposition: String,
+}
+
 const CLAIM_LEASE_SECONDS: i64 = 15 * 60;
 
 /// Atomically reserve the invocation authority and create its durable attempt
@@ -137,14 +144,14 @@ pub async fn claim_turn_attempt(
     let profile = resolved.profile.map(ExecutionProfile::as_str);
     let provenance = resolved.provenance.as_str();
     let mut tx = pool.begin().await?;
-    let decision: (Uuid, Uuid, Uuid, Uuid, Uuid) = sqlx::query_as(
-        "SELECT bear_id, job_id, run_id, task_id, id FROM docket_routing_decisions WHERE id = $1 FOR UPDATE",
+    let decision = sqlx::query!(
+        "SELECT bear_id AS \"bear_id!: Uuid\", job_id AS \"job_id!: Uuid\", run_id AS \"run_id!: Uuid\", task_id AS \"task_id!: Uuid\" FROM docket_routing_decisions WHERE id = $1 FOR UPDATE",
+        routing_decision_id
     )
-    .bind(routing_decision_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| DenError::NotFound(format!("routing decision {routing_decision_id}")))?;
-    let claim_id: Uuid = sqlx::query_scalar(
+    let claim_id: Uuid = sqlx::query_scalar!(
         "INSERT INTO docket_turn_claims (routing_decision_id, bear_id, job_id, run_id, task_id, work_run_id, owner_id, lease_expires_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7, now() + make_interval(secs => $8))
          ON CONFLICT (routing_decision_id) DO UPDATE
@@ -152,28 +159,31 @@ pub async fn claim_turn_attempt(
          WHERE docket_turn_claims.owner_id = EXCLUDED.owner_id
            AND docket_turn_claims.state IN ('reserved', 'executing')
          RETURNING id",
+        routing_decision_id, decision.bear_id, decision.job_id, decision.run_id, decision.task_id,
+        work_run_id, owner_id, CLAIM_LEASE_SECONDS as f64
     )
-    .bind(routing_decision_id).bind(decision.0).bind(decision.1).bind(decision.2).bind(decision.3)
-    .bind(work_run_id).bind(&owner_id).bind(CLAIM_LEASE_SECONDS)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| DenError::ValidationError("turn is already claimed by another worker".into()))?;
-    let row = sqlx::query_as::<_, TurnAttempt>(&format!(
+    let row = sqlx::query_as!(
+        TurnAttempt,
         "INSERT INTO docket_turn_attempts (routing_decision_id, work_run_id, attempt, claim_id, state, resolved_profile, profile_provenance)
          VALUES ($1,$2,$3,$4,'executing',$5,$6)
          ON CONFLICT (routing_decision_id, attempt) DO UPDATE
          SET last_activity_at = now()
          WHERE docket_turn_attempts.claim_id = EXCLUDED.claim_id
-         RETURNING {ATTEMPT_COLUMNS}"
-    ))
-    .bind(routing_decision_id).bind(work_run_id).bind(attempt).bind(claim_id).bind(profile).bind(provenance)
+         RETURNING id, routing_decision_id, work_run_id, attempt, state, outcome, cause_code, retry_disposition,
+                   evidence_refs AS \"evidence_refs: _\", resolved_profile, profile_provenance, latency_ms,
+                   cost_microusd, started_at, last_activity_at, finished_at",
+        routing_decision_id, work_run_id, attempt, claim_id, profile, provenance
+    )
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| DenError::ValidationError("turn attempt belongs to another claim".into()))?;
-    sqlx::query(
+    sqlx::query!(
         "UPDATE docket_turn_claims SET state = 'executing', updated_at = now() WHERE id = $1",
+        claim_id
     )
-    .bind(claim_id)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -185,7 +195,7 @@ pub async fn record_turn_activity(
     attempt_id: Uuid,
     evidence: Value,
 ) -> Result<bool, DenError> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE docket_turn_attempts
          SET last_activity_at = now(), evidence_refs = COALESCE(evidence_refs, '{}'::jsonb) || $2::jsonb
          WHERE id = $1 AND state = 'executing'
@@ -194,9 +204,9 @@ pub async fn record_turn_activity(
                WHERE id = docket_turn_attempts.claim_id
                  AND state = 'executing' AND lease_expires_at > now()
            )",
+        attempt_id,
+        evidence
     )
-    .bind(attempt_id)
-    .bind(evidence)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -276,7 +286,7 @@ pub async fn terminalize_turn_attempt(
             "attempt attribution cannot be negative".into(),
         ));
     }
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "WITH settled AS (
              UPDATE docket_turn_attempts
              SET state='settled', outcome=$2, cause_code=$3, retry_disposition=$4,
@@ -293,14 +303,14 @@ pub async fn terminalize_turn_attempt(
          UPDATE docket_turn_claims
          SET state='settled', updated_at=now()
          WHERE id IN (SELECT claim_id FROM settled WHERE claim_id IS NOT NULL)",
+        attempt_id,
+        outcome.as_str(),
+        cause_code,
+        disposition.as_str(),
+        evidence,
+        latency_ms,
+        cost_microusd
     )
-    .bind(attempt_id)
-    .bind(outcome.as_str())
-    .bind(cause_code)
-    .bind(disposition.as_str())
-    .bind(evidence)
-    .bind(latency_ms)
-    .bind(cost_microusd)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -313,25 +323,27 @@ pub async fn escalation_for_attempt(
     pool: &PgPool,
     attempt_id: Uuid,
 ) -> Result<EscalationDecision, DenError> {
-    let row: (i32, Option<String>, Option<String>, String) = sqlx::query_as(
-        "SELECT attempt, resolved_profile, outcome, cause_code
+    let row = sqlx::query!(
+        "SELECT attempt AS \"attempt!: i32\", resolved_profile, outcome, cause_code AS \"cause_code!: String\"
          FROM docket_turn_attempts
          WHERE id = $1 AND state = 'settled'",
+        attempt_id
     )
-    .bind(attempt_id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| DenError::NotFound(format!("terminal turn attempt {attempt_id}")))?;
     let outcome = row
-        .2
+        .outcome
         .as_deref()
         .and_then(AttemptOutcome::parse)
         .ok_or_else(|| DenError::ValidationError("terminal attempt has invalid outcome".into()))?;
     Ok(decide_escalation(
-        row.1.as_deref().and_then(ExecutionProfile::parse),
-        row.0,
+        row.resolved_profile
+            .as_deref()
+            .and_then(ExecutionProfile::parse),
+        row.attempt,
         outcome,
-        &row.3,
+        &row.cause_code,
     ))
 }
 
@@ -342,24 +354,25 @@ pub async fn apply_supervisor_disposition(
     let decision = escalation_for_attempt(pool, attempt_id).await?;
     let disposition = disposition_for(decision);
     let retry_disposition = disposition.retry_disposition();
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE docket_turn_attempts
          SET supervisor_disposition = $2, retry_disposition = $3
          WHERE id = $1 AND state = 'settled'
            AND (supervisor_disposition IS NULL OR supervisor_disposition = $2)",
+        attempt_id,
+        disposition.as_str(),
+        retry_disposition.as_str()
     )
-    .bind(attempt_id)
-    .bind(disposition.as_str())
-    .bind(retry_disposition.as_str())
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {
-        let existing: Option<String> = sqlx::query_scalar(
+        let existing: Option<String> = sqlx::query_scalar!(
             "SELECT supervisor_disposition FROM docket_turn_attempts WHERE id = $1",
+            attempt_id
         )
-        .bind(attempt_id)
         .fetch_optional(pool)
-        .await?;
+        .await?
+        .flatten();
         return match existing.as_deref() {
             Some(value) if value == disposition.as_str() => Ok(disposition),
             Some(_) => Err(DenError::ValidationError(
@@ -386,39 +399,44 @@ pub async fn persist_attention_outbox(
         ));
     }
     let mut tx = pool.begin().await?;
-    let row: (Uuid, Uuid, String, Value, String) = sqlx::query_as(
-        "SELECT d.run_id, d.task_id, a.cause_code, COALESCE(a.evidence_refs, '{}'::jsonb), a.supervisor_disposition
+    let row = sqlx::query_as!(
+        AttentionOutboxRow,
+        "SELECT d.run_id AS \"run_id!: Uuid\", d.task_id AS \"task_id!: Uuid\", a.cause_code AS \"cause_code!: String\",
+                COALESCE(a.evidence_refs, '{}'::jsonb) AS \"evidence_refs!: _\",
+                a.supervisor_disposition AS \"supervisor_disposition!: String\"
          FROM docket_turn_attempts a
          JOIN docket_routing_decisions d ON d.id = a.routing_decision_id
          WHERE a.id = $1 AND a.state = 'settled' AND a.supervisor_disposition IS NOT NULL
          FOR UPDATE",
+        attempt_id
     )
-    .bind(attempt_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| DenError::ValidationError("attempt must be settled and supervisor-disposed".into()))?;
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO docket_attention (run_id, task_id, cause_code, recovery_action, evidence_refs)
          VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT (run_id) WHERE resolved_at IS NULL DO UPDATE
          SET task_id = EXCLUDED.task_id, cause_code = EXCLUDED.cause_code,
              recovery_action = EXCLUDED.recovery_action, evidence_refs = EXCLUDED.evidence_refs",
+        row.run_id,
+        row.task_id,
+        row.cause_code,
+        recovery_action.trim(),
+        row.evidence_refs
     )
-    .bind(row.0)
-    .bind(row.1)
-    .bind(&row.2)
-    .bind(recovery_action.trim())
-    .bind(&row.3)
     .execute(&mut *tx)
     .await?;
     let deduplication_key = format!("turn-attempt:{attempt_id}:attention");
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "INSERT INTO docket_notification_outbox (run_id, task_id, deduplication_key, kind, payload)
          VALUES ($1,$2,$3,'attention',$4)
          ON CONFLICT (deduplication_key) DO NOTHING",
+        row.run_id,
+        row.task_id,
+        deduplication_key,
+        json!({"attempt_id": attempt_id, "cause_code": row.cause_code, "disposition": row.supervisor_disposition, "recovery_action": recovery_action.trim()})
     )
-    .bind(row.0).bind(row.1).bind(deduplication_key)
-    .bind(json!({"attempt_id": attempt_id, "cause_code": row.2, "disposition": row.4, "recovery_action": recovery_action.trim()}))
     .execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(result.rows_affected() == 1)
@@ -428,7 +446,7 @@ pub async fn terminalize_stale_attempts(
     pool: &PgPool,
     stale_before: OffsetDateTime,
 ) -> Result<u64, DenError> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "WITH settled AS (
              UPDATE docket_turn_attempts
              SET state='settled', outcome='timed_out', cause_code='activity_timeout',
@@ -441,9 +459,9 @@ pub async fn terminalize_stale_attempts(
          UPDATE docket_turn_claims
          SET state='settled', updated_at=now()
          WHERE id IN (SELECT claim_id FROM settled WHERE claim_id IS NOT NULL)",
+        stale_before,
+        json!({"synthetic": true, "boundary": "watchdog"})
     )
-    .bind(stale_before)
-    .bind(json!({"synthetic": true, "boundary": "watchdog"}))
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
@@ -468,8 +486,16 @@ pub async fn persist_result_rollup(
             "result rollup requires a summary".into(),
         ));
     }
-    let result = sqlx::query("INSERT INTO docket_result_rollups (run_id, task_id, parent_task_id, summary, evidence_refs) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (run_id, task_id) DO NOTHING")
-        .bind(run_id).bind(task_id).bind(parent_task_id).bind(rollup.summary.trim()).bind(rollup.evidence_refs).execute(pool).await?;
+    let result = sqlx::query!(
+        "INSERT INTO docket_result_rollups (run_id, task_id, parent_task_id, summary, evidence_refs) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (run_id, task_id) DO NOTHING",
+        run_id,
+        task_id,
+        parent_task_id,
+        rollup.summary.trim(),
+        rollup.evidence_refs
+    )
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -478,15 +504,15 @@ pub async fn parent_rollup_context(
     run_id: Uuid,
     parent_task_id: Uuid,
 ) -> Result<Vec<ResultRollup>, DenError> {
-    let rows: Vec<(String, Value)> = sqlx::query_as("SELECT summary, evidence_refs FROM docket_result_rollups WHERE run_id=$1 AND parent_task_id=$2 ORDER BY created_at, task_id")
-        .bind(run_id).bind(parent_task_id).fetch_all(pool).await?;
-    Ok(rows
-        .into_iter()
-        .map(|(summary, evidence_refs)| ResultRollup {
-            summary,
-            evidence_refs,
-        })
-        .collect())
+    let rows = sqlx::query_as!(
+        ResultRollup,
+        "SELECT summary AS \"summary!: String\", evidence_refs AS \"evidence_refs!: _\" FROM docket_result_rollups WHERE run_id=$1 AND parent_task_id=$2 ORDER BY created_at, task_id",
+        run_id,
+        parent_task_id
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
 
 #[cfg(test)]

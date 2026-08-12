@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE docket_turn_attempts\n         SET supervisor_disposition = $2, retry_disposition = $3\n         WHERE id = $1 AND state = 'settled'\n           AND (supervisor_disposition IS NULL OR supervisor_disposition = $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "932b0cb5dd772cde32462c8c07e0204e219f6c6c5dbccc8825360f186bf82672"
+}

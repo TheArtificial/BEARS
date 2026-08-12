@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs\n         SET result_refs = COALESCE(result_refs, '{}'::jsonb)\n                 || jsonb_build_object('rust_dependency_preparation', $3::jsonb),\n             updated_at = now()\n         WHERE id = $1 AND bear_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "010ee4e7353bacc003b2e3ef7a6f6c13ad428504ebfbe2d5689008ae53f3451f"
+}

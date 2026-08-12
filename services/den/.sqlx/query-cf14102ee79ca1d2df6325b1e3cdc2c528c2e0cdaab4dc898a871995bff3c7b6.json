@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs\n         SET result_refs = COALESCE(result_refs, '{}'::jsonb) || jsonb_build_object(\n                 'stalled_resolution', jsonb_build_object(\n                     'resolved_by', $3::text,\n                     'reason', $4::text,\n                     'resolved_at', now()\n                 )\n             ),\n             updated_at = now()\n         WHERE id = $1 AND bear_id = $2 AND state = 'stalled'\n           AND NOT (COALESCE(result_refs, '{}'::jsonb) ? 'stalled_resolution')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cf14102ee79ca1d2df6325b1e3cdc2c528c2e0cdaab4dc898a871995bff3c7b6"
+}
