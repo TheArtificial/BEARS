@@ -154,6 +154,7 @@ pub fn normalized_operational_outcome(
     let (kind, retryable, subsystem) = match reason {
         "command_outcome_unknown" => ("command_outcome_unknown", false, "client_command"),
         "continuation_stream_error" => ("provider_stream_error", true, "llm_stream_transport"),
+        "continuation_run_state_conflict" => ("run_state_conflict", false, "continuation_runtime"),
         "continuation_watchdog_timeout" => ("continuation_timeout", true, "continuation_runtime"),
         "continuation_start_failed" => ("continuation_start_failed", true, "continuation_runtime"),
         "runtime_internal" if is_budget_or_loop_failure(reason, message) => {
@@ -225,6 +226,12 @@ pub fn run_failed_user_message(
     if reason == "server_restart_interrupted" {
         return Some(format!(
             "{} was interrupted because Den restarted while waiting for the connected work surface to complete a local step. Reconnect and send another message to continue.",
+            display_bear_name(bear_name),
+        ));
+    }
+    if reason == "continuation_run_state_conflict" {
+        return Some(format!(
+            "{} could not continue because this turn changed state while Den prepared its next execution slice. No additional model work was started. Check the run state and send a new message if the turn is terminal.",
             display_bear_name(bear_name),
         ));
     }

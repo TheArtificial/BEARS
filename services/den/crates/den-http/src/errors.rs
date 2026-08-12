@@ -188,6 +188,15 @@ impl From<DenError> for CustomError {
         match err {
             DenError::Anyhow(cause) => CustomError::Anyhow(cause),
             DenError::System(cause) => CustomError::System(cause),
+            DenError::RunStateConflict {
+                operation,
+                run_id,
+                expected_state,
+                actual_state,
+            } => CustomError::System(format!(
+                "Run state conflict during {operation}: run {run_id} expected state {expected_state}, observed {}",
+                actual_state.as_deref().unwrap_or("missing")
+            )),
             DenError::Database(cause) => CustomError::Database(cause),
             DenError::DatabaseUnavailable(cause) => CustomError::DatabaseUnavailable(cause),
             DenError::Session(cause) => CustomError::Session(cause),

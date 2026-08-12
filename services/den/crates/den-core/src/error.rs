@@ -19,6 +19,12 @@ use std::fmt;
 pub enum DenError {
     Anyhow(anyhow::Error),
     System(String),
+    RunStateConflict {
+        operation: &'static str,
+        run_id: String,
+        expected_state: &'static str,
+        actual_state: Option<String>,
+    },
     Database(String),
     /// Pool exhaustion or closed — semantically distinct from a query-level Database error.
     DatabaseUnavailable(String),
@@ -39,6 +45,16 @@ impl fmt::Display for DenError {
         match *self {
             DenError::Anyhow(ref cause) => write!(f, "{cause:?}"),
             DenError::System(ref cause) => write!(f, "Server Error: {cause}"),
+            DenError::RunStateConflict {
+                operation,
+                ref run_id,
+                expected_state,
+                ref actual_state,
+            } => write!(
+                f,
+                "Run state conflict during {operation}: run {run_id} expected state {expected_state}, observed {}",
+                actual_state.as_deref().unwrap_or("missing")
+            ),
             DenError::Database(ref cause) => write!(f, "Database Error: {cause}"),
             DenError::DatabaseUnavailable(ref cause) => write!(f, "Database Unavailable: {cause}"),
             DenError::Session(ref cause) => write!(f, "Session Error: {cause}"),

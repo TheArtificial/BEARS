@@ -129,6 +129,7 @@ pub(crate) enum RunFailureReason {
     RuntimeInternal,
     ContinuationWatchdogTimeout,
     ContinuationStreamError,
+    ContinuationRunStateConflict,
     ContinuationStreamEndedWithoutRuntimeTerminal,
     ContinuationStartFailed,
 }
@@ -147,6 +148,7 @@ impl RunFailureReason {
             Self::RuntimeInternal => "runtime_internal",
             Self::ContinuationWatchdogTimeout => "continuation_watchdog_timeout",
             Self::ContinuationStreamError => "continuation_stream_error",
+            Self::ContinuationRunStateConflict => "continuation_run_state_conflict",
             Self::ContinuationStreamEndedWithoutRuntimeTerminal => {
                 "continuation_stream_ended_without_runtime_terminal"
             }

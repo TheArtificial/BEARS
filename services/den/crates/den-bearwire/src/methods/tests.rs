@@ -2815,15 +2815,17 @@ async fn run_recover_refuses_when_selected_pair_task_changed(pool: sqlx::PgPool)
         }),
     ))
     .expect("serialize recovery snapshot");
-    turn_runs::claim_technical_budget_continuation(
-        &pool,
-        &run_id,
-        "emergency_hard_step_limit",
-        &snapshot,
-    )
-    .await
-    .expect("claim recovery continuation")
-    .expect("running run transitions to continuing");
+    assert!(matches!(
+        turn_runs::claim_technical_budget_continuation(
+            &pool,
+            &run_id,
+            "emergency_hard_step_limit",
+            &snapshot,
+        )
+        .await
+        .expect("claim recovery continuation"),
+        turn_runs::TechnicalBudgetContinuationClaim::Claimed(_)
+    ));
     client_sessions::set_current_task(&pool, user_id, bear_id, &session_id, None)
         .await
         .expect("clear selected task");

@@ -584,6 +584,11 @@ impl TechnicalBudgetRecoverySnapshot {
     }
 }
 
+pub enum TechnicalBudgetContinuationClaim {
+    Claimed(TurnRunRow),
+    RunStateConflict { actual_state: Option<String> },
+}
+
 pub struct TurnRunRecoverySnapshotRow {
     pub run_id: String,
     pub reason: String,
@@ -603,7 +608,7 @@ pub async fn claim_technical_budget_continuation(
     run_id: &str,
     reason: &str,
     snapshot: &Value,
-) -> Result<Option<TurnRunRow>, DenError> {
+) -> Result<TechnicalBudgetContinuationClaim, DenError> {
     let mut tx = pool.begin().await?;
     let row = sqlx::query_as!(
         TurnRunRow,
@@ -633,8 +638,19 @@ pub async fn claim_technical_budget_continuation(
         .execute(&mut *tx)
         .await?;
     }
+    let outcome = match row {
+        Some(row) => TechnicalBudgetContinuationClaim::Claimed(row),
+        None => {
+            let actual_state =
+                sqlx::query_scalar::<_, String>("SELECT state FROM turn_runs WHERE run_id = $1")
+                    .bind(run_id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            TechnicalBudgetContinuationClaim::RunStateConflict { actual_state }
+        }
+    };
     tx.commit().await?;
-    Ok(row)
+    Ok(outcome)
 }
 
 /// Reads an unconsumed technical-budget recovery snapshot so the caller can

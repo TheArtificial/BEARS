@@ -857,17 +857,25 @@ impl SessionTrackingStream {
                                 "serialize Pair technical-budget recovery snapshot failed: {error}"
                             ))
                         })?;
-                        let Some(transitioned) = turn_runs::claim_technical_budget_continuation(
+                        let transitioned = match turn_runs::claim_technical_budget_continuation(
                             &pool,
                             &run_id,
                             reason_code,
                             &snapshot,
                         )
                         .await?
-                        else {
-                            return Err(DenError::System(format!(
-                                "Pair run {run_id} was not running when budget continuation was claimed"
-                            )));
+                        {
+                            turn_runs::TechnicalBudgetContinuationClaim::Claimed(run) => run,
+                            turn_runs::TechnicalBudgetContinuationClaim::RunStateConflict {
+                                actual_state,
+                            } => {
+                                return Err(DenError::RunStateConflict {
+                                    operation: "technical budget continuation claim",
+                                    run_id,
+                                    expected_state: "running",
+                                    actual_state,
+                                });
+                            }
                         };
                         if let Err(error) = record_loop_control_decision(
                             &pool,
