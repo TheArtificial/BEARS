@@ -35,3 +35,28 @@ case "${AUTO_BUMP_DEN_PATCH}" in
     fi
     ;;
 esac
+
+needs_sqlx_offline_check=0
+while IFS= read -r -d '' file; do
+  case "${file}" in
+    services/den/Cargo.toml|services/den/Cargo.lock|services/den/migrations/*|services/den/.sqlx/*|services/den/*.sql)
+      needs_sqlx_offline_check=1
+      break
+      ;;
+    *.rs)
+      if git cat-file -e ":${file}" 2>/dev/null &&
+        git show ":${file}" | grep -Eq '(^|[^[:alnum:]_])sqlx::(query|query_as|query_scalar|query_file|query_file_as|query_file_scalar)!'; then
+        needs_sqlx_offline_check=1
+        break
+      fi
+      ;;
+  esac
+done < <(git diff --cached --name-only -z)
+
+if [ "${needs_sqlx_offline_check}" -eq 1 ]; then
+  echo "pre-commit: verifying staged Den SQLx metadata compiles offline" >&2
+  SQLX_OFFLINE=true cargo check --manifest-path services/den/Cargo.toml --locked --features=production
+fi
+
+# ponytail: this staged-file heuristic does not expand Rust macros or trace query
+# strings through wrappers. The Den image build remains the non-bypassable backstop.
