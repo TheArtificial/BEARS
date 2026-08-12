@@ -195,7 +195,9 @@ GitHub Actions builds Den images and owns the relevant cache. The [`Dockerfile`]
 - `/usr/local/cargo/registry` + `/usr/local/cargo/git` — downloaded crate sources.
 - `/app/target` — compiled artifacts.
 
-**External dependencies** are not re-downloaded or recompiled unless `Cargo.lock` changes — resolved by the `/app/target` mount exported through the Actions and registry BuildKit caches.
+GitHub-hosted builders are ephemeral, so the image workflow uses `reproducible-containers/buildkit-cache-dance` plus `actions/cache` to restore and save these otherwise builder-local cache mounts. Cache snapshots are keyed by platform, branch, `Cargo.lock`, and commit SHA, with same-branch and `main` lockfile-compatible fallback keys. This lets Cargo reuse incremental artifacts without accepting artifacts from an incompatible dependency graph.
+
+The normal Den build is the canonical producer for a workflow run. The sandbox-provider job waits for it and imports the standard Den BuildKit cache before its provider-specific cache, avoiding a second compile of the same Rust build stage.
 
 **Workspace crates** (`den-core`, `den-web`, …) are kept incremental with Cargo's `-Z checksum-freshness`, which decides freshness from file **content hashes** instead of mtimes. Without it, Docker's `COPY` stamps a fresh mtime on every file each build and Cargo recompiles the entire workspace every deploy. The feature is still [unstable](https://github.com/rust-lang/cargo/issues/14136), so the build stage installs a **pinned nightly toolchain** (`RUST_NIGHTLY` in the [`Dockerfile`](Dockerfile)) purely to enable it; the runtime image is unaffected.
 
