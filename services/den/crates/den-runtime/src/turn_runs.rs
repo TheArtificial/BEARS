@@ -1,5 +1,6 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -543,6 +544,95 @@ pub async fn finish_run_with_bearwire_event(
         settled_steps,
         event_sequence: terminal_event.sequence_no,
     }))
+}
+
+pub struct TurnRunRecoverySnapshotRow {
+    pub run_id: String,
+    pub reason: String,
+    pub snapshot: Value,
+    pub recovery_lease_id: Option<Uuid>,
+    pub recovery_lease_expires_at: Option<OffsetDateTime>,
+    pub recovered_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
+/// Stores the replay inputs atomically with the only technical-budget claim
+/// that may survive process loss. `snapshot` must be sanitized by the caller:
+/// never include credentials, stream handles, or provider continuation tokens.
+pub async fn claim_technical_budget_continuation(
+    pool: &PgPool,
+    run_id: &str,
+    reason: &str,
+    snapshot: &Value,
+) -> Result<Option<TurnRunRow>, DenError> {
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
+        UPDATE turn_runs
+        SET state = 'continuing', terminal_reason = $2, updated_at = NOW()
+        WHERE run_id = $1 AND state = 'running'
+        RETURNING id, run_id, session_id, bear_id, user_id, state,
+                  terminal_reason AS "terminal_reason?", created_at, updated_at,
+                  completed_at AS "completed_at?"
+        "#,
+        run_id,
+        reason,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if row.is_some() {
+        sqlx::query!(
+            r#"
+            INSERT INTO turn_run_recovery_snapshots (run_id, reason, snapshot)
+            VALUES ($1, $2, $3)
+            "#,
+            run_id,
+            reason,
+            snapshot,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(row)
+}
+
+/// Atomically leases an eligible, stranded technical-budget continuation.
+/// Callers must still authenticate and revalidate current-task authority
+/// before rebuilding execution from the returned snapshot.
+pub async fn lease_technical_budget_recovery(
+    pool: &PgPool,
+    run_id: &str,
+    lease_id: Uuid,
+) -> Result<Option<TurnRunRecoverySnapshotRow>, DenError> {
+    let row = sqlx::query_as!(
+        TurnRunRecoverySnapshotRow,
+        r#"
+        UPDATE turn_run_recovery_snapshots AS snapshots
+        SET recovery_lease_id = $2,
+            recovery_lease_expires_at = NOW() + INTERVAL '5 minutes',
+            updated_at = NOW()
+        FROM turn_runs AS runs
+        WHERE snapshots.run_id = runs.run_id
+          AND snapshots.run_id = $1
+          AND runs.state = 'continuing'
+          AND snapshots.recovered_at IS NULL
+          AND (snapshots.recovery_lease_expires_at IS NULL
+               OR snapshots.recovery_lease_expires_at < NOW())
+        RETURNING snapshots.run_id, snapshots.reason, snapshots.snapshot,
+                  snapshots.recovery_lease_id AS "recovery_lease_id?",
+                  snapshots.recovery_lease_expires_at AS "recovery_lease_expires_at?",
+                  snapshots.recovered_at AS "recovered_at?", snapshots.created_at,
+                  snapshots.updated_at
+        "#,
+        run_id,
+        lease_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
 }
 
 pub async fn claim_run_continuation(
