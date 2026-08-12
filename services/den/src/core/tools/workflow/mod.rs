@@ -1366,6 +1366,12 @@ pub(crate) async fn create_job(
     let task_list = docket::task_list_projection_from_docket_job(&job, None);
     let web_base = docket_web_base(pool, config, context.bear_id).await?;
     Ok(json!({
+        "action": "job_created",
+        "execution": {
+            "requested": false,
+            "state": "not_started",
+            "run_id": null,
+        },
         "domain": "docket",
         "bear_id": context.bear_id,
         "summary": docket_job_summary(&job),
@@ -1614,10 +1620,20 @@ pub(crate) async fn execute_job(
         .await?;
     let status_report = docket_job_status_report(&outcome.job);
     update_focused_conversation_title(pool, context, &outcome.job, &status_report).await?;
+    let run = outcome.job.current_run.as_ref();
+    let execution_state = run
+        .map(|run| run.state.to_string())
+        .unwrap_or_else(|| "not_started".to_string());
     Ok(json!({
+        "action": "execution_requested",
+        "execution": {
+            "requested": true,
+            "state": execution_state,
+            "run_id": run.map(|run| run.id),
+        },
+        "outcome": outcome,
         "domain": "docket",
         "bear_id": context.bear_id,
-        "execution": outcome,
         "status_report": status_report,
     }))
 }
