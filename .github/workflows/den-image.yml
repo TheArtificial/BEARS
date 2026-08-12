@@ -113,7 +113,7 @@ jobs:
               id: build
               uses: docker/build-push-action@v6
               with:
-                  context: .
+                  context: services/den
                   file: services/den/Dockerfile
                   target: sandbox-provider
                   build-contexts: |
