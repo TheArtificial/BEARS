@@ -1,6 +1,7 @@
 # GitHub-built Den images and Coolify deployment plan
 
-> **Status:** Proposed  
+> **Status:** In progress
+>
 > **Scope:** Build and publish Den-derived container images in GitHub Actions; make Coolify pull and deploy those images. This plan preserves local source builds and does not, by itself, move Bifrost or preflight image builds out of Coolify.
 
 ## Objective
@@ -286,23 +287,11 @@ After calling the webhook, retain and strengthen the existing polling logic:
 
 The Den build scripts intentionally keep the compile-time Git SHA stable so that commit-specific build inputs do not invalidate Cargo compilation layers. See [`services/den/build.rs`](../../services/den/build.rs) and [`services/den/crates/den-http/build.rs`](../../services/den/crates/den-http/build.rs).
 
-The migration must preserve that optimization.
+The implementation preserves that optimization: GitHub Actions supplies `GIT_SHA` as a Docker build argument, but [`services/den/Dockerfile`](../../services/den/Dockerfile) applies it only in the final runtime stage after the compiled binary has been copied. The running process exposes that environment value through `/status.json`; it does not make it a Cargo build input.
 
-### 4.1 Do not use a changing Rust build input for Git SHA
+The workflow's post-deploy check compares this value with the GitHub `workflow_run.head_sha`. The immutable SHA image tag remains the rollback/provenance reference, while `testing` and `latest` remain lane pointers.
 
-Do not solve deploy verification by changing a `GIT_SHA` Docker build argument that affects Rust compilation. That would undermine the caching goal of this work.
-
-### 4.2 Choose and implement one runtime provenance mechanism
-
-Select one of the following, in preferred order:
-
-1. **Image digest verification:** make the post-deploy check retrieve the actual pulled image digest through a supported Coolify API/inspection surface and compare it with the GitHub build output.
-2. **OCI image labels:** publish `org.opencontainers.image.revision` and verify the running image label through supported Coolify/Docker inspection tooling.
-3. **Runtime deployment metadata:** use a supported Coolify environment/deployment metadata mechanism to set `DEN_GIT_SHA_OVERRIDE` for the image being deployed.
-
-The current `/status.json` endpoint already prefers `DEN_GIT_SHA_OVERRIDE`, `GIT_SHA`, and `SOURCE_COMMIT` over its stable compile-time fallback. Use that runtime seam if option 3 is selected.
-
-**Exit criteria:** each successful automatic deployment is tied to an immutable SHA-tagged artifact or image digest, and the check does not require a cache-breaking Rust rebuild.
+**Exit criteria:** each successful automatic deployment is tied to an immutable SHA-tagged artifact and a matching `/status.json` revision, without a cache-breaking Rust rebuild.
 
 ## Phase 5 — Documentation and operational readiness
 

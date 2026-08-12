@@ -24,10 +24,10 @@ You can use the devcontainer in this repo instead of a manual local Postgres set
 
 ## Docker stack (recommended for integration)
 
-From the repo root, start the native compose stack (Bifrost + Den; optional `bundled` Postgres):
+From the repo root, start the native compose stack (Bifrost + Den; optional `bundled` Postgres). The development override restores local source builds; the base Compose file is reserved for Coolify's CI-published Den images:
 
 ```bash
-docker compose --profile bundled up -d
+docker compose -f docker-compose.yaml -f docker-compose.dev.yaml --profile bundled up -d
 ```
 
 Operational scripts (see also [AGENTS.md](../../AGENTS.md)):

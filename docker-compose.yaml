@@ -194,20 +194,11 @@ services:
         # Coolify owns proxy-facing network attachment. Do not add an explicit
         # Compose `default` network here: it creates an extra unshared network
         # that Traefik may select for the upstream address.
-        # No `pull_policy: build`. Coolify deploys in two phases — `docker compose
-        # build` then `docker compose up -d` — from two different directories.
-        # `pull_policy: build` forces `up` to recompile the image a second time
-        # even though `build` already produced `bears-den:local`. Omitting it lets
-        # `up` reuse the freshly built image (default pull policy reuses a present
-        # local image and never rebuilds without `--build`). The `build` phase
-        # always runs first, so the reused image is always current — no staleness.
-        build:
-            context: ./services/den
-            dockerfile: Dockerfile
-            args:
-                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
-                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        # GitHub Actions builds and publishes this image. Coolify must resolve the
+        # current registry digest for its mutable lane tag on every webhook deploy.
+        # Local source builds are restored by docker-compose.dev.yaml.
         image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
+        pull_policy: always
         restart: unless-stopped
         depends_on:
             bears-den-migrate:
@@ -300,13 +291,10 @@ services:
             - "${DEN_API_PORT:-3001}"
 
     bears-den-migrate:
-        build:
-            context: ./services/den
-            dockerfile: Dockerfile
-            args:
-                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
-                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        # Must use the same CI-published image as bears-den so migrations and the
+        # serving binary always come from one artifact.
         image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
+        pull_policy: always
         restart: "no"
         depends_on:
             bears-preflight-config:
@@ -428,17 +416,10 @@ services:
     # docker CLI, talking to the engine over TLS TCP.
     bears-sandbox-provider:
         hostname: bears-sandbox-provider${BEARS_INSTANCE_SUFFIX:-}
-        build:
-            context: ./services/den
-            dockerfile: Dockerfile
-            target: sandbox-provider
-            additional_contexts:
-                sandbox_packaging: ./packaging/sandbox-image
-                bear_armature: ./tools/bear-armature
-            args:
-                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
-                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        # Built and published by GitHub Actions from the sandbox-provider target;
+        # docker-compose.dev.yaml restores the local build definition.
         image: ${SANDBOX_PROVIDER_IMAGE:-bears-sandbox-provider:${SOURCE_COMMIT:-local}}
+        pull_policy: always
         restart: unless-stopped
         depends_on:
             bears-preflight-config:

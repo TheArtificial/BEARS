@@ -77,7 +77,7 @@ fi
 
 compose_with_env() {
   env -i PATH="$PATH" HOME="$HOME" DOCKER_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}" \
-    "${COMPOSE_ENV_FILES[@]}" docker compose "${COMPOSE_PROFILE_ARGS[@]}" "$@"
+    "${COMPOSE_ENV_FILES[@]}" docker compose -f "${ROOT}/docker-compose.yaml" -f "${ROOT}/docker-compose.dev.yaml" "${COMPOSE_PROFILE_ARGS[@]}" "$@"
 }
 
 wait_postgres_service() {

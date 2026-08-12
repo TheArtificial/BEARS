@@ -34,7 +34,7 @@ compose_with_env() {
     LLM_API_URL="${LLM_API_URL:-http://bears-bifrost:8080/v1}" \
     BIFROST_IMAGE="${BIFROST_IMAGE:-bears-bifrost-dev:latest}" \
     DEN_IMAGE="${DEN_IMAGE:-bears-den-dev:latest}" \
-    docker compose --profile bundled "$@"
+    docker compose -f "${ROOT}/docker-compose.yaml" -f "${ROOT}/docker-compose.dev.yaml" --profile bundled "$@"
 }
 
 API_URL=""

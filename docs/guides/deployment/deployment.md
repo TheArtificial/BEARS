@@ -86,12 +86,18 @@ Set these on the Compose resource:
 | `DEN_API_ORIGIN` | Public Den API origin, e.g. `https://api.bears.[domain]` or `https://bears.[domain]:3001`; compose derives `API_SERVER_URL` from this |
 | `BEAR_SQLITE_DATA_DIR` | Leave default `/var/lib/den/bear-sqlite` unless you customize the volume mount |
 
+For GitHub-built Den images, also set:
+
+| Variable | Value |
+| -------- | ----- |
+| `DEN_IMAGE` | Required Den runtime image. Set `ghcr.io/<owner>/den:latest` in production and `ghcr.io/<owner>/den:testing` in testing. |
+| `SANDBOX_PROVIDER_IMAGE` | Required when sandbox work is enabled. Set the matching `ghcr.io/<owner>/den-sandbox-provider:<lane>` image. |
+
 Optional:
 
 | Variable | Value |
 | -------- | ----- |
-| `DEN_IMAGE` | Optional local tag assigned to the compose-built Den image |
-| `CARGO_BUILD_JOBS` | Den Docker build parallelism; keep low on small deploy hosts |
+| `CARGO_BUILD_JOBS` | Used only by the local `docker-compose.dev.yaml` source-build override; it does not affect Coolify's Den image pull. |
 | `BIFROST_APP_PORT` | Bifrost listen port. It may remain `8080` when instance DNS names are suffixed; use distinct values if your platform also requires unique published/listener ports |
 | `BIFROST_ORIGIN` | Canonical internal Bifrost origin; compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this. Defaults to `http://bears-bifrost${BEARS_INSTANCE_SUFFIX}:${BIFROST_APP_PORT}` |
 | `RUN_WEB` / `RUN_API` / `RUN_WORKERS` | Service toggles inside the Den container (compose defaults all three on) |
@@ -125,13 +131,17 @@ You usually do not need to set internal service URLs. The compose file already d
 
 For the initial deploy, click **Deploy** in Coolify.
 
-For ongoing `main` updates, prefer the GitHub-coordinated deployment flow:
+For ongoing deployments, use the GitHub image and webhook flow:
 
 1. In Coolify, disable automatic deploys on Git push for this Compose resource if they are enabled.
-2. Keep the repository secrets `COOLIFY_WEBHOOK` and `COOLIFY_TOKEN` configured in GitHub.
-3. Let `.github/workflows/coolify-deploy.yml` trigger the Coolify deploy webhook.
+2. Configure GHCR read credentials on the Coolify host when the packages are private.
+3. Create separate Coolify resources for production and testing:
+   - production: `DEN_IMAGE=ghcr.io/<owner>/den:latest` and `SANDBOX_PROVIDER_IMAGE=ghcr.io/<owner>/den-sandbox-provider:latest`;
+   - testing: set `BEARS_INSTANCE_SUFFIX=-test`, `DEN_IMAGE=ghcr.io/<owner>/den:testing`, and `SANDBOX_PROVIDER_IMAGE=ghcr.io/<owner>/den-sandbox-provider:testing`.
+4. Configure `COOLIFY_WEBHOOK`, `COOLIFY_TOKEN`, and `BEARS_DEPLOY_URL` as GitHub Environment secrets for `production` and `testing`.
+5. Push to `test` for the automatic testing lane or `main` for the automatic production lane.
 
-That workflow waits for the Den image workflow when a push changes `services/den/**` or related stack files, then triggers Coolify only after the required GHCR image is available. This avoids Coolify pulling stale `latest` image tags before GitHub has finished rebuilding them.
+`.github/workflows/den-image.yml` publishes both Den images before `.github/workflows/coolify-deploy.yml` triggers the corresponding Coolify webhook. Compose uses `pull_policy: always` for Den-derived services, so each webhook deployment resolves the newest digest behind `testing` or `latest` instead of relying on a deploy-host build cache.
 
 If deploy preflight fails, check the missing environment variable in the logs first. The compose file intentionally defaults required secrets and database URLs to `SETME` so bad deploys fail early. Preflight services (`bears-preflight-config`, `bears-preflight-den-db`) must complete successfully before `bears-bifrost` and `bears-den` start.
 

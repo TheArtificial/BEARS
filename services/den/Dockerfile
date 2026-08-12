@@ -51,6 +51,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,s
 FROM alpine:3.18 AS final
 
 ARG UID=10001
+# Deliberately applied in the final image stage: this makes the deployed revision
+# visible at runtime without invalidating cached Rust compilation layers.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
 RUN apk add --no-cache su-exec wget git \
     && adduser \
     --disabled-password \
@@ -65,7 +69,8 @@ COPY --from=build /tmp/server /bin/server
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Runtime env (set in Coolify / compose — not baked into the image):
+# Runtime env (set in Coolify / compose — not baked into the image, except the
+# non-sensitive GIT_SHA provenance supplied by CI above):
 #   AGENT_RUNTIME — native (default) or letta (legacy external runtime).
 #   BEAR_SQLITE_DATA_DIR — per-Bear SQLite store for native runtime (default /var/lib/den/bear-sqlite).
 #     Mount a persistent volume at this path in production; entrypoint chowns it for appuser.

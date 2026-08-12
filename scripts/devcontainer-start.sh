@@ -76,7 +76,7 @@ log "Starting remaining BEARS services"
 stack_ok=0
 if [ "${build_ok}" != "1" ]; then
   log "Skipping full stack startup because one or more local source image builds failed"
-elif ! run_logged docker compose up -d --force-recreate bears-bifrost bears-den; then
+elif ! run_logged docker compose -f "${ROOT}/docker-compose.yaml" -f "${ROOT}/docker-compose.dev.yaml" up -d --force-recreate bears-bifrost bears-den; then
   stack_ok=0
   log "Full stack startup failed; devcontainer remains usable. See ${LOG_FILE}."
 else
