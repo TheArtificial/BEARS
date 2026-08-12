@@ -21,9 +21,6 @@ pub struct BearObservationRow {
     pub reviewed_at: Option<OffsetDateTime>,
 }
 
-const OBSERVATION_COLUMNS: &str =
-    "id, bear_id, observation_id, summary, salience, payload_ref, source, logical_path, status, proposal_id, created_at, reviewed_at";
-
 #[derive(Debug, Clone)]
 pub struct CreateBearObservation<'a> {
     pub bear_id: Uuid,
@@ -35,7 +32,7 @@ pub struct CreateBearObservation<'a> {
 }
 
 pub fn observation_logical_path(observation_id: &str) -> String {
-    format!("watch/observations/{observation_id}.md")
+    ["watch/observations/", observation_id, ".md"].concat()
 }
 
 pub async fn create(
@@ -43,22 +40,28 @@ pub async fn create(
     params: CreateBearObservation<'_>,
 ) -> Result<BearObservationRow, DenError> {
     let logical_path = observation_logical_path(params.observation_id);
-    let row = sqlx::query_as::<_, BearObservationRow>(&format!(
-        r"
+    let row = sqlx::query_as!(
+        BearObservationRow,
+        r#"
         INSERT INTO bear_observations (
             bear_id, observation_id, summary, salience, payload_ref, source, logical_path
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING {OBSERVATION_COLUMNS}
-        "
-    ))
-    .bind(params.bear_id)
-    .bind(params.observation_id)
-    .bind(params.summary)
-    .bind(params.salience)
-    .bind(params.payload_ref)
-    .bind(params.source)
-    .bind(logical_path)
+        RETURNING id as "id!: _", bear_id as "bear_id!: _",
+                  observation_id as "observation_id!: _", summary as "summary!: _",
+                  salience as "salience!: _", payload_ref as "payload_ref: _",
+                  source as "source!: _", logical_path as "logical_path!: _",
+                  status as "status!: _", proposal_id as "proposal_id: _",
+                  created_at as "created_at!: _", reviewed_at as "reviewed_at: _"
+        "#,
+        params.bear_id,
+        params.observation_id,
+        params.summary,
+        params.salience,
+        params.payload_ref,
+        params.source,
+        logical_path
+    )
     .fetch_one(pool)
     .await?;
     Ok(row)
@@ -70,18 +73,24 @@ pub async fn mark_review_queued(
     observation_row_id: Uuid,
     proposal_id: Uuid,
 ) -> Result<BearObservationRow, DenError> {
-    let row = sqlx::query_as::<_, BearObservationRow>(&format!(
-        r"
+    let row = sqlx::query_as!(
+        BearObservationRow,
+        r#"
         UPDATE bear_observations
         SET status = 'review_queued',
             proposal_id = $3
         WHERE bear_id = $1 AND id = $2
-        RETURNING {OBSERVATION_COLUMNS}
-        "
-    ))
-    .bind(bear_id)
-    .bind(observation_row_id)
-    .bind(proposal_id)
+        RETURNING id as "id!: _", bear_id as "bear_id!: _",
+                  observation_id as "observation_id!: _", summary as "summary!: _",
+                  salience as "salience!: _", payload_ref as "payload_ref: _",
+                  source as "source!: _", logical_path as "logical_path!: _",
+                  status as "status!: _", proposal_id as "proposal_id: _",
+                  created_at as "created_at!: _", reviewed_at as "reviewed_at: _"
+        "#,
+        bear_id,
+        observation_row_id,
+        proposal_id
+    )
     .fetch_one(pool)
     .await?;
     Ok(row)
@@ -92,15 +101,21 @@ pub async fn get_for_bear(
     bear_id: Uuid,
     observation_id: &str,
 ) -> Result<Option<BearObservationRow>, DenError> {
-    let row = sqlx::query_as::<_, BearObservationRow>(&format!(
-        r"
-        SELECT {OBSERVATION_COLUMNS}
+    let row = sqlx::query_as!(
+        BearObservationRow,
+        r#"
+        SELECT id as "id!: _", bear_id as "bear_id!: _",
+               observation_id as "observation_id!: _", summary as "summary!: _",
+               salience as "salience!: _", payload_ref as "payload_ref: _",
+               source as "source!: _", logical_path as "logical_path!: _",
+               status as "status!: _", proposal_id as "proposal_id: _",
+               created_at as "created_at!: _", reviewed_at as "reviewed_at: _"
         FROM bear_observations
         WHERE bear_id = $1 AND observation_id = $2
-        "
-    ))
-    .bind(bear_id)
-    .bind(observation_id)
+        "#,
+        bear_id,
+        observation_id
+    )
     .fetch_optional(pool)
     .await?;
     Ok(row)

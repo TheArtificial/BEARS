@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT reason\n        FROM bear_loop_control_ledger\n        WHERE run_id = $1\n          AND decision_kind = 'grounding_probe_result'\n          AND evidence_refs @> $2::jsonb\n        ORDER BY created_at DESC, decision_id DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reason",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "95ed4e64c30152b90fe345fee095f33265b134049dee136f5b4fada20bb2db9c"
+}

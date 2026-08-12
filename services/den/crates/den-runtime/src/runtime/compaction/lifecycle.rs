@@ -300,7 +300,7 @@ pub async fn enqueue_compaction_after_turn(
         "profile": profile.as_str(),
         "trigger": "post_turn",
     });
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r"
         INSERT INTO bear_reflection_runs (
             bear_id, lane, trigger, status, input_summary, output_summary, conversation_id
@@ -314,10 +314,10 @@ pub async fn enqueue_compaction_after_turn(
               AND status = 'queued'
         )
         ",
+        bear_id,
+        input_summary,
+        conversation_id
     )
-    .bind(bear_id)
-    .bind(input_summary)
-    .bind(conversation_id)
     .execute(pool)
     .await;
     if let Err(error) = result {

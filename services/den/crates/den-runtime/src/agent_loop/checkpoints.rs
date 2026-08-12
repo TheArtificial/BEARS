@@ -2,7 +2,7 @@ use den_core::DenError;
 use den_protocol::ContextBudgetReport;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -684,7 +684,8 @@ pub async fn record_checkpoint_request(
         .and_then(|context| context.docket_task_id.as_deref())
         .and_then(|value| Uuid::parse_str(value).ok());
 
-    let row = sqlx::query(
+    let checkpoint = sqlx::query_as!(
+        CheckpointArtifactRow,
         r"
         INSERT INTO bear_run_checkpoints (
             run_id, turn_step_id, checkpoint_id, reason, control_level, request,
@@ -709,22 +710,20 @@ pub async fn record_checkpoint_request(
             response, validation_status, visibility, replay_policy, related_task_list_id,
             related_task_item_id, related_docket_task_id, created_at, updated_at
         ",
+        input.run_id,
+        input.turn_step_id,
+        input.request.checkpoint_id,
+        input.request.reason.as_str(),
+        input.request.control_level.as_str(),
+        request_json,
+        input.visibility.as_str(),
+        input.replay_policy.as_str(),
+        task_context.and_then(|context| context.task_list_id.as_deref()),
+        task_context.and_then(|context| context.active_item_id.as_deref()),
+        related_docket_task_id
     )
-    .bind(&input.run_id)
-    .bind(input.turn_step_id)
-    .bind(&input.request.checkpoint_id)
-    .bind(input.request.reason.as_str())
-    .bind(input.request.control_level.as_str())
-    .bind(request_json)
-    .bind(input.visibility.as_str())
-    .bind(input.replay_policy.as_str())
-    .bind(task_context.and_then(|context| context.task_list_id.as_deref()))
-    .bind(task_context.and_then(|context| context.active_item_id.as_deref()))
-    .bind(related_docket_task_id)
     .fetch_one(pool)
     .await?;
-
-    let checkpoint = row_to_checkpoint(row);
     record_loop_control_decision(
         pool,
         checkpoint_request_ledger_input(
@@ -834,7 +833,8 @@ pub async fn record_loop_control_decision(
 ) -> Result<LoopControlLedgerRow, DenError> {
     let evidence_refs = serde_json::to_value(&input.evidence_refs)
         .map_err(|err| DenError::System(format!("serialize loop-control evidence refs: {err}")))?;
-    let row = sqlx::query(
+    sqlx::query_as!(
+        LoopControlLedgerRow,
         r"
         INSERT INTO bear_loop_control_ledger (
             run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,
@@ -861,33 +861,33 @@ pub async fn record_loop_control_decision(
             orientation_kind, checkpoint_id, related_task_list_id, related_task_item_id,
             related_docket_job_id, related_docket_task_id, evidence_refs, decision, created_at
         ",
+        input.run_id,
+        input.turn_step_id,
+        input.conversation_message_id,
+        input.decision_id,
+        input.decision_kind.as_str(),
+        input.control_level,
+        input.reason,
+        input.orientation_kind,
+        input.checkpoint_id,
+        input.related_task_list_id,
+        input.related_task_item_id,
+        input.related_docket_job_id,
+        input.related_docket_task_id,
+        evidence_refs,
+        input.decision
     )
-    .bind(&input.run_id)
-    .bind(input.turn_step_id)
-    .bind(input.conversation_message_id)
-    .bind(&input.decision_id)
-    .bind(input.decision_kind.as_str())
-    .bind(&input.control_level)
-    .bind(&input.reason)
-    .bind(&input.orientation_kind)
-    .bind(&input.checkpoint_id)
-    .bind(&input.related_task_list_id)
-    .bind(&input.related_task_item_id)
-    .bind(input.related_docket_job_id)
-    .bind(input.related_docket_task_id)
-    .bind(evidence_refs)
-    .bind(input.decision)
     .fetch_one(pool)
-    .await?;
-
-    Ok(row_to_ledger(row))
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn list_loop_control_decisions_for_run(
     pool: &PgPool,
     run_id: &str,
 ) -> Result<Vec<LoopControlLedgerRow>, DenError> {
-    let rows = sqlx::query(
+    sqlx::query_as!(
+        LoopControlLedgerRow,
         r"
         SELECT
             id, run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,
@@ -897,12 +897,11 @@ pub async fn list_loop_control_decisions_for_run(
         WHERE run_id = $1
         ORDER BY created_at ASC, decision_id ASC
         ",
+        run_id
     )
-    .bind(run_id)
     .fetch_all(pool)
-    .await?;
-
-    Ok(rows.into_iter().map(row_to_ledger).collect())
+    .await
+    .map_err(Into::into)
 }
 
 /// Summarizes decisions recorded since `since` across all runs.
@@ -913,7 +912,8 @@ pub async fn summarize_recent_loop_control_replay_profile(
     pool: &PgPool,
     since: OffsetDateTime,
 ) -> Result<LoopControlReplayProfileSummary, DenError> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as!(
+        LoopControlLedgerRow,
         r"
         SELECT
             id, run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,
@@ -923,11 +923,10 @@ pub async fn summarize_recent_loop_control_replay_profile(
         WHERE created_at >= $1
         ORDER BY created_at ASC, run_id ASC, decision_id ASC
         ",
+        since
     )
-    .bind(since)
     .fetch_all(pool)
     .await?;
-    let rows = rows.into_iter().map(row_to_ledger).collect::<Vec<_>>();
     let turns = aggregate_loop_control_replay_turns(&rows)?;
     Ok(summarize_loop_control_replay_profile(&turns))
 }
@@ -938,7 +937,7 @@ pub async fn latest_grounding_probe_signal_for_tool_call(
     tool_call_id: &str,
 ) -> Result<Option<GroundingProbeSignalKind>, DenError> {
     let evidence_ref = serde_json::json!([{ "kind": "tool_call", "id": tool_call_id }]);
-    let row: Option<(Option<String>,)> = sqlx::query_as(
+    let row = sqlx::query!(
         r"
         SELECT reason
         FROM bear_loop_control_ledger
@@ -948,14 +947,14 @@ pub async fn latest_grounding_probe_signal_for_tool_call(
         ORDER BY created_at DESC, decision_id DESC
         LIMIT 1
         ",
+        run_id,
+        evidence_ref
     )
-    .bind(run_id)
-    .bind(evidence_ref)
     .fetch_optional(pool)
     .await?;
 
     Ok(row
-        .and_then(|(reason,)| reason)
+        .and_then(|row| row.reason)
         .and_then(|reason| GroundingProbeSignalKind::parse(&reason)))
 }
 
@@ -966,7 +965,7 @@ pub async fn latest_grounding_probe_signal_for_run(
     // ponytail: this is a run-level signal because current probe rows are not yet
     // tied to individual tool-call ids; add a tool-call evidence ref if multiple
     // mutation probes can overlap within one continuation.
-    let row: Option<(Option<String>,)> = sqlx::query_as(
+    let row = sqlx::query!(
         r"
         SELECT reason
         FROM bear_loop_control_ledger
@@ -975,13 +974,13 @@ pub async fn latest_grounding_probe_signal_for_run(
         ORDER BY created_at DESC, decision_id DESC
         LIMIT 1
         ",
+        run_id
     )
-    .bind(run_id)
     .fetch_optional(pool)
     .await?;
 
     Ok(row
-        .and_then(|(reason,)| reason)
+        .and_then(|row| row.reason)
         .and_then(|reason| GroundingProbeSignalKind::parse(&reason)))
 }
 
@@ -1063,35 +1062,14 @@ fn checkpoint_request_ledger_input(
     })
 }
 
-fn row_to_ledger(row: sqlx::postgres::PgRow) -> LoopControlLedgerRow {
-    LoopControlLedgerRow {
-        id: row.get("id"),
-        run_id: row.get("run_id"),
-        turn_step_id: row.get("turn_step_id"),
-        conversation_message_id: row.get("conversation_message_id"),
-        decision_id: row.get("decision_id"),
-        decision_kind: row.get("decision_kind"),
-        control_level: row.get("control_level"),
-        reason: row.get("reason"),
-        orientation_kind: row.get("orientation_kind"),
-        checkpoint_id: row.get("checkpoint_id"),
-        related_task_list_id: row.get("related_task_list_id"),
-        related_task_item_id: row.get("related_task_item_id"),
-        related_docket_job_id: row.get("related_docket_job_id"),
-        related_docket_task_id: row.get("related_docket_task_id"),
-        evidence_refs: row.get("evidence_refs"),
-        decision: row.get("decision"),
-        created_at: row.get("created_at"),
-    }
-}
-
 pub async fn record_checkpoint_response(
     pool: &PgPool,
     input: CheckpointResponseInput,
 ) -> Result<CheckpointArtifactRow, DenError> {
     let response_json = serde_json::to_value(&input.response)
         .map_err(|err| DenError::System(format!("serialize checkpoint response: {err}")))?;
-    let row = sqlx::query(
+    let row = sqlx::query_as!(
+        CheckpointArtifactRow,
         r"
         UPDATE bear_run_checkpoints
         SET response = $3,
@@ -1103,15 +1081,15 @@ pub async fn record_checkpoint_response(
             response, validation_status, visibility, replay_policy, related_task_list_id,
             related_task_item_id, related_docket_task_id, created_at, updated_at
         ",
+        input.run_id,
+        input.checkpoint_id,
+        response_json,
+        input.validation_status.as_str()
     )
-    .bind(&input.run_id)
-    .bind(&input.checkpoint_id)
-    .bind(response_json)
-    .bind(input.validation_status.as_str())
     .fetch_optional(pool)
     .await?;
 
-    row.map(row_to_checkpoint).ok_or_else(|| {
+    row.ok_or_else(|| {
         DenError::NotFound(format!(
             "checkpoint artifact not found: run_id={} checkpoint_id={}",
             input.run_id, input.checkpoint_id
@@ -1123,7 +1101,8 @@ pub async fn list_checkpoints_for_run(
     pool: &PgPool,
     run_id: &str,
 ) -> Result<Vec<CheckpointArtifactRow>, DenError> {
-    let rows = sqlx::query(
+    sqlx::query_as!(
+        CheckpointArtifactRow,
         r"
         SELECT
             id, run_id, turn_step_id, checkpoint_id, reason, control_level, request,
@@ -1133,12 +1112,11 @@ pub async fn list_checkpoints_for_run(
         WHERE run_id = $1
         ORDER BY created_at ASC, checkpoint_id ASC
         ",
+        run_id
     )
-    .bind(run_id)
     .fetch_all(pool)
-    .await?;
-
-    Ok(rows.into_iter().map(row_to_checkpoint).collect())
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn list_checkpoints_for_session(
@@ -1147,7 +1125,8 @@ pub async fn list_checkpoints_for_session(
     session_id: &str,
     limit: i64,
 ) -> Result<Vec<CheckpointArtifactRow>, DenError> {
-    let rows = sqlx::query(
+    sqlx::query_as!(
+        CheckpointArtifactRow,
         r"
         SELECT
             c.id, c.run_id, c.turn_step_id, c.checkpoint_id, c.reason, c.control_level,
@@ -1160,35 +1139,13 @@ pub async fn list_checkpoints_for_session(
         ORDER BY c.created_at DESC, c.checkpoint_id DESC
         LIMIT $3
         ",
+        bear_id,
+        session_id,
+        limit.max(1)
     )
-    .bind(bear_id)
-    .bind(session_id)
-    .bind(limit.max(1))
     .fetch_all(pool)
-    .await?;
-
-    Ok(rows.into_iter().map(row_to_checkpoint).collect())
-}
-
-fn row_to_checkpoint(row: sqlx::postgres::PgRow) -> CheckpointArtifactRow {
-    CheckpointArtifactRow {
-        id: row.get("id"),
-        run_id: row.get("run_id"),
-        turn_step_id: row.get("turn_step_id"),
-        checkpoint_id: row.get("checkpoint_id"),
-        reason: row.get("reason"),
-        control_level: row.get("control_level"),
-        request: row.get("request"),
-        response: row.get("response"),
-        validation_status: row.get("validation_status"),
-        visibility: row.get("visibility"),
-        replay_policy: row.get("replay_policy"),
-        related_task_list_id: row.get("related_task_list_id"),
-        related_task_item_id: row.get("related_task_item_id"),
-        related_docket_task_id: row.get("related_docket_task_id"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-    }
+    .await
+    .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -1204,43 +1161,43 @@ mod tests {
         let suffix = Uuid::new_v4().simple().to_string();
         let username = format!("ckpt{}", &suffix[..12]);
         let email = format!("{username}@example.test");
-        let (user_id,): (i32,) = sqlx::query_as(
+        let user_id = sqlx::query_scalar!(
             r"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
             ",
+            email,
+            username,
+            "Checkpoint Test",
+            "test-passhash"
         )
-        .bind(email)
-        .bind(&username)
-        .bind("Checkpoint Test")
-        .bind("test-passhash")
         .fetch_one(pool)
         .await
         .expect("create user");
         let bear_id = Uuid::new_v4();
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO bears (id, slug, name)
             VALUES ($1, $2, $3)
             ",
+            bear_id,
+            format!("checkpoint-bear-{}", &suffix[..12]),
+            "Checkpoint Bear"
         )
-        .bind(bear_id)
-        .bind(format!("checkpoint-bear-{}", &suffix[..12]))
-        .bind("Checkpoint Bear")
         .execute(pool)
         .await
         .expect("create bear");
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO turn_runs (run_id, session_id, bear_id, user_id, state)
             VALUES ($1, $2, $3, $4, 'running')
             ",
+            run_id,
+            format!("session-{run_id}"),
+            bear_id,
+            user_id
         )
-        .bind(run_id)
-        .bind(format!("session-{run_id}"))
-        .bind(bear_id)
-        .bind(user_id)
         .execute(pool)
         .await
         .expect("create run");
@@ -1321,10 +1278,10 @@ mod tests {
             .await
             .expect("record ledger decision");
         }
-        sqlx::query(
+        sqlx::query!(
             "UPDATE bear_loop_control_ledger SET created_at = NOW() - INTERVAL '2 days' WHERE run_id = $1",
+            old_run
         )
-        .bind(&old_run)
         .execute(&pool)
         .await
         .expect("age old ledger decision");
@@ -1440,14 +1397,14 @@ mod tests {
     async fn replay_turn_aggregate_handles_multi_decision_fixture(pool: PgPool) {
         let run_id = format!("run-{}", Uuid::new_v4().simple());
         seed_run(&pool, &run_id).await;
-        let (turn_step_id,): (Uuid,) = sqlx::query_as(
+        let turn_step_id = sqlx::query_scalar!(
             r"
             INSERT INTO turn_steps (run_id, step_index, state)
             VALUES ($1, 1, 'streaming_model')
             RETURNING id
             ",
+            run_id
         )
-        .bind(&run_id)
         .fetch_one(&pool)
         .await
         .expect("create turn step");

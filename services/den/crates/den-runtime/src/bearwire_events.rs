@@ -1,6 +1,6 @@
 use std::fmt;
 
-use sqlx::{PgConnection, PgPool, Row};
+use sqlx::{PgConnection, PgPool};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
@@ -40,31 +40,33 @@ pub async fn append_bearwire_event_on(
     user_id: Option<i32>,
     mut event: BearWireEvent,
 ) -> Result<BearWireEventRow, DenError> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(session_id)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query!(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        session_id
+    )
+    .execute(&mut *conn)
+    .await?;
 
     let initial_json = serde_json::to_value(&event)
         .map_err(|err| DenError::System(format!("serialize BearWire event failed: {err}")))?;
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query!(
+        r#"
         INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id, sequence_no, created_at
-        ",
+        "#,
+        session_id,
+        bear_id,
+        user_id,
+        &event.event_type,
+        initial_json
     )
-    .bind(session_id)
-    .bind(bear_id)
-    .bind(user_id)
-    .bind(&event.event_type)
-    .bind(initial_json)
     .fetch_one(&mut *conn)
     .await?;
 
-    let id: Uuid = row.get("id");
-    let sequence_no: i64 = row.get("sequence_no");
-    let created_at: OffsetDateTime = row.get("created_at");
+    let id = row.id;
+    let sequence_no = row.sequence_no;
+    let created_at = row.created_at;
     event.event_id = Some(BearWireEventId::new(id).to_string());
     event.sequence = Some(sequence_no as u64);
     event.time =
@@ -77,11 +79,13 @@ pub async fn append_bearwire_event_on(
 
     let final_json = serde_json::to_value(&event)
         .map_err(|err| DenError::System(format!("serialize BearWire event failed: {err}")))?;
-    sqlx::query("UPDATE bearwire_events SET event_json = $2 WHERE id = $1")
-        .bind(id)
-        .bind(final_json)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query!(
+        "UPDATE bearwire_events SET event_json = $2 WHERE id = $1",
+        id,
+        final_json
+    )
+    .execute(&mut *conn)
+    .await?;
 
     Ok(BearWireEventRow {
         id,
@@ -128,17 +132,17 @@ pub async fn latest_event_sequence(
     pool: &PgPool,
     session_id: &str,
 ) -> Result<Option<i64>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query!(
+        r#"
         SELECT MAX(sequence_no) AS sequence_no
         FROM bearwire_events
         WHERE session_id = $1
-        ",
+        "#,
+        session_id
     )
-    .bind(session_id)
     .fetch_one(pool)
     .await?;
-    Ok(row.get("sequence_no"))
+    Ok(row.sequence_no)
 }
 
 pub async fn latest_bearwire_event_of_type(
@@ -146,32 +150,31 @@ pub async fn latest_bearwire_event_of_type(
     session_id: &str,
     event_type: &str,
 ) -> Result<Option<BearWireEventRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query!(
+        r#"
         SELECT id, sequence_no, session_id, event_type, event_json, created_at
         FROM bearwire_events
         WHERE session_id = $1
           AND event_type = $2
         ORDER BY sequence_no DESC
         LIMIT 1
-        ",
+        "#,
+        session_id,
+        event_type
     )
-    .bind(session_id)
-    .bind(event_type)
     .fetch_optional(pool)
     .await?;
 
     row.map(|row| {
-        let event_json: serde_json::Value = row.get("event_json");
-        let event: BearWireEvent = serde_json::from_value(event_json)
+        let event: BearWireEvent = serde_json::from_value(row.event_json)
             .map_err(|err| DenError::System(format!("decode BearWire event failed: {err}")))?;
         Ok(BearWireEventRow {
-            id: row.get("id"),
-            sequence_no: row.get("sequence_no"),
-            session_id: row.get("session_id"),
-            event_type: row.get("event_type"),
+            id: row.id,
+            sequence_no: row.sequence_no,
+            session_id: row.session_id,
+            event_type: row.event_type,
             event,
-            created_at: row.get("created_at"),
+            created_at: row.created_at,
         })
     })
     .transpose()
@@ -184,34 +187,33 @@ pub async fn list_bearwire_events_after(
     limit: i64,
 ) -> Result<Vec<BearWireEventRow>, DenError> {
     let limit = limit.clamp(1, 501);
-    let rows = sqlx::query(
-        r"
+    let rows = sqlx::query!(
+        r#"
         SELECT id, sequence_no, session_id, event_type, event_json, created_at
         FROM bearwire_events
         WHERE session_id = $1
           AND ($2::bigint IS NULL OR sequence_no > $2)
         ORDER BY sequence_no ASC
         LIMIT $3
-        ",
+        "#,
+        session_id,
+        after_sequence,
+        limit
     )
-    .bind(session_id)
-    .bind(after_sequence)
-    .bind(limit)
     .fetch_all(pool)
     .await?;
 
     rows.into_iter()
         .map(|row| {
-            let event_json: serde_json::Value = row.get("event_json");
-            let event: BearWireEvent = serde_json::from_value(event_json)
+            let event: BearWireEvent = serde_json::from_value(row.event_json)
                 .map_err(|err| DenError::System(format!("decode BearWire event failed: {err}")))?;
             Ok(BearWireEventRow {
-                id: row.get("id"),
-                sequence_no: row.get("sequence_no"),
-                session_id: row.get("session_id"),
-                event_type: row.get("event_type"),
+                id: row.id,
+                sequence_no: row.sequence_no,
+                session_id: row.session_id,
+                event_type: row.event_type,
                 event,
-                created_at: row.get("created_at"),
+                created_at: row.created_at,
             })
         })
         .collect()

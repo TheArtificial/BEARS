@@ -28,21 +28,6 @@ struct TranscriptRow {
 
 type TranscriptHistoryRow = (String, i64, String, String, Value, Option<String>);
 
-const TRANSCRIPT_HISTORY_QUERY: &str = r"
-        SELECT id::text, sequence_no, message_type, content_text, content_json, tool_call_id
-        FROM conversation_messages
-        WHERE conversation_id = (
-            SELECT id FROM conversations
-            WHERE external_conversation_id = $1 AND bear_id = $2
-            LIMIT 1
-        )
-        AND (
-            visibility != 'diagnostic_only'
-            OR message_type IN ('tool_call', 'tool_result')
-        )
-        ORDER BY sequence_no ASC
-        ";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TranscriptPruneDiagnostics {
     pub pruned_message_count: u32,
@@ -398,11 +383,38 @@ pub async fn load_transcript_grouping_rows(
     bear_id: Uuid,
     conversation_id: &str,
 ) -> Result<Vec<TranscriptGroupingRow>, DenError> {
-    let history_rows = sqlx::query_as::<_, TranscriptHistoryRow>(TRANSCRIPT_HISTORY_QUERY)
-        .bind(conversation_id)
-        .bind(bear_id)
-        .fetch_all(pool)
-        .await?;
+    let history_rows = sqlx::query!(
+        r#"
+        SELECT id::text AS "message_id!", sequence_no, message_type, content_text, content_json, tool_call_id
+        FROM conversation_messages
+        WHERE conversation_id = (
+            SELECT id FROM conversations
+            WHERE external_conversation_id = $1 AND bear_id = $2
+            LIMIT 1
+        )
+        AND (
+            visibility != 'diagnostic_only'
+            OR message_type IN ('tool_call', 'tool_result')
+        )
+        ORDER BY sequence_no ASC
+        "#,
+        conversation_id,
+        bear_id
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|row| {
+        (
+            row.message_id,
+            row.sequence_no,
+            row.message_type,
+            row.content_text,
+            row.content_json,
+            row.tool_call_id,
+        )
+    })
+    .collect();
     Ok(transcript_grouping_rows_from_history(history_rows))
 }
 
@@ -667,11 +679,6 @@ mod tests {
             pruned.messages.first().map(|m| m.role.as_str()),
             Some("system")
         );
-    }
-
-    #[test]
-    fn transcript_history_query_has_no_hard_row_limit() {
-        assert!(!TRANSCRIPT_HISTORY_QUERY.contains("LIMIT 200"));
     }
 
     #[test]

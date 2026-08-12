@@ -1,0 +1,132 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,\n               previous_permission_mode, plan_artifact_path, plan_title, plan_body,\n               approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,\n               created_at, updated_at\n        FROM client_plan_mode_sessions\n        WHERE bear_id = $1\n          AND ($2 OR state IN ('active', 'submitted'))\n        ORDER BY updated_at DESC\n        LIMIT $3\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "bear_slug",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "client_session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "requested_by",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "previous_permission_mode",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "plan_artifact_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "plan_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "plan_body",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "approval_request_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "approved_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "approved_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "rejected_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "closed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "3900e3d439604bc51d152530489bd432fb0f29adb45762331d7df8d6b71bb763"
+}

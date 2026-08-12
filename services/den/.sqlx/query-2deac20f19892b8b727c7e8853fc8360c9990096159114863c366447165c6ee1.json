@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT bear_id\n        FROM bear_reflection_runs\n        WHERE lane = 'memory_curate'\n          AND status = 'queued'\n        ORDER BY bear_id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2deac20f19892b8b727c7e8853fc8360c9990096159114863c366447165c6ee1"
+}

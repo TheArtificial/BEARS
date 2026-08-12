@@ -59,16 +59,16 @@ async fn duplicate_source_event_id_returns_existing_sequence(
 
     assert_eq!(first, second);
 
-    let count: i64 = sqlx::query_scalar(
+    let count: i64 = sqlx::query_scalar!(
         r"
         SELECT COUNT(*)::bigint
         FROM conversation_messages
         WHERE conversation_id = $1
           AND source_event_id = $2
         ",
+        conversation.id,
+        source_event_id,
     )
-    .bind(conversation.id)
-    .bind(source_event_id)
     .fetch_one(&pool)
     .await?;
     assert_eq!(count, 1);

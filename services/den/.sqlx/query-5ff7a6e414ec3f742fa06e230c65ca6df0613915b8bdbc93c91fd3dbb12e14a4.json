@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id AS \"id!\", artifact_json AS \"artifact_json!\",\n               source_message_start_seq AS \"source_message_start_seq!\",\n               source_message_end_seq AS \"source_message_end_seq!\",\n               policy_version AS \"policy_version!\"\n        FROM conversation_compaction_artifacts\n        WHERE conversation_id = $1\n          AND artifact_kind = 'iterative_summary'\n          AND superseded_by IS NULL\n        ORDER BY created_at DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "artifact_json!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "source_message_start_seq!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "source_message_end_seq!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "policy_version!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5ff7a6e414ec3f742fa06e230c65ca6df0613915b8bdbc93c91fd3dbb12e14a4"
+}

@@ -38,21 +38,21 @@ pub async fn create_native_approval(
     arguments: &Value,
 ) -> Result<String, DenError> {
     let approval_id = Uuid::new_v4().to_string();
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO runtime_approvals (
             approval_id, bear_id, conversation_id, client_session_id,
             tool_call_id, tool_name, arguments_json
         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
         ",
+        approval_id,
+        bear_id,
+        conversation_id,
+        client_session_id,
+        tool_call_id,
+        tool_name,
+        arguments.clone()
     )
-    .bind(&approval_id)
-    .bind(bear_id)
-    .bind(conversation_id)
-    .bind(client_session_id)
-    .bind(tool_call_id)
-    .bind(tool_name)
-    .bind(arguments.to_string())
     .execute(pool)
     .await
     .map_err(|e| DenError::System(format!("create runtime approval failed: {e}")))?;
@@ -66,16 +66,16 @@ pub async fn decide_native_approval(
     reason: Option<&str>,
 ) -> Result<(), DenError> {
     let status = decision.status();
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE runtime_approvals
         SET status = $2, decision_reason = $3, decided_at = NOW()
         WHERE approval_id = $1
         ",
+        approval_id,
+        status,
+        reason
     )
-    .bind(approval_id)
-    .bind(status)
-    .bind(reason)
     .execute(pool)
     .await
     .map_err(|e| DenError::System(format!("decide runtime approval failed: {e}")))?;

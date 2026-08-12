@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, sequence_no, session_id, event_type, event_json, created_at\n        FROM bearwire_events\n        WHERE session_id = $1\n          AND event_type = $2\n        ORDER BY sequence_no DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "sequence_no",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "event_json",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "edd3ca2cd3edb60fd0d506dab051063aa31113a1129eaa361fa9a97040a3c2b1"
+}

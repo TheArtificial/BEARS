@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO bear_reflection_run_items (run_id, item_kind, item_id, status)\n        VALUES ($1, 'memory_proposal', $2, $3)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5e74809e4ec3ad325f7ded7d17b6b76841b2a6cab96a475f4749d63f8aca7754"
+}

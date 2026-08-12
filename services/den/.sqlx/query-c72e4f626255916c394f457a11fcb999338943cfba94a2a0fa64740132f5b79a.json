@@ -1,0 +1,60 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE turn_steps\n        SET state = $2,\n            closed_at = CASE WHEN $3 THEN COALESCE(closed_at, NOW()) ELSE closed_at END\n        WHERE id = $1\n        RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "step_index",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "provider_response_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "opened_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "closed_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "c72e4f626255916c394f457a11fcb999338943cfba94a2a0fa64740132f5b79a"
+}

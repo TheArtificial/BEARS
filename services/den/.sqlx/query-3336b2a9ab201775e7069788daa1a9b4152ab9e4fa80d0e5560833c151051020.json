@@ -1,0 +1,108 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE bear_reflection_runs\n        SET status = 'completed', output_summary = $3, error = NULL, completed_at = NOW()\n        WHERE bear_id = $1 AND id = $2 AND lane = 'recall_index'\n        RETURNING id, bear_id, lane, trigger, status, role_agent_id,\n                  conversation_id, conversation_key, conversation_date,\n                  input_summary, output_summary, error,\n                  started_at, completed_at, created_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "lane",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "trigger",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "role_agent_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "conversation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "conversation_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "conversation_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 9,
+        "name": "input_summary",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "output_summary",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 11,
+        "name": "error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "3336b2a9ab201775e7069788daa1a9b4152ab9e4fa80d0e5560833c151051020"
+}

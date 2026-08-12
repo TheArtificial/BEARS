@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH next_step AS (\n            SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index\n            FROM turn_steps\n            WHERE run_id = $1\n        )\n        INSERT INTO turn_steps (run_id, step_index, state)\n        SELECT $1, step_index, 'streaming_model'\n        FROM next_step\n        RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "step_index",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "provider_response_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "opened_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "closed_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "00dde83950f6c957592aee389433a5b0f657ede9dc9004ad5ec88cf473ca6c91"
+}

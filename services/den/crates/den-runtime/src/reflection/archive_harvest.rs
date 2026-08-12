@@ -239,19 +239,20 @@ async fn list_unmined_compaction_artifacts(
     bear_id: Uuid,
     limit: i64,
 ) -> Result<Vec<CompactionArtifactHarvestRow>, DenError> {
-    sqlx::query_as::<_, CompactionArtifactHarvestRow>(
-        r"
-        SELECT a.id,
-               a.conversation_id,
-               c.external_conversation_id,
-               a.artifact_kind,
-               a.policy_version,
-               a.trigger,
-               a.source_message_start_seq,
-               a.source_message_end_seq,
-               a.source_group_start,
-               a.source_group_end,
-               a.artifact_json
+    sqlx::query_as!(
+        CompactionArtifactHarvestRow,
+        r#"
+        SELECT a.id as "id: _",
+               a.conversation_id as "conversation_id: _",
+               c.external_conversation_id as "external_conversation_id: _",
+               a.artifact_kind as "artifact_kind: _",
+               a.policy_version as "policy_version: _",
+               a.trigger as "trigger: _",
+               a.source_message_start_seq as "source_message_start_seq: _",
+               a.source_message_end_seq as "source_message_end_seq: _",
+               a.source_group_start as "source_group_start: _",
+               a.source_group_end as "source_group_end: _",
+               a.artifact_json as "artifact_json: _"
         FROM conversation_compaction_artifacts a
         JOIN conversations c ON c.id = a.conversation_id
         WHERE c.bear_id = $1
@@ -271,10 +272,10 @@ async fn list_unmined_compaction_artifacts(
           )
         ORDER BY a.created_at ASC
         LIMIT $2
-        ",
+        "#,
+        bear_id,
+        limit
     )
-    .bind(bear_id)
-    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(db_err("list/decode compaction artifacts for harvest"))

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT EXISTS (\n            SELECT 1\n            FROM conversation_messages\n            WHERE conversation_id = (\n                SELECT id FROM conversations\n                WHERE external_conversation_id = $1 AND bear_id = $2\n                LIMIT 1\n            )\n              AND message_type = 'tool_call'\n              AND tool_call_id = $3\n        ) AS \"exists!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a12006e8dcd69c1b0c86b82a9c0bb2d83d204632371444916434bd7c34d9b53f"
+}

@@ -1,0 +1,112 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            id, run_id, turn_step_id, checkpoint_id, reason, control_level, request,\n            response, validation_status, visibility, replay_policy, related_task_list_id,\n            related_task_item_id, related_docket_task_id, created_at, updated_at\n        FROM bear_run_checkpoints\n        WHERE run_id = $1\n        ORDER BY created_at ASC, checkpoint_id ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "turn_step_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "checkpoint_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "control_level",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "request",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "response",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 8,
+        "name": "validation_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "replay_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "related_task_list_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "related_task_item_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "related_docket_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9d612ef4c72c3e1a80e06f0f6a0d07f8ecc94c286b0e2fcdc8cfd41c2934db26"
+}

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id\n        FROM turn_steps\n        WHERE run_id = $1\n          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')\n        ORDER BY step_index DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "30080f349615ed67e2ff94033841c46e0ee592d7368b301c045f6006fd48ef13"
+}

@@ -1,0 +1,132 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO bear_loop_control_ledger (\n            run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,\n            orientation_kind, checkpoint_id, related_task_list_id, related_task_item_id,\n            related_docket_job_id, related_docket_task_id, evidence_refs, decision\n        )\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)\n        ON CONFLICT (run_id, decision_id) DO UPDATE SET\n            turn_step_id = EXCLUDED.turn_step_id,\n            conversation_message_id = EXCLUDED.conversation_message_id,\n            decision_kind = EXCLUDED.decision_kind,\n            control_level = EXCLUDED.control_level,\n            reason = EXCLUDED.reason,\n            orientation_kind = EXCLUDED.orientation_kind,\n            checkpoint_id = EXCLUDED.checkpoint_id,\n            related_task_list_id = EXCLUDED.related_task_list_id,\n            related_task_item_id = EXCLUDED.related_task_item_id,\n            related_docket_job_id = EXCLUDED.related_docket_job_id,\n            related_docket_task_id = EXCLUDED.related_docket_task_id,\n            evidence_refs = EXCLUDED.evidence_refs,\n            decision = EXCLUDED.decision\n        RETURNING\n            id, run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,\n            orientation_kind, checkpoint_id, related_task_list_id, related_task_item_id,\n            related_docket_job_id, related_docket_task_id, evidence_refs, decision, created_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "turn_step_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "conversation_message_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "decision_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "decision_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "control_level",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "orientation_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "checkpoint_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "related_task_list_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "related_task_item_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "related_docket_job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 13,
+        "name": "related_docket_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "evidence_refs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 15,
+        "name": "decision",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Jsonb",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1380ca9afb940e33a30a9e7d36a3edf911f30f372ac01a389d483baf50fa6691"
+}

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{postgres::PgRow, PgPool, Row as SqlxRow};
+use sqlx::PgPool;
 use std::fmt;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -159,37 +159,6 @@ fn clean_optional(value: Option<String>) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-fn row_from_sql(row: &PgRow) -> PlanModeSessionRow {
-    PlanModeSessionRow {
-        id: row.get("id"),
-        user_id: row.get("user_id"),
-        bear_id: row.get("bear_id"),
-        bear_slug: row.get("bear_slug"),
-        client_session_id: row.get("client_session_id"),
-        state: row.get("state"),
-        reason: row.get("reason"),
-        requested_by: row.get("requested_by"),
-        previous_permission_mode: row.get("previous_permission_mode"),
-        plan_artifact_path: row.get("plan_artifact_path"),
-        plan_title: row.get("plan_title"),
-        plan_body: row.get("plan_body"),
-        approval_request_id: row.get("approval_request_id"),
-        approved_by_user_id: row.get("approved_by_user_id"),
-        approved_at: row.get("approved_at"),
-        rejected_at: row.get("rejected_at"),
-        closed_at: row.get("closed_at"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-    }
-}
-
-const SELECT_COLUMNS: &str = r"
-    id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
-    previous_permission_mode, plan_artifact_path, plan_title, plan_body,
-    approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
-    created_at, updated_at
-";
-
 pub async fn list_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
@@ -197,23 +166,26 @@ pub async fn list_for_bear(
     limit: i64,
 ) -> Result<Vec<PlanModeSessionRow>, DenError> {
     let limit = limit.clamp(1, 100);
-    let query = format!(
-        r"
-        SELECT {SELECT_COLUMNS}
+    let rows = sqlx::query_as!(
+        PlanModeSessionRow,
+        r#"
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
+               previous_permission_mode, plan_artifact_path, plan_title, plan_body,
+               approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
+               created_at, updated_at
         FROM client_plan_mode_sessions
         WHERE bear_id = $1
           AND ($2 OR state IN ('active', 'submitted'))
         ORDER BY updated_at DESC
         LIMIT $3
-        "
-    );
-    let rows = sqlx::query(&query)
-        .bind(bear_id)
-        .bind(include_closed)
-        .bind(limit)
-        .fetch_all(pool)
-        .await?;
-    Ok(rows.iter().map(row_from_sql).collect())
+        "#,
+        bear_id,
+        include_closed,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
 
 pub async fn active_for_session(
@@ -222,9 +194,13 @@ pub async fn active_for_session(
     bear_id: Uuid,
     client_session_id: &str,
 ) -> Result<Option<PlanModeSessionRow>, DenError> {
-    let query = format!(
-        r"
-        SELECT {SELECT_COLUMNS}
+    sqlx::query_as!(
+        PlanModeSessionRow,
+        r#"
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
+               previous_permission_mode, plan_artifact_path, plan_title, plan_body,
+               approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
+               created_at, updated_at
         FROM client_plan_mode_sessions
         WHERE user_id = $1
           AND bear_id = $2
@@ -232,15 +208,14 @@ pub async fn active_for_session(
           AND state IN ('active', 'submitted')
         ORDER BY updated_at DESC
         LIMIT 1
-        "
-    );
-    let row = sqlx::query(&query)
-        .bind(user_id)
-        .bind(bear_id)
-        .bind(client_session_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.as_ref().map(row_from_sql))
+        "#,
+        user_id,
+        bear_id,
+        client_session_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn get_by_id_for_bear(
@@ -249,20 +224,23 @@ pub async fn get_by_id_for_bear(
     bear_id: Uuid,
     plan_mode_id: Uuid,
 ) -> Result<Option<PlanModeSessionRow>, DenError> {
-    let query = format!(
-        r"
-        SELECT {SELECT_COLUMNS}
+    sqlx::query_as!(
+        PlanModeSessionRow,
+        r#"
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
+               previous_permission_mode, plan_artifact_path, plan_title, plan_body,
+               approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
+               created_at, updated_at
         FROM client_plan_mode_sessions
         WHERE id = $1 AND user_id = $2 AND bear_id = $3
-        "
-    );
-    let row = sqlx::query(&query)
-        .bind(plan_mode_id)
-        .bind(user_id)
-        .bind(bear_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.as_ref().map(row_from_sql))
+        "#,
+        plan_mode_id,
+        user_id,
+        bear_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn get_for_session(
@@ -286,20 +264,24 @@ async fn get_for_session_by_id(
     client_session_id: &str,
     plan_mode_id: Uuid,
 ) -> Result<Option<PlanModeSessionRow>, DenError> {
-    let row = sqlx::query(&format!(
-        r"
-        SELECT {SELECT_COLUMNS}
+    sqlx::query_as!(
+        PlanModeSessionRow,
+        r#"
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
+               previous_permission_mode, plan_artifact_path, plan_title, plan_body,
+               approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
+               created_at, updated_at
         FROM client_plan_mode_sessions
         WHERE id = $1 AND user_id = $2 AND bear_id = $3 AND client_session_id = $4
-        "
-    ))
-    .bind(plan_mode_id)
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(client_session_id)
+        "#,
+        plan_mode_id,
+        user_id,
+        bear_id,
+        client_session_id
+    )
     .fetch_optional(pool)
-    .await?;
-    Ok(row.as_ref().map(row_from_sql))
+    .await
+    .map_err(Into::into)
 }
 
 async fn latest_for_session(
@@ -308,21 +290,25 @@ async fn latest_for_session(
     bear_id: Uuid,
     client_session_id: &str,
 ) -> Result<Option<PlanModeSessionRow>, DenError> {
-    let row = sqlx::query(&format!(
-        r"
-        SELECT {SELECT_COLUMNS}
+    sqlx::query_as!(
+        PlanModeSessionRow,
+        r#"
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
+               previous_permission_mode, plan_artifact_path, plan_title, plan_body,
+               approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
+               created_at, updated_at
         FROM client_plan_mode_sessions
         WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ORDER BY updated_at DESC
         LIMIT 1
-        "
-    ))
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(client_session_id)
+        "#,
+        user_id,
+        bear_id,
+        client_session_id
+    )
     .fetch_optional(pool)
-    .await?;
-    Ok(row.as_ref().map(row_from_sql))
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn enter_plan_mode(
@@ -351,27 +337,29 @@ pub async fn enter_plan_mode(
     let row = if let Some(existing) = existing {
         existing
     } else {
-        let query = format!(
-            r"
+        sqlx::query_as!(
+            PlanModeSessionRow,
+            r#"
             INSERT INTO client_plan_mode_sessions (
                 user_id, bear_id, bear_slug, client_session_id, state, reason,
                 requested_by, previous_permission_mode
             )
             VALUES ($1, $2, $3, $4, 'active', $5, $6, $7)
-            RETURNING {SELECT_COLUMNS}
-            "
-        );
-        let row = sqlx::query(&query)
-            .bind(params.user_id)
-            .bind(params.bear_id)
-            .bind(params.bear_slug.trim())
-            .bind(params.client_session_id.trim())
-            .bind(params.reason.trim())
-            .bind(params.requested_by.as_str())
-            .bind(clean_optional(params.previous_permission_mode))
-            .fetch_one(&mut *tx)
-            .await?;
-        row_from_sql(&row)
+            RETURNING id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
+                      previous_permission_mode, plan_artifact_path, plan_title, plan_body,
+                      approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
+                      created_at, updated_at
+            "#,
+            params.user_id,
+            params.bear_id,
+            params.bear_slug.trim(),
+            params.client_session_id.trim(),
+            params.reason.trim(),
+            params.requested_by.as_str(),
+            clean_optional(params.previous_permission_mode)
+        )
+        .fetch_one(&mut *tx)
+        .await?
     };
     append_event(
         &mut tx,
@@ -426,8 +414,9 @@ pub async fn submit_plan_artifact(
         ));
     }
 
-    let query = format!(
-        r"
+    let updated = sqlx::query_as!(
+        PlanModeSessionRow,
+        r#"
         UPDATE client_plan_mode_sessions
         SET state = 'submitted',
             plan_title = $5,
@@ -436,21 +425,22 @@ pub async fn submit_plan_artifact(
             approval_request_id = $8,
             updated_at = NOW()
         WHERE id = $1 AND user_id = $2 AND bear_id = $3 AND client_session_id = $4
-        RETURNING {SELECT_COLUMNS}
-        "
-    );
-    let row = sqlx::query(&query)
-        .bind(current.id)
-        .bind(params.user_id)
-        .bind(params.bear_id)
-        .bind(params.client_session_id.trim())
-        .bind(title)
-        .bind(body)
-        .bind(artifact_path)
-        .bind(clean_optional(params.approval_request_id))
-        .fetch_one(&mut *tx)
-        .await?;
-    let updated = row_from_sql(&row);
+        RETURNING id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
+                  previous_permission_mode, plan_artifact_path, plan_title, plan_body,
+                  approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
+                  created_at, updated_at
+        "#,
+        current.id,
+        params.user_id,
+        params.bear_id,
+        params.client_session_id.trim(),
+        title,
+        body,
+        artifact_path,
+        clean_optional(params.approval_request_id)
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     append_event(
         &mut tx,
         &updated,
@@ -576,8 +566,9 @@ async fn close_with_state(
     let event_type = state.event_type();
     let state = state.as_state();
     let mut tx = pool.begin().await?;
-    let query = format!(
-        r"
+    let updated = sqlx::query_as!(
+        PlanModeSessionRow,
+        r#"
         UPDATE client_plan_mode_sessions
         SET state = $5,
             approved_by_user_id = CASE WHEN $5 = 'approved' THEN $2 ELSE approved_by_user_id END,
@@ -590,19 +581,20 @@ async fn close_with_state(
           AND bear_id = $3
           AND ($4 = '' OR client_session_id = $4)
           AND state IN ('active', 'submitted')
-        RETURNING {SELECT_COLUMNS}
-        "
-    );
-    let row = sqlx::query(&query)
-        .bind(plan_mode_id)
-        .bind(user_id)
-        .bind(bear_id)
-        .bind(client_session_id.trim())
-        .bind(state.as_str())
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(|| DenError::NotFound("open client plan mode session not found".to_string()))?;
-    let updated = row_from_sql(&row);
+        RETURNING id, user_id, bear_id, bear_slug, client_session_id, state, reason, requested_by,
+                  previous_permission_mode, plan_artifact_path, plan_title, plan_body,
+                  approval_request_id, approved_by_user_id, approved_at, rejected_at, closed_at,
+                  created_at, updated_at
+        "#,
+        plan_mode_id,
+        user_id,
+        bear_id,
+        client_session_id.trim(),
+        state.as_str()
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| DenError::NotFound("open client plan mode session not found".to_string()))?;
     append_event(
         &mut tx,
         &updated,
@@ -620,20 +612,20 @@ async fn append_event(
     event_type: &str,
     event_payload: Value,
 ) -> Result<(), DenError> {
-    sqlx::query(
-        r"
+    sqlx::query!(
+        r#"
         INSERT INTO client_plan_mode_events (
             plan_mode_id, user_id, bear_id, client_session_id, event_type, event_payload
         )
         VALUES ($1, $2, $3, $4, $5, $6)
-        ",
+        "#,
+        row.id,
+        row.user_id,
+        row.bear_id,
+        &row.client_session_id,
+        event_type,
+        event_payload
     )
-    .bind(row.id)
-    .bind(row.user_id)
-    .bind(row.bear_id)
-    .bind(&row.client_session_id)
-    .bind(event_type)
-    .bind(event_payload)
     .execute(&mut **tx)
     .await?;
     Ok(())

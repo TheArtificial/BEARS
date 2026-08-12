@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT MAX(sequence_no) AS sequence_no\n        FROM bearwire_events\n        WHERE session_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sequence_no",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "aaa8667bfea0d9dd68d1bb0d9a84d0266657e722868645497779a37329c57d69"
+}

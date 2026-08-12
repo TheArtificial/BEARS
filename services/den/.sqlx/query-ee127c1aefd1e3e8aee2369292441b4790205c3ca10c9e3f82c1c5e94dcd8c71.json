@@ -1,0 +1,129 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE turn_obligations\n            SET session_id = $2,\n                turn_step_id = COALESCE($6, turn_step_id),\n                kind = 'permission_decision',\n                expected_responder_action = 'permission_decision',\n                permission_id = $4,\n                state = CASE\n                    WHEN state IN ('result_received','continued','failed','cancelled') THEN state\n                    ELSE 'waiting_for_client'\n                END,\n                request_payload = $5,\n                updated_at = NOW()\n            WHERE run_id = $1\n              AND tool_call_id = $3\n              AND (permission_id IS NULL OR permission_id = $4)\n            RETURNING id, run_id, session_id, kind, expected_responder_action, tool_call_id, permission_id, NULL::text AS \"responder_ref_id?\", state, turn_step_id, request_payload, result_payload, created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "expected_responder_action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "tool_call_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "permission_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "responder_ref_id?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "turn_step_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 10,
+        "name": "request_payload",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 11,
+        "name": "result_payload",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 12,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "lease_attempt_token_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "claimed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "lease_expires_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "ee127c1aefd1e3e8aee2369292441b4790205c3ca10c9e3f82c1c5e94dcd8c71"
+}

@@ -1,0 +1,83 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.id as \"id: _\",\n               a.conversation_id as \"conversation_id: _\",\n               c.external_conversation_id as \"external_conversation_id: _\",\n               a.artifact_kind as \"artifact_kind: _\",\n               a.policy_version as \"policy_version: _\",\n               a.trigger as \"trigger: _\",\n               a.source_message_start_seq as \"source_message_start_seq: _\",\n               a.source_message_end_seq as \"source_message_end_seq: _\",\n               a.source_group_start as \"source_group_start: _\",\n               a.source_group_end as \"source_group_end: _\",\n               a.artifact_json as \"artifact_json: _\"\n        FROM conversation_compaction_artifacts a\n        JOIN conversations c ON c.id = a.conversation_id\n        WHERE c.bear_id = $1\n          AND a.superseded_by IS NULL\n          AND NOT EXISTS (\n              SELECT 1\n              FROM bear_memory_proposals p\n              WHERE p.bear_id = $1\n                AND (\n                    (p.source_refs->>'source' = 'archive_harvest'\n                     AND p.source_refs->>'artifact_id' = a.id::text)\n                    OR\n                    (p.source_refs->>'source' = 'memory_extraction'\n                     AND p.source_refs->>'source_kind' = 'archive_harvest'\n                     AND p.source_refs->>'source_ref' = a.id::text)\n                )\n          )\n        ORDER BY a.created_at ASC\n        LIMIT $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: _",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "conversation_id: _",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "external_conversation_id: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "artifact_kind: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "policy_version: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "trigger: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "source_message_start_seq: _",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "source_message_end_seq: _",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "source_group_start: _",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "source_group_end: _",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "artifact_json: _",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "03e4f04dd154242e901f7a2959ed59b14a5ad55ce1546222b2a67be0cc9cac3e"
+}

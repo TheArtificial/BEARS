@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT reason\n        FROM bear_loop_control_ledger\n        WHERE run_id = $1\n          AND decision_kind = 'grounding_probe_result'\n        ORDER BY created_at DESC, decision_id DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "reason",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "64f1b111e8d95fce70ef58bc2399177a3e72becbfbf9a7ee4b4f62e5f7265b2a"
+}

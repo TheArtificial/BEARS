@@ -1,0 +1,118 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            id, run_id, turn_step_id, conversation_message_id, decision_id, decision_kind, control_level, reason,\n            orientation_kind, checkpoint_id, related_task_list_id, related_task_item_id,\n            related_docket_job_id, related_docket_task_id, evidence_refs, decision, created_at\n        FROM bear_loop_control_ledger\n        WHERE created_at >= $1\n        ORDER BY created_at ASC, run_id ASC, decision_id ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "turn_step_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "conversation_message_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "decision_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "decision_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "control_level",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "orientation_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "checkpoint_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "related_task_list_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "related_task_item_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "related_docket_job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 13,
+        "name": "related_docket_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "evidence_refs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 15,
+        "name": "decision",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fb4b02b973ee081c51928a3c6c4f79395022bab49d34b8a2ab6c5613d1ac4e0e"
+}

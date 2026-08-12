@@ -1,7 +1,7 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -88,27 +88,6 @@ impl TurnRunRow {
     }
 }
 
-fn row_to_run(row: sqlx::postgres::PgRow) -> TurnRunRow {
-    TurnRunRow {
-        id: row.get("id"),
-        run_id: row.get("run_id"),
-        session_id: row.get("session_id"),
-        bear_id: row.get("bear_id"),
-        user_id: row.get("user_id"),
-        state: row.get("state"),
-        terminal_reason: row.get("terminal_reason"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-        completed_at: row.get("completed_at"),
-    }
-}
-
-const RUN_RETURNING: &str = r"
-    id, run_id, session_id, bear_id, user_id, state,
-    terminal_reason, created_at, updated_at, completed_at
-";
-const ACTIVE_RUN_STATES_SQL: &str = "'accepted','running','waiting_for_client','continuing'";
-
 pub async fn create_run(
     pool: &PgPool,
     run_id: &str,
@@ -128,54 +107,63 @@ pub async fn create_run_with_ids(
     bear_id: Uuid,
     user_id: i32,
 ) -> Result<TurnRunRow, DenError> {
-    let row = sqlx::query(&format!(
-        r"
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
         INSERT INTO turn_runs (run_id, session_id, bear_id, user_id, state)
         VALUES ($1, $2, $3, $4, 'accepted')
-        RETURNING {RUN_RETURNING}
-        "
-    ))
-    .bind(run_id.as_str())
-    .bind(session_id.as_str())
-    .bind(bear_id)
-    .bind(user_id)
+        RETURNING id, run_id, session_id, bear_id, user_id, state,
+                  terminal_reason AS "terminal_reason?", created_at, updated_at,
+                  completed_at AS "completed_at?"
+        "#,
+        run_id.as_str(),
+        session_id.as_str(),
+        bear_id,
+        user_id,
+    )
     .fetch_one(pool)
     .await?;
-    Ok(row_to_run(row))
+    Ok(row)
 }
 
 pub async fn get_run(pool: &PgPool, run_id: &str) -> Result<Option<TurnRunRow>, DenError> {
-    let row = sqlx::query(&format!(
-        r"
-        SELECT {RUN_RETURNING}
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
+        SELECT id, run_id, session_id, bear_id, user_id, state,
+               terminal_reason AS "terminal_reason?", created_at, updated_at,
+               completed_at AS "completed_at?"
         FROM turn_runs
         WHERE run_id = $1
-        "
-    ))
-    .bind(run_id)
+        "#,
+        run_id,
+    )
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_run))
+    Ok(row)
 }
 
 pub async fn active_run_for_session(
     pool: &PgPool,
     session_id: &str,
 ) -> Result<Option<TurnRunRow>, DenError> {
-    let row = sqlx::query(&format!(
-        r"
-        SELECT {RUN_RETURNING}
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
+        SELECT id, run_id, session_id, bear_id, user_id, state,
+               terminal_reason AS "terminal_reason?", created_at, updated_at,
+               completed_at AS "completed_at?"
         FROM turn_runs
         WHERE session_id = $1
-          AND state IN ({ACTIVE_RUN_STATES_SQL})
+          AND state IN ('accepted', 'running', 'waiting_for_client', 'continuing')
         ORDER BY created_at DESC
         LIMIT 1
-        "
-    ))
-    .bind(session_id)
+        "#,
+        session_id,
+    )
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_run))
+    Ok(row)
 }
 
 pub async fn supersede_active_run_for_session(
@@ -185,28 +173,31 @@ pub async fn supersede_active_run_for_session(
     user_id: i32,
     reason: &str,
 ) -> Result<Option<TurnRunRow>, DenError> {
-    let row = sqlx::query(&format!(
-        r"
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
         UPDATE turn_runs
         SET state = 'failed', terminal_reason = $4, completed_at = NOW(), updated_at = NOW()
         WHERE id = (
             SELECT id
             FROM turn_runs
             WHERE session_id = $1 AND bear_id = $2 AND user_id = $3
-              AND state IN ({ACTIVE_RUN_STATES_SQL})
+              AND state IN ('accepted', 'running', 'waiting_for_client', 'continuing')
             ORDER BY created_at DESC
             LIMIT 1
         )
-        RETURNING {RUN_RETURNING}
-        "
-    ))
-    .bind(session_id)
-    .bind(bear_id)
-    .bind(user_id)
-    .bind(reason)
+        RETURNING id, run_id, session_id, bear_id, user_id, state,
+                  terminal_reason AS "terminal_reason?", created_at, updated_at,
+                  completed_at AS "completed_at?"
+        "#,
+        session_id,
+        bear_id,
+        user_id,
+        reason,
+    )
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_run))
+    Ok(row)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -237,19 +228,6 @@ fn result_hash(payload: &serde_json::Value) -> Result<String, DenError> {
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest))
 }
 
-fn row_to_client_result(row: sqlx::postgres::PgRow) -> TurnObligationResultRow {
-    TurnObligationResultRow {
-        id: row.get("id"),
-        run_id: row.get("run_id"),
-        obligation_kind: row.get("obligation_kind"),
-        obligation_id: row.get("obligation_id"),
-        result_hash: row.get("result_hash"),
-        payload_json: row.get("payload_json"),
-        turn_step_id: row.try_get("turn_step_id").ok(),
-        created_at: row.get("created_at"),
-    }
-}
-
 pub async fn existing_client_result_for_payload(
     pool: &PgPool,
     run_id: &str,
@@ -257,22 +235,24 @@ pub async fn existing_client_result_for_payload(
     obligation_id: &str,
     payload_json: &serde_json::Value,
 ) -> Result<Option<TurnObligationResultRecord>, DenError> {
-    let Some(existing) = sqlx::query(
-        r"
-        SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
+    let Some(row) = sqlx::query_as!(
+        TurnObligationResultRow,
+        r#"
+        SELECT id, run_id, obligation_kind, obligation_id, result_hash,
+               payload_json AS "payload_json: serde_json::Value",
+               turn_step_id AS "turn_step_id?", created_at
         FROM turn_obligation_results
         WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
-        ",
+        "#,
+        run_id,
+        obligation_kind,
+        obligation_id,
     )
-    .bind(run_id)
-    .bind(obligation_kind)
-    .bind(obligation_id)
     .fetch_optional(pool)
     .await?
     else {
         return Ok(None);
     };
-    let row = row_to_client_result(existing);
     if row.result_hash == result_hash(payload_json)? {
         Ok(Some(TurnObligationResultRecord::DuplicateIdentical { row }))
     } else {
@@ -315,8 +295,8 @@ pub async fn record_claimed_tool_result_for_step(
     payload_json: serde_json::Value,
 ) -> Result<ClaimedToolResultRecord, DenError> {
     let mut tx = pool.begin().await?;
-    let claimed = sqlx::query_scalar::<_, Uuid>(
-        r"
+    let claimed = sqlx::query_scalar!(
+        r#"
         UPDATE turn_obligations
         SET state = 'result_received', result_payload = $4, updated_at = NOW()
         WHERE id = $1
@@ -327,13 +307,13 @@ pub async fn record_claimed_tool_result_for_step(
           AND lease_attempt_token_hash = $5
           AND lease_expires_at > NOW()
         RETURNING id
-        ",
+        "#,
+        obligation_id,
+        run_id,
+        tool_call_id,
+        &payload_json,
+        attempt_token_hash,
     )
-    .bind(obligation_id)
-    .bind(run_id)
-    .bind(tool_call_id)
-    .bind(&payload_json)
-    .bind(attempt_token_hash)
     .fetch_optional(&mut *tx)
     .await?;
     if claimed.is_none() {
@@ -342,39 +322,42 @@ pub async fn record_claimed_tool_result_for_step(
     }
 
     let hash = result_hash(&payload_json)?;
-    let inserted = sqlx::query(
-        r"
+    let inserted = sqlx::query_as!(
+        TurnObligationResultRow,
+        r#"
         INSERT INTO turn_obligation_results (
             run_id, turn_step_id, obligation_kind, obligation_id, result_hash, payload_json
         ) VALUES ($1, $2, 'tool', $3, $4, $5)
         ON CONFLICT (run_id, obligation_kind, obligation_id) DO NOTHING
-        RETURNING id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
-        ",
+        RETURNING id, run_id, obligation_kind, obligation_id, result_hash,
+                  payload_json AS "payload_json: serde_json::Value",
+                  turn_step_id AS "turn_step_id?", created_at
+        "#,
+        run_id,
+        turn_step_id,
+        tool_call_id,
+        &hash,
+        &payload_json,
     )
-    .bind(run_id)
-    .bind(turn_step_id)
-    .bind(tool_call_id)
-    .bind(&hash)
-    .bind(&payload_json)
     .fetch_optional(&mut *tx)
     .await?;
     let record = if let Some(row) = inserted {
-        TurnObligationResultRecord::Inserted {
-            row: row_to_client_result(row),
-        }
+        TurnObligationResultRecord::Inserted { row }
     } else {
-        let existing = sqlx::query(
-            r"
-            SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
+        let row = sqlx::query_as!(
+            TurnObligationResultRow,
+            r#"
+            SELECT id, run_id, obligation_kind, obligation_id, result_hash,
+                   payload_json AS "payload_json: serde_json::Value",
+                   turn_step_id AS "turn_step_id?", created_at
             FROM turn_obligation_results
             WHERE run_id = $1 AND obligation_kind = 'tool' AND obligation_id = $2
-            ",
+            "#,
+            run_id,
+            tool_call_id,
         )
-        .bind(run_id)
-        .bind(tool_call_id)
         .fetch_one(&mut *tx)
         .await?;
-        let row = row_to_client_result(existing);
         if row.result_hash == hash {
             TurnObligationResultRecord::DuplicateIdentical { row }
         } else {
@@ -396,42 +379,45 @@ pub async fn record_client_result_for_step(
     payload_json: serde_json::Value,
 ) -> Result<TurnObligationResultRecord, DenError> {
     let hash = result_hash(&payload_json)?;
-    let inserted = sqlx::query(
-        r"
+    let inserted = sqlx::query_as!(
+        TurnObligationResultRow,
+        r#"
         INSERT INTO turn_obligation_results (
             run_id, turn_step_id, obligation_kind, obligation_id, result_hash, payload_json
         ) VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (run_id, obligation_kind, obligation_id) DO NOTHING
-        RETURNING id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
-        ",
+        RETURNING id, run_id, obligation_kind, obligation_id, result_hash,
+                  payload_json AS "payload_json: serde_json::Value",
+                  turn_step_id AS "turn_step_id?", created_at
+        "#,
+        run_id,
+        turn_step_id,
+        obligation_kind,
+        obligation_id,
+        &hash,
+        &payload_json,
     )
-    .bind(run_id)
-    .bind(turn_step_id)
-    .bind(obligation_kind)
-    .bind(obligation_id)
-    .bind(&hash)
-    .bind(&payload_json)
     .fetch_optional(pool)
     .await?;
     if let Some(row) = inserted {
-        return Ok(TurnObligationResultRecord::Inserted {
-            row: row_to_client_result(row),
-        });
+        return Ok(TurnObligationResultRecord::Inserted { row });
     }
 
-    let existing = sqlx::query(
-        r"
-        SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
+    let row = sqlx::query_as!(
+        TurnObligationResultRow,
+        r#"
+        SELECT id, run_id, obligation_kind, obligation_id, result_hash,
+               payload_json AS "payload_json: serde_json::Value",
+               turn_step_id AS "turn_step_id?", created_at
         FROM turn_obligation_results
         WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
-        ",
+        "#,
+        run_id,
+        obligation_kind,
+        obligation_id,
     )
-    .bind(run_id)
-    .bind(obligation_kind)
-    .bind(obligation_id)
     .fetch_one(pool)
     .await?;
-    let row = row_to_client_result(existing);
     if row.result_hash == hash {
         Ok(TurnObligationResultRecord::DuplicateIdentical { row })
     } else {
@@ -446,15 +432,15 @@ pub async fn client_result_count_for_run_kind(
     run_id: &str,
     obligation_kind: &str,
 ) -> Result<i64, DenError> {
-    let count = sqlx::query_scalar::<_, i64>(
-        r"
-        SELECT COUNT(*)
+    let count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) AS "count!"
         FROM turn_obligation_results
         WHERE run_id = $1 AND obligation_kind = $2
-        ",
+        "#,
+        run_id,
+        obligation_kind,
     )
-    .bind(run_id)
-    .bind(obligation_kind)
     .fetch_one(pool)
     .await?;
     Ok(count)
@@ -488,8 +474,8 @@ pub async fn finish_run_with_bearwire_event(
         .expect("terminal state has obligation settlement");
     let settlement_state = obligation_state.as_str();
     let mut tx = pool.begin().await?;
-    let claimed = sqlx::query(
-        r"
+    let claimed = sqlx::query!(
+        r#"
         UPDATE turn_runs
         SET state = $2,
             terminal_reason = $3,
@@ -498,12 +484,12 @@ pub async fn finish_run_with_bearwire_event(
         WHERE run_id = $1
           AND session_id = $4
           AND state NOT IN ('completed','failed','cancelled')
-        ",
+        "#,
+        run_id,
+        state.as_str(),
+        terminal_reason,
+        session_id,
     )
-    .bind(run_id)
-    .bind(state.as_str())
-    .bind(terminal_reason)
-    .bind(session_id)
     .execute(&mut *tx)
     .await?
     .rows_affected()
@@ -512,32 +498,32 @@ pub async fn finish_run_with_bearwire_event(
         tx.rollback().await?;
         return Ok(None);
     }
-    let settled_obligations = sqlx::query(
-        r"
+    let settled_obligations = sqlx::query!(
+        r#"
         UPDATE turn_obligations
         SET state = $2,
             completed_at = COALESCE(completed_at, NOW()),
             updated_at = NOW()
         WHERE run_id = $1
           AND state IN ('requested','waiting_for_client','result_received')
-        ",
+        "#,
+        run_id,
+        settlement_state,
     )
-    .bind(run_id)
-    .bind(settlement_state)
     .execute(&mut *tx)
     .await?
     .rows_affected();
-    let settled_steps = sqlx::query(
-        r"
+    let settled_steps = sqlx::query!(
+        r#"
         UPDATE turn_steps
         SET state = $2,
             closed_at = COALESCE(closed_at, NOW())
         WHERE run_id = $1
           AND state IN ('streaming_model','waiting_for_client','ready_to_continue')
-        ",
+        "#,
+        run_id,
+        settlement_state,
     )
-    .bind(run_id)
-    .bind(settlement_state)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -565,8 +551,9 @@ pub async fn claim_run_continuation(
     terminal_reason: Option<&str>,
 ) -> Result<Option<TurnRunRow>, DenError> {
     let mut tx = pool.begin().await?;
-    let row = sqlx::query(&format!(
-        r"
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
         UPDATE turn_runs
         SET state = 'continuing',
             terminal_reason = $2,
@@ -574,16 +561,18 @@ pub async fn claim_run_continuation(
             completed_at = completed_at
         WHERE run_id = $1
           AND state = 'running'
-        RETURNING {RUN_RETURNING}
-        "
-    ))
-    .bind(run_id)
-    .bind(terminal_reason)
+        RETURNING id, run_id, session_id, bear_id, user_id, state,
+                  terminal_reason AS "terminal_reason?", created_at, updated_at,
+                  completed_at AS "completed_at?"
+        "#,
+        run_id,
+        terminal_reason,
+    )
     .fetch_optional(&mut *tx)
     .await?;
 
     tx.commit().await?;
-    Ok(row.map(row_to_run))
+    Ok(row)
 }
 
 /// Starts work after a successful `claim_run_continuation`.
@@ -594,18 +583,21 @@ pub async fn begin_claimed_run_continuation(
     pool: &PgPool,
     run_id: &str,
 ) -> Result<Option<TurnRunRow>, DenError> {
-    let row = sqlx::query(&format!(
-        r"
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
         UPDATE turn_runs
         SET state = 'running', terminal_reason = NULL, updated_at = NOW()
         WHERE run_id = $1 AND state = 'continuing'
-        RETURNING {RUN_RETURNING}
-        "
-    ))
-    .bind(run_id)
+        RETURNING id, run_id, session_id, bear_id, user_id, state,
+                  terminal_reason AS "terminal_reason?", created_at, updated_at,
+                  completed_at AS "completed_at?"
+        "#,
+        run_id,
+    )
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_run))
+    Ok(row)
 }
 
 /// Releases a continuation claim when durable setup fails before the successor
@@ -616,18 +608,21 @@ pub async fn release_claimed_run_continuation(
     pool: &PgPool,
     run_id: &str,
 ) -> Result<Option<TurnRunRow>, DenError> {
-    let row = sqlx::query(&format!(
-        r"
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
         UPDATE turn_runs
         SET state = 'running', terminal_reason = NULL, updated_at = NOW()
         WHERE run_id = $1 AND state = 'continuing'
-        RETURNING {RUN_RETURNING}
-        "
-    ))
-    .bind(run_id)
+        RETURNING id, run_id, session_id, bear_id, user_id, state,
+                  terminal_reason AS "terminal_reason?", created_at, updated_at,
+                  completed_at AS "completed_at?"
+        "#,
+        run_id,
+    )
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_run))
+    Ok(row)
 }
 
 pub async fn transition_run(
@@ -643,8 +638,9 @@ pub async fn transition_run(
         )));
     }
     let mut tx = pool.begin().await?;
-    let row = sqlx::query(&format!(
-        r"
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
         UPDATE turn_runs
         SET state = $2,
             terminal_reason = $3,
@@ -652,17 +648,19 @@ pub async fn transition_run(
             completed_at = completed_at
         WHERE run_id = $1
           AND state NOT IN ('completed','failed','cancelled')
-        RETURNING {RUN_RETURNING}
-        "
-    ))
-    .bind(run_id)
-    .bind(state.as_str())
-    .bind(terminal_reason)
+        RETURNING id, run_id, session_id, bear_id, user_id, state,
+                  terminal_reason AS "terminal_reason?", created_at, updated_at,
+                  completed_at AS "completed_at?"
+        "#,
+        run_id,
+        state.as_str(),
+        terminal_reason,
+    )
     .fetch_optional(&mut *tx)
     .await?;
 
     tx.commit().await?;
-    Ok(row.map(row_to_run))
+    Ok(row)
 }
 
 #[cfg(test)]

@@ -26,19 +26,19 @@ impl<'a> DenNativeProfileRegistry<'a> {
         // the small `den_service::bears::db::profile_binding_id` query so den-runtime does not depend
         // on the `den`-crate `bears` subsystem (a `den-runtime → den` cycle); the bears
         // subsystem keeps its own copy for the edge call sites until it, too, lands here.
-        let row: Option<(String,)> = sqlx::query_as(
+        let row = sqlx::query!(
             r"
             SELECT binding_id
             FROM bear_profile_bindings
             WHERE bear_id = $1 AND profile = $2
             ",
+            bear_id,
+            profile.as_str()
         )
-        .bind(bear_id)
-        .bind(profile.as_str())
         .fetch_optional(self.pool)
         .await?;
         let binding_id = row
-            .map(|r| r.0)
+            .map(|r| r.binding_id)
             .filter(|id| !id.trim().is_empty())
             // Public fallback contract for pre-provisioned/native-only runs: derive the
             // deterministic binding id that provisioning would have written.

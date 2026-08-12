@@ -80,7 +80,7 @@ pub async fn create_tool_output_artifact(
     } else {
         json!({ "value": input.metadata })
     };
-    let id = sqlx::query_scalar::<_, Uuid>(
+    let id = sqlx::query_scalar!(
         r"
         INSERT INTO tool_output_artifacts (
             bear_id, user_id, session_id, conversation_id, run_id, tool_call_id,
@@ -88,19 +88,19 @@ pub async fn create_tool_output_artifact(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING id
         ",
+        input.bear_id,
+        input.user_id,
+        input.session_id,
+        input.conversation_id,
+        input.run_id,
+        input.tool_call_id,
+        input.tool_name,
+        input.source,
+        input.content_text,
+        input.content_json,
+        metadata,
+        content_bytes
     )
-    .bind(input.bear_id)
-    .bind(input.user_id)
-    .bind(&input.session_id)
-    .bind(&input.conversation_id)
-    .bind(&input.run_id)
-    .bind(&input.tool_call_id)
-    .bind(&input.tool_name)
-    .bind(input.source)
-    .bind(&input.content_text)
-    .bind(&input.content_json)
-    .bind(&metadata)
-    .bind(content_bytes)
     .fetch_one(pool)
     .await
     .map_err(|err| DenError::Database(format!("insert tool output artifact: {err}")))?;
@@ -119,16 +119,17 @@ pub async fn read_tool_output_artifact(
     limit_chars: usize,
 ) -> Result<ToolOutputArtifactRead, DenError> {
     let id = artifact_id_from_ref(artifact_ref)?;
-    let row = sqlx::query_as::<_, ToolOutputArtifactSelectRow>(
+    let row = sqlx::query_as!(
+        ToolOutputArtifactSelectRow,
         r"
         SELECT id, tool_call_id, tool_name, source, content_text, content_json, metadata
         FROM tool_output_artifacts
         WHERE id = $1 AND bear_id = $2 AND session_id = $3
         ",
+        id,
+        bear_id,
+        session_id
     )
-    .bind(id)
-    .bind(bear_id)
-    .bind(session_id)
     .fetch_optional(pool)
     .await
     .map_err(|err| DenError::Database(format!("read tool output artifact: {err}")))?
@@ -185,12 +186,12 @@ mod tests {
     #[sqlx::test(migrations = "../../migrations")]
     async fn writes_and_reads_tool_output_artifact_slice(pool: PgPool) {
         let suffix = Uuid::new_v4();
-        let bear_id = sqlx::query_scalar::<_, Uuid>(
+        let bear_id = sqlx::query_scalar!(
             "INSERT INTO bears (slug, name, description) VALUES ($1, $2, $3) RETURNING id",
+            format!("artifact-bear-{}", suffix.simple()),
+            "Artifact Bear",
+            "artifact test bear"
         )
-        .bind(format!("artifact-bear-{}", suffix.simple()))
-        .bind("Artifact Bear")
-        .bind("artifact test bear")
         .fetch_one(&pool)
         .await
         .unwrap();

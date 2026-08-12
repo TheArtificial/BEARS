@@ -58,20 +58,12 @@ pub struct ReflectionRunRow {
 // archive_harvest lane: mine compaction artifacts into memory proposals.
 // ---------------------------------------------------------------------------
 
-const ARCHIVE_HARVEST_RETURNING: &str = r"
-    RETURNING id, bear_id, lane, trigger, status, role_agent_id,
-              conversation_id, conversation_key, conversation_date,
-              input_summary, output_summary, error,
-              started_at, completed_at, created_at
-";
-
 pub async fn enqueue_archive_harvest_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
     trigger: &str,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
-        r"
+    let row = sqlx::query_as!(ReflectionRunRow, r"
         INSERT INTO bear_reflection_runs (bear_id, lane, trigger, status, input_summary, output_summary)
         SELECT $1, 'archive_harvest', $2, 'queued', '{}'::jsonb, '{}'::jsonb
         WHERE NOT EXISTS (
@@ -82,10 +74,7 @@ pub async fn enqueue_archive_harvest_for_bear(
                   conversation_id, conversation_key, conversation_date,
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
-        ",
-    )
-    .bind(bear_id)
-    .bind(trigger)
+        ", bear_id, trigger)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -95,7 +84,8 @@ async fn claim_next_archive_harvest_run(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
         r"
         WITH next_run AS (
             SELECT id
@@ -114,8 +104,8 @@ async fn claim_next_archive_harvest_run(
                   runs.conversation_date, runs.input_summary, runs.output_summary,
                   runs.error, runs.started_at, runs.completed_at, runs.created_at
         ",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -127,17 +117,23 @@ async fn mark_archive_harvest_completed(
     run_id: Uuid,
     output_summary: serde_json::Value,
 ) -> Result<ReflectionRunRow, DenError> {
-    let sql = format!(
-        "UPDATE bear_reflection_runs SET status = 'completed', output_summary = $3, \
-         error = NULL, completed_at = NOW() \
-         WHERE bear_id = $1 AND id = $2 AND lane = 'archive_harvest'{ARCHIVE_HARVEST_RETURNING}"
-    );
-    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
-        .bind(bear_id)
-        .bind(run_id)
-        .bind(output_summary)
-        .fetch_one(pool)
-        .await?;
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
+        r"
+        UPDATE bear_reflection_runs
+        SET status = 'completed', output_summary = $3, error = NULL, completed_at = NOW()
+        WHERE bear_id = $1 AND id = $2 AND lane = 'archive_harvest'
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        ",
+        bear_id,
+        run_id,
+        output_summary,
+    )
+    .fetch_one(pool)
+    .await?;
     Ok(row)
 }
 
@@ -147,27 +143,34 @@ async fn mark_archive_harvest_failed(
     run_id: Uuid,
     error: &str,
 ) -> Result<ReflectionRunRow, DenError> {
-    let sql = format!(
-        "UPDATE bear_reflection_runs SET status = 'failed', error = $3, completed_at = NOW() \
-         WHERE bear_id = $1 AND id = $2 AND lane = 'archive_harvest'{ARCHIVE_HARVEST_RETURNING}"
-    );
-    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
-        .bind(bear_id)
-        .bind(run_id)
-        .bind(error)
-        .fetch_one(pool)
-        .await?;
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
+        r"
+        UPDATE bear_reflection_runs
+        SET status = 'failed', error = $3, completed_at = NOW()
+        WHERE bear_id = $1 AND id = $2 AND lane = 'archive_harvest'
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        ",
+        bear_id,
+        run_id,
+        error,
+    )
+    .fetch_one(pool)
+    .await?;
     Ok(row)
 }
 
 async fn list_bears_with_queued_archive_harvest_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
-    let rows = sqlx::query_scalar::<_, Uuid>(
+    let rows = sqlx::query_scalar!(
         r"
         SELECT DISTINCT bear_id
         FROM bear_reflection_runs
         WHERE lane = 'archive_harvest' AND status = 'queued'
         ORDER BY bear_id
-        ",
+        "
     )
     .fetch_all(pool)
     .await?;
@@ -268,7 +271,8 @@ pub async fn create_run(
     pool: &PgPool,
     params: CreateReflectionRun<'_>,
 ) -> Result<ReflectionRunRow, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
         r"
         INSERT INTO bear_reflection_runs (
             bear_id, lane, trigger, status, role_agent_id,
@@ -281,18 +285,18 @@ pub async fn create_run(
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
         ",
+        params.bear_id,
+        params.lane,
+        params.trigger,
+        params.status,
+        params.role_agent_id,
+        params.conversation_id,
+        params.conversation_key,
+        params.conversation_date,
+        params.input_summary,
+        params.output_summary,
+        params.error
     )
-    .bind(params.bear_id)
-    .bind(params.lane)
-    .bind(params.trigger)
-    .bind(params.status)
-    .bind(params.role_agent_id)
-    .bind(params.conversation_id)
-    .bind(params.conversation_key)
-    .bind(params.conversation_date)
-    .bind(params.input_summary)
-    .bind(params.output_summary)
-    .bind(params.error)
     .fetch_one(pool)
     .await?;
     Ok(row)
@@ -431,7 +435,8 @@ pub async fn list_queued_memory_curate_runs(
     bear_id: Uuid,
     limit: i64,
 ) -> Result<Vec<ReflectionRunRow>, DenError> {
-    let rows = sqlx::query_as::<_, ReflectionRunRow>(
+    let rows = sqlx::query_as!(
+        ReflectionRunRow,
         r"
         SELECT id, bear_id, lane, trigger, status, role_agent_id,
                conversation_id, conversation_key, conversation_date,
@@ -444,9 +449,9 @@ pub async fn list_queued_memory_curate_runs(
         ORDER BY created_at ASC
         LIMIT $2
         ",
+        bear_id,
+        limit.clamp(1, 200)
     )
-    .bind(bear_id)
-    .bind(limit.clamp(1, 200))
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -456,7 +461,8 @@ pub async fn claim_next_memory_curate_run(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
         r"
         WITH next_run AS (
             SELECT id
@@ -478,8 +484,8 @@ pub async fn claim_next_memory_curate_run(
                   runs.conversation_date, runs.input_summary, runs.output_summary,
                   runs.error, runs.started_at, runs.completed_at, runs.created_at
         ",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else {
@@ -509,7 +515,8 @@ pub async fn mark_memory_curate_started(
     bear_id: Uuid,
     reflection_run_id: Uuid,
 ) -> Result<ReflectionRunRow, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
         r"
         UPDATE bear_reflection_runs
         SET status = 'running',
@@ -520,9 +527,9 @@ pub async fn mark_memory_curate_started(
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
         ",
+        bear_id,
+        reflection_run_id
     )
-    .bind(bear_id)
-    .bind(reflection_run_id)
     .fetch_one(pool)
     .await?;
     let run = row;
@@ -536,7 +543,8 @@ pub async fn mark_memory_curate_completed(
     reflection_run_id: Uuid,
     output_summary: serde_json::Value,
 ) -> Result<ReflectionRunRow, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
         r"
         UPDATE bear_reflection_runs
         SET status = 'completed',
@@ -549,10 +557,10 @@ pub async fn mark_memory_curate_completed(
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
         ",
+        bear_id,
+        reflection_run_id,
+        output_summary
     )
-    .bind(bear_id)
-    .bind(reflection_run_id)
-    .bind(output_summary)
     .fetch_one(pool)
     .await?;
     let run = row;
@@ -566,7 +574,8 @@ pub async fn mark_memory_curate_failed(
     reflection_run_id: Uuid,
     error: &str,
 ) -> Result<ReflectionRunRow, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
         r"
         UPDATE bear_reflection_runs
         SET status = 'failed',
@@ -578,10 +587,10 @@ pub async fn mark_memory_curate_failed(
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
         ",
+        bear_id,
+        reflection_run_id,
+        error
     )
-    .bind(bear_id)
-    .bind(reflection_run_id)
-    .bind(error)
     .fetch_one(pool)
     .await?;
     let run = row;
@@ -706,15 +715,15 @@ async fn record_memory_curate_run_item(
     proposal_id: Uuid,
     status: &str,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_reflection_run_items (run_id, item_kind, item_id, status)
         VALUES ($1, 'memory_proposal', $2, $3)
         ",
+        run_id,
+        proposal_id.to_string(),
+        status
     )
-    .bind(run_id)
-    .bind(proposal_id.to_string())
-    .bind(status)
     .execute(pool)
     .await?;
     Ok(())
@@ -852,14 +861,14 @@ pub async fn run_memory_curate_worker_loop(
 }
 
 async fn list_bears_with_queued_memory_curate_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
-    let rows = sqlx::query_scalar::<_, Uuid>(
+    let rows = sqlx::query_scalar!(
         r"
         SELECT DISTINCT bear_id
         FROM bear_reflection_runs
         WHERE lane = 'memory_curate'
           AND status = 'queued'
         ORDER BY bear_id
-        ",
+        "
     )
     .fetch_all(pool)
     .await?;
@@ -883,13 +892,6 @@ fn proposal_ids_from_summary(summary: &serde_json::Value) -> Vec<Uuid> {
 // conversation-projection machinery — recall indexing is invisible plumbing.
 // ---------------------------------------------------------------------------
 
-const RECALL_INDEX_RETURNING: &str = r"
-    RETURNING id, bear_id, lane, trigger, status, role_agent_id,
-              conversation_id, conversation_key, conversation_date,
-              input_summary, output_summary, error,
-              started_at, completed_at, created_at
-";
-
 /// Enqueue a derived-recall reconcile for a Bear. **Coalesces**: if a `recall_index` run is
 /// already queued for the Bear, returns `None` rather than piling up duplicate work.
 pub async fn enqueue_recall_index(
@@ -897,8 +899,7 @@ pub async fn enqueue_recall_index(
     bear_id: Uuid,
     trigger: &str,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
-        r"
+    let row = sqlx::query_as!(ReflectionRunRow, r"
         INSERT INTO bear_reflection_runs (bear_id, lane, trigger, status, input_summary, output_summary)
         SELECT $1, 'recall_index', $2, 'queued', '{}'::jsonb, '{}'::jsonb
         WHERE NOT EXISTS (
@@ -909,10 +910,7 @@ pub async fn enqueue_recall_index(
                   conversation_id, conversation_key, conversation_date,
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
-        ",
-    )
-    .bind(bear_id)
-    .bind(trigger)
+        ", bear_id, trigger)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -944,7 +942,8 @@ async fn claim_next_recall_index_run(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
         r"
         WITH next_run AS (
             SELECT id
@@ -963,8 +962,8 @@ async fn claim_next_recall_index_run(
                   runs.conversation_date, runs.input_summary, runs.output_summary,
                   runs.error, runs.started_at, runs.completed_at, runs.created_at
         ",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -976,17 +975,23 @@ async fn mark_recall_index_completed(
     run_id: Uuid,
     output_summary: serde_json::Value,
 ) -> Result<ReflectionRunRow, DenError> {
-    let sql = format!(
-        "UPDATE bear_reflection_runs SET status = 'completed', output_summary = $3, \
-         error = NULL, completed_at = NOW() \
-         WHERE bear_id = $1 AND id = $2 AND lane = 'recall_index'{RECALL_INDEX_RETURNING}"
-    );
-    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
-        .bind(bear_id)
-        .bind(run_id)
-        .bind(output_summary)
-        .fetch_one(pool)
-        .await?;
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
+        r"
+        UPDATE bear_reflection_runs
+        SET status = 'completed', output_summary = $3, error = NULL, completed_at = NOW()
+        WHERE bear_id = $1 AND id = $2 AND lane = 'recall_index'
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        ",
+        bear_id,
+        run_id,
+        output_summary,
+    )
+    .fetch_one(pool)
+    .await?;
     Ok(row)
 }
 
@@ -996,27 +1001,34 @@ async fn mark_recall_index_failed(
     run_id: Uuid,
     error: &str,
 ) -> Result<ReflectionRunRow, DenError> {
-    let sql = format!(
-        "UPDATE bear_reflection_runs SET status = 'failed', error = $3, completed_at = NOW() \
-         WHERE bear_id = $1 AND id = $2 AND lane = 'recall_index'{RECALL_INDEX_RETURNING}"
-    );
-    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
-        .bind(bear_id)
-        .bind(run_id)
-        .bind(error)
-        .fetch_one(pool)
-        .await?;
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
+        r"
+        UPDATE bear_reflection_runs
+        SET status = 'failed', error = $3, completed_at = NOW()
+        WHERE bear_id = $1 AND id = $2 AND lane = 'recall_index'
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        ",
+        bear_id,
+        run_id,
+        error,
+    )
+    .fetch_one(pool)
+    .await?;
     Ok(row)
 }
 
 async fn list_bears_with_queued_recall_index_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
-    let rows = sqlx::query_scalar::<_, Uuid>(
+    let rows = sqlx::query_scalar!(
         r"
         SELECT DISTINCT bear_id
         FROM bear_reflection_runs
         WHERE lane = 'recall_index' AND status = 'queued'
         ORDER BY bear_id
-        ",
+        "
     )
     .fetch_all(pool)
     .await?;
@@ -1122,18 +1134,12 @@ pub async fn run_recall_index_worker_loop(
 // Mirrors recall_index queue semantics (FOR UPDATE SKIP LOCKED, coalesced enqueue).
 // ---------------------------------------------------------------------------
 
-const CONTEXT_COMPACT_RETURNING: &str = r"
-    RETURNING id, bear_id, lane, trigger, status, role_agent_id,
-              conversation_id, conversation_key, conversation_date,
-              input_summary, output_summary, error,
-              started_at, completed_at, created_at
-";
-
 async fn claim_next_context_compact_run(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query_as::<_, ReflectionRunRow>(
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
         r"
         WITH next_run AS (
             SELECT id
@@ -1152,8 +1158,8 @@ async fn claim_next_context_compact_run(
                   runs.conversation_date, runs.input_summary, runs.output_summary,
                   runs.error, runs.started_at, runs.completed_at, runs.created_at
         ",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_optional(pool)
     .await?;
     Ok(row)
@@ -1165,17 +1171,23 @@ async fn mark_context_compact_completed(
     run_id: Uuid,
     output_summary: serde_json::Value,
 ) -> Result<ReflectionRunRow, DenError> {
-    let sql = format!(
-        "UPDATE bear_reflection_runs SET status = 'completed', output_summary = $3, \
-         error = NULL, completed_at = NOW() \
-         WHERE bear_id = $1 AND id = $2 AND lane = 'context_compact'{CONTEXT_COMPACT_RETURNING}"
-    );
-    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
-        .bind(bear_id)
-        .bind(run_id)
-        .bind(output_summary)
-        .fetch_one(pool)
-        .await?;
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
+        r"
+        UPDATE bear_reflection_runs
+        SET status = 'completed', output_summary = $3, error = NULL, completed_at = NOW()
+        WHERE bear_id = $1 AND id = $2 AND lane = 'context_compact'
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        ",
+        bear_id,
+        run_id,
+        output_summary,
+    )
+    .fetch_one(pool)
+    .await?;
     Ok(row)
 }
 
@@ -1185,27 +1197,34 @@ async fn mark_context_compact_failed(
     run_id: Uuid,
     error: &str,
 ) -> Result<ReflectionRunRow, DenError> {
-    let sql = format!(
-        "UPDATE bear_reflection_runs SET status = 'failed', error = $3, completed_at = NOW() \
-         WHERE bear_id = $1 AND id = $2 AND lane = 'context_compact'{CONTEXT_COMPACT_RETURNING}"
-    );
-    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
-        .bind(bear_id)
-        .bind(run_id)
-        .bind(error)
-        .fetch_one(pool)
-        .await?;
+    let row = sqlx::query_as!(
+        ReflectionRunRow,
+        r"
+        UPDATE bear_reflection_runs
+        SET status = 'failed', error = $3, completed_at = NOW()
+        WHERE bear_id = $1 AND id = $2 AND lane = 'context_compact'
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        ",
+        bear_id,
+        run_id,
+        error,
+    )
+    .fetch_one(pool)
+    .await?;
     Ok(row)
 }
 
 async fn list_bears_with_queued_context_compact_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
-    let rows = sqlx::query_scalar::<_, Uuid>(
+    let rows = sqlx::query_scalar!(
         r"
         SELECT DISTINCT bear_id
         FROM bear_reflection_runs
         WHERE lane = 'context_compact' AND status = 'queued'
         ORDER BY bear_id
-        ",
+        "
     )
     .fetch_all(pool)
     .await?;

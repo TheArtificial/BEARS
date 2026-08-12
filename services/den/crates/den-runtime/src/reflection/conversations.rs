@@ -1,4 +1,4 @@
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use time::Date;
 use uuid::Uuid;
 
@@ -51,8 +51,7 @@ pub async fn ensure_memory_curate_conversation(
     )
     .await?;
 
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(ReflectionConversationRow, r#"
         INSERT INTO reflection_conversations (
             bear_id, role_agent_id, lane, conversation_date, conversation_key, conversation_id
         )
@@ -63,20 +62,15 @@ pub async fn ensure_memory_curate_conversation(
             conversation_key = EXCLUDED.conversation_key,
             conversation_id = COALESCE(reflection_conversations.conversation_id, EXCLUDED.conversation_id),
             last_used_at = NOW()
-        RETURNING id, bear_id, role_agent_id, lane, conversation_date, conversation_key,
-                  conversation_id, created_at, last_used_at
-        ",
-    )
-    .bind(bear_id)
-    .bind(role_agent_id)
-    .bind(MEMORY_CURATE_LANE)
-    .bind(conversation_date)
-    .bind(&conversation_key)
-    .bind(&external_conversation_id)
+        RETURNING id as "id: _", bear_id as "bear_id: _", role_agent_id as "role_agent_id: _",
+                  lane as "lane: _", conversation_date as "conversation_date: _",
+                  conversation_key as "conversation_key: _", conversation_id as "conversation_id: _",
+                  created_at as "created_at: _", last_used_at as "last_used_at: _"
+        "#, bear_id, role_agent_id, MEMORY_CURATE_LANE, conversation_date, &conversation_key, &external_conversation_id)
     .fetch_one(pool)
     .await?;
 
-    Ok(row_from_sql(row))
+    Ok(row)
 }
 
 pub async fn touch_memory_curate_conversation(
@@ -84,7 +78,7 @@ pub async fn touch_memory_curate_conversation(
     bear_id: Uuid,
     conversation_date: Date,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE reflection_conversations
         SET last_used_at = NOW()
@@ -92,10 +86,10 @@ pub async fn touch_memory_curate_conversation(
           AND lane = $2
           AND conversation_date = $3
         ",
+        bear_id,
+        MEMORY_CURATE_LANE,
+        conversation_date
     )
-    .bind(bear_id)
-    .bind(MEMORY_CURATE_LANE)
-    .bind(conversation_date)
     .execute(pool)
     .await?;
     Ok(())
@@ -107,7 +101,7 @@ pub async fn bind_memory_curate_run_conversation(
     reflection_run_id: Uuid,
     conversation_id: &str,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE bear_reflection_runs
         SET conversation_id = $3
@@ -116,11 +110,11 @@ pub async fn bind_memory_curate_run_conversation(
           AND lane = $4
           AND (conversation_id IS NULL OR btrim(conversation_id) = '')
         ",
+        bear_id,
+        reflection_run_id,
+        conversation_id,
+        MEMORY_CURATE_LANE
     )
-    .bind(bear_id)
-    .bind(reflection_run_id)
-    .bind(conversation_id)
-    .bind(MEMORY_CURATE_LANE)
     .execute(pool)
     .await?;
     Ok(())
@@ -131,36 +125,25 @@ pub async fn get_memory_curate_conversation(
     bear_id: Uuid,
     conversation_date: Date,
 ) -> Result<Option<ReflectionConversationRow>, DenError> {
-    let row = sqlx::query(
-        r"
-        SELECT id, bear_id, role_agent_id, lane, conversation_date, conversation_key,
-               conversation_id, created_at, last_used_at
+    let row = sqlx::query_as!(
+        ReflectionConversationRow,
+        r#"
+        SELECT id as "id: _", bear_id as "bear_id: _", role_agent_id as "role_agent_id: _",
+               lane as "lane: _", conversation_date as "conversation_date: _",
+               conversation_key as "conversation_key: _", conversation_id as "conversation_id: _",
+               created_at as "created_at: _", last_used_at as "last_used_at: _"
         FROM reflection_conversations
         WHERE bear_id = $1
           AND lane = $2
           AND conversation_date = $3
-        ",
+        "#,
+        bear_id,
+        MEMORY_CURATE_LANE,
+        conversation_date
     )
-    .bind(bear_id)
-    .bind(MEMORY_CURATE_LANE)
-    .bind(conversation_date)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_from_sql))
-}
-
-fn row_from_sql(row: sqlx::postgres::PgRow) -> ReflectionConversationRow {
-    ReflectionConversationRow {
-        id: row.get("id"),
-        bear_id: row.get("bear_id"),
-        role_agent_id: row.get("role_agent_id"),
-        lane: row.get("lane"),
-        conversation_date: row.get("conversation_date"),
-        conversation_key: row.get("conversation_key"),
-        conversation_id: row.get("conversation_id"),
-        created_at: row.get("created_at"),
-        last_used_at: row.get("last_used_at"),
-    }
+    Ok(row)
 }
 
 #[cfg(test)]

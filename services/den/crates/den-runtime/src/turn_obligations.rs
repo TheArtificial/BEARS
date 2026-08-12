@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -255,29 +255,6 @@ impl TurnObligationRow {
     }
 }
 
-fn row_to_obligation(row: sqlx::postgres::PgRow) -> TurnObligationRow {
-    TurnObligationRow {
-        id: row.get("id"),
-        run_id: row.get("run_id"),
-        session_id: row.get("session_id"),
-        kind: row.get("kind"),
-        expected_responder_action: row.get("expected_responder_action"),
-        tool_call_id: row.get("tool_call_id"),
-        permission_id: row.get("permission_id"),
-        responder_ref_id: row.try_get("responder_ref_id").ok(),
-        state: row.get("state"),
-        turn_step_id: row.try_get("turn_step_id").ok(),
-        request_payload: row.get("request_payload"),
-        result_payload: row.get("result_payload"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-        completed_at: row.get("completed_at"),
-        lease_attempt_token_hash: row.try_get("lease_attempt_token_hash").ok(),
-        claimed_at: row.try_get("claimed_at").ok(),
-        lease_expires_at: row.try_get("lease_expires_at").ok(),
-    }
-}
-
 pub async fn create_turn_obligation_for_step(
     pool: &PgPool,
     run_id: &str,
@@ -290,8 +267,8 @@ pub async fn create_turn_obligation_for_step(
 ) -> Result<TurnObligationRow, DenError> {
     let kind = kind.as_str();
     let expected_responder_action = expected_responder_action.as_str();
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             responder_ref_id, state, request_payload
@@ -299,18 +276,18 @@ pub async fn create_turn_obligation_for_step(
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
                   request_payload, result_payload, created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        run_id,
+        session_id,
+        turn_step_id,
+        kind,
+        expected_responder_action,
+        responder_ref_id,
+        request_payload,
     )
-    .bind(run_id)
-    .bind(session_id)
-    .bind(turn_step_id)
-    .bind(kind)
-    .bind(expected_responder_action)
-    .bind(responder_ref_id)
-    .bind(request_payload)
     .fetch_one(pool)
     .await?;
-    Ok(row_to_obligation(row))
+    Ok(row)
 }
 
 pub async fn upsert_tool_result_obligation(
@@ -342,8 +319,8 @@ pub async fn upsert_tool_result_obligation_for_step(
     permission_id: Option<&str>,
     request_payload: Value,
 ) -> Result<TurnObligationRow, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             tool_call_id, permission_id, state, request_payload
@@ -361,19 +338,19 @@ pub async fn upsert_tool_result_obligation_for_step(
                       request_payload = EXCLUDED.request_payload,
                       updated_at = NOW()
         RETURNING id, run_id, session_id, kind, expected_responder_action,
-                  tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+                  tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        run_id,
+        session_id,
+        turn_step_id,
+        tool_call_id,
+        permission_id,
+        request_payload,
     )
-    .bind(run_id)
-    .bind(session_id)
-    .bind(turn_step_id)
-    .bind(tool_call_id)
-    .bind(permission_id)
-    .bind(request_payload)
     .fetch_one(pool)
     .await?;
-    Ok(row_to_obligation(row))
+    Ok(row)
 }
 
 pub async fn upsert_permission_decision_obligation(
@@ -406,8 +383,8 @@ pub async fn upsert_permission_decision_obligation_for_step(
     request_payload: Value,
 ) -> Result<TurnObligationRow, DenError> {
     if let Some(tool_call_id) = tool_call_id {
-        if let Some(row) = sqlx::query(
-            r"
+        if let Some(row) = sqlx::query_as!(TurnObligationRow,
+            r#"
             UPDATE turn_obligations
             SET session_id = $2,
                 turn_step_id = COALESCE($6, turn_step_id),
@@ -425,25 +402,25 @@ pub async fn upsert_permission_decision_obligation_for_step(
               AND tool_call_id = $3
               AND (permission_id IS NULL OR permission_id = $4)
             RETURNING id, run_id, session_id, kind, expected_responder_action,
-                      tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+                      tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                       created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
-            ",
+            "#,
+            run_id,
+            session_id,
+            tool_call_id,
+            permission_id,
+            request_payload.clone(),
+            turn_step_id,
         )
-        .bind(run_id)
-        .bind(session_id)
-        .bind(tool_call_id)
-        .bind(permission_id)
-        .bind(request_payload.clone())
-        .bind(turn_step_id)
         .fetch_optional(pool)
         .await?
         {
-            return Ok(row_to_obligation(row));
+            return Ok(row);
         }
     }
 
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             tool_call_id, permission_id, state, request_payload
@@ -460,19 +437,19 @@ pub async fn upsert_permission_decision_obligation_for_step(
                       request_payload = EXCLUDED.request_payload,
                       updated_at = NOW()
         RETURNING id, run_id, session_id, kind, expected_responder_action,
-                  tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+                  tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        run_id,
+        session_id,
+        turn_step_id,
+        tool_call_id,
+        permission_id,
+        request_payload,
     )
-    .bind(run_id)
-    .bind(session_id)
-    .bind(turn_step_id)
-    .bind(tool_call_id)
-    .bind(permission_id)
-    .bind(request_payload)
     .fetch_one(pool)
     .await?;
-    Ok(row_to_obligation(row))
+    Ok(row)
 }
 
 pub async fn get_tool_call_obligation(
@@ -480,20 +457,20 @@ pub async fn get_tool_call_obligation(
     run_id: &str,
     tool_call_id: &str,
 ) -> Result<Option<TurnObligationRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
         SELECT id, run_id, session_id, kind, expected_responder_action,
-               tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+               tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE run_id = $1 AND tool_call_id = $2
-        ",
+        "#,
+        run_id,
+        tool_call_id,
     )
-    .bind(run_id)
-    .bind(tool_call_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_obligation))
+    Ok(row)
 }
 
 pub async fn get_permission_obligation(
@@ -501,20 +478,20 @@ pub async fn get_permission_obligation(
     run_id: &str,
     permission_id: &str,
 ) -> Result<Option<TurnObligationRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
         SELECT id, run_id, session_id, kind, expected_responder_action,
-               tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+               tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE run_id = $1 AND permission_id = $2
-        ",
+        "#,
+        run_id,
+        permission_id,
     )
-    .bind(run_id)
-    .bind(permission_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_obligation))
+    Ok(row)
 }
 
 pub const TOOL_LEASE_DURATION_SECONDS: i64 = 30;
@@ -532,8 +509,9 @@ pub async fn claim_tool_execution(
     tool_call_id: &str,
     attempt_token_hash: &str,
 ) -> Result<Option<TurnObligationRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(
+        TurnObligationRow,
+        r#"
         UPDATE turn_obligations
         SET lease_attempt_token_hash = $5,
             claimed_at = NOW(),
@@ -551,17 +529,17 @@ pub async fn claim_tool_execution(
                   tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
                   request_payload, result_payload, created_at, updated_at, completed_at,
                   lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        obligation_id,
+        run_id,
+        session_id,
+        tool_call_id,
+        attempt_token_hash,
+        TOOL_LEASE_DURATION_SECONDS as f64,
     )
-    .bind(obligation_id)
-    .bind(run_id)
-    .bind(session_id)
-    .bind(tool_call_id)
-    .bind(attempt_token_hash)
-    .bind(TOOL_LEASE_DURATION_SECONDS as f64)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_obligation))
+    Ok(row)
 }
 
 pub async fn renew_tool_execution(
@@ -572,8 +550,9 @@ pub async fn renew_tool_execution(
     tool_call_id: &str,
     attempt_token_hash: &str,
 ) -> Result<Option<TurnObligationRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(
+        TurnObligationRow,
+        r#"
         UPDATE turn_obligations
         SET lease_expires_at = NOW() + make_interval(secs => $6),
             updated_at = NOW()
@@ -589,17 +568,17 @@ pub async fn renew_tool_execution(
                   tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
                   request_payload, result_payload, created_at, updated_at, completed_at,
                   lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        obligation_id,
+        run_id,
+        session_id,
+        tool_call_id,
+        attempt_token_hash,
+        TOOL_LEASE_DURATION_SECONDS as f64,
     )
-    .bind(obligation_id)
-    .bind(run_id)
-    .bind(session_id)
-    .bind(tool_call_id)
-    .bind(attempt_token_hash)
-    .bind(TOOL_LEASE_DURATION_SECONDS as f64)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_obligation))
+    Ok(row)
 }
 
 pub async fn mark_claimed_result_received(
@@ -608,8 +587,9 @@ pub async fn mark_claimed_result_received(
     attempt_token_hash: &str,
     result_payload: Value,
 ) -> Result<Option<TurnObligationRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(
+        TurnObligationRow,
+        r#"
         UPDATE turn_obligations
         SET state = 'result_received',
             result_payload = $3,
@@ -622,14 +602,14 @@ pub async fn mark_claimed_result_received(
                   tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
                   request_payload, result_payload, created_at, updated_at, completed_at,
                   lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        obligation_id,
+        attempt_token_hash,
+        result_payload,
     )
-    .bind(obligation_id)
-    .bind(attempt_token_hash)
-    .bind(result_payload)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_obligation))
+    Ok(row)
 }
 
 pub async fn mark_result_received(
@@ -637,8 +617,8 @@ pub async fn mark_result_received(
     obligation_id: Uuid,
     result_payload: Value,
 ) -> Result<Option<TurnObligationRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
         UPDATE turn_obligations
         SET state = 'result_received',
             result_payload = $2,
@@ -646,23 +626,23 @@ pub async fn mark_result_received(
         WHERE id = $1
           AND state IN ('requested','waiting_for_client','result_received')
         RETURNING id, run_id, session_id, kind, expected_responder_action,
-                  tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+                  tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        obligation_id,
+        result_payload,
     )
-    .bind(obligation_id)
-    .bind(result_payload)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_obligation))
+    Ok(row)
 }
 
 pub async fn mark_waiting_for_tool_result(
     pool: &PgPool,
     obligation_id: Uuid,
 ) -> Result<Option<TurnObligationRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
         UPDATE turn_obligations
         SET kind = 'tool_result',
             expected_responder_action = 'tool_result',
@@ -677,22 +657,22 @@ pub async fn mark_waiting_for_tool_result(
           AND state IN ('requested','waiting_for_client','result_received')
           AND tool_call_id IS NOT NULL
         RETURNING id, run_id, session_id, kind, expected_responder_action,
-                  tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+                  tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        obligation_id,
     )
-    .bind(obligation_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_obligation))
+    Ok(row)
 }
 
 pub async fn mark_continued(
     pool: &PgPool,
     obligation_id: Uuid,
 ) -> Result<Option<TurnObligationRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
         UPDATE turn_obligations
         SET state = 'continued',
             completed_at = COALESCE(completed_at, NOW()),
@@ -700,22 +680,22 @@ pub async fn mark_continued(
         WHERE id = $1
           AND state IN ('result_received','continued')
         RETURNING id, run_id, session_id, kind, expected_responder_action,
-                  tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+                  tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        obligation_id,
     )
-    .bind(obligation_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_obligation))
+    Ok(row)
 }
 
 pub async fn mark_failed(
     pool: &PgPool,
     obligation_id: Uuid,
 ) -> Result<Option<TurnObligationRow>, DenError> {
-    let row = sqlx::query(
-        r"
+    let row = sqlx::query_as!(TurnObligationRow,
+        r#"
         UPDATE turn_obligations
         SET state = 'failed',
             completed_at = COALESCE(completed_at, NOW()),
@@ -723,77 +703,77 @@ pub async fn mark_failed(
         WHERE id = $1
           AND state IN ('requested','waiting_for_client','result_received')
         RETURNING id, run_id, session_id, kind, expected_responder_action,
-                  tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+                  tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
-        ",
+        "#,
+        obligation_id,
     )
-    .bind(obligation_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_obligation))
+    Ok(row)
 }
 
 pub async fn open_client_obligations_for_step(
     pool: &PgPool,
     turn_step_id: Uuid,
 ) -> Result<Vec<TurnObligationRow>, DenError> {
-    let rows = sqlx::query(
-        r"
+    let rows = sqlx::query_as!(TurnObligationRow,
+        r#"
         SELECT id, run_id, session_id, kind, expected_responder_action,
-               tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+               tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE turn_step_id = $1
           AND state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
-        ",
+        "#,
+        turn_step_id,
     )
-    .bind(turn_step_id)
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(row_to_obligation).collect())
+    Ok(rows)
 }
 
 pub async fn open_client_obligations_for_run(
     pool: &PgPool,
     run_id: &str,
 ) -> Result<Vec<TurnObligationRow>, DenError> {
-    let rows = sqlx::query(
-        r"
+    let rows = sqlx::query_as!(TurnObligationRow,
+        r#"
         SELECT id, run_id, session_id, kind, expected_responder_action,
-               tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+               tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE run_id = $1
           AND state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
-        ",
+        "#,
+        run_id,
     )
-    .bind(run_id)
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(row_to_obligation).collect())
+    Ok(rows)
 }
 
 pub async fn open_client_obligations_for_session(
     pool: &PgPool,
     session_id: &str,
 ) -> Result<Vec<TurnObligationRow>, DenError> {
-    let rows = sqlx::query(
-        r"
+    let rows = sqlx::query_as!(TurnObligationRow,
+        r#"
         SELECT id, run_id, session_id, kind, expected_responder_action,
-               tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+               tool_call_id, permission_id, NULL::text AS "responder_ref_id?", state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE session_id = $1
           AND state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
-        ",
+        "#,
+        session_id,
     )
-    .bind(session_id)
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(row_to_obligation).collect())
+    Ok(rows)
 }
 
 async fn open_client_obligations(
@@ -801,8 +781,8 @@ async fn open_client_obligations(
     limit: i64,
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let limit = limit.clamp(1, 10_000);
-    let rows = sqlx::query(
-        r"
+    let rows = sqlx::query_as!(TurnObligationRow,
+        r#"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
                request_payload, result_payload, created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
@@ -810,12 +790,12 @@ async fn open_client_obligations(
         WHERE state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
         LIMIT $1
-        ",
+        "#,
+        limit,
     )
-    .bind(limit)
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(row_to_obligation).collect())
+    Ok(rows)
 }
 
 pub async fn expire_open_client_obligations_for_session(

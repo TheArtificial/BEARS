@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE turn_steps\n            SET state = 'waiting_for_client'\n            WHERE id = $1\n              AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "596c231f0782f5e1bcdf22861f087834327f05e77ce189108f6de46045ce4763"
+}

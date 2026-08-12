@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at\n        FROM turn_steps\n        WHERE run_id = $1\n          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')\n        ORDER BY step_index DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "step_index",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "provider_response_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "opened_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "closed_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "e4dcfa98f13143f9add5dd0cba4b52a8a11d02020bbb5263651cd8945e6ee006"
+}

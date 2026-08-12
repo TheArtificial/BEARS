@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id AS \"id!\"\n        FROM conversation_compaction_artifacts\n        WHERE conversation_id = $1\n          AND artifact_kind = 'iterative_summary'\n          AND superseded_by IS NULL\n        ORDER BY created_at DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4d02431e3ca4b3c76590f7352aab973a5b46dea2222e8f49386f9e2c1867ac74"
+}

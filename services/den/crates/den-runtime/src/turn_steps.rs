@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -47,10 +47,6 @@ impl TurnStepState {
     }
 }
 
-const STEP_RETURNING: &str =
-    "id, run_id, step_index, state, provider_response_id, opened_at, closed_at";
-const ACTIVE_STEP_STATES_SQL: &str = "'streaming_model', 'waiting_for_client', 'ready_to_continue'";
-
 #[derive(Debug, Clone)]
 pub struct TurnStepRow {
     pub id: Uuid,
@@ -68,37 +64,27 @@ impl TurnStepRow {
     }
 }
 
-fn row_to_step(row: sqlx::postgres::PgRow) -> TurnStepRow {
-    TurnStepRow {
-        id: row.get("id"),
-        run_id: row.get("run_id"),
-        step_index: row.get("step_index"),
-        state: row.get("state"),
-        provider_response_id: row.get("provider_response_id"),
-        opened_at: row.get("opened_at"),
-        closed_at: row.get("closed_at"),
-    }
-}
-
 pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepRow, DenError> {
-    if let Some(row) = sqlx::query(&format!(
+    if let Some(row) = sqlx::query_as!(
+        TurnStepRow,
         r"
-        SELECT {STEP_RETURNING}
+        SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
         FROM turn_steps
         WHERE run_id = $1
-          AND state IN ({ACTIVE_STEP_STATES_SQL})
+          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
         ORDER BY step_index DESC
         LIMIT 1
-        "
-    ))
-    .bind(run_id)
+        ",
+        run_id
+    )
     .fetch_optional(pool)
     .await?
     {
-        return Ok(row_to_step(row));
+        return Ok(row);
     }
 
-    let row = sqlx::query(&format!(
+    let row = sqlx::query_as!(
+        TurnStepRow,
         r"
         WITH next_step AS (
             SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
@@ -108,13 +94,13 @@ pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepR
         INSERT INTO turn_steps (run_id, step_index, state)
         SELECT $1, step_index, 'streaming_model'
         FROM next_step
-        RETURNING {STEP_RETURNING}
-        "
-    ))
-    .bind(run_id)
+        RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
+        ",
+        run_id
+    )
     .fetch_one(pool)
     .await?;
-    Ok(row_to_step(row))
+    Ok(row)
 }
 
 pub async fn transition_step(
@@ -123,19 +109,20 @@ pub async fn transition_step(
     state: TurnStepState,
 ) -> Result<Option<TurnStepRow>, DenError> {
     let terminal = state.is_terminal();
-    let row = sqlx::query(&format!(
+    let row = sqlx::query_as!(
+        TurnStepRow,
         r"
         UPDATE turn_steps
         SET state = $2,
             closed_at = CASE WHEN $3 THEN COALESCE(closed_at, NOW()) ELSE closed_at END
         WHERE id = $1
-        RETURNING {STEP_RETURNING}
-        "
-    ))
-    .bind(turn_step_id)
-    .bind(state.as_str())
-    .bind(terminal)
+        RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
+        ",
+        turn_step_id,
+        state.as_str(),
+        terminal
+    )
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_to_step))
+    Ok(row)
 }

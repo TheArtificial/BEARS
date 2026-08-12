@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            trigger,\n            status,\n            policy_version,\n            source_group_start,\n            source_group_end,\n            diagnostic,\n            artifact,\n            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS \"created_at!\"\n        FROM runtime_compaction_events\n        WHERE conversation_id = $1\n        ORDER BY created_at DESC\n        LIMIT $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "trigger",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "policy_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "source_group_start",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "source_group_end",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "diagnostic",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "artifact",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "b30f358af5728d3abedcc2b7d46812d4fca4ebfda9c87feca8e8e7301b593cd2"
+}

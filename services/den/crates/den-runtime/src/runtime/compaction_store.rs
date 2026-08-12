@@ -127,7 +127,7 @@ pub async fn record_runtime_compaction_event(
         .map(serde_json::to_value)
         .transpose()
         .map_err(|err| DenError::System(format!("serialize compaction artifact: {err}")))?;
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO runtime_compaction_events (
             conversation_id,
@@ -144,17 +144,17 @@ pub async fn record_runtime_compaction_event(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (conversation_id, event_hash) DO NOTHING
         ",
+        &event.conversation_id,
+        event.trigger.as_str(),
+        &event.policy_version,
+        event.status.as_str(),
+        &event_hash,
+        boundary,
+        event.source_group_start.map(|v| v as i32),
+        event.source_group_end.map(|v| v as i32),
+        artifact,
+        &event.diagnostic as _
     )
-    .bind(&event.conversation_id)
-    .bind(event.trigger.as_str())
-    .bind(&event.policy_version)
-    .bind(event.status.as_str())
-    .bind(&event_hash)
-    .bind(boundary)
-    .bind(event.source_group_start.map(|v| v as i32))
-    .bind(event.source_group_end.map(|v| v as i32))
-    .bind(artifact)
-    .bind(&event.diagnostic)
     .execute(pool)
     .await
     .map_err(|err| DenError::Database(format!("insert runtime_compaction_events: {err}")))?;
@@ -166,7 +166,8 @@ pub async fn list_runtime_compaction_events(
     conversation_id: &str,
     limit: i64,
 ) -> Result<Vec<CompactionStatusResponse>, DenError> {
-    let rows = sqlx::query_as::<_, CompactionStatusRow>(
+    let rows = sqlx::query_as!(
+        CompactionStatusRow,
         r#"
         SELECT
             trigger,
@@ -176,15 +177,15 @@ pub async fn list_runtime_compaction_events(
             source_group_end,
             diagnostic,
             artifact,
-            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at
+            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "created_at!"
         FROM runtime_compaction_events
         WHERE conversation_id = $1
         ORDER BY created_at DESC
         LIMIT $2
         "#,
+        conversation_id,
+        limit
     )
-    .bind(conversation_id)
-    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(|err| DenError::Database(format!("select runtime_compaction_events: {err}")))?;
@@ -196,7 +197,8 @@ pub async fn latest_compaction_artifact_for_conversation(
     pool: &PgPool,
     conversation_uuid: Uuid,
 ) -> Result<Option<CompactionArtifactResponse>, DenError> {
-    let row = sqlx::query_as::<_, CompactionArtifactRow>(
+    let row = sqlx::query_as!(
+        CompactionArtifactRow,
         r#"
         SELECT
             id,
@@ -209,15 +211,15 @@ pub async fn latest_compaction_artifact_for_conversation(
             source_group_end,
             artifact_json,
             superseded_by,
-            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at
+            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "created_at!"
         FROM conversation_compaction_artifacts
         WHERE conversation_id = $1
           AND superseded_by IS NULL
         ORDER BY created_at DESC
         LIMIT 1
         "#,
+        conversation_uuid
     )
-    .bind(conversation_uuid)
     .fetch_optional(pool)
     .await
     .map_err(|err| DenError::Database(format!("select latest compaction artifact: {err}")))?;

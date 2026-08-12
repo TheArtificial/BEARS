@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO conversation_compaction_artifacts (\n            conversation_id,\n            artifact_kind,\n            policy_version,\n            trigger,\n            source_message_start_seq,\n            source_message_end_seq,\n            source_group_start,\n            source_group_end,\n            artifact_json\n        )\n        VALUES ($1, 'iterative_summary', $2, $3, $4, $5, $6, $7, $8)\n        RETURNING id AS \"id!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int4",
+        "Int4",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d8c1f9b296d3194e0c99c08f3bdc8a483ac46f4e88bff18c5a04885529855cb1"
+}

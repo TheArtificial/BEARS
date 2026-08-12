@@ -41,35 +41,38 @@ pub async fn load_latest_iterative_summary(
         return Ok(None);
     };
 
-    let row = sqlx::query_as::<_, (Uuid, serde_json::Value, i64, i64, String)>(
-        r"
-        SELECT id, artifact_json, source_message_start_seq, source_message_end_seq, policy_version
+    let row = sqlx::query!(
+        r#"
+        SELECT id AS "id!", artifact_json AS "artifact_json!",
+               source_message_start_seq AS "source_message_start_seq!",
+               source_message_end_seq AS "source_message_end_seq!",
+               policy_version AS "policy_version!"
         FROM conversation_compaction_artifacts
         WHERE conversation_id = $1
           AND artifact_kind = 'iterative_summary'
           AND superseded_by IS NULL
         ORDER BY created_at DESC
         LIMIT 1
-        ",
+        "#,
+        conversation_uuid
     )
-    .bind(conversation_uuid)
     .fetch_optional(pool)
     .await
     .map_err(db_err("load compaction artifact"))?;
 
-    let Some((artifact_id, artifact_json, start_seq, end_seq, policy_version)) = row else {
+    let Some(row) = row else {
         return Ok(None);
     };
 
-    let summary: RuntimeIterativeSummary = serde_json::from_value(artifact_json)
+    let summary: RuntimeIterativeSummary = serde_json::from_value(row.artifact_json)
         .map_err(json_parse_err("decode compaction artifact_json"))?;
 
     Ok(Some(CompactionArtifactRecord {
-        artifact_id,
+        artifact_id: row.id,
         summary,
-        source_message_start_seq: start_seq,
-        source_message_end_seq: end_seq,
-        policy_version,
+        source_message_start_seq: row.source_message_start_seq,
+        source_message_end_seq: row.source_message_end_seq,
+        policy_version: row.policy_version,
     }))
 }
 
@@ -100,25 +103,24 @@ pub async fn insert_iterative_summary_artifact(
         .await
         .map_err(db_err("begin compaction artifact tx"))?;
 
-    let prior_id = sqlx::query_scalar::<_, Option<Uuid>>(
-        r"
-        SELECT id
+    let prior_id = sqlx::query_scalar!(
+        r#"
+        SELECT id AS "id!"
         FROM conversation_compaction_artifacts
         WHERE conversation_id = $1
           AND artifact_kind = 'iterative_summary'
           AND superseded_by IS NULL
         ORDER BY created_at DESC
         LIMIT 1
-        ",
+        "#,
+        conversation_uuid
     )
-    .bind(conversation_uuid)
     .fetch_optional(&mut *tx)
     .await
-    .map_err(db_err("select prior compaction artifact"))?
-    .flatten();
+    .map_err(db_err("select prior compaction artifact"))?;
 
-    let inserted_id = sqlx::query_scalar::<_, Uuid>(
-        r"
+    let inserted_id = sqlx::query_scalar!(
+        r#"
         INSERT INTO conversation_compaction_artifacts (
             conversation_id,
             artifact_kind,
@@ -131,31 +133,31 @@ pub async fn insert_iterative_summary_artifact(
             artifact_json
         )
         VALUES ($1, 'iterative_summary', $2, $3, $4, $5, $6, $7, $8)
-        RETURNING id
-        ",
+        RETURNING id AS "id!"
+        "#,
+        conversation_uuid,
+        &policy.policy_version,
+        trigger.as_str(),
+        source_message_start_seq,
+        source_message_end_seq,
+        decision.selected_group_start as i32,
+        decision.selected_group_end as i32,
+        artifact_json
     )
-    .bind(conversation_uuid)
-    .bind(&policy.policy_version)
-    .bind(trigger.as_str())
-    .bind(source_message_start_seq)
-    .bind(source_message_end_seq)
-    .bind(decision.selected_group_start as i32)
-    .bind(decision.selected_group_end as i32)
-    .bind(artifact_json)
     .fetch_one(&mut *tx)
     .await
     .map_err(db_err("insert compaction artifact"))?;
 
     if let Some(prior_id) = prior_id {
-        sqlx::query(
+        sqlx::query!(
             r"
             UPDATE conversation_compaction_artifacts
             SET superseded_by = $1
             WHERE id = $2
             ",
+            inserted_id,
+            prior_id
         )
-        .bind(inserted_id)
-        .bind(prior_id)
         .execute(&mut *tx)
         .await
         .map_err(db_err("supersede prior compaction artifact"))?;
@@ -173,16 +175,16 @@ async fn resolve_conversation_uuid(
     bear_id: Uuid,
     external_conversation_id: &str,
 ) -> Result<Option<Uuid>, DenError> {
-    let row = sqlx::query_scalar::<_, Uuid>(
-        r"
-        SELECT id
+    let row = sqlx::query_scalar!(
+        r#"
+        SELECT id AS "id!"
         FROM conversations
         WHERE bear_id = $1 AND external_conversation_id = $2
         LIMIT 1
-        ",
+        "#,
+        bear_id,
+        external_conversation_id
     )
-    .bind(bear_id)
-    .bind(external_conversation_id)
     .fetch_optional(pool)
     .await
     .map_err(db_err("resolve conversation uuid"))?;

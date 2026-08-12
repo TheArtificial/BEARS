@@ -1,0 +1,75 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO reflection_conversations (\n            bear_id, role_agent_id, lane, conversation_date, conversation_key, conversation_id\n        )\n        VALUES ($1, $2, $3, $4, $5, $6)\n        ON CONFLICT (bear_id, lane, conversation_date)\n        DO UPDATE SET\n            role_agent_id = COALESCE(EXCLUDED.role_agent_id, reflection_conversations.role_agent_id),\n            conversation_key = EXCLUDED.conversation_key,\n            conversation_id = COALESCE(reflection_conversations.conversation_id, EXCLUDED.conversation_id),\n            last_used_at = NOW()\n        RETURNING id as \"id: _\", bear_id as \"bear_id: _\", role_agent_id as \"role_agent_id: _\",\n                  lane as \"lane: _\", conversation_date as \"conversation_date: _\",\n                  conversation_key as \"conversation_key: _\", conversation_id as \"conversation_id: _\",\n                  created_at as \"created_at: _\", last_used_at as \"last_used_at: _\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id: _",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id: _",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "role_agent_id: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "lane: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "conversation_date: _",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 5,
+        "name": "conversation_key: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "conversation_id: _",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at: _",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "last_used_at: _",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Date",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "f62e4b31106a4e038df0097c8b816da0926364861929309e0170ab5b4564f814"
+}

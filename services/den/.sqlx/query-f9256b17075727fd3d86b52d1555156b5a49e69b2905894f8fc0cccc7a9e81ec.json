@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)\n        VALUES ($1, $2, $3, $4, $5)\n        RETURNING id, sequence_no, created_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "sequence_no",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Int4",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f9256b17075727fd3d86b52d1555156b5a49e69b2905894f8fc0cccc7a9e81ec"
+}

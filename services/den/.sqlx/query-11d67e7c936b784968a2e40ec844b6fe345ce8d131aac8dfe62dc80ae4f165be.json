@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE turn_steps\n        SET state = $2,\n            closed_at = COALESCE(closed_at, NOW())\n        WHERE run_id = $1\n          AND state IN ('streaming_model','waiting_for_client','ready_to_continue')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "11d67e7c936b784968a2e40ec844b6fe345ce8d131aac8dfe62dc80ae4f165be"
+}

@@ -323,8 +323,8 @@ async fn persisted_tool_call_exists(
     conversation_id: &str,
     tool_call_id: &str,
 ) -> Result<bool, DenError> {
-    let exists = sqlx::query_scalar::<_, bool>(
-        r"
+    let exists = sqlx::query_scalar!(
+        r#"
         SELECT EXISTS (
             SELECT 1
             FROM conversation_messages
@@ -335,12 +335,12 @@ async fn persisted_tool_call_exists(
             )
               AND message_type = 'tool_call'
               AND tool_call_id = $3
-        )
-        ",
+        ) AS "exists!"
+        "#,
+        conversation_id,
+        bear_id,
+        tool_call_id,
     )
-    .bind(conversation_id)
-    .bind(bear_id)
-    .bind(tool_call_id)
     .fetch_one(pool)
     .await
     .map_err(|err| DenError::Database(format!("check persisted tool_call: {err}")))?;
@@ -1794,19 +1794,19 @@ async fn record_web_fetch_url_approval(
         .and_then(|value| value.as_str())
         .ok_or_else(|| DenError::ValidationError("web_fetch args missing url".to_string()))?;
     let normalized_url = normalize_approved_web_url(raw_url)?;
-    sqlx::query(
-        r"
+    sqlx::query!(
+        r#"
         INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
         VALUES ($1, 'url', $2, $3, 'acp', now() + interval '1 hour')
         ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
         DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
                       source = EXCLUDED.source,
                       expires_at = EXCLUDED.expires_at
-        ",
+        "#,
+        bear_id,
+        normalized_url,
+        user_id
     )
-    .bind(bear_id)
-    .bind(normalized_url)
-    .bind(user_id)
     .execute(pool)
     .await
     .map_err(|err| DenError::Database(format!("record web_fetch approval: {err}")))?;
@@ -2934,31 +2934,31 @@ mod tests {
         let suffix = Uuid::new_v4().simple().to_string();
         let username = format!("toolhist{}", &suffix[..12]);
         let email = format!("{username}@example.test");
-        let (user_id,): (i32,) = sqlx::query_as(
-            r"
+        let user_id: i32 = sqlx::query_scalar!(
+            r#"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-            ",
+            "#,
+            email,
+            &username,
+            "Tool History Test",
+            "test-passhash"
         )
-        .bind(email)
-        .bind(&username)
-        .bind("Tool History Test")
-        .bind("test-passhash")
         .fetch_one(&pool)
         .await
         .expect("create user");
         let bear_id = Uuid::new_v4();
         let bear_slug = format!("tool-history-{}", &suffix[..12]);
-        sqlx::query(
-            r"
+        sqlx::query!(
+            r#"
             INSERT INTO bears (id, slug, name)
             VALUES ($1, $2, $3)
-            ",
+            "#,
+            bear_id,
+            &bear_slug,
+            "Tool History Bear"
         )
-        .bind(bear_id)
-        .bind(&bear_slug)
-        .bind("Tool History Bear")
         .execute(&pool)
         .await
         .expect("create bear");
@@ -3095,31 +3095,31 @@ mod tests {
         let suffix = Uuid::new_v4().simple().to_string();
         let username = format!("toolhistload{}", &suffix[..8]);
         let email = format!("{username}@example.test");
-        let (user_id,): (i32,) = sqlx::query_as(
-            r"
+        let user_id: i32 = sqlx::query_scalar!(
+            r#"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-            ",
+            "#,
+            email,
+            &username,
+            "Tool Load History Test",
+            "test-passhash"
         )
-        .bind(email)
-        .bind(&username)
-        .bind("Tool Load History Test")
-        .bind("test-passhash")
         .fetch_one(&pool)
         .await
         .expect("create user");
         let bear_id = Uuid::new_v4();
         let bear_slug = format!("tool-load-history-{}", &suffix[..8]);
-        sqlx::query(
-            r"
+        sqlx::query!(
+            r#"
             INSERT INTO bears (id, slug, name)
             VALUES ($1, $2, $3)
-            ",
+            "#,
+            bear_id,
+            &bear_slug,
+            "Tool Load History Bear"
         )
-        .bind(bear_id)
-        .bind(&bear_slug)
-        .bind("Tool Load History Bear")
         .execute(&pool)
         .await
         .expect("create bear");

@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH next_step AS (\n                SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index\n                FROM turn_steps\n                WHERE run_id = $1\n            )\n            INSERT INTO turn_steps (run_id, step_index, state)\n            SELECT $1, step_index, 'streaming_model'\n            FROM next_step\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3f0611549875d6f95c37c34c14eac6ad4591654e84675eb144b617b2cc49a07e"
+}

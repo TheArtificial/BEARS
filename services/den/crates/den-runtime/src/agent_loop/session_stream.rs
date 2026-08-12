@@ -182,18 +182,19 @@ async fn oriented_child_count_policy_error(
     let parent_task_id = uuid::Uuid::parse_str(parent_task_id).map_err(|_| {
         DenError::ValidationError("parent_task_id must be a valid UUID".to_string())
     })?;
-    let child_count: i64 = sqlx::query_scalar(
-        r"
-        SELECT COUNT(*)
+    let child_count = sqlx::query!(
+        r#"
+        SELECT COUNT(*) AS "child_count!: i64"
         FROM bear_tasks
         WHERE bear_id = $1
           AND parent_task_id = $2
-        ",
+        "#,
+        bear_id,
+        parent_task_id
     )
-    .bind(bear_id)
-    .bind(parent_task_id)
     .fetch_one(pool)
-    .await?;
+    .await?
+    .child_count;
     if let Some(error) = oriented_child_limit_error(task.child_policy.max_children, child_count) {
         return Ok(Some(error));
     }

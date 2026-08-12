@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE turn_obligations\n        SET state = $2,\n            completed_at = COALESCE(completed_at, NOW()),\n            updated_at = NOW()\n        WHERE run_id = $1\n          AND state IN ('requested','waiting_for_client','result_received')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2c8f325534a422cdab9fbb8ea4aaed6bed65171efcc7bb5503f8663a94a8e8c2"
+}
