@@ -329,6 +329,8 @@ pub struct AgentLoopControlProfile {
 
 ## Phase 2 — Model defaults and Bear/stance overrides
 
+**Status: Complete (2026-08-11).** The model-registry default, persisted Bear and stance overrides, raise-only task/pre-risk escalation, typed runtime resolver, session/run projection, diagnostics, and precedence/fallback coverage are implemented. See `den-runtime/src/agent_loop/control.rs`, Bear settings persistence, and commits `1d06fd779` and `b7a3f7f39`. The remaining Phase 2a/2d Pair-run recovery, correlation, retention, and orientation work below is required to close the broader current-task execution program; it is not missing Phase 2 control-profile resolution.
+
 **Goal:** resolve control level the same way model selection is resolved.
 
 Resolution order:
@@ -342,14 +344,14 @@ Task/run escalation may raise intensity, but should not silently downgrade opera
 
 | Task | Done when |
 | --- | --- |
-| Extend model metadata | Model registry can expose default `agent_loop_control_level`. |
-| Add Bear override storage | Bear config can set a default loop control level. |
-| Add stance override storage | Stance/profile config can override for `pair`, `chat`, `work`, etc. |
-| Implement resolver | Runtime receives `ResolvedAgentLoopControl`, including source and profile. |
-| Add diagnostics | Run logs/progress include level, source, and profile summary. |
-| Add tests | Model default, Bear override, stance override, unknown model fallback, and escalation precedence are covered. |
+| Extend model metadata | **Complete.** Model registry exposes the default `agent_loop_control_level`. |
+| Add Bear override storage | **Complete.** Persisted Bear config can set a default loop control level. |
+| Add stance override storage | **Complete.** Persisted stance/profile config overrides Bear/model defaults for `pair`, `chat`, `work`, and related stances. |
+| Implement resolver | **Complete.** Runtime resolves a typed control result with level, source attribution, and profile; task/pre-risk escalation is raise-only. |
+| Add diagnostics | **Complete.** Runtime/session projections include level, source, and profile summary/fingerprint. |
+| Add tests | **Complete.** Model default, Bear override, stance override, unknown-model/context fallback, and escalation precedence are covered. |
 
-**Exit gate:** runs can resolve and report a control profile without behavior changes.
+**Exit gate: Met.** Runs resolve and report a control profile without relying on behavior changes. This phase must not be reopened merely because Phase 2a/2c/2d still have execution-entry, recovery, orientation, or persisted-evidence work.
 
 ## Phase 2a — Governance and session-task inputs
 
