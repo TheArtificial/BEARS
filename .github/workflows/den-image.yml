@@ -16,6 +16,9 @@ concurrency:
 
 env:
     REGISTRY: ghcr.io
+    # The current Coolify host is x86_64. Keep this explicit so a wrong-platform
+    # image cannot reach the deployment webhook.
+    DEPLOY_PLATFORM: linux/amd64
     # Image names are set in each job because GHCR requires lowercase repository paths.
 
 permissions:
@@ -81,7 +84,7 @@ jobs:
                   context: services/den
                   file: services/den/Dockerfile
                   push: true
-                  platforms: linux/amd64
+                  platforms: ${{ env.DEPLOY_PLATFORM }}
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}
                   build-args: |
@@ -160,7 +163,7 @@ jobs:
                       sandbox_packaging=./packaging/sandbox-image
                       bear_armature=./tools/bear-armature
                   push: true
-                  platforms: linux/amd64
+                  platforms: ${{ env.DEPLOY_PLATFORM }}
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}
                   build-args: |
@@ -177,3 +180,49 @@ jobs:
                   cache-to: |
                       type=gha,scope=den-sandbox-provider-image,mode=max,ignore-error=true
                       type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+    verify-deployable-images:
+        name: Verify deployable image availability
+        needs: [build-and-push-den, build-and-push-sandbox-provider]
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Set lane image references
+              run: |
+                  owner_lc=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+                  case "${{ github.ref_name }}" in
+                    test) lane=testing ;;
+                    main) lane=latest ;;
+                    *) echo "Unsupported deployment branch: ${{ github.ref_name }}" >&2; exit 1 ;;
+                  esac
+                  echo "DEN_IMAGE=${{ env.REGISTRY }}/${owner_lc}/den:${lane}" >> "$GITHUB_ENV"
+                  echo "SANDBOX_PROVIDER_IMAGE=${{ env.REGISTRY }}/${owner_lc}/den-sandbox-provider:${lane}" >> "$GITHUB_ENV"
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Pull and verify deployment images
+              run: |
+                  set -euo pipefail
+                  for image in "${DEN_IMAGE}" "${SANDBOX_PROVIDER_IMAGE}"; do
+                    echo "Waiting for ${image} to be available as ${DEPLOY_PLATFORM}..."
+                    for attempt in $(seq 1 12); do
+                      if docker pull "${image}"; then
+                        actual=$(docker image inspect "${image}" --format '{{.Os}}/{{.Architecture}}')
+                        if [ "${actual}" = "${DEPLOY_PLATFORM}" ]; then
+                          echo "Verified ${image}: ${actual}"
+                          break
+                        fi
+                        echo "${image} resolved to ${actual}, expected ${DEPLOY_PLATFORM}" >&2
+                        exit 1
+                      fi
+                      if [ "${attempt}" = "12" ]; then
+                        echo "${image} was not available after 12 attempts" >&2
+                        exit 1
+                      fi
+                      sleep 10
+                    done
+                  done
