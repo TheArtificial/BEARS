@@ -26,8 +26,25 @@ permissions:
     packages: write
 
 jobs:
+    sqlx-offline-preflight:
+        name: Verify Den SQLx offline build
+        runs-on: ubuntu-24.04
+        defaults:
+            run:
+                working-directory: services/den
+        env:
+            SQLX_OFFLINE: "true"
+        steps:
+            - uses: actions/checkout@v4
+
+            # Intentionally do not restore `target/`: this must compile the checked-in
+            # .sqlx metadata, not inherit a previous image build's artifacts.
+            - name: Compile production workspace with checked-in SQLx metadata
+              run: cargo build --locked --release --features=production --message-format=short
+
     build-and-push-den:
         name: Build and push Den
+        needs: sqlx-offline-preflight
         runs-on: ubuntu-24.04
         outputs:
             digest: ${{ steps.build.outputs.digest }}
