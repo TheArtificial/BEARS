@@ -1393,6 +1393,88 @@ async fn docket_requires_explicit_parent_completion_after_children_are_terminal(
 }
 
 #[tokio::test]
+async fn docket_completing_job_settles_current_run() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket run settlement test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "terminal-run").await;
+    let service = PgDocketService::from_pool(&pool);
+    let created = service
+        .create_job(DocketJobCreate {
+            criteria: vec![DocketJobCriterionInput {
+                description: "Both tasks complete".to_string(),
+                kind: DocketCriterionKind::Narrative,
+                sibling_order: 0,
+                spec: None,
+            }],
+            ..two_task_job(user_id, bear_id)
+        })
+        .await
+        .expect("create job");
+    let run_id = created.job.current_run_id.expect("current run");
+
+    service
+        .record_task_success(
+            bear_id,
+            created.tasks[0].id,
+            run_id,
+            "first task complete".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("complete first task");
+    service
+        .record_task_success(
+            bear_id,
+            created.tasks[1].id,
+            run_id,
+            "second task complete".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("complete second task");
+    let completed = service
+        .get_job(bear_id, created.job.id)
+        .await
+        .expect("load ready job")
+        .expect("job exists");
+    let criterion_id = completed.criteria[0].id;
+    service
+        .evaluate_criterion(DocketCriterionStateUpdate {
+            bear_id,
+            job_id: created.job.id,
+            run_id,
+            criterion_id,
+            status: crate::DocketCriterionStatus::Met,
+            evidence: None,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect("meet completion criterion");
+    let completed = service
+        .get_job(bear_id, created.job.id)
+        .await
+        .expect("load completed job")
+        .expect("job exists");
+    assert_eq!(completed.job.status, "completed");
+
+    let run = sqlx::query!(
+        "SELECT state, finished_at FROM bear_job_runs WHERE id = $1",
+        run_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load settled run");
+    assert_eq!(run.state, "completed");
+    assert!(run.finished_at.is_some());
+}
+
+#[tokio::test]
 async fn create_job_requires_explicit_resolution_for_exact_active_overlap() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket integration test; database unavailable");

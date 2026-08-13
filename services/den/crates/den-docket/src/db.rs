@@ -1053,7 +1053,21 @@ async fn reconcile_job_status(
     .fetch_one(&mut **tx)
     .await?;
 
-    let _derived = derived_job_status(in_progress, blocked, unfinished, unmet_criteria);
+    if derived_job_status(in_progress, blocked, unfinished, unmet_criteria) == "completed" {
+        sqlx::query!(
+            r#"
+            UPDATE bear_job_runs
+            SET state = 'completed',
+                finished_at = COALESCE(finished_at, NOW()),
+                updated_at = NOW()
+            WHERE id = $1
+              AND state NOT IN ('completed', 'cancelled')
+            "#,
+            run_id
+        )
+        .execute(&mut **tx)
+        .await?;
+    }
     Ok(())
 }
 

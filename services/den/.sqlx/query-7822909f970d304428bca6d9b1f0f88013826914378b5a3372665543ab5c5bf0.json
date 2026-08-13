@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE bear_job_runs\n            SET state = 'completed',\n                finished_at = COALESCE(finished_at, NOW()),\n                updated_at = NOW()\n            WHERE id = $1\n              AND state NOT IN ('completed', 'cancelled')\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7822909f970d304428bca6d9b1f0f88013826914378b5a3372665543ab5c5bf0"
+}
