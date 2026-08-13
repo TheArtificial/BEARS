@@ -1198,7 +1198,9 @@ pub async fn establish_conversation_default_model_state(
     .bind(selected_reason.trim())
     .execute(pool)
     .await
-    .map_err(|err| DenError::Database(format!("establish conversation default model state: {err}")))?
+    .map_err(|err| {
+        DenError::Database(format!("establish conversation default model state: {err}"))
+    })?
     .rows_affected();
     Ok(inserted == 1)
 }

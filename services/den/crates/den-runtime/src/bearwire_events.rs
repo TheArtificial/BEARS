@@ -180,6 +180,42 @@ pub async fn latest_bearwire_event_of_type(
     .transpose()
 }
 
+pub async fn list_bearwire_events_for_run(
+    pool: &PgPool,
+    run_id: &str,
+    limit: i64,
+) -> Result<Vec<BearWireEventRow>, DenError> {
+    let limit = limit.clamp(1, 501);
+    let rows = sqlx::query!(
+        r#"
+        SELECT id, sequence_no, session_id, event_type, event_json, created_at
+        FROM bearwire_events
+        WHERE event_json->>'run_id' = $1
+        ORDER BY sequence_no ASC
+        LIMIT $2
+        "#,
+        run_id,
+        limit
+    )
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            let event: BearWireEvent = serde_json::from_value(row.event_json)
+                .map_err(|err| DenError::System(format!("decode BearWire event failed: {err}")))?;
+            Ok(BearWireEventRow {
+                id: row.id,
+                sequence_no: row.sequence_no,
+                session_id: row.session_id,
+                event_type: row.event_type,
+                event,
+                created_at: row.created_at,
+            })
+        })
+        .collect()
+}
+
 pub async fn list_bearwire_events_after(
     pool: &PgPool,
     session_id: &str,

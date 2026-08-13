@@ -101,6 +101,7 @@ Member-facing bear management at `/bear/{slug}/…` (read for members, write for
 - `GET|POST /admin/oauth_clients/*` — OAuth client CRUD, PKCE test
 - `GET|POST /admin/models*` — Den model selector catalog CRUD (`model_selection_options`)
 - `GET /admin/loop-control/` — transcript-free 30-day aggregate of runtime loop-control decisions, for later production tuning
+- `GET /admin/runs/` — recent failed turn runs and arbitrary `run_id` lookup; `GET /admin/runs/{run_id}` — run lifecycle detail with persisted run-scoped BearWire events
 - `GET|POST /admin/oauth_tokens/*` — token admin
 
 ### Sandbox images (`src/admin/sandbox_images.rs`)

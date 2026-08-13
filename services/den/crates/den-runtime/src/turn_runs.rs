@@ -144,6 +144,29 @@ pub async fn get_run(pool: &PgPool, run_id: &str) -> Result<Option<TurnRunRow>, 
     Ok(row)
 }
 
+pub async fn list_recent_failed_runs(
+    pool: &PgPool,
+    limit: i64,
+) -> Result<Vec<TurnRunRow>, DenError> {
+    let limit = limit.clamp(1, 100);
+    let rows = sqlx::query_as!(
+        TurnRunRow,
+        r#"
+        SELECT id, run_id, session_id, bear_id, user_id, state,
+               terminal_reason AS "terminal_reason?", created_at, updated_at,
+               completed_at AS "completed_at?"
+        FROM turn_runs
+        WHERE state = 'failed'
+        ORDER BY completed_at DESC NULLS LAST, updated_at DESC
+        LIMIT $1
+        "#,
+        limit,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 pub async fn active_run_for_session(
     pool: &PgPool,
     session_id: &str,

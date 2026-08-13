@@ -1,0 +1,33 @@
+{% extends "admin/base.html" %}
+{% macro open(tag) %}{{ ("<" ~ tag ~ ">") | safe }}{% endmacro %}
+{% macro close(tag) %}{{ ("</" ~ tag ~ ">") | safe }}{% endmacro %}
+
+{% block title %}Run {{ run.run_id }} · Admin{% endblock %}
+
+{% block admin_content %}
+{{ open("p") }}{{ open("a href=\"/admin/runs/\"") }}← Run diagnostics{{ close("a") }}{{ close("p") }}
+{{ open("h3") }}Run {{ open("code") }}{{ run.run_id }}{{ close("code") }}{{ close("h3") }}
+
+{{ open("table") }}{{ open("tbody") }}
+{{ open("tr") }}{{ open("th") }}State{{ close("th") }}{{ open("td") }}{{ run.state }}{{ close("td") }}{{ close("tr") }}
+{{ open("tr") }}{{ open("th") }}Terminal reason{{ close("th") }}{{ open("td") }}{% if run.terminal_reason %}{{ run.terminal_reason }}{% else %}—{% endif %}{{ close("td") }}{{ close("tr") }}
+{{ open("tr") }}{{ open("th") }}Session ID{{ close("th") }}{{ open("td") }}{{ open("code") }}{{ run.session_id }}{{ close("code") }}{{ close("td") }}{{ close("tr") }}
+{{ open("tr") }}{{ open("th") }}Bear ID{{ close("th") }}{{ open("td") }}{{ open("code") }}{{ run.bear_id }}{{ close("code") }}{{ close("td") }}{{ close("tr") }}
+{{ open("tr") }}{{ open("th") }}User ID{{ close("th") }}{{ open("td") }}{{ run.user_id }}{{ close("td") }}{{ close("tr") }}
+{{ open("tr") }}{{ open("th") }}Created{{ close("th") }}{{ open("td") }}{{ run.created_at }}{{ close("td") }}{{ close("tr") }}
+{{ open("tr") }}{{ open("th") }}Updated{{ close("th") }}{{ open("td") }}{{ run.updated_at }}{{ close("td") }}{{ close("tr") }}
+{{ open("tr") }}{{ open("th") }}Completed{{ close("th") }}{{ open("td") }}{% if run.completed_at %}{{ run.completed_at }}{% else %}—{% endif %}{{ close("td") }}{{ close("tr") }}
+{{ close("tbody") }}{{ close("table") }}
+
+{{ open("h4") }}Run-scoped BearWire events{{ close("h4") }}
+{{ open("p class=\"form-hint\"") }}Showing up to 500 persisted events whose canonical BearWire {{ open("code") }}run_id{{ close("code") }} matches this run.{{ close("p") }}
+{% for event in events %}
+{{ open("details") }}
+{{ open("summary") }}#{{ event.sequence_no }} · {{ event.event_type }} · {{ event.created_at }}{{ close("summary") }}
+{{ open("p class=\"form-hint\"") }}Session: {{ open("code") }}{{ event.session_id }}{{ close("code") }}{{ close("p") }}
+{{ open("pre") }}{{ open("code") }}{{ event.event_json }}{{ close("code") }}{{ close("pre") }}
+{{ close("details") }}
+{% else %}
+{{ open("p") }}No persisted BearWire events are associated with this run.{{ close("p") }}
+{% endfor %}
+{% endblock %}

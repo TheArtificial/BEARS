@@ -121,6 +121,23 @@ fn render_final_gate_continuation_guidance(next_task: &str) -> Result<String, De
     )
 }
 
+fn render_checkpoint_task_follow_through_guidance(
+    attempted_action: &str,
+    required_action: &str,
+) -> Result<String, DenError> {
+    let fragments = repository_prompt_fragment_registry()?;
+    let fragment = fragments.require("runtime_checkpoint_task_follow_through")?;
+    render_turn_fragment(
+        fragment,
+        &serde_json::json!({
+            "checkpoint": {
+                "attempted_action": attempted_action,
+                "required_action": required_action,
+            }
+        }),
+    )
+}
+
 fn recent_tool_result_matches(messages: &[ChatMessage], tool_call_id: &str) -> bool {
     messages.last().is_some_and(|last| {
         last.role == "tool" && last.tool_call_id.as_deref() == Some(tool_call_id)
@@ -1120,6 +1137,19 @@ impl SessionTrackingStream {
         }
     }
 
+    fn required_task_action_label(
+        action: &crate::agent_loop::CheckpointNextAction,
+    ) -> &'static str {
+        match action {
+            crate::agent_loop::CheckpointNextAction::UpdateTaskList => {
+                "update_task_list or update_current_task_status"
+            }
+            crate::agent_loop::CheckpointNextAction::SyncTaskList => "sync_task_list",
+            crate::agent_loop::CheckpointNextAction::RequestHandoff => "request_task_list_handoff",
+            _ => "the required task-management action",
+        }
+    }
+
     fn checkpoint_next_action_can_satisfy_task_state_change(
         action: &crate::agent_loop::CheckpointNextAction,
     ) -> bool {
@@ -1175,9 +1205,16 @@ impl SessionTrackingStream {
             )));
         }
 
-        let message = format!(
-            "Your attempted action `{attempted_action}` was blocked before execution because task-state follow-through is pending. Call the task-management tool required by the checkpoint before any other action."
-        );
+        let required_action = Self::required_task_action_label(&action);
+        let message = render_checkpoint_task_follow_through_guidance(
+            attempted_action,
+            required_action,
+        )
+        .unwrap_or_else(|error| {
+            format!(
+                "Checkpoint task-state follow-through is pending ({error}). Call `{required_action}` before any other action."
+            )
+        });
         self.push_checkpoint_recovery_guidance_for_task_action(&message);
         self.begin_checkpoint_continuation();
         Err(Self::checkpoint_recovery_event(message))

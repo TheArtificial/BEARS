@@ -6,6 +6,7 @@ pub mod membership;
 pub mod models;
 pub mod oauth_clients;
 pub mod reflections;
+pub mod runs;
 pub mod sandbox_images;
 pub mod users;
 pub mod workers;
@@ -28,6 +29,7 @@ pub fn router() -> Router<AppState> {
         .merge(sandbox_images::router())
         .nest("/loop-control", loop_control::router())
         .nest("/workers", workers::router())
+        .nest("/runs", runs::router())
         .nest("/api", api::router())
         .route("/", get(admin_home))
 }
