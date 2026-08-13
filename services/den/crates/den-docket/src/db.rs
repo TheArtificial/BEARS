@@ -751,11 +751,20 @@ async fn list_active_task_ids(pool: &PgPool, job_id: Uuid) -> Result<Vec<Uuid>, 
     sqlx::query_as!(
         ActiveTaskIdRow,
         r#"
-        SELECT DISTINCT executing_task_id AS "executing_task_id!: _"
-        FROM bear_work_runs
-        WHERE job_id = $1
-          AND executing_task_id IS NOT NULL
-          AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
+        SELECT DISTINCT active_task_id AS "executing_task_id!: _"
+        FROM (
+            SELECT executing_task_id AS active_task_id
+            FROM bear_work_runs
+            WHERE job_id = $1
+              AND executing_task_id IS NOT NULL
+              AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
+            UNION
+            SELECT task_id AS active_task_id
+            FROM docket_execution_sessions
+            WHERE job_id = $1
+              AND task_id IS NOT NULL
+              AND state = 'active'
+        ) AS active_tasks
         "#,
         job_id
     )

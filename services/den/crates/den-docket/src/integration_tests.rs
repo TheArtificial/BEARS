@@ -8,7 +8,7 @@ use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
     DocketEntryScope, DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
+    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
     DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
     DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy,
@@ -538,7 +538,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     .fetch_one(&pool)
     .await
     .expect("query focus event");
-    assert_eq!(focus_event_count, 1);
+    assert_eq!(focus_event_count, Some(1));
 
     let task_definition_count = sqlx::query_scalar!(
         r"
@@ -557,7 +557,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     .fetch_one(&pool)
     .await
     .expect("query task definition event");
-    assert_eq!(task_definition_count, 1);
+    assert_eq!(task_definition_count, Some(1));
 
     let report_only_completion = service
         .update_task(DocketTaskUpdate {
@@ -600,8 +600,8 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         outcome_summary,
         "Inventory findings recorded in the task result."
     );
-    assert_eq!(outcome_disposition, "completed");
-    assert_eq!(evidence_count, 0);
+    assert_eq!(outcome_disposition.as_deref(), Some("completed"));
+    assert_eq!(evidence_count, Some(0));
 
     let identical_retry = service
         .update_task(DocketTaskUpdate {
@@ -630,7 +630,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     .fetch_one(&pool)
     .await
     .expect("count terminal outcomes after retry");
-    assert_eq!(outcome_count, 1);
+    assert_eq!(outcome_count, Some(1));
 
     let replacement_without_reopen = service
         .update_task(DocketTaskUpdate {
@@ -698,7 +698,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     .fetch_one(&pool)
     .await
     .expect("count terminal outcomes after resettlement");
-    assert_eq!(outcome_count, 2);
+    assert_eq!(outcome_count, Some(2));
 
     let missing_summary = service
         .update_task(DocketTaskUpdate {
@@ -871,6 +871,12 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         .await
         .expect("execute first");
     assert_eq!(selected.selected_task_id, Some(first_task_id));
+    assert_eq!(selected.job.active_task_ids, vec![first_task_id]);
+    assert_eq!(selected.job.job.status, "running");
+    assert_eq!(
+        crate::docket_job_status_report(&selected.job).current_task_id,
+        Some(first_task_id)
+    );
 
     let active_execution = service
         .get_active_execution_session(
@@ -933,7 +939,7 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
     .fetch_one(&pool)
     .await
     .expect("count active conversation rows");
-    assert_eq!(active_rows, 1);
+    assert_eq!(active_rows, Some(1));
 }
 
 #[tokio::test]

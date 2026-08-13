@@ -4,7 +4,6 @@
 
 use den_core::{BearProfile, DenError};
 use sqlx::PgPool;
-use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::db::get_job;
@@ -26,7 +25,7 @@ use crate::work_runs::{
 };
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
+    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
     DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
     DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskUpdate, PgDocketService, RoutingStrategy,
     TaskListVisibility,
@@ -744,7 +743,7 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(execution_count, 1);
+    assert_eq!(execution_count, Some(1));
     assert!(get_live_work_run_by_session(&pool, &session_id)
         .await
         .unwrap()
@@ -815,17 +814,13 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     assert_eq!(task_status, "in_progress");
     assert!(task_summary.is_none());
     assert!(task_refs.is_none());
-    let job = sqlx::query!(
-        "SELECT j.status, r.state FROM bear_jobs j JOIN bear_job_runs r ON r.id = j.current_run_id \
-         WHERE j.id = $1",
-        run.job_id,
+    let job_run_state = sqlx::query_scalar!(
+        "SELECT state FROM bear_job_runs WHERE id = $1",
+        run.job_run_id,
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    let job_status = job.status;
-    let job_run_state = job.state;
-    assert_eq!(job_status, "blocked");
     assert_eq!(job_run_state, "blocked");
     assert!(finalized.runner_id.is_none());
     assert!(finalized.lease_expires_at.is_none());
@@ -857,7 +852,7 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(events, 0);
+    assert_eq!(events, Some(0));
 
     // A recovered job run can enqueue a new work-run attempt; job state is
     // derived from its current run and never reset on bear_jobs.
