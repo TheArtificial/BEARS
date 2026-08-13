@@ -16,14 +16,15 @@ use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
     DocketCriterionStatus, DocketEffortHint, DocketEntryCreate, DocketEntryKind,
     DocketEntryListFilter, DocketEntryPromotion, DocketEntryScope, DocketExecutionLookup,
-    DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobOverlapResolution, DocketJobProjection, DocketJobStatus, DocketJobStatusReport,
-    DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketService, DocketSessionTaskSettlement,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
-    DocketTaskKind, DocketTaskListFilter, DocketTaskPlacement, DocketTaskRunStateUpdate,
-    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, DocketValidationError, MutationPolicy,
-    PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection,
-    TaskListSyncRequest, TaskListVisibility,
+    DocketExecutionTaskSettlement, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobOverlapResolution, DocketJobProjection,
+    DocketJobStatus, DocketJobStatusReport, DocketJobSurfaceAssignmentInput, DocketJobUpdate,
+    DocketService, DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
+    DocketTaskPlacement, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
+    DocketTaskUpdate, DocketValidationError, MutationPolicy, PgDocketService,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
+    TaskListVisibility,
 };
 
 use crate::{
@@ -866,6 +867,19 @@ fn docket_job_card_content(
         lines.push(format!("Current task: {title}"));
     }
     lines.join("\n")
+}
+
+fn control_next_action_label(control: &docket::DocketExecutionControl) -> &'static str {
+    match &control.next_action {
+        docket::DocketExecutionNextAction::WorkCurrentTask => "Continue with the current task",
+        docket::DocketExecutionNextAction::JobCompleted => "Job completed",
+        docket::DocketExecutionNextAction::ReconcileExecution => {
+            "Reconcile execution before continuing"
+        }
+        docket::DocketExecutionNextAction::RecoverBlockedRun => {
+            "Resolve the blocked run before continuing"
+        }
+    }
 }
 
 fn human_task_status_label(status: &str) -> &'static str {
@@ -2073,6 +2087,71 @@ pub(crate) async fn update_current_task_status(
             .get_active_execution_session(context.bear_id, role, lookup)
             .await?
     };
+    if let Some(execution) = execution.as_ref().filter(|_| {
+        matches!(
+            args.status,
+            DocketTaskStatus::Done | DocketTaskStatus::Blocked | DocketTaskStatus::Cancelled
+        )
+    }) {
+        let outcome = PgDocketService::from_pool(pool)
+            .settle_execution_task(DocketExecutionTaskSettlement {
+                execution: DocketJobExecuteRequest {
+                    bear_id: context.bear_id,
+                    job_id: execution.job_id,
+                    actor_role: role,
+                    actor_user_id: Some(context.user_id),
+                    actor_agent_id: clean_optional(&context.binding_id),
+                    session_id: Some(context.session_id.clone()),
+                    source_conversation_id: clean_optional(&context.conversation_id),
+                    source_client_session_id: context.client_session_id.clone(),
+                },
+                task_id: args.task_id,
+                status: args.status,
+                outcome_disposition: args.outcome_disposition,
+                result_refs: args.result_refs.clone(),
+                result_summary: args.result_summary.clone(),
+            })
+            .await?;
+        let status_report = docket_job_status_report(&outcome.job);
+        update_focused_conversation_title(pool, context, &outcome.job, &status_report).await?;
+        let task_title = outcome
+            .job
+            .tasks
+            .iter()
+            .find(|task| task.id == args.task_id)
+            .map(|task| task.title.as_str())
+            .unwrap_or("Docket task");
+        let task_list = den_docket::task_list_projection_from_docket_job(&outcome.job, None);
+        let next_task = outcome.control.task.current_task_id;
+        let content = format!(
+            "Task marked {}: {task_title}\nNext action: {}{}",
+            human_task_status_label(args.status.as_str()),
+            control_next_action_label(&outcome.control),
+            next_task
+                .map(|task_id| format!("\nCurrent task: {task_id}"))
+                .unwrap_or_default(),
+        );
+        return Ok(json!({
+            "domain": "docket",
+            "bear_id": context.bear_id,
+            "content": content,
+            "summary": format!("Task '{task_title}' is now {}; {}.", human_task_status_label(args.status.as_str()), control_next_action_label(&outcome.control)),
+            "task_title": task_title,
+            "task_status": args.status.as_str(),
+            "result_summary": args.result_summary,
+            "task_counts": &status_report.task_counts,
+            "next_action": control_next_action_label(&outcome.control),
+            "control": outcome.control,
+            "docket": {
+                "active_job_id": execution.job_id,
+                "active_run_id": execution.run_id,
+                "active_task_id": next_task,
+                "source": "docket_execution_settlement"
+            },
+            "task_list": task_list,
+            "status_report": status_report,
+        }));
+    }
     let job_id = args
         .job_id
         .or_else(|| execution.as_ref().map(|execution| execution.job_id))
