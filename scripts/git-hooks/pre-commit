@@ -9,13 +9,17 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 0
 fi
 
+# SQLx offline metadata is generated as a cache. A metadata refresh commonly
+# replaces many files, so do not let its stale-file cleanup mask a bulk source
+# deletion. Every other staged deletion remains subject to the safety limit.
 staged_deletes="$(
-  git diff --cached --name-status 2>/dev/null | awk '/^D/ { c++ } END { print c + 0 }'
+  git diff --cached --name-status 2>/dev/null |
+    awk -F '\t' '$1 ~ /^D/ && $2 !~ /(^|\/)\.sqlx\// { c++ } END { print c + 0 }'
 )"
 
 if [ "${staged_deletes}" -gt "${MAX_DELETES}" ]; then
   cat >&2 <<EOF
-pre-commit: refusing commit with ${staged_deletes} staged file deletions (limit ${MAX_DELETES}).
+pre-commit: refusing commit with ${staged_deletes} staged non-SQLx file deletions (limit ${MAX_DELETES}).
 
 This usually means an agent tried to "remove deprecated" files in bulk.
 Review with: git diff --cached --name-status | awk '/^D/'
