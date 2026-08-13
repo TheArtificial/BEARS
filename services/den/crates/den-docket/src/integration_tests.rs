@@ -7,8 +7,8 @@ use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
-    DocketEntryScope, DocketExecutionLookup, DocketExecutionTaskSettlement, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
+    DocketEntryScope, DocketExecutionLookup, DocketExecutionTaskSettlement, DocketJobCreate,
+    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
     DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
     DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy,
@@ -1311,7 +1311,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
 }
 
 #[tokio::test]
-async fn docket_rejects_parent_completion_until_children_are_terminal() {
+async fn docket_requires_explicit_parent_completion_after_children_are_terminal() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket parent completion test; database unavailable");
         return;
@@ -1361,10 +1361,34 @@ async fn docket_rejects_parent_completion_until_children_are_terminal() {
         .iter()
         .find(|state| state.task_id == parent_id)
         .expect("parent run state");
+    assert_eq!(parent_state.status.as_str(), "pending");
+    assert_eq!(parent_state.result_summary, None);
+
+    service
+        .record_task_success(
+            bear_id,
+            parent_id,
+            run_id,
+            "parent complete".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("complete parent explicitly");
+    let projection = service
+        .get_job(bear_id, created.job.id)
+        .await
+        .expect("reload job")
+        .expect("job exists");
+    let parent_state = projection
+        .task_states
+        .iter()
+        .find(|state| state.task_id == parent_id)
+        .expect("parent run state");
     assert_eq!(parent_state.status.as_str(), "done");
     assert_eq!(
         parent_state.result_summary.as_deref(),
-        Some("All child tasks are terminal.")
+        Some("parent complete")
     );
 }
 
