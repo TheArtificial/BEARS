@@ -38,8 +38,10 @@ jobs:
                     headers+=(-H "Authorization: Bearer ${COOLIFY_TOKEN}")
                   fi
 
-                  curl -X GET "${COOLIFY_WEBHOOK}" \
+                  curl -X POST "${COOLIFY_WEBHOOK}" \
                     "${headers[@]}" \
+                    -H "Content-Type: application/json" \
+                    --data '{}' \
                     --fail --silent --show-error
 
             - name: Verify deployment readiness and Den revision

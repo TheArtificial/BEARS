@@ -10366,6 +10366,17 @@ impl ToolDisplay {
             display.title = fallback_tool_title_from_event(event);
             display.permission_operation = display.title.to_ascii_lowercase();
         }
+        if tool_name == "git_commit" {
+            if let Some(message) = tool_args_from_event(event)
+                .and_then(|args| args.get("message"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|message| !message.is_empty())
+            {
+                display.title = format!("Git commit: {}", truncate_title(message));
+                display.subtitle = Some(message.to_string());
+            }
+        }
         display
     }
 }

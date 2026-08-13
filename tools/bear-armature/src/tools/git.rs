@@ -306,11 +306,13 @@ pub(crate) async fn handle_git_commit(
     if allow_empty {
         command_args.push("--allow-empty".to_string());
     }
-    let output = run_git_command(
-        &repo,
-        &command_args,
-        policy.max_bytes.unwrap_or(262_144) as usize,
-    )?;
+    let max_bytes = policy.max_bytes.unwrap_or(262_144) as usize;
+    let repo_for_command = repo.clone();
+    let output = tokio::task::spawn_blocking(move || {
+        run_git_command(&repo_for_command, &command_args, max_bytes)
+    })
+    .await
+    .map_err(|error| anyhow!("git_commit blocking task failed: {error}"))??;
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
