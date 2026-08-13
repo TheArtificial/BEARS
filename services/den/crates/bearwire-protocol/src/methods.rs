@@ -213,6 +213,32 @@ pub struct DocketJobsExecuteRequest {
     pub source_client_session_id: Option<String>,
 }
 
+/// Settles the Docket task currently claimed by an execution session and
+/// returns the scheduler's successor control result.
+#[derive(Debug, Deserialize)]
+pub struct DocketJobsSettleTaskRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub job_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub task_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub status: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub outcome_disposition: Option<String>,
+    #[serde(default)]
+    pub result_refs: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub result_summary: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub session_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub conversation_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub source_client_session_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SessionModelSetRequest {
     #[serde(deserialize_with = "deserialize_required_string")]

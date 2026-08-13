@@ -7,7 +7,7 @@ use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
-    DocketEntryScope, DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput,
+    DocketEntryScope, DocketExecutionLookup, DocketExecutionTaskSettlement, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
     DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
@@ -886,6 +886,7 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         .expect("create job");
     let run_id = created.job.current_run_id.expect("current run");
     let first_task_id = created.tasks[0].id;
+    let second_task_id = created.tasks[1].id;
 
     let selected = service
         .execute_job(DocketJobExecuteRequest {
@@ -941,7 +942,7 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         .expect("session-bound active execution");
     assert_eq!(session_fallback.id, active_execution.id);
 
-    service
+    let resumed = service
         .execute_job(DocketJobExecuteRequest {
             bear_id,
             job_id: created.job.id,
@@ -954,6 +955,36 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         })
         .await
         .expect("execute after reconnect");
+    assert!(matches!(
+        resumed.control.next_action,
+        crate::DocketExecutionNextAction::WorkCurrentTask
+    ));
+
+    let advanced = service
+        .settle_execution_task(DocketExecutionTaskSettlement {
+            execution: DocketJobExecuteRequest {
+                bear_id,
+                job_id: created.job.id,
+                actor_role: BearProfile::Pair,
+                actor_user_id: Some(user_id),
+                actor_agent_id: None,
+                session_id: Some("adapter-session-2".to_string()),
+                source_conversation_id: Some("conversation-1".to_string()),
+                source_client_session_id: Some("client-session-2".to_string()),
+            },
+            task_id: first_task_id,
+            status: DocketTaskStatus::Done,
+            outcome_disposition: None,
+            result_refs: None,
+            result_summary: Some("first task complete".to_string()),
+        })
+        .await
+        .expect("settle and automatically advance focused task");
+    assert!(matches!(
+        advanced.control.next_action,
+        crate::DocketExecutionNextAction::WorkCurrentTask
+    ));
+    assert_eq!(advanced.control.task.current_task_id, Some(second_task_id));
 
     let active_rows = sqlx::query_scalar!(
         r"

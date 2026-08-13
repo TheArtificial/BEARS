@@ -1198,6 +1198,18 @@ pub struct DocketJobExecuteRequest {
     pub source_client_session_id: Option<String>,
 }
 
+/// Settles the task currently claimed by a Docket execution session and returns
+/// the authoritative successor control result.
+#[derive(Debug, Clone)]
+pub struct DocketExecutionTaskSettlement {
+    pub execution: DocketJobExecuteRequest,
+    pub task_id: Uuid,
+    pub status: DocketTaskStatus,
+    pub outcome_disposition: Option<DocketOutcomeDisposition>,
+    pub result_refs: Option<serde_json::Value>,
+    pub result_summary: Option<String>,
+}
+
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct DocketExecutionSessionRow {
     pub id: Uuid,

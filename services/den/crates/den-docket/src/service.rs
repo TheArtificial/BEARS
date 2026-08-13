@@ -14,12 +14,12 @@ use super::db;
 use super::model::{
     task_list_projection_from_docket_job, DocketCriterionStateUpdate, DocketEntryCreate,
     DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketExecutionLookup,
-    DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest,
-    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate,
-    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection,
-    DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest, TaskListCheckoutSource,
-    TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome,
-    TaskListSyncRequest,
+    DocketExecutionSessionRow, DocketExecutionTaskSettlement, DocketJobCreate,
+    DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection,
+    DocketJobRow, DocketJobUpdate, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
+    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
 };
 
 /// Orchestration API for task and job state. The only public entry point to the
@@ -54,6 +54,21 @@ pub trait DocketService: Send + Sync {
     async fn execute_job(
         &self,
         request: DocketJobExecuteRequest,
+    ) -> Result<DocketJobExecuteOutcome, DenError>;
+
+    /// Repairs stale scheduler focus and returns the same authoritative control
+    /// result as execution. Call this instead of retrying `execute_job` after a
+    /// non-retryable `reconcile_execution` outcome.
+    async fn reconcile_execution(
+        &self,
+        request: DocketJobExecuteRequest,
+    ) -> Result<DocketJobExecuteOutcome, DenError>;
+
+    /// Settles the session's claimed job task and returns successor control.
+    /// Ordinary Pair/session tasks must continue to use their own settlement API.
+    async fn settle_execution_task(
+        &self,
+        settlement: DocketExecutionTaskSettlement,
     ) -> Result<DocketJobExecuteOutcome, DenError>;
 
     async fn get_active_execution_session(
@@ -172,6 +187,20 @@ impl DocketService for PgDocketService {
         request: DocketJobExecuteRequest,
     ) -> Result<DocketJobExecuteOutcome, DenError> {
         db::execute_job(&self.pool, request).await
+    }
+
+    async fn reconcile_execution(
+        &self,
+        request: DocketJobExecuteRequest,
+    ) -> Result<DocketJobExecuteOutcome, DenError> {
+        db::reconcile_execution(&self.pool, request).await
+    }
+
+    async fn settle_execution_task(
+        &self,
+        settlement: DocketExecutionTaskSettlement,
+    ) -> Result<DocketJobExecuteOutcome, DenError> {
+        db::settle_execution_task(&self.pool, settlement).await
     }
 
     async fn get_active_execution_session(

@@ -142,6 +142,17 @@ pub(crate) async fn rpc(
             methods::docket::docket_jobs_execute_result(&state, &headers, &request.params).await,
             "BearWire docket.jobs.execute failed",
         ),
+        "docket.jobs.reconcile" => method_response(
+            request.id,
+            methods::docket::docket_jobs_reconcile_result(&state, &headers, &request.params).await,
+            "BearWire docket.jobs.reconcile failed",
+        ),
+        "docket.jobs.settle_task" => method_response(
+            request.id,
+            methods::docket::docket_jobs_settle_task_result(&state, &headers, &request.params)
+                .await,
+            "BearWire docket.jobs.settle_task failed",
+        ),
         "run.state" | "run.timeline" => method_response(
             request.id,
             methods::run::run_state_result(&state, &headers, &request.params).await,

@@ -39,13 +39,14 @@ use super::model::{
     DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketEntryScope,
     DocketExecutionControl, DocketExecutionLookup, DocketExecutionNextAction,
     DocketExecutionReason, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
-    DocketExecutionTaskControl, DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome,
-    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
-    DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketSessionTaskSettlement,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
-    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
-    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
-    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketJobCreate,
+    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
+    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput,
+    DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection, DocketTaskRow,
+    DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, TaskListItemStatus,
+    TaskListProjection, TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest,
+    TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1475,6 +1476,134 @@ fn execution_control(
         retryable,
         reason,
     }
+}
+
+pub(super) async fn reconcile_execution(
+    pool: &PgPool,
+    request: DocketJobExecuteRequest,
+) -> Result<DocketJobExecuteOutcome, DenError> {
+    let Some(projection) = get_job(pool, request.bear_id, request.job_id).await? else {
+        return Err(DenError::NotFound(format!(
+            "Docket job not found: {}",
+            request.job_id
+        )));
+    };
+    let Some(run) = projection.current_run.as_ref() else {
+        return Err(DenError::ValidationError(
+            "Docket job has no current run to reconcile".to_string(),
+        ));
+    };
+    let lookup = DocketExecutionLookup {
+        session_id: request.session_id.clone(),
+        source_conversation_id: request.source_conversation_id.clone(),
+        source_client_session_id: request.source_client_session_id.clone(),
+    };
+    let Some(session) =
+        get_active_execution_session(pool, request.bear_id, request.actor_role, lookup).await?
+    else {
+        return execute_job(pool, request).await;
+    };
+    if session.job_id != request.job_id || session.run_id != run.id {
+        return Err(DenError::ValidationError(format!(
+            "Docket execution focus belongs to another job or run: session_id={}",
+            session.id
+        )));
+    }
+
+    let state_by_task = projection
+        .task_states
+        .iter()
+        .map(|state| (state.task_id, state.status.as_str()))
+        .collect::<HashMap<_, _>>();
+    let selected =
+        first_pending_leaf_in_plan_order(&projection, &state_by_task).map(|task| task.id);
+    if session.task_id != selected {
+        // The session belongs to this run and its old focus is no longer the
+        // plan's first unfinished leaf, so replacing it is safe and idempotent.
+        // ponytail: session focus is the sole scheduler claim today; add a
+        // separate lease table if work dispatch gains a second concurrent owner.
+        record_execution_session(
+            pool,
+            &request,
+            run.id,
+            selected,
+            if selected.is_some() {
+                "active"
+            } else {
+                "blocked"
+            },
+        )
+        .await?;
+    }
+    execute_job(pool, request).await
+}
+
+/// Records a terminal outcome for the task owned by this execution session,
+/// then advances its durable scheduler focus before returning control.
+pub(super) async fn settle_execution_task(
+    pool: &PgPool,
+    settlement: DocketExecutionTaskSettlement,
+) -> Result<DocketJobExecuteOutcome, DenError> {
+    let execution = settlement.execution.clone();
+    let status = settlement.status.as_str();
+    if !matches!(status, "done" | "blocked" | "cancelled") {
+        return Err(DenError::ValidationError(
+            "Docket execution settlement requires a terminal task status".to_string(),
+        ));
+    }
+    let Some(projection) = get_job(pool, execution.bear_id, execution.job_id).await? else {
+        return Err(DenError::NotFound(format!(
+            "Docket job not found: {}",
+            execution.job_id
+        )));
+    };
+    let Some(run) = projection.current_run.as_ref() else {
+        return Err(DenError::ValidationError(
+            "Docket job has no current run to settle".to_string(),
+        ));
+    };
+    let lookup = DocketExecutionLookup {
+        session_id: execution.session_id.clone(),
+        source_conversation_id: execution.source_conversation_id.clone(),
+        source_client_session_id: execution.source_client_session_id.clone(),
+    };
+    let session =
+        get_active_execution_session(pool, execution.bear_id, execution.actor_role, lookup)
+            .await?
+            .ok_or_else(|| {
+                DenError::ValidationError("Docket execution has no active task claim".to_string())
+            })?;
+    if session.job_id != execution.job_id
+        || session.run_id != run.id
+        || session.task_id != Some(settlement.task_id)
+    {
+        return Err(DenError::ValidationError(
+            "Docket execution settlement task is not owned by the active session claim".to_string(),
+        ));
+    }
+
+    update_task(
+        pool,
+        DocketTaskUpdate {
+            bear_id: execution.bear_id,
+            job_id: Some(execution.job_id),
+            task_id: settlement.task_id,
+            actor_role: execution.actor_role,
+            actor_user_id: execution.actor_user_id,
+            actor_agent_id: execution.actor_agent_id.clone(),
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(super::model::DocketTaskRunStateUpdate {
+                run_id: run.id,
+                status: settlement.status,
+                outcome_disposition: settlement.outcome_disposition,
+                result_refs: settlement.result_refs,
+                result_summary: settlement.result_summary,
+            }),
+        },
+    )
+    .await?;
+
+    reconcile_execution(pool, execution).await
 }
 
 pub(super) async fn execute_job(
