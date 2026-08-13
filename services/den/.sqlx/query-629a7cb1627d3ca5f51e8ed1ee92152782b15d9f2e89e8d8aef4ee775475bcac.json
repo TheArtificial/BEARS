@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT snapshots.run_id, snapshots.reason, snapshots.snapshot,\n               snapshots.recovery_lease_id AS \"recovery_lease_id?\",\n               snapshots.recovery_lease_expires_at AS \"recovery_lease_expires_at?\",\n               snapshots.recovered_at AS \"recovered_at?\", snapshots.created_at,\n               snapshots.updated_at\n        FROM turn_run_recovery_snapshots AS snapshots\n        JOIN turn_runs AS runs ON runs.run_id = snapshots.run_id\n        WHERE snapshots.run_id = $1\n          AND runs.state = 'continuing'\n          AND snapshots.recovered_at IS NULL\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "snapshot",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 3,
+        "name": "recovery_lease_id?",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "recovery_lease_expires_at?",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "recovered_at?",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "629a7cb1627d3ca5f51e8ed1ee92152782b15d9f2e89e8d8aef4ee775475bcac"
+}

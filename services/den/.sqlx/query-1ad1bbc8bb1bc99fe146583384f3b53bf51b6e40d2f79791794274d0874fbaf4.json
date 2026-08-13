@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE turn_run_recovery_snapshots AS snapshots\n        SET recovery_lease_id = $2,\n            recovery_lease_expires_at = NOW() + INTERVAL '5 minutes',\n            updated_at = NOW()\n        FROM turn_runs AS runs\n        WHERE snapshots.run_id = runs.run_id\n          AND snapshots.run_id = $1\n          AND runs.state = 'continuing'\n          AND snapshots.recovered_at IS NULL\n          AND (snapshots.recovery_lease_expires_at IS NULL\n               OR snapshots.recovery_lease_expires_at < NOW())\n        RETURNING snapshots.run_id, snapshots.reason, snapshots.snapshot,\n                  snapshots.recovery_lease_id AS \"recovery_lease_id?\",\n                  snapshots.recovery_lease_expires_at AS \"recovery_lease_expires_at?\",\n                  snapshots.recovered_at AS \"recovered_at?\", snapshots.created_at,\n                  snapshots.updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "snapshot",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 3,
+        "name": "recovery_lease_id?",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "recovery_lease_expires_at?",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "recovered_at?",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "1ad1bbc8bb1bc99fe146583384f3b53bf51b6e40d2f79791794274d0874fbaf4"
+}

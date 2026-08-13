@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO bear_profile_bindings (\n            bear_id, profile, binding_id, provisioning_status, last_provisioning_error, updated_at\n        )\n        VALUES ($1, $2, $3, 'failed', $4, NOW())\n        ON CONFLICT (bear_id, profile)\n        DO UPDATE SET provisioning_status = 'failed',\n                      last_provisioning_error = EXCLUDED.last_provisioning_error,\n                      updated_at = NOW()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0a9669d0c61d93000059f63c750a53ac9a9f5c8612001ffc99a82c840598f044"
+}

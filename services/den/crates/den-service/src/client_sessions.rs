@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row as SqlxRow};
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -138,7 +138,9 @@ impl ClientSessionRow {
     }
 }
 
-const UPSERT_SESSION_SQL: &str = r"
+pub async fn upsert_session(pool: &PgPool, session: UpsertClientSession) -> Result<(), DenError> {
+    sqlx::query!(
+        r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
             conversation_id, resolved_conversation_id, client, cwd, current_mode
@@ -155,21 +157,19 @@ const UPSERT_SESSION_SQL: &str = r"
             closed_at = NULL,
             archived_at = NULL,
             updated_at = NOW()
-        ";
-
-pub async fn upsert_session(pool: &PgPool, session: UpsertClientSession) -> Result<(), DenError> {
-    sqlx::query(UPSERT_SESSION_SQL)
-        .bind(session.user_id)
-        .bind(session.bear_id)
-        .bind(session.bear_slug)
-        .bind(session.client_session_id)
-        .bind(session.runtime_session_id)
-        .bind(session.conversation_id)
-        .bind(session.resolved_conversation_id)
-        .bind(session.client)
-        .bind(session.cwd)
-        .bind(session.current_mode.map(ClientSessionMode::as_str))
-        .execute(pool)
+        ",
+        session.user_id,
+        session.bear_id,
+        session.bear_slug,
+        session.client_session_id,
+        session.runtime_session_id,
+        session.conversation_id,
+        session.resolved_conversation_id,
+        session.client,
+        session.cwd,
+        session.current_mode.map(ClientSessionMode::as_str),
+    )
+    .execute(pool)
         .await?;
     Ok(())
 }
@@ -181,17 +181,17 @@ pub async fn set_current_mode(
     client_session_id: &str,
     mode: ClientSessionMode,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE client_sessions
         SET current_mode = $4, updated_at = NOW()
         WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
+        user_id,
+        bear_id,
+        client_session_id,
+        mode.as_str()
     )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(client_session_id)
-    .bind(mode.as_str())
     .execute(pool)
     .await?;
     Ok(())
@@ -204,17 +204,17 @@ pub async fn set_current_task(
     client_session_id: &str,
     task_id: Option<Uuid>,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE client_sessions
         SET current_task_id = $4, updated_at = NOW()
         WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
+        user_id,
+        bear_id,
+        client_session_id,
+        task_id
     )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(client_session_id)
-    .bind(task_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -227,17 +227,17 @@ pub async fn mark_resolved(
     client_session_id: &str,
     resolved_conversation_id: &str,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE client_sessions
         SET resolved_conversation_id = $4, updated_at = NOW()
         WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
+        user_id,
+        bear_id,
+        client_session_id,
+        resolved_conversation_id
     )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(client_session_id)
-    .bind(resolved_conversation_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -249,7 +249,7 @@ pub async fn find_for_user_bear_session(
     bear_slug: &str,
     client_session_id: &str,
 ) -> Result<Option<ClientSessionRow>, DenError> {
-    let row = sqlx::query_as::<_, ClientSessionRow>(
+    let row = sqlx::query_as!(ClientSessionRow,
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
@@ -258,10 +258,7 @@ pub async fn find_for_user_bear_session(
         FROM client_sessions
         WHERE user_id = $1 AND bear_slug = $2 AND client_session_id = $3
         ",
-    )
-    .bind(user_id)
-    .bind(bear_slug)
-    .bind(client_session_id)
+    user_id, bear_slug, client_session_id)
     .fetch_optional(pool)
     .await?;
 
@@ -274,7 +271,7 @@ pub async fn find_for_user_bear_session_id(
     bear_id: Uuid,
     client_session_id: &str,
 ) -> Result<Option<ClientSessionRow>, DenError> {
-    let row = sqlx::query_as::<_, ClientSessionRow>(
+    let row = sqlx::query_as!(ClientSessionRow,
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
@@ -283,10 +280,7 @@ pub async fn find_for_user_bear_session_id(
         FROM client_sessions
         WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
-    )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(client_session_id)
+    user_id, bear_id, client_session_id)
     .fetch_optional(pool)
     .await?;
 
@@ -298,7 +292,7 @@ pub async fn find_latest_for_bear_conversation(
     bear_id: Uuid,
     conversation_id: &str,
 ) -> Result<Option<ClientSessionRow>, DenError> {
-    let row = sqlx::query_as::<_, ClientSessionRow>(
+    let row = sqlx::query_as!(ClientSessionRow,
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
@@ -310,9 +304,7 @@ pub async fn find_latest_for_bear_conversation(
         ORDER BY updated_at DESC, id DESC
         LIMIT 1
         ",
-    )
-    .bind(bear_id)
-    .bind(conversation_id)
+    bear_id, conversation_id)
     .fetch_optional(pool)
     .await?;
 
@@ -537,7 +529,7 @@ pub async fn list_for_user_bear(
 ) -> Result<Vec<ClientSessionRow>, DenError> {
     let limit = params.limit.clamp(1, 100);
     let cwd_filter = params.cwd_filter.map(str::trim).filter(|s| !s.is_empty());
-    let rows = sqlx::query_as::<_, ClientSessionRow>(
+    let rows = sqlx::query_as!(ClientSessionRow,
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
@@ -555,14 +547,7 @@ pub async fn list_for_user_bear(
         ORDER BY updated_at DESC, id DESC
         LIMIT $5
         ",
-    )
-    .bind(params.user_id)
-    .bind(params.bear_slug)
-    .bind(params.include_closed)
-    .bind(cwd_filter)
-    .bind(limit)
-    .bind(params.cursor_updated_at)
-    .bind(params.cursor_id)
+    params.user_id, params.bear_slug, params.include_closed, cwd_filter, limit, params.cursor_updated_at, params.cursor_id)
     .fetch_all(pool)
     .await?;
 
@@ -576,18 +561,18 @@ pub async fn update_adapter_environment(
     client_session_id: &str,
     adapter_environment: &serde_json::Value,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE client_sessions
         SET adapter_environment = $4,
             updated_at = NOW()
         WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
+        user_id,
+        bear_id,
+        client_session_id,
+        adapter_environment
     )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(client_session_id)
-    .bind(adapter_environment)
     .execute(pool)
     .await?;
     Ok(())
@@ -604,7 +589,7 @@ pub async fn update_client_conversation_title(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.chars().take(120).collect::<String>());
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE client_sessions
         SET conversation_title = $4,
@@ -621,25 +606,25 @@ pub async fn update_client_conversation_title(
             updated_at = NOW()
         WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
+        user_id,
+        bear_id,
+        client_session_id,
+        normalized
     )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(client_session_id)
-    .bind(normalized)
     .execute(pool)
     .await?;
     Ok(())
 }
 
 pub async fn mark_closed(pool: &PgPool, id: Uuid) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE client_sessions
         SET closed_at = NOW(), updated_at = NOW()
         WHERE id = $1
         ",
+        id
     )
-    .bind(id)
     .execute(pool)
     .await?;
     Ok(())
@@ -651,7 +636,7 @@ pub async fn set_title_for_bear_conversation(
     conversation_id: &str,
     title: &str,
 ) -> Result<u64, DenError> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r"
         UPDATE client_sessions
         SET conversation_title = $3,
@@ -661,10 +646,10 @@ pub async fn set_title_for_bear_conversation(
         WHERE bear_id = $1
           AND (conversation_id = $2 OR resolved_conversation_id = $2)
         ",
+        bear_id,
+        conversation_id,
+        title
     )
-    .bind(bear_id)
-    .bind(conversation_id)
-    .bind(title)
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
@@ -675,7 +660,7 @@ pub async fn list_for_bear_conversation(
     bear_id: Uuid,
     conversation_id: &str,
 ) -> Result<Vec<ClientSessionRow>, DenError> {
-    sqlx::query_as::<_, ClientSessionRow>(
+    sqlx::query_as!(ClientSessionRow,
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode, current_task_id,
@@ -685,9 +670,7 @@ pub async fn list_for_bear_conversation(
         WHERE bear_id = $1
           AND (conversation_id = $2 OR resolved_conversation_id = $2)
         ",
-    )
-    .bind(bear_id)
-    .bind(conversation_id)
+    bear_id, conversation_id)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -699,16 +682,16 @@ pub async fn mark_title_synced(
     bear_id: Uuid,
     client_session_id: &str,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE client_sessions
         SET conversation_title_synced_at = NOW()
         WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
         ",
+        user_id,
+        bear_id,
+        client_session_id
     )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(client_session_id)
     .execute(pool)
     .await?;
     Ok(())
@@ -718,34 +701,30 @@ pub async fn resolved_conversation_ids_for_bear(
     pool: &PgPool,
     bear_slug: &str,
 ) -> Result<Vec<String>, DenError> {
-    let rows = sqlx::query(
-        r"
-        SELECT DISTINCT resolved_conversation_id
+    sqlx::query_scalar!(
+        r#"
+        SELECT DISTINCT resolved_conversation_id AS "resolved_conversation_id!"
         FROM client_sessions
         WHERE bear_slug = $1
           AND resolved_conversation_id IS NOT NULL
           AND resolved_conversation_id LIKE 'conv-%'
-        ",
+        "#,
+        bear_slug
     )
-    .bind(bear_slug)
     .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .iter()
-        .filter_map(|row| row.get::<Option<String>, _>("resolved_conversation_id"))
-        .collect())
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn mark_archived(pool: &PgPool, id: Uuid) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE client_sessions
         SET archived_at = NOW(), updated_at = NOW()
         WHERE id = $1
         ",
+        id
     )
-    .bind(id)
     .execute(pool)
     .await?;
     Ok(())
@@ -758,34 +737,33 @@ mod reflection_candidate_tests {
 
     async fn insert_test_user(pool: &PgPool) -> i32 {
         let suffix = Uuid::new_v4().simple().to_string();
-        let (user_id,): (i32,) = sqlx::query_as(
+        sqlx::query_scalar!(
             r"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
             ",
+            format!("reflection-{suffix}@example.test"),
+            format!("reflection{}", &suffix[..16]),
+            "Reflection Test User",
+            "unused"
         )
-        .bind(format!("reflection-{suffix}@example.test"))
-        .bind(format!("reflection{}", &suffix[..16]))
-        .bind("Reflection Test User")
-        .bind("unused")
         .fetch_one(pool)
         .await
-        .expect("insert user");
-        user_id
+        .expect("insert user")
     }
 
     async fn insert_test_bear(pool: &PgPool) -> (Uuid, String) {
         let suffix = Uuid::new_v4().simple().to_string();
         let slug = format!("reflection-bear-{}", &suffix[..12]);
-        let (bear_id,): (Uuid,) = sqlx::query_as(
+        let bear_id = sqlx::query_scalar!(
             r"
             INSERT INTO bears (slug, name, description, system_prompt, live_reflection_enabled)
             VALUES ($1, 'Reflection Test Bear', 'test', 'test', TRUE)
             RETURNING id
             ",
+            &slug
         )
-        .bind(&slug)
         .fetch_one(pool)
         .await
         .expect("insert bear");
@@ -817,8 +795,7 @@ mod reflection_candidate_tests {
         )
         .await
         .expect("insert session");
-        sqlx::query("UPDATE client_sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE client_session_id = $1")
-            .bind(session_id)
+        sqlx::query!("UPDATE client_sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE client_session_id = $1", session_id)
             .execute(pool)
             .await
             .expect("age session");
@@ -830,36 +807,35 @@ mod reflection_candidate_tests {
         conversation_id: &str,
         end_seq: i64,
     ) {
-        let canonical_id = if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>(
+        let canonical_id = if let Some(id) = sqlx::query_scalar!(
             r"
             SELECT id
             FROM conversations
             WHERE bear_id = $1 AND external_conversation_id = $2
             ",
+            bear_id,
+            conversation_id
         )
-        .bind(bear_id)
-        .bind(conversation_id)
         .fetch_optional(pool)
         .await
         .expect("select conversation")
         {
             id
         } else {
-            let (id,): (Uuid,) = sqlx::query_as(
+            sqlx::query_scalar!(
                 r"
                 INSERT INTO conversations (bear_id, external_conversation_id)
                 VALUES ($1, $2)
                 RETURNING id
                 ",
+                bear_id,
+                conversation_id
             )
-            .bind(bear_id)
-            .bind(conversation_id)
             .fetch_one(pool)
             .await
-            .expect("insert conversation");
-            id
+            .expect("insert conversation")
         };
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO conversation_compaction_artifacts (
                 conversation_id, artifact_kind, policy_version, trigger,
@@ -867,9 +843,9 @@ mod reflection_candidate_tests {
             )
             VALUES ($1, 'iterative_summary', 'test', 'test', 1, $2, '{}'::jsonb)
             ",
+            canonical_id,
+            end_seq
         )
-        .bind(canonical_id)
-        .bind(end_seq)
         .execute(pool)
         .await
         .expect("insert artifact");
@@ -882,16 +858,16 @@ mod reflection_candidate_tests {
         session_id: &str,
         event_type: &str,
     ) {
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
             VALUES ($1, $2, $3, $4, '{}'::jsonb)
             ",
+            session_id,
+            bear_id,
+            user_id,
+            event_type
         )
-        .bind(session_id)
-        .bind(bear_id)
-        .bind(user_id)
-        .bind(event_type)
         .execute(pool)
         .await
         .expect("insert event");
@@ -909,16 +885,16 @@ mod reflection_candidate_tests {
         if let Some(source_end_seq) = source_end_seq {
             pair_reflection["source_message_end_seq"] = json!(source_end_seq);
         }
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
             VALUES ($1, $2, $3, 'session.reflected', $4)
             ",
+            session_id,
+            bear_id,
+            user_id,
+            json!({ "data": { "pair_reflection": pair_reflection } })
         )
-        .bind(session_id)
-        .bind(bear_id)
-        .bind(user_id)
-        .bind(json!({ "data": { "pair_reflection": pair_reflection } }))
         .execute(pool)
         .await
         .expect("insert reflection event");

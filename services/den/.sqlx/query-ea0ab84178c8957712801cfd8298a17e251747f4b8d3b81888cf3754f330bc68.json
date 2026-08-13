@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE turn_run_recovery_snapshots\n        SET recovered_at = NOW(),\n            recovery_lease_id = NULL,\n            recovery_lease_expires_at = NULL,\n            updated_at = NOW()\n        WHERE run_id = $1\n          AND recovery_lease_id = $2\n          AND recovered_at IS NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ea0ab84178c8957712801cfd8298a17e251747f4b8d3b81888cf3754f330bc68"
+}

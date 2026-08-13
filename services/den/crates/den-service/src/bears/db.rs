@@ -37,17 +37,75 @@ pub struct BearBifrostVirtualKey {
     pub virtual_key_value_encrypted: Option<String>,
 }
 
+/// Flat SQLx macro target for `BearWithMembership`.
+///
+/// `query_as!` constructs struct literals and cannot populate the flattened
+/// `BearWithMembership::bear` field directly.
+struct BearWithMembershipRow {
+    id: Uuid,
+    slug: String,
+    name: String,
+    description: String,
+    default_model: Option<String>,
+    default_tool_budget_multiplier: Option<f64>,
+    tools_enabled: Option<Json<serde_json::Value>>,
+    work_enabled: bool,
+    runtime_plan: Option<Json<serde_json::Value>>,
+    context_profile: Option<Json<serde_json::Value>>,
+    provisioning_version: i32,
+    system_prompt: String,
+    birthday: Option<time::Date>,
+    created_at: time::OffsetDateTime,
+    updated_at: time::OffsetDateTime,
+    live_reflection_enabled: bool,
+    live_reflection_stale_after_minutes: i32,
+    live_reflection_activity_threshold: i32,
+    live_reflection_sweep_limit: i32,
+    membership_role: Option<String>,
+}
+
+impl From<BearWithMembershipRow> for BearWithMembership {
+    fn from(row: BearWithMembershipRow) -> Self {
+        Self {
+            bear: Bear {
+                id: row.id,
+                slug: row.slug,
+                name: row.name,
+                description: row.description,
+                default_model: row.default_model,
+                default_tool_budget_multiplier: row.default_tool_budget_multiplier,
+                tools_enabled: row.tools_enabled,
+                work_enabled: row.work_enabled,
+                runtime_plan: row.runtime_plan,
+                context_profile: row.context_profile,
+                provisioning_version: row.provisioning_version,
+                system_prompt: row.system_prompt,
+                birthday: row.birthday,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                live_reflection_enabled: row.live_reflection_enabled,
+                live_reflection_stale_after_minutes: row.live_reflection_stale_after_minutes,
+                live_reflection_activity_threshold: row.live_reflection_activity_threshold,
+                live_reflection_sweep_limit: row.live_reflection_sweep_limit,
+            },
+            membership_role: row.membership_role,
+        }
+    }
+}
+
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
-    sqlx::query_as::<_, Bear>(
-        r"
-        SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
-               work_enabled, runtime_plan, context_profile,
+    sqlx::query_as!(Bear,
+        r#"
+        SELECT id, slug, name, description, default_model, default_tool_budget_multiplier,
+               tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
+               work_enabled, runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
+               context_profile AS "context_profile?: Json<serde_json::Value>",
                provisioning_version, system_prompt, birthday, created_at, updated_at,
                live_reflection_enabled, live_reflection_stale_after_minutes,
                live_reflection_activity_threshold, live_reflection_sweep_limit
         FROM bears
         ORDER BY slug
-        ",
+        "#,
     )
     .fetch_all(pool)
     .await
@@ -55,29 +113,32 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
 }
 
 pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError> {
-    sqlx::query_as::<_, Bear>(
-        r"
-        SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
-               work_enabled, runtime_plan, context_profile,
+    sqlx::query_as!(Bear,
+        r#"
+        SELECT id, slug, name, description, default_model, default_tool_budget_multiplier,
+               tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
+               work_enabled, runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
+               context_profile AS "context_profile?: Json<serde_json::Value>",
                provisioning_version, system_prompt, birthday, created_at, updated_at,
                live_reflection_enabled, live_reflection_stale_after_minutes,
                live_reflection_activity_threshold, live_reflection_sweep_limit
         FROM bears
         WHERE id = $1
-        ",
-    )
-    .bind(id)
+        "#,
+    id)
     .fetch_optional(pool)
     .await
     .map_err(Into::into)
 }
 
 pub async fn bear_slug_exists(pool: &PgPool, slug: &str) -> Result<bool, DenError> {
-    let n: (i64,) = sqlx::query_as("SELECT COUNT(*)::bigint FROM bears WHERE slug = $1")
-        .bind(slug)
+    let n = sqlx::query_scalar!(
+        "SELECT COUNT(*)::bigint AS \"count!\" FROM bears WHERE slug = $1",
+        slug
+    )
         .fetch_one(pool)
         .await?;
-    Ok(n.0 > 0)
+    Ok(n > 0)
 }
 
 pub async fn bear_slug_exists_excluding(
@@ -85,17 +146,19 @@ pub async fn bear_slug_exists_excluding(
     slug: &str,
     exclude_id: Uuid,
 ) -> Result<bool, DenError> {
-    let n: (i64,) =
-        sqlx::query_as("SELECT COUNT(*)::bigint FROM bears WHERE slug = $1 AND id <> $2")
-            .bind(slug)
-            .bind(exclude_id)
-            .fetch_one(pool)
-            .await?;
-    Ok(n.0 > 0)
+    let n = sqlx::query_scalar!(
+        "SELECT COUNT(*)::bigint AS \"count!\" FROM bears WHERE slug = $1 AND id <> $2",
+        slug,
+        exclude_id
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(n > 0)
 }
 
 pub async fn update_bear(pool: &PgPool, id: Uuid, params: BearParams<'_>) -> Result<(), DenError> {
-    let r = sqlx::query(
+    let tools_enabled = params.tools_enabled.map(|Json(value)| value);
+    let r = sqlx::query!(
         r"
         UPDATE bears
         SET slug = $1,
@@ -107,14 +170,14 @@ pub async fn update_bear(pool: &PgPool, id: Uuid, params: BearParams<'_>) -> Res
             updated_at = NOW()
         WHERE id = $7
         ",
+        params.slug,
+        params.name,
+        params.description,
+        params.system_prompt,
+        params.default_model,
+        tools_enabled,
+        id
     )
-    .bind(params.slug)
-    .bind(params.name)
-    .bind(params.description)
-    .bind(params.system_prompt)
-    .bind(params.default_model)
-    .bind(params.tools_enabled)
-    .bind(id)
     .execute(pool)
     .await?;
     if r.rows_affected() == 0 {
@@ -133,7 +196,9 @@ pub async fn create_bear_with_context_profile(
     pool: &PgPool,
     params: BearParams<'_>,
 ) -> Result<Uuid, DenError> {
-    let row: (Uuid,) = sqlx::query_as(
+    let tools_enabled = params.tools_enabled.map(|Json(value)| value);
+    let context_profile = params.context_profile.map(|Json(value)| value);
+    let id = sqlx::query_scalar!(
         r"
         INSERT INTO bears (
             slug, name, description, system_prompt, default_model, tools_enabled,
@@ -142,17 +207,17 @@ pub async fn create_bear_with_context_profile(
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id
         ",
+        params.slug,
+        params.name,
+        params.description,
+        params.system_prompt,
+        params.default_model,
+        tools_enabled,
+        context_profile,
     )
-    .bind(params.slug)
-    .bind(params.name)
-    .bind(params.description)
-    .bind(params.system_prompt)
-    .bind(params.default_model)
-    .bind(params.tools_enabled)
-    .bind(params.context_profile)
     .fetch_one(pool)
     .await?;
-    Ok(row.0)
+    Ok(id)
 }
 
 pub async fn update_bear_context_profile(
@@ -161,7 +226,8 @@ pub async fn update_bear_context_profile(
     context_profile: Option<Json<serde_json::Value>>,
     system_prompt: &str,
 ) -> Result<(), DenError> {
-    let r = sqlx::query(
+    let context_profile = context_profile.map(|Json(value)| value);
+    let r = sqlx::query!(
         r"
         UPDATE bears
         SET context_profile = $1,
@@ -169,10 +235,10 @@ pub async fn update_bear_context_profile(
             updated_at = NOW()
         WHERE id = $3
         ",
+        context_profile,
+        system_prompt,
+        id
     )
-    .bind(context_profile)
-    .bind(system_prompt)
-    .bind(id)
     .execute(pool)
     .await?;
     if r.rows_affected() == 0 {
@@ -199,27 +265,29 @@ pub async fn grant_membership(
     bear_id: Uuid,
     role: Option<&str>,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO user_bear (user_id, bear_id, role)
         VALUES ($1, $2, $3)
         ON CONFLICT (user_id, bear_id) DO UPDATE SET role = EXCLUDED.role
         ",
+        user_id,
+        bear_id,
+        role
     )
-    .bind(user_id)
-    .bind(bear_id)
-    .bind(role)
     .execute(pool)
     .await?;
     Ok(())
 }
 
 pub async fn revoke_membership(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Result<(), DenError> {
-    let r = sqlx::query("DELETE FROM user_bear WHERE user_id = $1 AND bear_id = $2")
-        .bind(user_id)
-        .bind(bear_id)
-        .execute(pool)
-        .await?;
+    let r = sqlx::query!(
+        "DELETE FROM user_bear WHERE user_id = $1 AND bear_id = $2",
+        user_id,
+        bear_id
+    )
+    .execute(pool)
+    .await?;
     if r.rows_affected() == 0 {
         return Err(DenError::NotFound("membership not found".to_string()));
     }
@@ -227,8 +295,7 @@ pub async fn revoke_membership(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Re
 }
 
 pub async fn delete_bear(pool: &PgPool, bear_id: Uuid) -> Result<(), DenError> {
-    let r = sqlx::query("DELETE FROM bears WHERE id = $1")
-        .bind(bear_id)
+    let r = sqlx::query!("DELETE FROM bears WHERE id = $1", bear_id)
         .execute(pool)
         .await?;
     if r.rows_affected() == 0 {
@@ -249,7 +316,8 @@ pub async fn list_members_for_bear(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearMemberRow>, DenError> {
-    sqlx::query_as::<_, BearMemberRow>(
+    sqlx::query_as!(
+        BearMemberRow,
         r"
         SELECT ub.user_id, u.username, u.display_name, ub.role
         FROM user_bear ub
@@ -259,26 +327,26 @@ pub async fn list_members_for_bear(
             CASE WHEN lower(btrim(coalesce(ub.role, ''))) = 'admin' THEN 0 ELSE 1 END,
             u.username
         ",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
 }
 
 pub async fn count_bear_admins(pool: &PgPool, bear_id: Uuid) -> Result<i64, DenError> {
-    let n: (i64,) = sqlx::query_as(
-        r"
-        SELECT COUNT(*)::bigint
+    let n = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)::bigint AS "count!"
         FROM user_bear
         WHERE bear_id = $1
           AND lower(btrim(coalesce(role, ''))) = 'admin'
-        ",
+        "#,
+        bear_id
     )
-    .bind(bear_id)
     .fetch_one(pool)
     .await?;
-    Ok(n.0)
+    Ok(n)
 }
 
 pub async fn membership_role_for_user(
@@ -286,13 +354,14 @@ pub async fn membership_role_for_user(
     user_id: i32,
     bear_id: Uuid,
 ) -> Result<Option<Option<String>>, DenError> {
-    let row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT role FROM user_bear WHERE user_id = $1 AND bear_id = $2")
-            .bind(user_id)
-            .bind(bear_id)
-            .fetch_optional(pool)
-            .await?;
-    Ok(row.map(|r| r.0))
+    sqlx::query_scalar!(
+        "SELECT role FROM user_bear WHERE user_id = $1 AND bear_id = $2",
+        user_id,
+        bear_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
@@ -306,7 +375,8 @@ pub struct MembershipRow {
 }
 
 pub async fn list_memberships(pool: &PgPool) -> Result<Vec<MembershipRow>, DenError> {
-    sqlx::query_as::<_, MembershipRow>(
+    sqlx::query_as!(
+        MembershipRow,
         r"
         SELECT ub.user_id, u.username, ub.bear_id, b.slug AS bear_slug, b.name AS bear_name, ub.role
         FROM user_bear ub
@@ -324,10 +394,12 @@ pub async fn list_bears_for_user(
     pool: &PgPool,
     user_id: i32,
 ) -> Result<Vec<BearWithMembership>, DenError> {
-    sqlx::query_as::<_, BearWithMembership>(
-        r"
-        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
-               b.work_enabled, b.runtime_plan, b.context_profile,
+    sqlx::query_as!(BearWithMembershipRow,
+        r#"
+        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier,
+               b.tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
+               b.work_enabled, b.runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
+               b.context_profile AS "context_profile?: Json<serde_json::Value>",
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
                b.live_reflection_enabled, b.live_reflection_stale_after_minutes,
                b.live_reflection_activity_threshold, b.live_reflection_sweep_limit,
@@ -336,11 +408,11 @@ pub async fn list_bears_for_user(
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1
         ORDER BY b.slug
-        ",
-    )
-    .bind(user_id)
+        "#,
+    user_id)
     .fetch_all(pool)
     .await
+    .map(|rows| rows.into_iter().map(Into::into).collect())
     .map_err(Into::into)
 }
 
@@ -350,31 +422,33 @@ pub async fn bear_for_user_by_slug(
     user_id: i32,
     slug: &str,
 ) -> Result<Option<Bear>, DenError> {
-    sqlx::query_as::<_, Bear>(
-        r"
-        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
-               b.work_enabled, b.runtime_plan, b.context_profile,
+    sqlx::query_as!(Bear,
+        r#"
+        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier,
+               b.tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
+               b.work_enabled, b.runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
+               b.context_profile AS "context_profile?: Json<serde_json::Value>",
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
                b.live_reflection_enabled, b.live_reflection_stale_after_minutes,
                b.live_reflection_activity_threshold, b.live_reflection_sweep_limit
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1 AND b.slug = $2
-        ",
-    )
-    .bind(user_id)
-    .bind(slug)
+        "#,
+    user_id, slug)
     .fetch_optional(pool)
     .await
     .map_err(Into::into)
 }
 
 pub async fn count_bear_members(pool: &PgPool, bear_id: Uuid) -> Result<i64, DenError> {
-    let n: (i64,) = sqlx::query_as("SELECT COUNT(*)::bigint FROM user_bear WHERE bear_id = $1")
-        .bind(bear_id)
-        .fetch_one(pool)
-        .await?;
-    Ok(n.0)
+    let n = sqlx::query_scalar!(
+        "SELECT COUNT(*)::bigint AS \"count!\" FROM user_bear WHERE bear_id = $1",
+        bear_id
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(n)
 }
 
 pub async fn user_may_use_bear(
@@ -382,16 +456,16 @@ pub async fn user_may_use_bear(
     user_id: i32,
     bear_id: Uuid,
 ) -> Result<bool, DenError> {
-    let n: (i64,) = sqlx::query_as(
-        r"
-        SELECT COUNT(*)::bigint FROM user_bear WHERE user_id = $1 AND bear_id = $2
-        ",
+    let n = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)::bigint AS "count!" FROM user_bear WHERE user_id = $1 AND bear_id = $2
+        "#,
+        user_id,
+        bear_id
     )
-    .bind(user_id)
-    .bind(bear_id)
     .fetch_one(pool)
     .await?;
-    Ok(n.0 > 0)
+    Ok(n > 0)
 }
 
 pub async fn ensure_bear_profile_binding_rows(
@@ -399,16 +473,16 @@ pub async fn ensure_bear_profile_binding_rows(
     bear_id: Uuid,
 ) -> Result<(), DenError> {
     for profile in BearProfile::ALL {
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO bear_profile_bindings (bear_id, profile, binding_id)
             VALUES ($1, $2, $3)
             ON CONFLICT (bear_id, profile) DO NOTHING
             ",
+            bear_id,
+            profile.as_str(),
+            format!("den-native:{bear_id}:{}", profile.as_str())
         )
-        .bind(bear_id)
-        .bind(profile.as_str())
-        .bind(format!("den-native:{bear_id}:{}", profile.as_str()))
         .execute(pool)
         .await?;
     }
@@ -419,10 +493,12 @@ pub async fn list_bear_profile_bindings(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearProfileBinding>, DenError> {
-    sqlx::query_as::<_, BearProfileBinding>(
-        r"
+    sqlx::query_as!(
+        BearProfileBinding,
+        r#"
         SELECT bear_id, profile, binding_id, provisioning_status,
-               last_provisioned_version, last_synced_at, last_provisioning_error, config_hash,
+               last_provisioned_version, last_synced_at, last_provisioning_error,
+               config_hash AS "config_hash?: Json<serde_json::Value>",
                created_at, updated_at
         FROM bear_profile_bindings
         WHERE bear_id = $1
@@ -434,9 +510,9 @@ pub async fn list_bear_profile_bindings(
             WHEN 'watch' THEN 5
             ELSE 99
         END
-        ",
+        "#,
+        bear_id
     )
-    .bind(bear_id)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -447,17 +523,19 @@ pub async fn get_bear_profile_binding(
     bear_id: Uuid,
     profile: BearProfile,
 ) -> Result<Option<BearProfileBinding>, DenError> {
-    sqlx::query_as::<_, BearProfileBinding>(
-        r"
+    sqlx::query_as!(
+        BearProfileBinding,
+        r#"
         SELECT bear_id, profile, binding_id, provisioning_status,
-               last_provisioned_version, last_synced_at, last_provisioning_error, config_hash,
+               last_provisioned_version, last_synced_at, last_provisioning_error,
+               config_hash AS "config_hash?: Json<serde_json::Value>",
                created_at, updated_at
         FROM bear_profile_bindings
         WHERE bear_id = $1 AND profile = $2
-        ",
+        "#,
+        bear_id,
+        profile.as_str()
     )
-    .bind(bear_id)
-    .bind(profile.as_str())
     .fetch_optional(pool)
     .await
     .map_err(Into::into)
@@ -469,18 +547,18 @@ pub async fn profile_binding_id(
     bear_id: Uuid,
     profile: BearProfile,
 ) -> Result<Option<String>, DenError> {
-    let row: Option<(String,)> = sqlx::query_as(
+    sqlx::query_scalar!(
         r"
         SELECT binding_id
         FROM bear_profile_bindings
         WHERE bear_id = $1 AND profile = $2
         ",
+        bear_id,
+        profile.as_str()
     )
-    .bind(bear_id)
-    .bind(profile.as_str())
     .fetch_optional(pool)
-    .await?;
-    Ok(row.map(|r| r.0))
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn mark_bear_profile_binding_provisioning(
@@ -488,7 +566,7 @@ pub async fn mark_bear_profile_binding_provisioning(
     bear_id: Uuid,
     profile: BearProfile,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, provisioning_status, updated_at)
         VALUES ($1, $2, $3, 'provisioning', NOW())
@@ -497,10 +575,7 @@ pub async fn mark_bear_profile_binding_provisioning(
                       last_provisioning_error = NULL,
                       updated_at = NOW()
         ",
-    )
-    .bind(bear_id)
-    .bind(profile.as_str())
-    .bind(format!("den-native:{bear_id}:{}", profile.as_str()))
+    bear_id, profile.as_str(), format!("den-native:{bear_id}:{}", profile.as_str()))
     .execute(pool)
     .await?;
     Ok(())
@@ -514,7 +589,7 @@ pub async fn mark_bear_profile_binding_ready(
     version: i32,
     config_hash: &serde_json::Value,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_profile_bindings (
             bear_id, profile, binding_id, provisioning_status,
@@ -530,12 +605,7 @@ pub async fn mark_bear_profile_binding_ready(
                       config_hash = EXCLUDED.config_hash,
                       updated_at = NOW()
         ",
-    )
-    .bind(bear_id)
-    .bind(profile.as_str())
-    .bind(binding_id)
-    .bind(version)
-    .bind(config_hash)
+    bear_id, profile.as_str(), binding_id, version, config_hash)
     .execute(pool)
     .await?;
     Ok(())
@@ -548,7 +618,7 @@ pub async fn mark_bear_profile_binding_synced(
     version: i32,
     config_hash: &serde_json::Value,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE bear_profile_bindings
         SET provisioning_status = 'ready',
@@ -559,11 +629,11 @@ pub async fn mark_bear_profile_binding_synced(
             updated_at = NOW()
         WHERE bear_id = $1 AND profile = $2
         ",
+        bear_id,
+        profile.as_str(),
+        version,
+        config_hash
     )
-    .bind(bear_id)
-    .bind(profile.as_str())
-    .bind(version)
-    .bind(config_hash)
     .execute(pool)
     .await?;
     Ok(())
@@ -575,7 +645,7 @@ pub async fn mark_bear_profile_binding_failed(
     profile: BearProfile,
     message: &str,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_profile_bindings (
             bear_id, profile, binding_id, provisioning_status, last_provisioning_error, updated_at
@@ -586,11 +656,11 @@ pub async fn mark_bear_profile_binding_failed(
                       last_provisioning_error = EXCLUDED.last_provisioning_error,
                       updated_at = NOW()
         ",
+        bear_id,
+        profile.as_str(),
+        format!("den-native:{bear_id}:{}", profile.as_str()),
+        message
     )
-    .bind(bear_id)
-    .bind(profile.as_str())
-    .bind(format!("den-native:{bear_id}:{}", profile.as_str()))
-    .bind(message)
     .execute(pool)
     .await?;
     Ok(())
@@ -600,7 +670,8 @@ pub async fn list_bear_skills(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearSkillManifestEntry>, DenError> {
-    sqlx::query_as::<_, BearSkillManifestEntry>(
+    sqlx::query_as!(
+        BearSkillManifestEntry,
         r"
         SELECT bear_id, skill_name, skill_version, source, content_hash, applies_to_profiles,
                installed_at, last_verified_at, created_at, updated_at
@@ -608,8 +679,8 @@ pub async fn list_bear_skills(
         WHERE bear_id = $1
         ORDER BY skill_name, skill_version
         ",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -621,26 +692,27 @@ pub async fn propose_skill(
     proposed_by_agent_id: &str,
     skill_payload: &serde_json::Value,
 ) -> Result<Uuid, DenError> {
-    let row: (Uuid,) = sqlx::query_as(
+    let id = sqlx::query_scalar!(
         r"
         INSERT INTO bear_skill_proposals (bear_id, proposed_by_agent_id, skill_payload)
         VALUES ($1, $2, $3::jsonb)
         RETURNING id
         ",
+        bear_id,
+        proposed_by_agent_id,
+        skill_payload
     )
-    .bind(bear_id)
-    .bind(proposed_by_agent_id)
-    .bind(skill_payload)
     .fetch_one(pool)
     .await?;
-    Ok(row.0)
+    Ok(id)
 }
 
 pub async fn list_pending_skill_proposals(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearSkillProposal>, DenError> {
-    sqlx::query_as::<_, BearSkillProposal>(
+    sqlx::query_as!(
+        BearSkillProposal,
         r"
         SELECT bear_id, id, proposed_by_agent_id, proposed_at, skill_payload, status,
                reviewed_at, rejection_reason, resulting_manifest_bear_id,
@@ -649,8 +721,8 @@ pub async fn list_pending_skill_proposals(
         WHERE bear_id = $1 AND status = 'pending_review'
         ORDER BY proposed_at, id
         ",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -662,7 +734,7 @@ pub async fn ensure_default_runtime_plan(
     bear_id: Uuid,
     default_json: &serde_json::Value,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE bears
         SET runtime_plan = $2::jsonb,
@@ -670,9 +742,9 @@ pub async fn ensure_default_runtime_plan(
         WHERE id = $1
           AND runtime_plan IS NULL
         ",
+        bear_id,
+        default_json
     )
-    .bind(bear_id)
-    .bind(default_json)
     .execute(pool)
     .await?;
     Ok(())
@@ -682,28 +754,26 @@ pub async fn get_bear_bifrost_virtual_key(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Option<BearBifrostVirtualKey>, DenError> {
-    match sqlx::query_as::<_, BearBifrostVirtualKey>(
+    match sqlx::query_as!(BearBifrostVirtualKey,
         r"
         SELECT bear_id, virtual_key_id, virtual_key_name, virtual_key_value, virtual_key_value_encrypted
         FROM bear_bifrost_virtual_keys
         WHERE bear_id = $1
         ",
-    )
-    .bind(bear_id)
+    bear_id)
     .fetch_optional(pool)
     .await
     {
         Ok(row) => Ok(row),
         Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("42P01") => Ok(None),
         Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("42703") => {
-            sqlx::query_as::<_, BearBifrostVirtualKey>(
+            sqlx::query_as!(BearBifrostVirtualKey,
                 r"
                 SELECT bear_id, virtual_key_id, virtual_key_name, virtual_key_value, NULL::TEXT AS virtual_key_value_encrypted
                 FROM bear_bifrost_virtual_keys
                 WHERE bear_id = $1
                 ",
-            )
-            .bind(bear_id)
+            bear_id)
             .fetch_optional(pool)
             .await
             .map_err(Into::into)
@@ -780,7 +850,7 @@ pub async fn set_bear_bifrost_virtual_key(
         clear_bear_bifrost_virtual_key(pool, bear_id).await?;
         return Ok(());
     }
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_bifrost_virtual_keys (
             bear_id, virtual_key_id, virtual_key_name, virtual_key_value, virtual_key_value_encrypted, updated_at
@@ -793,11 +863,7 @@ pub async fn set_bear_bifrost_virtual_key(
             virtual_key_value_encrypted = EXCLUDED.virtual_key_value_encrypted,
             updated_at = NOW()
         ",
-    )
-    .bind(bear_id)
-    .bind(virtual_key_id)
-    .bind(virtual_key_name)
-    .bind(virtual_key_value_encrypted)
+    bear_id, virtual_key_id, virtual_key_name, virtual_key_value_encrypted)
     .execute(pool)
     .await?;
     Ok(())
@@ -814,7 +880,7 @@ pub async fn set_bear_bifrost_virtual_key_metadata(
     if virtual_key_id.is_none() && virtual_key_name.is_none() {
         return Ok(());
     }
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_bifrost_virtual_keys (
             bear_id, virtual_key_id, virtual_key_name, updated_at
@@ -825,20 +891,22 @@ pub async fn set_bear_bifrost_virtual_key_metadata(
             virtual_key_name = EXCLUDED.virtual_key_name,
             updated_at = NOW()
         ",
+        bear_id,
+        virtual_key_id,
+        virtual_key_name
     )
-    .bind(bear_id)
-    .bind(virtual_key_id)
-    .bind(virtual_key_name)
     .execute(pool)
     .await?;
     Ok(())
 }
 
 pub async fn clear_bear_bifrost_virtual_key(pool: &PgPool, bear_id: Uuid) -> Result<(), DenError> {
-    sqlx::query("DELETE FROM bear_bifrost_virtual_keys WHERE bear_id = $1")
-        .bind(bear_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM bear_bifrost_virtual_keys WHERE bear_id = $1",
+        bear_id
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -846,15 +914,16 @@ pub async fn list_profile_model_settings(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearProfileModelSetting>, DenError> {
-    sqlx::query_as::<_, BearProfileModelSetting>(
+    sqlx::query_as!(
+        BearProfileModelSetting,
         r"
         SELECT bear_id, profile, model, agent_loop_control_level
         FROM bear_profile_model_settings
         WHERE bear_id = $1
         ORDER BY profile
         ",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_all(pool)
     .await
     .map_err(Into::into)
@@ -865,15 +934,15 @@ pub async fn profile_model_setting(
     bear_id: Uuid,
     profile: BearProfile,
 ) -> Result<Option<String>, DenError> {
-    sqlx::query_scalar::<_, Option<String>>(
+    sqlx::query_scalar!(
         r"
         SELECT model
         FROM bear_profile_model_settings
         WHERE bear_id = $1 AND profile = $2
         ",
+        bear_id,
+        profile.as_str()
     )
-    .bind(bear_id)
-    .bind(profile.as_str())
     .fetch_optional(pool)
     .await
     .map(|row| {
@@ -892,7 +961,7 @@ pub async fn set_profile_model_setting(
     model: Option<&str>,
 ) -> Result<(), DenError> {
     let model = model.map(str::trim).filter(|s| !s.is_empty());
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_profile_model_settings (bear_id, profile, model, updated_at)
         VALUES ($1, $2, $3, NOW())
@@ -900,10 +969,10 @@ pub async fn set_profile_model_setting(
         SET model = EXCLUDED.model,
             updated_at = NOW()
         ",
+        bear_id,
+        profile.as_str(),
+        model
     )
-    .bind(bear_id)
-    .bind(profile.as_str())
-    .bind(model)
     .execute(pool)
     .await?;
     Ok(())
@@ -913,14 +982,14 @@ pub async fn bear_agent_loop_control_setting(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Option<AgentLoopControlLevel>, DenError> {
-    let raw = sqlx::query_scalar::<_, Option<String>>(
+    let raw = sqlx::query_scalar!(
         r"
         SELECT default_agent_loop_control_level
         FROM bears
         WHERE id = $1
         ",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_optional(pool)
     .await?
     .flatten();
@@ -932,15 +1001,15 @@ pub async fn profile_agent_loop_control_setting(
     bear_id: Uuid,
     profile: BearProfile,
 ) -> Result<Option<AgentLoopControlLevel>, DenError> {
-    let raw = sqlx::query_scalar::<_, Option<String>>(
+    let raw = sqlx::query_scalar!(
         r"
         SELECT agent_loop_control_level
         FROM bear_profile_model_settings
         WHERE bear_id = $1 AND profile = $2
         ",
+        bear_id,
+        profile.as_str()
     )
-    .bind(bear_id)
-    .bind(profile.as_str())
     .fetch_optional(pool)
     .await?
     .flatten();
@@ -952,16 +1021,16 @@ pub async fn set_bear_agent_loop_control_setting(
     bear_id: Uuid,
     level: Option<AgentLoopControlLevel>,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE bears
         SET default_agent_loop_control_level = $2,
             updated_at = NOW()
         WHERE id = $1
         ",
+        bear_id,
+        level.map(AgentLoopControlLevel::as_str)
     )
-    .bind(bear_id)
-    .bind(level.map(AgentLoopControlLevel::as_str))
     .execute(pool)
     .await?;
     Ok(())
@@ -981,16 +1050,16 @@ pub async fn set_bear_tool_budget_multiplier(
         }
         None => None,
     };
-    sqlx::query(
+    sqlx::query!(
         r"
         UPDATE bears
         SET default_tool_budget_multiplier = $2,
             updated_at = NOW()
         WHERE id = $1
         ",
+        bear_id,
+        multiplier
     )
-    .bind(bear_id)
-    .bind(multiplier)
     .execute(pool)
     .await?;
     Ok(())
@@ -1002,7 +1071,7 @@ pub async fn set_profile_agent_loop_control_setting(
     profile: BearProfile,
     level: Option<AgentLoopControlLevel>,
 ) -> Result<(), DenError> {
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_profile_model_settings (
             bear_id, profile, agent_loop_control_level, updated_at
@@ -1012,10 +1081,10 @@ pub async fn set_profile_agent_loop_control_setting(
         SET agent_loop_control_level = EXCLUDED.agent_loop_control_level,
             updated_at = NOW()
         ",
+        bear_id,
+        profile.as_str(),
+        level.map(AgentLoopControlLevel::as_str)
     )
-    .bind(bear_id)
-    .bind(profile.as_str())
-    .bind(level.map(AgentLoopControlLevel::as_str))
     .execute(pool)
     .await?;
     Ok(())
@@ -1095,7 +1164,7 @@ pub async fn update_live_reflection_settings(
     let stale_after_minutes = stale_after_minutes.clamp(1, 1440);
     let activity_threshold = activity_threshold.clamp(1, 1000);
     let sweep_limit = sweep_limit.clamp(1, 100);
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r"
         UPDATE bears
         SET live_reflection_enabled = $2,
@@ -1105,12 +1174,12 @@ pub async fn update_live_reflection_settings(
             updated_at = NOW()
         WHERE id = $1
         ",
+        bear_id,
+        enabled,
+        stale_after_minutes,
+        activity_threshold,
+        sweep_limit
     )
-    .bind(bear_id)
-    .bind(enabled)
-    .bind(stale_after_minutes)
-    .bind(activity_threshold)
-    .bind(sweep_limit)
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {

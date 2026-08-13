@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE bears\n        SET runtime_plan = $2::jsonb,\n            updated_at = NOW()\n        WHERE id = $1\n          AND runtime_plan IS NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b5f8971cfb37aee41184a7194d230d250e2481fb8f29651e90ec0869a0db7a68"
+}

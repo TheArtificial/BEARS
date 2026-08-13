@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM turn_run_recovery_snapshots WHERE run_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "10857100e6c4d3d4b6e8bdbb9e58e1dbfdc2f1611e95ae0d943a307e7cc194d6"
+}
