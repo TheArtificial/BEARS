@@ -300,8 +300,6 @@ pub(crate) struct DocketTaskListArguments {
     #[serde(default)]
     pub(crate) job_id: Option<Uuid>,
     #[serde(default)]
-    pub(crate) session_anchor_id: Option<Uuid>,
-    #[serde(default)]
     pub(crate) parent_task_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) include_descendants: bool,
