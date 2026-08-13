@@ -1016,6 +1016,12 @@ async fn reconcile_job_status(
                     WHERE work_run.job_run_id = $2
                       AND work_run.executing_task_id = task.id
                       AND work_run.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')
+                ) OR EXISTS (
+                    SELECT 1 FROM docket_execution_sessions execution_session
+                    WHERE execution_session.job_id = $1
+                      AND execution_session.run_id = $2
+                      AND execution_session.task_id = task.id
+                      AND execution_session.state = 'active'
                 )
             ) AS "in_progress!: _",
             COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'blocked') AS "blocked!: _",
@@ -1535,6 +1541,7 @@ pub(super) async fn execute_job(
     }
 
     if tasks_complete && criteria_complete {
+        complete_job_run(pool, &request, run.id).await?;
         record_execution_session(pool, &request, run.id, None, "completed").await?;
         let job = get_job(pool, request.bear_id, request.job_id)
             .await?
@@ -1654,6 +1661,39 @@ request.actor_role.as_str(),
 request.actor_agent_id.as_deref(),
 request.actor_user_id,
 json!({"status": "running"}))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn complete_job_run(
+    pool: &PgPool,
+    request: &DocketJobExecuteRequest,
+    run_id: Uuid,
+) -> Result<(), DenError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query!(
+        r#"
+        UPDATE bear_job_runs
+        SET state = 'completed', finished_at = COALESCE(finished_at, NOW()), updated_at = NOW()
+        WHERE id = $1 AND state NOT IN ('completed', 'cancelled', 'failed')
+        "#,
+        run_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        r#"
+        INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_agent_id, by_user_id, payload)
+        VALUES ($1, $2, 'job_completed', $3, $4, $5, '{"status":"completed"}'::jsonb)
+        "#,
+        request.job_id,
+        run_id,
+        request.actor_role.as_str(),
+        request.actor_agent_id.as_deref(),
+        request.actor_user_id,
+    )
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -2127,13 +2167,6 @@ pub(super) async fn update_task(
     if append_outcome {
         append_terminal_outcome(&mut tx, &patched, &update).await?;
     }
-    if let Some(run_state) = update
-        .run_state
-        .as_ref()
-        .filter(|state| matches!(state.status.as_str(), "done" | "cancelled"))
-    {
-        roll_up_completed_parents(&mut tx, current.parent_task_id, run_state.run_id).await?;
-    }
     if let (Some(job_id), Some(run_state)) = (current.job_id, update.run_state.as_ref()) {
         reconcile_job_status(&mut tx, job_id, run_state.run_id).await?;
     }
@@ -2378,60 +2411,6 @@ async fn validate_parent_completion(
             "Docket phase cannot be completed while {unfinished_children} child task(s) remain unfinished: task_id={}",
             task.id
         )));
-    }
-    Ok(())
-}
-
-async fn roll_up_completed_parents(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    mut parent_id: Option<Uuid>,
-    run_id: Uuid,
-) -> Result<(), DenError> {
-    while let Some(task_id) = parent_id {
-        let unfinished_descendants = sqlx::query_scalar!(
-            r#"
-            WITH RECURSIVE descendants AS (
-                SELECT id FROM bear_tasks WHERE parent_task_id = $1
-                UNION ALL
-                SELECT child.id
-                FROM bear_tasks child
-                JOIN descendants parent ON child.parent_task_id = parent.id
-            )
-            SELECT COUNT(*) AS "count!: i64"
-            FROM descendants
-            LEFT JOIN bear_task_run_state state
-              ON state.task_id = descendants.id AND state.run_id = $2
-            WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled')
-            "#,
-            task_id,
-            run_id
-        )
-        .fetch_one(&mut **tx)
-        .await?;
-        if unfinished_descendants != 0 {
-            break;
-        }
-
-        sqlx::query!(
-            r"
-            UPDATE bear_task_run_state
-            SET status = 'done',
-                result_summary = COALESCE(NULLIF(result_summary, ''), 'All child tasks are terminal.'),
-                finished_at = COALESCE(finished_at, NOW()),
-                updated_at = NOW()
-            WHERE run_id = $1 AND task_id = $2 AND status NOT IN ('done', 'cancelled')
-            ",
-
-run_id,
-task_id)
-        .execute(&mut **tx)
-        .await?;
-        parent_id = sqlx::query_scalar!(
-            r#"SELECT parent_task_id FROM bear_tasks WHERE id = $1"#,
-            task_id
-        )
-        .fetch_one(&mut **tx)
-        .await?;
     }
     Ok(())
 }

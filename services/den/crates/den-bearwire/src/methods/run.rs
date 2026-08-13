@@ -338,6 +338,10 @@ impl ResolvedRunModelSource {
         matches!(self, Self::ConversationExplicit | Self::ConversationAuto)
     }
 
+    const fn is_default(self) -> bool {
+        matches!(self, Self::ProfileDefault | Self::BearDefault | Self::SystemDefault)
+    }
+
     const fn as_str(self) -> &'static str {
         match self {
             Self::ConversationExplicit => "conversation_explicit",
@@ -2053,6 +2057,33 @@ async fn run_start_with_recovery_source(
     };
     let resolved_model =
         preflight_pair_run_model(state, &bear, &session_id, &upstream_target, stance).await?;
+    if resolved_model.source.is_default() {
+        let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
+            &state.sqlx_pool,
+            bear.id,
+            Some(user_id),
+            &upstream_target,
+            Some(&session_id),
+            None,
+        )
+        .await?;
+        let established = den_service::conversation::persistence::establish_conversation_default_model_state(
+            &state.sqlx_pool,
+            conversation.id,
+            &resolved_model.handle,
+            "pair_default_resolved_at_preflight",
+        )
+        .await?;
+        if established {
+            tracing::info!(
+                session_id,
+                conversation_id = %upstream_target,
+                model_handle = %resolved_model.handle,
+                model_selection_source = %resolved_model.source,
+                "Established default Pair model on conversation for continuity"
+            );
+        }
+    }
     client_sessions::upsert_session(
         &state.sqlx_pool,
         client_sessions::UpsertClientSession {

@@ -25,10 +25,9 @@ use crate::work_runs::{
 };
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
-    DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
-    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskUpdate, PgDocketService, RoutingStrategy,
-    TaskListVisibility,
+    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService, DocketTaskDefinitionPatch,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate,
+    DocketTaskScope, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskListVisibility,
 };
 
 /// `claim_next_work_run` is deliberately global (any runner takes the oldest

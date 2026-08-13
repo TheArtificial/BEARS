@@ -94,7 +94,8 @@ impl From<BearWithMembershipRow> for BearWithMembership {
 }
 
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
-    sqlx::query_as!(Bear,
+    sqlx::query_as!(
+        Bear,
         r#"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier,
                tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
@@ -113,7 +114,8 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
 }
 
 pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError> {
-    sqlx::query_as!(Bear,
+    sqlx::query_as!(
+        Bear,
         r#"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier,
                tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
@@ -125,7 +127,8 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError>
         FROM bears
         WHERE id = $1
         "#,
-    id)
+        id
+    )
     .fetch_optional(pool)
     .await
     .map_err(Into::into)
@@ -136,8 +139,8 @@ pub async fn bear_slug_exists(pool: &PgPool, slug: &str) -> Result<bool, DenErro
         "SELECT COUNT(*)::bigint AS \"count!\" FROM bears WHERE slug = $1",
         slug
     )
-        .fetch_one(pool)
-        .await?;
+    .fetch_one(pool)
+    .await?;
     Ok(n > 0)
 }
 

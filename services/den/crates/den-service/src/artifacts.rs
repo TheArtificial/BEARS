@@ -868,7 +868,9 @@ pub async fn list_artifact_citations(
     .await?;
 
     rows.into_iter()
-        .map(|row| artifact_from_row(row).map(|artifact| citation_from_artifact(&artifact, &context)))
+        .map(|row| {
+            artifact_from_row(row).map(|artifact| citation_from_artifact(&artifact, &context))
+        })
         .collect()
 }
 
@@ -1140,8 +1142,8 @@ mod tests {
             "Artifact Test Bear",
         )
         .fetch_one(pool)
-            .await
-            .expect("create bear")
+        .await
+        .expect("create bear")
     }
 
     fn reserve_input(bear_id: Uuid, user_id: i32) -> ReserveArtifactInput {

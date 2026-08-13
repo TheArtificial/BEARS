@@ -1176,6 +1176,33 @@ pub async fn get_conversation_model_state(
     row.map(decode_conversation_model_state).transpose()
 }
 
+/// Establishes an automatic selection only when the conversation has no model state.
+/// This must not overwrite an explicit human selection or an existing automatic choice.
+pub async fn establish_conversation_default_model_state(
+    pool: &PgPool,
+    conversation_id: Uuid,
+    selected_model: &str,
+    selected_reason: &str,
+) -> Result<bool, DenError> {
+    let inserted = sqlx::query(
+        r"
+        INSERT INTO conversation_model_state (
+            conversation_id, selection_mode, requested_model, selected_model,
+            selected_reason, updated_at
+        ) VALUES ($1, 'auto', NULL, $2, $3, NOW())
+        ON CONFLICT (conversation_id) DO NOTHING
+        ",
+    )
+    .bind(conversation_id)
+    .bind(selected_model.trim())
+    .bind(selected_reason.trim())
+    .execute(pool)
+    .await
+    .map_err(|err| DenError::Database(format!("establish conversation default model state: {err}")))?
+    .rows_affected();
+    Ok(inserted == 1)
+}
+
 pub async fn set_conversation_model_state(
     pool: &PgPool,
     conversation_id: Uuid,
