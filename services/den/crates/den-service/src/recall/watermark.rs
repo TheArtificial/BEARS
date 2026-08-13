@@ -162,30 +162,30 @@ struct RecallRunStats {
 
 /// Last-success timestamp and failed-run count for the `recall_index` reflection lane.
 async fn recall_index_run_stats(pg: &PgPool, bear_id: Uuid) -> Result<RecallRunStats, DenError> {
-    let last_success_at = sqlx::query_scalar::<_, Option<OffsetDateTime>>(
-        r"
-        SELECT MAX(completed_at)
+    let last_success_at: Option<OffsetDateTime> = sqlx::query_scalar!(
+        r#"
+        SELECT MAX(completed_at) AS "last_success_at?"
         FROM bear_reflection_runs
         WHERE bear_id = $1 AND lane = $2 AND status = 'completed'
-        ",
+        "#,
+        bear_id,
+        RECALL_INDEX_LANE,
     )
-    .bind(bear_id)
-    .bind(RECALL_INDEX_LANE)
     .fetch_one(pg)
     .await
     .map_err(|e| DenError::System(format!("recall_index run stats (last success): {e}")))?;
 
-    let failed_run_count = sqlx::query_scalar::<_, i64>(
-        r"
-        SELECT COUNT(*)
+    let failed_run_count: i64 = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)::bigint AS "failed_run_count!"
         FROM bear_reflection_runs
         WHERE bear_id = $1 AND lane = $2 AND status = 'failed'
           AND ($3::timestamptz IS NULL OR created_at > $3)
-        ",
+        "#,
+        bear_id,
+        RECALL_INDEX_LANE,
+        last_success_at,
     )
-    .bind(bear_id)
-    .bind(RECALL_INDEX_LANE)
-    .bind(last_success_at)
     .fetch_one(pg)
     .await
     .map_err(|e| DenError::System(format!("recall_index run stats (failed count): {e}")))?;
@@ -314,7 +314,7 @@ mod tests {
         completed_hours_ago: Option<i32>,
         created_hours_ago: i32,
     ) {
-        sqlx::query(
+        sqlx::query!(
             r"
             INSERT INTO bear_reflection_runs (bear_id, lane, trigger, status, completed_at, created_at)
             VALUES ($1, $2, 'watermark-test', $3,
@@ -322,12 +322,12 @@ mod tests {
                          ELSE NOW() - make_interval(hours => $4) END,
                     NOW() - make_interval(hours => $5))
             ",
+            bear_id,
+            lane,
+            status,
+            completed_hours_ago,
+            created_hours_ago,
         )
-        .bind(bear_id)
-        .bind(lane)
-        .bind(status)
-        .bind(completed_hours_ago)
-        .bind(created_hours_ago)
         .execute(pool)
         .await
         .expect("insert reflection run");

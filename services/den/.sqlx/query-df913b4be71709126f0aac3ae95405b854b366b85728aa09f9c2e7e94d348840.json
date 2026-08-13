@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT memory_id AS \"memory_id!\"\n        FROM recall_passages\n        WHERE bear_id = $1 AND embedding_standard = $2 AND deleted_at IS NULL\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "memory_id!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "df913b4be71709126f0aac3ae95405b854b366b85728aa09f9c2e7e94d348840"
+}

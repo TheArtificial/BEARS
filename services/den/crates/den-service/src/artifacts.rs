@@ -16,7 +16,7 @@ use std::{fmt, str::FromStr};
 use den_core::{BearProfile, DenError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -358,6 +358,42 @@ pub struct ArtifactLink {
     pub created_at: OffsetDateTime,
 }
 
+struct ArtifactRow {
+    id: Uuid,
+    artifact_ref: String,
+    bear_id: Uuid,
+    created_by_user_id: Option<i32>,
+    owner_profile: String,
+    kind: String,
+    title: Option<String>,
+    summary: Option<String>,
+    content_type: Option<String>,
+    storage_kind: String,
+    storage_key: Option<String>,
+    content_bytes: Option<i64>,
+    content_sha256: Option<String>,
+    lifecycle: String,
+    visibility: String,
+    provenance: Value,
+    metadata: Value,
+    expires_at: Option<OffsetDateTime>,
+    finalized_at: Option<OffsetDateTime>,
+    deleted_at: Option<OffsetDateTime>,
+    created_at: OffsetDateTime,
+    updated_at: OffsetDateTime,
+}
+
+struct ArtifactLinkRow {
+    id: Uuid,
+    artifact_ref: String,
+    target_kind: String,
+    target_id: String,
+    role: String,
+    metadata: Value,
+    created_by_user_id: Option<i32>,
+    created_at: OffsetDateTime,
+}
+
 pub async fn reserve_artifact(
     pool: &PgPool,
     input: ReserveArtifactInput,
@@ -367,32 +403,37 @@ pub async fn reserve_artifact(
     validate_json_object("metadata", &input.metadata)?;
 
     let artifact_ref = new_artifact_ref();
-    let row = sqlx::query(
+    let row = sqlx::query_as!(
+        ArtifactRow,
         "INSERT INTO artifacts (
             artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
             title, summary, content_type, storage_kind, visibility, provenance,
             metadata, expires_at
          )
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-         RETURNING *",
+         RETURNING
+            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, storage_key, content_bytes,
+            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,
+            finalized_at, deleted_at, created_at, updated_at",
+        artifact_ref,
+        input.bear_id,
+        input.created_by_user_id,
+        input.owner_profile.as_str(),
+        input.kind,
+        input.title,
+        input.summary,
+        input.content_type,
+        input.storage_kind.as_str(),
+        input.visibility.as_str(),
+        input.provenance,
+        input.metadata,
+        input.expires_at,
     )
-    .bind(&artifact_ref)
-    .bind(input.bear_id)
-    .bind(input.created_by_user_id)
-    .bind(input.owner_profile.as_str())
-    .bind(input.kind)
-    .bind(input.title)
-    .bind(input.summary)
-    .bind(input.content_type)
-    .bind(input.storage_kind.as_str())
-    .bind(input.visibility.as_str())
-    .bind(input.provenance)
-    .bind(input.metadata)
-    .bind(input.expires_at)
     .fetch_one(pool)
     .await?;
 
-    artifact_from_row(&row)
+    artifact_from_row(row)
 }
 
 pub async fn finalize_metadata_only_artifact(
@@ -414,7 +455,8 @@ pub async fn finalize_metadata_only_artifact(
         validate_sha256(hash)?;
     }
 
-    let row = sqlx::query(
+    let row = sqlx::query_as!(
+        ArtifactRow,
         "UPDATE artifacts
          SET lifecycle = 'finalized', storage_key = $3, content_bytes = $4,
              content_sha256 = $5, metadata = $6, finalized_at = NOW(), updated_at = NOW()
@@ -422,19 +464,23 @@ pub async fn finalize_metadata_only_artifact(
            AND bear_id = $2
            AND lifecycle = 'pending'
            AND storage_kind = 'db_text'
-         RETURNING *",
+         RETURNING
+            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, storage_key, content_bytes,
+            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,
+            finalized_at, deleted_at, created_at, updated_at",
+        input.artifact_ref,
+        input.bear_id,
+        input.storage_key,
+        input.content_bytes,
+        input.content_sha256,
+        input.metadata,
     )
-    .bind(&input.artifact_ref)
-    .bind(input.bear_id)
-    .bind(input.storage_key)
-    .bind(input.content_bytes)
-    .bind(input.content_sha256)
-    .bind(input.metadata)
     .fetch_optional(pool)
     .await?;
 
     match row {
-        Some(row) => artifact_from_row(&row),
+        Some(row) => artifact_from_row(row),
         None => Err(DenError::ValidationError(format!(
             "artifact {} is not pending or does not exist",
             input.artifact_ref
@@ -483,7 +529,8 @@ pub async fn finalize_garage_artifact(
     validate_sha256(&input.content_sha256)?;
 
     let storage_key = garage_artifact_storage_key(&input.artifact_ref)?;
-    let row = sqlx::query(
+    let row = sqlx::query_as!(
+        ArtifactRow,
         "UPDATE artifacts
          SET lifecycle = 'finalized', storage_key = $3, content_type = $4,
              content_bytes = $5, content_sha256 = $6, metadata = $7,
@@ -492,20 +539,24 @@ pub async fn finalize_garage_artifact(
             AND bear_id = $2
             AND lifecycle = 'pending'
             AND storage_kind = 'garage_artifacts'
-         RETURNING *",
+         RETURNING
+            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, storage_key, content_bytes,
+            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,
+            finalized_at, deleted_at, created_at, updated_at",
+        &input.artifact_ref,
+        input.bear_id,
+        storage_key,
+        input.content_type,
+        input.content_bytes,
+        input.content_sha256,
+        input.metadata,
     )
-    .bind(&input.artifact_ref)
-    .bind(input.bear_id)
-    .bind(storage_key)
-    .bind(input.content_type)
-    .bind(input.content_bytes)
-    .bind(input.content_sha256)
-    .bind(input.metadata)
     .fetch_optional(pool)
     .await?;
 
     match row {
-        Some(row) => artifact_from_row(&row),
+        Some(row) => artifact_from_row(row),
         None => Err(DenError::ValidationError(format!(
             "artifact {} is not pending garage-backed content or does not exist",
             input.artifact_ref
@@ -533,23 +584,28 @@ pub async fn finalize_git_commit_artifact(
             }
         }),
     )?;
-    let row = sqlx::query(
+    let row = sqlx::query_as!(
+        ArtifactRow,
         "UPDATE artifacts
          SET lifecycle = 'finalized', metadata = $3, finalized_at = NOW(), updated_at = NOW()
          WHERE artifact_ref = $1
             AND bear_id = $2
             AND lifecycle = 'pending'
             AND storage_kind = 'external_git_commit'
-         RETURNING *",
+         RETURNING
+            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, storage_key, content_bytes,
+            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,
+            finalized_at, deleted_at, created_at, updated_at",
+        &input.artifact_ref,
+        input.bear_id,
+        metadata,
     )
-    .bind(&input.artifact_ref)
-    .bind(input.bear_id)
-    .bind(metadata)
     .fetch_optional(pool)
     .await?;
 
     match row {
-        Some(row) => artifact_from_row(&row),
+        Some(row) => artifact_from_row(row),
         None => Err(DenError::ValidationError(format!(
             "artifact {} is not pending external Git commit or does not exist",
             input.artifact_ref
@@ -587,14 +643,23 @@ pub async fn get_artifact_metadata(
     bear_id: Uuid,
     artifact_ref: &str,
 ) -> Result<ArtifactMetadata, DenError> {
-    let row = sqlx::query("SELECT * FROM artifacts WHERE bear_id = $1 AND artifact_ref = $2")
-        .bind(bear_id)
-        .bind(artifact_ref)
-        .fetch_optional(pool)
-        .await?;
+    let row = sqlx::query_as!(
+        ArtifactRow,
+        "SELECT
+            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, storage_key, content_bytes,
+            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,
+            finalized_at, deleted_at, created_at, updated_at
+         FROM artifacts
+         WHERE bear_id = $1 AND artifact_ref = $2",
+        bear_id,
+        artifact_ref,
+    )
+    .fetch_optional(pool)
+    .await?;
 
     match row {
-        Some(row) => artifact_from_row(&row),
+        Some(row) => artifact_from_row(row),
         None => Err(DenError::NotFound(format!(
             "artifact not found: {artifact_ref}"
         ))),
@@ -648,19 +713,24 @@ pub async fn mark_artifact_deleted(
     bear_id: Uuid,
     artifact_ref: &str,
 ) -> Result<ArtifactMetadata, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as!(
+        ArtifactRow,
         "UPDATE artifacts
          SET lifecycle = 'deleted', deleted_at = NOW(), updated_at = NOW()
          WHERE bear_id = $1 AND artifact_ref = $2 AND lifecycle <> 'deleted'
-         RETURNING *",
+         RETURNING
+            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, storage_key, content_bytes,
+            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,
+            finalized_at, deleted_at, created_at, updated_at",
+        bear_id,
+        artifact_ref,
     )
-    .bind(bear_id)
-    .bind(artifact_ref)
     .fetch_optional(pool)
     .await?;
 
     match row {
-        Some(row) => artifact_from_row(&row),
+        Some(row) => artifact_from_row(row),
         None => Err(DenError::NotFound(format!(
             "artifact not found or already deleted: {artifact_ref}"
         ))),
@@ -676,7 +746,8 @@ pub async fn attach_artifact(
     validate_non_empty("artifact link role", &input.role)?;
     validate_json_object("metadata", &input.metadata)?;
 
-    let row = sqlx::query(
+    let row = sqlx::query_as!(
+        ArtifactLinkRow,
         "WITH artifact AS (
             SELECT id, artifact_ref FROM artifacts
             WHERE bear_id = $1 AND artifact_ref = $2 AND lifecycle <> 'deleted'
@@ -688,21 +759,21 @@ pub async fn attach_artifact(
          ON CONFLICT (artifact_id, target_kind, target_id, role)
          DO UPDATE SET metadata = EXCLUDED.metadata
          RETURNING id,
-            (SELECT artifact_ref FROM artifact) AS artifact_ref,
+            (SELECT artifact_ref FROM artifact) AS \"artifact_ref!\",
             target_kind, target_id, role, metadata, created_by_user_id, created_at",
+        input.bear_id,
+        &input.artifact_ref,
+        input.target_kind,
+        input.target_id,
+        input.role,
+        input.metadata,
+        input.created_by_user_id,
     )
-    .bind(input.bear_id)
-    .bind(&input.artifact_ref)
-    .bind(input.target_kind)
-    .bind(input.target_id)
-    .bind(input.role)
-    .bind(input.metadata)
-    .bind(input.created_by_user_id)
     .fetch_optional(pool)
     .await?;
 
     match row {
-        Some(row) => link_from_row(&row),
+        Some(row) => link_from_row(row),
         None => Err(DenError::NotFound(format!(
             "artifact not found or deleted: {}",
             input.artifact_ref
@@ -716,7 +787,8 @@ pub async fn list_artifact_links(
     target_kind: &str,
     target_id: &str,
 ) -> Result<Vec<ArtifactLink>, DenError> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as!(
+        ArtifactLinkRow,
         "SELECT artifact_links.id, artifacts.artifact_ref, artifact_links.target_kind,
             artifact_links.target_id, artifact_links.role, artifact_links.metadata,
             artifact_links.created_by_user_id, artifact_links.created_at
@@ -727,14 +799,14 @@ pub async fn list_artifact_links(
             AND artifact_links.target_id = $3
             AND artifacts.lifecycle <> 'deleted'
          ORDER BY artifact_links.created_at DESC",
+        bear_id,
+        target_kind,
+        target_id,
     )
-    .bind(bear_id)
-    .bind(target_kind)
-    .bind(target_id)
     .fetch_all(pool)
     .await?;
 
-    rows.iter().map(link_from_row).collect()
+    rows.into_iter().map(link_from_row).collect()
 }
 
 pub async fn attach_docket_artifact(
@@ -771,8 +843,16 @@ pub async fn list_artifact_citations(
         ));
     }
 
-    let rows = sqlx::query(
-        "SELECT artifacts.*
+    let rows = sqlx::query_as!(
+        ArtifactRow,
+        "SELECT
+            artifacts.id, artifacts.artifact_ref, artifacts.bear_id,
+            artifacts.created_by_user_id, artifacts.owner_profile, artifacts.kind,
+            artifacts.title, artifacts.summary, artifacts.content_type, artifacts.storage_kind,
+            artifacts.storage_key, artifacts.content_bytes, artifacts.content_sha256,
+            artifacts.lifecycle, artifacts.visibility, artifacts.provenance, artifacts.metadata,
+            artifacts.expires_at, artifacts.finalized_at, artifacts.deleted_at,
+            artifacts.created_at, artifacts.updated_at
          FROM artifact_links
          JOIN artifacts ON artifacts.id = artifact_links.artifact_id
          WHERE artifacts.bear_id = $1
@@ -780,17 +860,15 @@ pub async fn list_artifact_citations(
             AND artifact_links.target_id = $3
             AND artifacts.lifecycle <> 'deleted'
          ORDER BY artifact_links.created_at DESC",
+        bear_id,
+        target_kind,
+        target_id,
     )
-    .bind(bear_id)
-    .bind(target_kind)
-    .bind(target_id)
     .fetch_all(pool)
     .await?;
 
-    rows.iter()
-        .map(|row| {
-            artifact_from_row(row).map(|artifact| citation_from_artifact(&artifact, &context))
-        })
+    rows.into_iter()
+        .map(|row| artifact_from_row(row).map(|artifact| citation_from_artifact(&artifact, &context)))
         .collect()
 }
 
@@ -823,22 +901,28 @@ pub async fn list_expired_artifact_gc_candidates(
         ));
     }
 
-    let rows = sqlx::query(
-        "SELECT * FROM artifacts
+    let rows = sqlx::query_as!(
+        ArtifactRow,
+        "SELECT
+            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, storage_key, content_bytes,
+            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,
+            finalized_at, deleted_at, created_at, updated_at
+         FROM artifacts
          WHERE bear_id = $1
             AND expires_at IS NOT NULL
             AND expires_at <= $2
             AND lifecycle IN ('finalized', 'expired')
          ORDER BY expires_at ASC, created_at ASC
          LIMIT $3",
+        bear_id,
+        now,
+        limit,
     )
-    .bind(bear_id)
-    .bind(now)
-    .bind(limit)
     .fetch_all(pool)
     .await?;
 
-    rows.iter().map(artifact_from_row).collect()
+    rows.into_iter().map(artifact_from_row).collect()
 }
 
 fn new_artifact_ref() -> String {
@@ -905,49 +989,46 @@ fn citation_from_artifact(
     }
 }
 
-fn artifact_from_row(row: &sqlx::postgres::PgRow) -> Result<ArtifactMetadata, DenError> {
-    let owner_profile: String = row.try_get("owner_profile")?;
-    let storage_kind: String = row.try_get("storage_kind")?;
-    let lifecycle: String = row.try_get("lifecycle")?;
-    let visibility: String = row.try_get("visibility")?;
+fn artifact_from_row(row: ArtifactRow) -> Result<ArtifactMetadata, DenError> {
     Ok(ArtifactMetadata {
-        id: row.try_get("id")?,
-        artifact_ref: row.try_get("artifact_ref")?,
-        bear_id: row.try_get("bear_id")?,
-        created_by_user_id: row.try_get("created_by_user_id")?,
-        owner_profile: owner_profile
+        id: row.id,
+        artifact_ref: row.artifact_ref,
+        bear_id: row.bear_id,
+        created_by_user_id: row.created_by_user_id,
+        owner_profile: row
+            .owner_profile
             .parse()
             .map_err(|err: String| DenError::ValidationError(err))?,
-        kind: row.try_get("kind")?,
-        title: row.try_get("title")?,
-        summary: row.try_get("summary")?,
-        content_type: row.try_get("content_type")?,
-        storage_kind: storage_kind.parse()?,
-        storage_key: row.try_get("storage_key")?,
-        content_bytes: row.try_get("content_bytes")?,
-        content_sha256: row.try_get("content_sha256")?,
-        lifecycle: lifecycle.parse()?,
-        visibility: visibility.parse()?,
-        provenance: row.try_get("provenance")?,
-        metadata: row.try_get("metadata")?,
-        expires_at: row.try_get("expires_at")?,
-        finalized_at: row.try_get("finalized_at")?,
-        deleted_at: row.try_get("deleted_at")?,
-        created_at: row.try_get("created_at")?,
-        updated_at: row.try_get("updated_at")?,
+        kind: row.kind,
+        title: row.title,
+        summary: row.summary,
+        content_type: row.content_type,
+        storage_kind: row.storage_kind.parse()?,
+        storage_key: row.storage_key,
+        content_bytes: row.content_bytes,
+        content_sha256: row.content_sha256,
+        lifecycle: row.lifecycle.parse()?,
+        visibility: row.visibility.parse()?,
+        provenance: row.provenance,
+        metadata: row.metadata,
+        expires_at: row.expires_at,
+        finalized_at: row.finalized_at,
+        deleted_at: row.deleted_at,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
     })
 }
 
-fn link_from_row(row: &sqlx::postgres::PgRow) -> Result<ArtifactLink, DenError> {
+fn link_from_row(row: ArtifactLinkRow) -> Result<ArtifactLink, DenError> {
     Ok(ArtifactLink {
-        id: row.try_get("id")?,
-        artifact_ref: row.try_get("artifact_ref")?,
-        target_kind: row.try_get("target_kind")?,
-        target_id: row.try_get("target_id")?,
-        role: row.try_get("role")?,
-        metadata: row.try_get("metadata")?,
-        created_by_user_id: row.try_get("created_by_user_id")?,
-        created_at: row.try_get("created_at")?,
+        id: row.id,
+        artifact_ref: row.artifact_ref,
+        target_kind: row.target_kind,
+        target_id: row.target_id,
+        role: row.role,
+        metadata: row.metadata,
+        created_by_user_id: row.created_by_user_id,
+        created_at: row.created_at,
     })
 }
 
@@ -1039,13 +1120,13 @@ mod tests {
     async fn create_user(pool: &PgPool) -> i32 {
         let suffix = Uuid::new_v4().simple().to_string();
         let username = format!("artifactuser{}", &suffix[..12]);
-        sqlx::query_scalar(
+        sqlx::query_scalar!(
             "INSERT INTO users (email, username, display_name, passhash)
              VALUES ($1, $2, $3, 'x') RETURNING id",
+            format!("{username}@example.invalid"),
+            &username,
+            &username,
         )
-        .bind(format!("{username}@example.invalid"))
-        .bind(&username)
-        .bind(&username)
         .fetch_one(pool)
         .await
         .expect("create user")
@@ -1053,10 +1134,12 @@ mod tests {
 
     async fn create_bear(pool: &PgPool) -> Uuid {
         let suffix = Uuid::new_v4().simple().to_string();
-        sqlx::query_scalar("INSERT INTO bears (slug, name) VALUES ($1, $2) RETURNING id")
-            .bind(format!("artifact-bear-{}", &suffix[..12]))
-            .bind("Artifact Test Bear")
-            .fetch_one(pool)
+        sqlx::query_scalar!(
+            "INSERT INTO bears (slug, name) VALUES ($1, $2) RETURNING id",
+            format!("artifact-bear-{}", &suffix[..12]),
+            "Artifact Test Bear",
+        )
+        .fetch_one(pool)
             .await
             .expect("create bear")
     }

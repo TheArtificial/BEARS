@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE recall_passages\n        SET deleted_at = NOW()\n        WHERE bear_id = $1 AND memory_id = $2 AND embedding_standard = $3\n          AND deleted_at IS NULL\n        RETURNING point_id AS \"point_id!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "point_id!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9d29706d8584dc278ace5dce5232d4498fa1a274f67179eff201b36caa3554aa"
+}

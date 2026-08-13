@@ -407,16 +407,16 @@ pub async fn user_may_manage_surface(
     user_id: i32,
     surface_id: Uuid,
 ) -> Result<bool, DenError> {
-    let exists: bool = sqlx::query_scalar(
-        r"
+    let exists = sqlx::query_scalar!(
+        r#"
         SELECT EXISTS (
             SELECT 1 FROM work_surface_managers
             WHERE surface_id = $1 AND user_id = $2
-        )
-        ",
+        ) AS "exists!"
+        "#,
+        surface_id,
+        user_id,
     )
-    .bind(surface_id)
-    .bind(user_id)
     .fetch_one(pool)
     .await?;
     Ok(exists)
@@ -439,18 +439,19 @@ pub async fn list_surfaces_for_bears(
     pool: &PgPool,
     bear_ids: &[Uuid],
 ) -> Result<Vec<SurfaceForBearRow>, DenError> {
-    Ok(sqlx::query_as::<_, SurfaceForBearRow>(
-        r"
+    Ok(sqlx::query_as!(
+        SurfaceForBearRow,
+        r#"
         SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
                g.default_image, sb.bear_id
         FROM work_surfaces s
         INNER JOIN git_work_surface_details g ON g.id = s.id
         INNER JOIN work_surface_bears sb ON sb.surface_id = s.id
-        WHERE s.kind = 'git_workspace' AND sb.bear_id = ANY($1)
+        WHERE s.kind = 'git_workspace' AND sb.bear_id = ANY($1::uuid[])
         ORDER BY s.name, sb.bear_id
-        ",
+        "#,
+        bear_ids,
     )
-    .bind(bear_ids)
     .fetch_all(pool)
     .await?)
 }
@@ -460,16 +461,16 @@ pub async fn bear_may_use_surface(
     bear_id: Uuid,
     surface_id: Uuid,
 ) -> Result<bool, DenError> {
-    let exists: bool = sqlx::query_scalar(
-        r"
+    let exists = sqlx::query_scalar!(
+        r#"
         SELECT EXISTS (
             SELECT 1 FROM work_surface_bears
             WHERE surface_id = $1 AND bear_id = $2
-        )
-        ",
+        ) AS "exists!"
+        "#,
+        surface_id,
+        bear_id,
     )
-    .bind(surface_id)
-    .bind(bear_id)
     .fetch_one(pool)
     .await?;
     Ok(exists)
@@ -533,25 +534,25 @@ pub async fn grant_manager(
 /// become unmanageable (site admins bypass grants entirely).
 pub async fn revoke_manager(pool: &PgPool, surface_id: Uuid, user_id: i32) -> Result<(), DenError> {
     let mut tx = pool.begin().await?;
-    let role: Option<String> = sqlx::query_scalar(
-        r"
-        SELECT role FROM work_surface_managers
+    let role = sqlx::query_scalar!(
+        r#"
+        SELECT role AS "role!" FROM work_surface_managers
         WHERE surface_id = $1 AND user_id = $2
         FOR UPDATE
-        ",
+        "#,
+        surface_id,
+        user_id,
     )
-    .bind(surface_id)
-    .bind(user_id)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(role) = role else {
         return Err(DenError::NotFound("manager grant not found".to_string()));
     };
     if role == SURFACE_ROLE_OWNER {
-        let owners: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM work_surface_managers WHERE surface_id = $1 AND role = 'owner'",
+        let owners = sqlx::query_scalar!(
+            "SELECT COUNT(*)::bigint AS \"count!\" FROM work_surface_managers WHERE surface_id = $1 AND role = 'owner'",
+            surface_id,
         )
-        .bind(surface_id)
         .fetch_one(&mut *tx)
         .await?;
         if owners <= 1 {

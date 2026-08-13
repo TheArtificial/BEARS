@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::DenError;
@@ -20,6 +20,14 @@ pub struct ExistingPassage {
     pub point_id: String,
 }
 
+/// Live content hash for one indexed memory chunk.
+#[derive(Debug, Clone)]
+struct LiveChunkHashRow {
+    memory_id: String,
+    chunk_index: i32,
+    content_hash: String,
+}
+
 /// List live passages for a memory record, for dedup + stale-chunk pruning.
 pub async fn list_passages(
     pool: &PgPool,
@@ -27,18 +35,20 @@ pub async fn list_passages(
     memory_id: &str,
     embedding_standard: &str,
 ) -> Result<Vec<ExistingPassage>, DenError> {
-    let rows = sqlx::query_as::<_, ExistingPassage>(
-        r"
-        SELECT chunk_index, content_hash, point_id
+    let rows = sqlx::query_as!(
+        ExistingPassage,
+        r#"
+        SELECT chunk_index AS "chunk_index!", content_hash AS "content_hash!",
+               point_id AS "point_id!"
         FROM recall_passages
         WHERE bear_id = $1 AND memory_id = $2 AND embedding_standard = $3
           AND deleted_at IS NULL
         ORDER BY chunk_index
-        ",
+        "#,
+        bear_id,
+        memory_id,
+        embedding_standard,
     )
-    .bind(bear_id)
-    .bind(memory_id)
-    .bind(embedding_standard)
     .fetch_all(pool)
     .await
     .map_err(db_err("list"))?;
@@ -53,15 +63,15 @@ pub async fn list_indexed_memory_ids(
     bear_id: Uuid,
     embedding_standard: &str,
 ) -> Result<Vec<String>, DenError> {
-    let rows = sqlx::query_scalar::<_, String>(
-        r"
-        SELECT DISTINCT memory_id
+    let rows = sqlx::query_scalar!(
+        r#"
+        SELECT DISTINCT memory_id AS "memory_id!"
         FROM recall_passages
         WHERE bear_id = $1 AND embedding_standard = $2 AND deleted_at IS NULL
-        ",
+        "#,
+        bear_id,
+        embedding_standard,
     )
-    .bind(bear_id)
-    .bind(embedding_standard)
     .fetch_all(pool)
     .await
     .map_err(db_err("list memory ids"))?;
@@ -76,25 +86,27 @@ pub async fn live_chunk_hashes_by_memory(
     bear_id: Uuid,
     embedding_standard: &str,
 ) -> Result<HashMap<String, HashMap<i32, String>>, DenError> {
-    let rows = sqlx::query_as::<_, (String, i32, String)>(
-        r"
-        SELECT memory_id, chunk_index, content_hash
+    let rows = sqlx::query_as!(
+        LiveChunkHashRow,
+        r#"
+        SELECT memory_id AS "memory_id!", chunk_index AS "chunk_index!",
+               content_hash AS "content_hash!"
         FROM recall_passages
         WHERE bear_id = $1 AND embedding_standard = $2 AND deleted_at IS NULL
-        ",
+        "#,
+        bear_id,
+        embedding_standard,
     )
-    .bind(bear_id)
-    .bind(embedding_standard)
     .fetch_all(pool)
     .await
     .map_err(db_err("list chunk hashes"))?;
 
     let mut by_memory: HashMap<String, HashMap<i32, String>> = HashMap::new();
-    for (memory_id, chunk_index, content_hash) in rows {
+    for row in rows {
         by_memory
-            .entry(memory_id)
+            .entry(row.memory_id)
             .or_default()
-            .insert(chunk_index, content_hash);
+            .insert(row.chunk_index, row.content_hash);
     }
     Ok(by_memory)
 }
@@ -106,25 +118,20 @@ pub async fn passage_stats(
     bear_id: Uuid,
     embedding_standard: &str,
 ) -> Result<(i64, i64), DenError> {
-    let row = sqlx::query(
-        r"
-        SELECT COUNT(*) AS passages, COUNT(DISTINCT memory_id) AS memories
+    let row = sqlx::query!(
+        r#"
+        SELECT COUNT(*)::bigint AS "passages!",
+               COUNT(DISTINCT memory_id)::bigint AS "memories!"
         FROM recall_passages
         WHERE bear_id = $1 AND embedding_standard = $2 AND deleted_at IS NULL
-        ",
+        "#,
+        bear_id,
+        embedding_standard,
     )
-    .bind(bear_id)
-    .bind(embedding_standard)
     .fetch_one(pool)
     .await
     .map_err(db_err("stats"))?;
-    let passages: i64 = row
-        .try_get("passages")
-        .map_err(db_err("decode stats passages"))?;
-    let memories: i64 = row
-        .try_get("memories")
-        .map_err(db_err("decode stats memories"))?;
-    Ok((passages, memories))
+    Ok((row.passages, row.memories))
 }
 
 pub struct NewPassage<'a> {
@@ -140,8 +147,8 @@ pub struct NewPassage<'a> {
 
 /// Insert or refresh a passage registry row (idempotent on the chunk identity).
 pub async fn upsert_passage(pool: &PgPool, passage: NewPassage<'_>) -> Result<(), DenError> {
-    sqlx::query(
-        r"
+    sqlx::query!(
+        r#"
         INSERT INTO recall_passages (
             bear_id, memory_id, logical_path, chunk_index, content_hash,
             embedding_standard, source_class, point_id, indexed_at, deleted_at
@@ -154,16 +161,16 @@ pub async fn upsert_passage(pool: &PgPool, passage: NewPassage<'_>) -> Result<()
             point_id = EXCLUDED.point_id,
             indexed_at = NOW(),
             deleted_at = NULL
-        ",
+        "#,
+        passage.bear_id,
+        passage.memory_id,
+        passage.logical_path,
+        passage.chunk_index,
+        passage.content_hash,
+        passage.embedding_standard,
+        passage.source_class,
+        passage.point_id,
     )
-    .bind(passage.bear_id)
-    .bind(passage.memory_id)
-    .bind(passage.logical_path)
-    .bind(passage.chunk_index)
-    .bind(passage.content_hash)
-    .bind(passage.embedding_standard)
-    .bind(passage.source_class)
-    .bind(passage.point_id)
     .execute(pool)
     .await
     .map_err(db_err("upsert"))?;
@@ -178,26 +185,23 @@ pub async fn delete_passages_for_memory(
     memory_id: &str,
     embedding_standard: &str,
 ) -> Result<Vec<String>, DenError> {
-    let rows = sqlx::query(
-        r"
+    let rows = sqlx::query_scalar!(
+        r#"
         UPDATE recall_passages
         SET deleted_at = NOW()
         WHERE bear_id = $1 AND memory_id = $2 AND embedding_standard = $3
           AND deleted_at IS NULL
-        RETURNING point_id
-        ",
+        RETURNING point_id AS "point_id!"
+        "#,
+        bear_id,
+        memory_id,
+        embedding_standard,
     )
-    .bind(bear_id)
-    .bind(memory_id)
-    .bind(embedding_standard)
     .fetch_all(pool)
     .await
     .map_err(db_err("delete (memory)"))?;
 
-    Ok(rows
-        .into_iter()
-        .map(|r| r.get::<String, _>("point_id"))
-        .collect())
+    Ok(rows)
 }
 
 /// Soft-delete live passages for a memory record at or above `min_chunk_index` (stale-chunk
@@ -209,25 +213,22 @@ pub async fn delete_passages_for_chunks_ge(
     embedding_standard: &str,
     min_chunk_index: i32,
 ) -> Result<Vec<String>, DenError> {
-    let rows = sqlx::query(
-        r"
+    let rows = sqlx::query_scalar!(
+        r#"
         UPDATE recall_passages
         SET deleted_at = NOW()
         WHERE bear_id = $1 AND memory_id = $2 AND embedding_standard = $3
           AND chunk_index >= $4 AND deleted_at IS NULL
-        RETURNING point_id
-        ",
+        RETURNING point_id AS "point_id!"
+        "#,
+        bear_id,
+        memory_id,
+        embedding_standard,
+        min_chunk_index,
     )
-    .bind(bear_id)
-    .bind(memory_id)
-    .bind(embedding_standard)
-    .bind(min_chunk_index)
     .fetch_all(pool)
     .await
     .map_err(db_err("delete (chunks)"))?;
 
-    Ok(rows
-        .into_iter()
-        .map(|r| r.get::<String, _>("point_id"))
-        .collect())
+    Ok(rows)
 }
