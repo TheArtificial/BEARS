@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH settled AS (\n             UPDATE docket_turn_attempts\n             SET state='settled', outcome='timed_out', cause_code='activity_timeout',\n                 retry_disposition='pause', supervisor_disposition='await_recovery',\n                 evidence_refs=COALESCE(evidence_refs, '{}'::jsonb) || $2::jsonb,\n                 finished_at=now(), last_activity_at=now()\n             WHERE state='executing' AND last_activity_at < $1\n             RETURNING claim_id\n         )\n         UPDATE docket_turn_claims\n         SET state='settled', updated_at=now()\n         WHERE id IN (SELECT claim_id FROM settled WHERE claim_id IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d832e8f85f44315c4bdb585d86424d0802e5d18744b514314b507372c6c848cc"
+}

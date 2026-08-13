@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs\n         SET result_refs = COALESCE(result_refs, '{}'::jsonb) || $2::jsonb, updated_at = now()\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d5f163864d7b02e6aa33d83bbb827482a1d9aa285c21546f7c36150926ed1507"
+}

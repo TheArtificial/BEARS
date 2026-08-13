@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO bear_task_run_state (\n            run_id, task_id, status, result_refs, result_summary, started_at, finished_at, updated_at\n        )\n        VALUES (\n            $1, $2, $3, $4::jsonb, $5,\n            NULL,\n            CASE WHEN $3 IN ('done', 'cancelled') THEN NOW() ELSE NULL END,\n            NOW()\n        )\n        ON CONFLICT (run_id, task_id) DO UPDATE\n        SET status = EXCLUDED.status,\n            result_refs = EXCLUDED.result_refs,\n            result_summary = EXCLUDED.result_summary,\n            started_at = bear_task_run_state.started_at,\n            finished_at = CASE\n                WHEN EXCLUDED.status IN ('done', 'cancelled') THEN COALESCE(bear_task_run_state.finished_at, NOW())\n                WHEN EXCLUDED.status IN ('pending', 'blocked') THEN NULL\n                ELSE bear_task_run_state.finished_at\n            END,\n            updated_at = NOW()\n        RETURNING run_id, task_id, status, result_refs AS \"result_refs: _\", result_summary, started_at, finished_at, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "result_refs: _",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "result_summary",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Jsonb",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "3056d4761140efe3c7ee1aa2099fd5042cc99ce4cd6873db5dbfee5b26a7ff7a"
+}

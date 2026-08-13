@@ -37,14 +37,15 @@ use super::model::{
     task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
     DocketCommitPolicy, DocketCriterionStateRow, DocketCriterionStateUpdate, DocketEntryCreate,
     DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketEntryScope,
-    DocketExecutionLookup, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
-    DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
-    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
-    DocketJobUpdate, DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch,
-    DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection,
-    DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError,
-    TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncOutcome,
-    TaskListSyncRequest, TaskListSyncState,
+    DocketExecutionControl, DocketExecutionLookup, DocketExecutionNextAction,
+    DocketExecutionReason, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
+    DocketExecutionTaskControl, DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
+    DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketSessionTaskSettlement,
+    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
+    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
+    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
+    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1452,6 +1453,30 @@ json!({
     Ok(())
 }
 
+fn execution_control(
+    run: &DocketJobRunRow,
+    selected_task_id: Option<Uuid>,
+    focused_task_id: Option<Uuid>,
+    claimed_task_id: Option<Uuid>,
+    next_action: DocketExecutionNextAction,
+    retryable: bool,
+    reason: Option<DocketExecutionReason>,
+) -> DocketExecutionControl {
+    DocketExecutionControl {
+        run_id: run.id,
+        run_state: run.state.clone(),
+        task: DocketExecutionTaskControl {
+            selected_task_id,
+            focused_task_id,
+            claimed_task_id,
+            current_task_id: claimed_task_id,
+        },
+        next_action,
+        retryable,
+        reason,
+    }
+}
+
 pub(super) async fn execute_job(
     pool: &PgPool,
     request: DocketJobExecuteRequest,
@@ -1505,9 +1530,29 @@ pub(super) async fn execute_job(
         let selected =
             first_pending_leaf_in_plan_order(&projection, &state_by_task).map(|task| task.id);
         if selected != Some(*active) {
-            return Err(DenError::ValidationError(format!(
-                "Docket active task {active} is not the first eligible leaf in sibling order; refusing stale work run",
-            )));
+            let job = get_job(pool, request.bear_id, request.job_id)
+                .await?
+                .ok_or_else(|| {
+                    DenError::NotFound(format!("Docket job not found: {}", request.job_id))
+                })?;
+            return Ok(DocketJobExecuteOutcome {
+                job,
+                control: execution_control(
+                    run,
+                    selected,
+                    Some(*active),
+                    Some(*active),
+                    DocketExecutionNextAction::ReconcileExecution,
+                    false,
+                    Some(DocketExecutionReason::ActiveTaskIsStale),
+                ),
+                selected_task_id: selected,
+                completed: false,
+                blocked: true,
+                message: format!(
+                    "Active task {active} is stale; reconcile execution instead of retrying execution."
+                ),
+            });
         }
         let job = get_job(pool, request.bear_id, request.job_id)
             .await?
@@ -1515,6 +1560,15 @@ pub(super) async fn execute_job(
                 DenError::NotFound(format!("Docket job not found: {}", request.job_id))
             })?;
         return Ok(DocketJobExecuteOutcome {
+            control: execution_control(
+                run,
+                Some(*active),
+                Some(*active),
+                Some(*active),
+                DocketExecutionNextAction::WorkCurrentTask,
+                true,
+                None,
+            ),
             job,
             selected_task_id: Some(*active),
             completed: false,
@@ -1531,7 +1585,20 @@ pub(super) async fn execute_job(
             .ok_or_else(|| {
                 DenError::NotFound(format!("Docket job not found: {}", request.job_id))
             })?;
+        let current_run = job
+            .current_run
+            .as_ref()
+            .expect("executing job retains its current run");
         return Ok(DocketJobExecuteOutcome {
+            control: execution_control(
+                current_run,
+                Some(next.id),
+                Some(next.id),
+                Some(next.id),
+                DocketExecutionNextAction::WorkCurrentTask,
+                true,
+                None,
+            ),
             job,
             selected_task_id: Some(next.id),
             completed: false,
@@ -1548,7 +1615,20 @@ pub(super) async fn execute_job(
             .ok_or_else(|| {
                 DenError::NotFound(format!("Docket job not found: {}", request.job_id))
             })?;
+        let current_run = job
+            .current_run
+            .as_ref()
+            .expect("completed job retains its settled run");
         Ok(DocketJobExecuteOutcome {
+            control: execution_control(
+                current_run,
+                None,
+                None,
+                None,
+                DocketExecutionNextAction::JobCompleted,
+                false,
+                Some(DocketExecutionReason::JobComplete),
+            ),
             job,
             selected_task_id: None,
             completed: true,
@@ -1562,7 +1642,20 @@ pub(super) async fn execute_job(
             .ok_or_else(|| {
                 DenError::NotFound(format!("Docket job not found: {}", request.job_id))
             })?;
+        let current_run = job
+            .current_run
+            .as_ref()
+            .expect("blocked job retains its current run");
         Ok(DocketJobExecuteOutcome {
+            control: execution_control(
+                current_run,
+                None,
+                None,
+                None,
+                DocketExecutionNextAction::RecoverBlockedRun,
+                false,
+                Some(DocketExecutionReason::NoActionableTask),
+            ),
             job,
             selected_task_id: None,
             completed: false,

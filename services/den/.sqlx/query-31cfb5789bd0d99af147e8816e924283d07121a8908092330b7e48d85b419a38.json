@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT goal AS \"goal!\", commit_policy AS \"commit_policy?\" FROM bear_jobs WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "goal!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "commit_policy?",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "31cfb5789bd0d99af147e8816e924283d07121a8908092330b7e48d85b419a38"
+}

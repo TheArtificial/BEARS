@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE docket_turn_claims SET state = 'executing', updated_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fb8c86a8afa7edfcb0528ca479b80b69e3192458a5b163ea3a220d47cb3202e9"
+}

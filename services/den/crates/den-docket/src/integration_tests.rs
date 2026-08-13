@@ -500,6 +500,16 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .await
         .expect("execute first");
     assert_eq!(first.selected_task_id, Some(first_task_id));
+    assert_eq!(first.control.task.selected_task_id, Some(first_task_id));
+    assert_eq!(first.control.task.focused_task_id, Some(first_task_id));
+    assert_eq!(first.control.task.claimed_task_id, Some(first_task_id));
+    assert_eq!(first.control.task.current_task_id, Some(first_task_id));
+    assert!(matches!(
+        first.control.next_action,
+        crate::DocketExecutionNextAction::WorkCurrentTask
+    ));
+    assert!(first.control.retryable);
+    assert!(first.control.reason.is_none());
     assert_eq!(first.job.job.status, "running");
     let active_execution = service
         .get_active_execution_session(
@@ -731,9 +741,29 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             definition: DocketTaskDefinitionPatch::default(),
             run_state: Some(DocketTaskRunStateUpdate {
                 run_id,
+                status: DocketTaskStatus::Pending,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: None,
+            }),
+        })
+        .await
+        .expect("reopen task for lifecycle completion");
+
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: None,
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
                 status: DocketTaskStatus::Done,
                 outcome_disposition: None,
-                result_refs: Some(primary_output_result_refs()),
+                result_refs: None,
                 result_summary: Some("First task actually completed".to_string()),
             }),
         })
@@ -768,7 +798,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
                 run_id,
                 status: DocketTaskStatus::Done,
                 outcome_disposition: None,
-                result_refs: Some(primary_output_result_refs()),
+                result_refs: None,
                 result_summary: Some("Second task actually completed".to_string()),
             }),
         })

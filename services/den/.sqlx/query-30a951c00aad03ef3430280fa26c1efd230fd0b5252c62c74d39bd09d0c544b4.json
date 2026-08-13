@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO docket_conversation_binding_runs (run_id, task_id, conversation_id)\n        VALUES ($1, $2, $3)\n        ON CONFLICT (run_id, task_id) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "30a951c00aad03ef3430280fa26c1efd230fd0b5252c62c74d39bd09d0c544b4"
+}

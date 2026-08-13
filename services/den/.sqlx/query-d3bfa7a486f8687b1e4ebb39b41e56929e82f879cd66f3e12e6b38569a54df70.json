@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id AS run_id,\n                (SELECT count(*) FROM bear_work_runs q\n                 WHERE q.job_id = r.job_id AND q.state = 'queued'\n                   AND (q.queued_at < r.queued_at\n                        OR (q.queued_at = r.queued_at AND q.id <= r.id))) AS \"position!\",\n                (SELECT s.id FROM bear_work_runs s\n                 WHERE s.job_id = r.job_id\n                   AND s.state IN ('claimed', 'provisioning', 'running', 'reporting')\n                 ORDER BY s.queued_at ASC, s.id ASC\n                 LIMIT 1) AS waiting_on_run_id\n         FROM bear_work_runs r\n         WHERE r.id = ANY($1) AND r.state = 'queued'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "position!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "waiting_on_run_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "d3bfa7a486f8687b1e4ebb39b41e56929e82f879cd66f3e12e6b38569a54df70"
+}

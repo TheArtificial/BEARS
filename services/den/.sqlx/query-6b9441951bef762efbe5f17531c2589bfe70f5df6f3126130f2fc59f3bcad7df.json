@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE docket_execution_sessions\n         SET state = 'completed', updated_at = now()\n         WHERE bear_id = $1 AND owner_profile = 'work' AND session_id = $2\n           AND state IN ('active', 'blocked', 'completing', 'paused')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6b9441951bef762efbe5f17531c2589bfe70f5df6f3126130f2fc59f3bcad7df"
+}

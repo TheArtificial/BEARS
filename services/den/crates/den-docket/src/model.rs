@@ -1235,8 +1235,60 @@ pub struct DocketExecutionSessionUpsert {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct DocketExecutionTaskControl {
+    /// The task the scheduler would select next from the plan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_task_id: Option<Uuid>,
+    /// The task persisted as execution-session focus.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused_task_id: Option<Uuid>,
+    /// The task currently protected from concurrent advancement by execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_task_id: Option<Uuid>,
+    /// The task safe to show as the user's current work.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_task_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketExecutionNextAction {
+    WorkCurrentTask,
+    JobCompleted,
+    ReconcileExecution,
+    RecoverBlockedRun,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketExecutionReason {
+    ActiveTaskIsStale,
+    NoActionableTask,
+    JobComplete,
+    JobBlocked,
+}
+
+/// Authoritative execution control returned by scheduler operations.
+///
+/// `selected`, `focused`, `claimed`, and `current` deliberately remain
+/// separate fields: callers must not infer ownership from a display
+/// projection. A missing reason means normal actionable execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct DocketExecutionControl {
+    pub run_id: Uuid,
+    pub run_state: String,
+    pub task: DocketExecutionTaskControl,
+    pub next_action: DocketExecutionNextAction,
+    pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<DocketExecutionReason>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DocketJobExecuteOutcome {
     pub job: DocketJobProjection,
+    pub control: DocketExecutionControl,
+    /// Compatibility field. New callers should use `control.task.selected_task_id`.
     pub selected_task_id: Option<Uuid>,
     pub completed: bool,
     pub blocked: bool,

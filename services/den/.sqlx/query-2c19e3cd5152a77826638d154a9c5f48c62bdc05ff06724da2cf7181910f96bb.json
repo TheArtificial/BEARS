@@ -1,0 +1,227 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs\n         SET state = 'reporting',\n             result_refs = COALESCE(result_refs, '{}'::jsonb) || jsonb_build_object('turn_outcome', $2::jsonb),\n             updated_at = now()\n         WHERE bearwire_session_id = $1 AND state IN ('provisioning', 'running')\n         RETURNING id, bear_id, job_id, job_run_id, executing_task_id, attempt, state, runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, cancel_requested_at, git_ref, image_name, sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, execution_target, attached_client_session_id, attachment_state, attachment_warning, disconnected_at, disconnect_deadline_at, bearwire_session_id, result_summary, result_refs, usage, error, queued_at, started_at, finished_at, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "job_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "executing_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "attempt",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "runner_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "lease_expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "cancel_requested",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "cancel_requested_by",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "cancel_reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "cancel_requested_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "git_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "image_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "sandbox_server_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "sandbox_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "sandbox_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "sandbox_strength",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "work_surface",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 20,
+        "name": "execution_target",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 21,
+        "name": "attached_client_session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 22,
+        "name": "attachment_state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 23,
+        "name": "attachment_warning",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 24,
+        "name": "disconnected_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 25,
+        "name": "disconnect_deadline_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 26,
+        "name": "bearwire_session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 27,
+        "name": "result_summary",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 28,
+        "name": "result_refs",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 29,
+        "name": "usage",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 30,
+        "name": "error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 31,
+        "name": "queued_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 32,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 33,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 34,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "2c19e3cd5152a77826638d154a9c5f48c62bdc05ff06724da2cf7181910f96bb"
+}

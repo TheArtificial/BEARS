@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT preferred_conversation_id AS \"preferred_conversation_id!: String\"\n        FROM docket_conversation_bindings\n        WHERE task_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "preferred_conversation_id!: String",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "82ca17937320ae1a54cf61bb911534a89c7c3f595a1296fd686485973f37aae9"
+}
