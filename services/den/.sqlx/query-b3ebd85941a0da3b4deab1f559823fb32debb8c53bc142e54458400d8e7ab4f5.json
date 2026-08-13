@@ -1,0 +1,150 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n            artifacts.id, artifacts.artifact_ref, artifacts.bear_id,\n            artifacts.created_by_user_id, artifacts.owner_profile, artifacts.kind,\n            artifacts.title, artifacts.summary, artifacts.content_type, artifacts.storage_kind,\n            artifacts.storage_key, artifacts.content_bytes, artifacts.content_sha256,\n            artifacts.lifecycle, artifacts.visibility, artifacts.provenance, artifacts.metadata,\n            artifacts.expires_at, artifacts.finalized_at, artifacts.deleted_at,\n            artifacts.created_at, artifacts.updated_at\n         FROM artifact_links\n         JOIN artifacts ON artifacts.id = artifact_links.artifact_id\n         WHERE artifacts.bear_id = $1\n            AND artifact_links.target_kind = $2\n            AND artifact_links.target_id = $3\n            AND artifacts.lifecycle <> 'deleted'\n         ORDER BY artifact_links.created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "artifact_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "owner_profile",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "summary",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "content_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "storage_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "storage_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "content_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "content_sha256",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "lifecycle",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "provenance",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 16,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 17,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "finalized_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 19,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "b3ebd85941a0da3b4deab1f559823fb32debb8c53bc142e54458400d8e7ab4f5"
+}

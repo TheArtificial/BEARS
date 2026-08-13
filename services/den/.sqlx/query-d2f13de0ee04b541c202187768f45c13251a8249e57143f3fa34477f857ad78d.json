@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE client_sessions\n        SET adapter_environment = $4,\n            updated_at = NOW()\n        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Uuid",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d2f13de0ee04b541c202187768f45c13251a8249e57143f3fa34477f857ad78d"
+}

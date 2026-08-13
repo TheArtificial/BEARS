@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT MAX(completed_at) AS \"last_success_at?\"\n        FROM bear_reflection_runs\n        WHERE bear_id = $1 AND lane = $2 AND status = 'completed'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "last_success_at?",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "cd0fd6b5a656b4cca839dea9c13d3fbb247ba7a11aaee3ce1a1af8b4e9a30bf4"
+}

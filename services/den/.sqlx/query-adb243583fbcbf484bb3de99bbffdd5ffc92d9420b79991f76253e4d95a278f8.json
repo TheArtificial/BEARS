@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT agent_loop_control_level\n        FROM bear_profile_model_settings\n        WHERE bear_id = $1 AND profile = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_loop_control_level",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "adb243583fbcbf484bb3de99bbffdd5ffc92d9420b79991f76253e4d95a278f8"
+}

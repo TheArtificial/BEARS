@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE bears\n        SET context_profile = $1,\n            system_prompt = $2,\n            updated_at = NOW()\n        WHERE id = $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Jsonb",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "843b3fb8e649e51e75ad08080efdb1921c1dd25c688dc22eff69f809ceaf9e46"
+}

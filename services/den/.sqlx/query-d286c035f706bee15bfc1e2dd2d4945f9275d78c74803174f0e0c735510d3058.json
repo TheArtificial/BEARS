@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT bear_id, profile, binding_id, provisioning_status,\n               last_provisioned_version, last_synced_at, last_provisioning_error,\n               config_hash AS \"config_hash?: Json<serde_json::Value>\",\n               created_at, updated_at\n        FROM bear_profile_bindings\n        WHERE bear_id = $1\n        ORDER BY CASE profile\n            WHEN 'chat' THEN 1\n            WHEN 'pair' THEN 2\n            WHEN 'curate' THEN 3\n            WHEN 'work' THEN 4\n            WHEN 'watch' THEN 5\n            ELSE 99\n        END\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "profile",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "binding_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "provisioning_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_provisioned_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_synced_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_provisioning_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "config_hash?: Json<serde_json::Value>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "d286c035f706bee15bfc1e2dd2d4945f9275d78c74803174f0e0c735510d3058"
+}

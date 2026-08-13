@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO bear_bifrost_virtual_keys (\n            bear_id, virtual_key_id, virtual_key_name, virtual_key_value, virtual_key_value_encrypted, updated_at\n        )\n        VALUES ($1, $2, $3, NULL, $4, NOW())\n        ON CONFLICT (bear_id) DO UPDATE\n        SET virtual_key_id = EXCLUDED.virtual_key_id,\n            virtual_key_name = EXCLUDED.virtual_key_name,\n            virtual_key_value = NULL,\n            virtual_key_value_encrypted = EXCLUDED.virtual_key_value_encrypted,\n            updated_at = NOW()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c0c2b31e5d7a693ff5c68a9cc58dbf979b51f5db73eb88c07b1b391c96c087dd"
+}

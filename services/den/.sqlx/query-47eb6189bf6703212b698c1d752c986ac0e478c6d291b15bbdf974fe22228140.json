@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO bear_profile_bindings (\n            bear_id, profile, binding_id, provisioning_status,\n            last_provisioned_version, last_synced_at, last_provisioning_error, config_hash, updated_at\n        )\n        VALUES ($1, $2, $3, 'ready', $4, NOW(), NULL, $5::jsonb, NOW())\n        ON CONFLICT (bear_id, profile)\n        DO UPDATE SET binding_id = EXCLUDED.binding_id,\n                      provisioning_status = 'ready',\n                      last_provisioned_version = EXCLUDED.last_provisioned_version,\n                      last_synced_at = NOW(),\n                      last_provisioning_error = NULL,\n                      config_hash = EXCLUDED.config_hash,\n                      updated_at = NOW()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Int4",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "47eb6189bf6703212b698c1d752c986ac0e478c6d291b15bbdf974fe22228140"
+}

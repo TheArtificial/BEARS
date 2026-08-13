@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT bear_id, virtual_key_id, virtual_key_name, virtual_key_value, virtual_key_value_encrypted\n        FROM bear_bifrost_virtual_keys\n        WHERE bear_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "virtual_key_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "virtual_key_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "virtual_key_value",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "virtual_key_value_encrypted",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "4c7774cd7905887f2f79d1bd8d84f59d35b16f21d453bfbded9ea2caa6638a6a"
+}

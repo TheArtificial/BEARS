@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT bear_id, id, proposed_by_agent_id, proposed_at, skill_payload, status,\n               reviewed_at, rejection_reason, resulting_manifest_bear_id,\n               resulting_manifest_skill_name, resulting_manifest_skill_version, updated_at\n        FROM bear_skill_proposals\n        WHERE bear_id = $1 AND status = 'pending_review'\n        ORDER BY proposed_at, id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "proposed_by_agent_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "proposed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "skill_payload",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "reviewed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "rejection_reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "resulting_manifest_bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 9,
+        "name": "resulting_manifest_skill_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "resulting_manifest_skill_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "b2114bb25d5233d31d280f51bff9203c5f456934b66ecdb32863b2615ff67712"
+}
