@@ -3,7 +3,8 @@ use crate::{
     tools::{
         constants::{
             DEN_DOCKET_ENTRY_APPEND_PROVIDER, DEN_DOCKET_ENTRY_LIST_PROVIDER,
-            DEN_JOB_CREATE_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
+            DEN_JOB_CREATE_PROVIDER, DEN_JOB_RECONCILE, DEN_JOB_RECONCILE_PROVIDER,
+            DEN_JOB_SETTLE_TASK, DEN_JOB_SETTLE_TASK_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
             DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER,
             DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
             DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_SELECT_PROVIDER,
@@ -87,6 +88,21 @@ fn task_list_update_descriptor_includes_active_work_state_guidance() {
     assert!(descriptor.description.contains("checkout_task_list"));
 }
 
+#[test]
+fn docket_recovery_descriptors_have_callable_provider_names() {
+    let descriptors = builtin_den_tool_descriptors();
+
+    for (name, provider_name) in [
+        (DEN_JOB_RECONCILE, DEN_JOB_RECONCILE_PROVIDER),
+        (DEN_JOB_SETTLE_TASK, DEN_JOB_SETTLE_TASK_PROVIDER),
+    ] {
+        let descriptor = descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == name)
+            .expect("Docket recovery descriptor");
+        assert_eq!(descriptor.provider_name, provider_name);
+    }
+}
 #[test]
 fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
     let descriptors = builtin_den_tool_descriptors();
