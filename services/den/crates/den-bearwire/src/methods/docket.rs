@@ -2,9 +2,9 @@ use axum::http::HeaderMap;
 use den_core::BearProfile;
 use den_docket::{
     work_runs::{self, WorkRunListFilter},
-    DocketExecutionTaskSettlement, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketOutcomeDisposition, DocketService, DocketTaskListFilter, DocketTaskStatus,
-    PgDocketService,
+    DocketExecutionControl, DocketExecutionNextAction, DocketExecutionTaskSettlement,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketOutcomeDisposition, DocketService,
+    DocketTaskListFilter, DocketTaskStatus, PgDocketService,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -274,6 +274,7 @@ fn execution_result(outcome: den_docket::DocketJobExecuteOutcome) -> Result<Valu
     let execution_state = run
         .map(|run| run.state.to_string())
         .unwrap_or("not_started".to_owned());
+    let status = execution_status(&outcome.control);
 
     Ok(json!({
         "action": "execution_requested",
@@ -282,8 +283,36 @@ fn execution_result(outcome: den_docket::DocketJobExecuteOutcome) -> Result<Valu
             "state": execution_state,
             "run_id": run.map(|run| run.id),
         },
+        "status": status,
         "outcome": outcome,
     }))
+}
+
+fn execution_status(control: &DocketExecutionControl) -> Value {
+    let message = match control.next_action {
+        DocketExecutionNextAction::WorkCurrentTask => "Docket selected the current task.",
+        DocketExecutionNextAction::JobCompleted => "Docket job completed.",
+        DocketExecutionNextAction::ReconcileExecution => {
+            "Docket task focus is stale; reconcile execution before continuing."
+        }
+        DocketExecutionNextAction::RecoverBlockedRun => {
+            "Docket has no actionable task; inspect the blocked run."
+        }
+    };
+
+    json!({
+        "message": message,
+        "next_action": control.next_action,
+        "retryable": control.retryable,
+        "reason": control.reason,
+        "resources": {
+            "run_id": control.run_id,
+            "selected_task_id": control.task.selected_task_id,
+            "focused_task_id": control.task.focused_task_id,
+            "claimed_task_id": control.task.claimed_task_id,
+            "current_task_id": control.task.current_task_id,
+        },
+    })
 }
 
 async fn source_conversation_id(
@@ -312,4 +341,39 @@ async fn source_conversation_id(
             .filter(|id| !id.trim().is_empty())
             .unwrap_or(session.conversation_id),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use den_docket::model::DocketExecutionTaskControl;
+
+    #[test]
+    fn execution_status_makes_stale_focus_actionable() {
+        let run_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let status = execution_status(&DocketExecutionControl {
+            run_id,
+            run_state: "running".to_owned(),
+            task: DocketExecutionTaskControl {
+                selected_task_id: Some(task_id),
+                focused_task_id: Some(Uuid::new_v4()),
+                claimed_task_id: Some(Uuid::new_v4()),
+                current_task_id: None,
+            },
+            next_action: DocketExecutionNextAction::ReconcileExecution,
+            retryable: false,
+            reason: Some(den_docket::DocketExecutionReason::ActiveTaskIsStale),
+        });
+
+        assert_eq!(
+            status["message"],
+            "Docket task focus is stale; reconcile execution before continuing."
+        );
+        assert_eq!(status["next_action"], "reconcile_execution");
+        assert_eq!(status["retryable"], false);
+        assert_eq!(status["reason"], "active_task_is_stale");
+        assert_eq!(status["resources"]["run_id"], run_id.to_string());
+        assert_eq!(status["resources"]["selected_task_id"], task_id.to_string());
+    }
 }
