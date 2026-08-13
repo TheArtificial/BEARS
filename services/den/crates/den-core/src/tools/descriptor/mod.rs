@@ -1021,6 +1021,8 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_JOB_GET,
         DEN_JOB_UPDATE,
         DEN_JOB_EXECUTE,
+        DEN_JOB_RECONCILE,
+        DEN_JOB_SETTLE_TASK,
         DEN_JOB_EVALUATE_CRITERION,
         DEN_TASK_CREATE,
         DEN_TASK_LIST,
@@ -1887,6 +1889,18 @@ fn set_conversation_title_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pair_acp_surface_injects_eligible_docket_execution_controls() {
+        let provider_names: std::collections::HashSet<_> =
+            builtin_den_tool_descriptors_for_pair_acp_surface()
+                .into_iter()
+                .map(|descriptor| descriptor.provider_name)
+                .collect();
+
+        assert!(provider_names.contains(DEN_JOB_RECONCILE_PROVIDER));
+        assert!(provider_names.contains(DEN_JOB_SETTLE_TASK_PROVIDER));
+    }
 
     #[test]
     fn rust_dependency_preparation_is_work_only_and_narrowly_typed() {
