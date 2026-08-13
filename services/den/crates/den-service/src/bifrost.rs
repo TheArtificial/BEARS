@@ -142,6 +142,12 @@ impl BifrostCatalogSnapshot {
 pub type BifrostCatalogStore = Arc<RwLock<BifrostCatalogSnapshot>>;
 pub type BearBifrostCatalogStore = Arc<RwLock<HashMap<Uuid, BifrostCatalogSnapshot>>>;
 
+const BEAR_CATALOG_REFRESH_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
+
 pub fn new_catalog_store() -> BifrostCatalogStore {
     Arc::new(RwLock::new(BifrostCatalogSnapshot::default()))
 }
@@ -480,9 +486,28 @@ impl BifrostClient {
                 "Bear {bear_id} has no Bifrost virtual key for Bear-scoped model catalog refresh"
             ))
         })?;
-        let models = self
-            .list_available_models_with_virtual_key(Some(&virtual_key))
-            .await?;
+        let mut attempt = 0usize;
+        let models = loop {
+            attempt += 1;
+            match self
+                .list_available_models_with_virtual_key(Some(&virtual_key))
+                .await
+            {
+                Ok(models) => break models,
+                Err(error) if attempt <= BEAR_CATALOG_REFRESH_RETRY_DELAYS.len() => {
+                    let delay = BEAR_CATALOG_REFRESH_RETRY_DELAYS[attempt - 1];
+                    tracing::warn!(
+                        bear_id = %bear_id,
+                        attempt,
+                        retry_after_ms = delay.as_millis(),
+                        error = %error,
+                        "Bear-scoped Bifrost catalog refresh failed; retrying before Pair preflight"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Err(error) => return Err(error),
+            }
+        };
         let snapshot = BifrostCatalogSnapshot::from_available_models(models);
         if let Ok(mut guard) = self.bear_catalogs.write() {
             guard.insert(bear_id, snapshot.clone());
