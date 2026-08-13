@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn pair_surface_includes_explicit_current_task_selection() {
+    fn pair_surface_includes_docket_recovery_tools() {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
@@ -306,9 +306,12 @@ mod tests {
             Some("work on the current task"),
         )
         .unwrap();
-        assert!(merged
-            .iter()
-            .any(|tool| tool.name == DEN_TASK_SELECT_PROVIDER));
+        let names: std::collections::HashSet<_> =
+            merged.iter().map(|tool| tool.name.as_str()).collect();
+
+        assert!(names.contains(DEN_TASK_SELECT_PROVIDER));
+        assert!(names.contains(DEN_JOB_RECONCILE_PROVIDER));
+        assert!(names.contains(DEN_JOB_SETTLE_TASK_PROVIDER));
     }
 
     #[test]
