@@ -827,10 +827,57 @@ pub async fn record_grounding_probe_result_decision(
     .await
 }
 
+const TRANSCRIPT_LIKE_DECISION_KEYS: &[&str] = &[
+    "content",
+    "message_content",
+    "prompt",
+    "raw_message",
+    "transcript",
+];
+
+fn reject_transcript_like_decision(value: &Value) -> Result<(), DenError> {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                reject_transcript_like_decision(value)?;
+            }
+        }
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                if TRANSCRIPT_LIKE_DECISION_KEYS.contains(&key.as_str()) {
+                    return Err(DenError::ValidationError(format!(
+                        "loop-control decision contains transcript-like field: {key}"
+                    )));
+                }
+                reject_transcript_like_decision(value)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Deletes ledger rows created before `retain_after`, returning the number removed.
+///
+/// The ledger is replay/tuning telemetry, not canonical conversation history.
+pub async fn purge_loop_control_decisions_before(
+    pool: &PgPool,
+    retain_after: OffsetDateTime,
+) -> Result<u64, DenError> {
+    let result = sqlx::query!(
+        "DELETE FROM bear_loop_control_ledger WHERE created_at < $1",
+        retain_after
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn record_loop_control_decision(
     pool: &PgPool,
     input: LoopControlLedgerInput,
 ) -> Result<LoopControlLedgerRow, DenError> {
+    reject_transcript_like_decision(&input.decision)?;
     let evidence_refs = serde_json::to_value(&input.evidence_refs)
         .map_err(|err| DenError::System(format!("serialize loop-control evidence refs: {err}")))?;
     sqlx::query_as!(
@@ -1246,6 +1293,82 @@ mod tests {
             evidence_refs: vec![],
             confidence: None,
         }
+    }
+
+    #[test]
+    fn rejects_transcript_like_decision_fields_recursively() {
+        let error = reject_transcript_like_decision(&serde_json::json!({
+            "safe": { "raw_message": "do not retain this" }
+        }))
+        .expect_err("nested transcript-like field must be rejected");
+        assert!(error
+            .to_string()
+            .contains("loop-control decision contains transcript-like field: raw_message"));
+        assert!(reject_transcript_like_decision(&serde_json::json!({
+            "active_objective_present": true,
+            "findings": [{ "code": "diff_present" }]
+        }))
+        .is_ok());
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn purges_only_loop_control_decisions_before_retention_cutoff(pool: PgPool) {
+        let old_run = format!("run-{}", Uuid::new_v4().simple());
+        let recent_run = format!("run-{}", Uuid::new_v4().simple());
+        seed_run(&pool, &old_run).await;
+        seed_run(&pool, &recent_run).await;
+        for (run_id, decision_id) in [(&old_run, "old"), (&recent_run, "recent")] {
+            record_loop_control_decision(
+                &pool,
+                LoopControlLedgerInput {
+                    run_id: run_id.to_string(),
+                    turn_step_id: None,
+                    conversation_message_id: None,
+                    decision_id: decision_id.to_string(),
+                    decision_kind: LoopControlDecisionKind::CheckpointRequested,
+                    control_level: "standard".to_string(),
+                    reason: None,
+                    orientation_kind: None,
+                    checkpoint_id: None,
+                    related_task_list_id: None,
+                    related_task_item_id: None,
+                    related_docket_job_id: None,
+                    related_docket_task_id: None,
+                    evidence_refs: vec![],
+                    decision: serde_json::json!({ "active_objective_present": true }),
+                },
+            )
+            .await
+            .expect("record ledger decision");
+        }
+        sqlx::query!(
+            "UPDATE bear_loop_control_ledger SET created_at = NOW() - INTERVAL '2 days' WHERE run_id = $1",
+            old_run
+        )
+        .execute(&pool)
+        .await
+        .expect("age old ledger decision");
+
+        assert_eq!(
+            purge_loop_control_decisions_before(
+                &pool,
+                OffsetDateTime::now_utc() - time::Duration::days(1),
+            )
+            .await
+            .expect("purge old ledger rows"),
+            1
+        );
+        assert!(list_loop_control_decisions_for_run(&pool, &old_run)
+            .await
+            .expect("list old rows")
+            .is_empty());
+        assert_eq!(
+            list_loop_control_decisions_for_run(&pool, &recent_run)
+                .await
+                .expect("list recent rows")
+                .len(),
+            1
+        );
     }
 
     #[sqlx::test(migrations = "../../migrations")]
