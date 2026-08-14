@@ -11,8 +11,8 @@ use den_core::tools::{
     constants::{
         DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_CREATE,
         DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST,
-        DEN_JOB_RECONCILE, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
-        DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
+        DEN_JOB_RECONCILE, DEN_JOB_SETTLE_TASK, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND,
+        DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
         DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_SELECT, DEN_TASK_UPDATE,
         DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
         DEN_WORK_PREPARE_RUST_DEPENDENCIES, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND,
@@ -266,6 +266,9 @@ async fn invoke_workflow_tool(
         DEN_JOB_EXECUTE => workflow::execute_job(pool, context, role, arguments).await?,
         DEN_JOB_RECONCILE => {
             workflow::reconcile_job_execution(pool, context, role, arguments).await?
+        }
+        DEN_JOB_SETTLE_TASK => {
+            workflow::update_current_task_status(pool, context, role, arguments).await?
         }
         DEN_JOB_EVALUATE_CRITERION => {
             workflow::evaluate_criterion(pool, context, role, arguments).await?
