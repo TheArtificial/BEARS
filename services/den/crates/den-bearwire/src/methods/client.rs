@@ -286,6 +286,16 @@ fn should_retry_continuation_error(message: &str, attempt_index: usize) -> bool 
         && attempt_index < continuation_retry_pauses().len()
 }
 
+fn is_sibling_continuation_claim(err: &DenError) -> bool {
+    matches!(
+        err,
+        DenError::RunStateConflict {
+            actual_state: Some(actual_state),
+            ..
+        } if actual_state == "continuing"
+    )
+}
+
 fn should_retry_non_terminal_continuation_eof(
     terminal_event_seen: bool,
     wait_event_seen: bool,
@@ -822,6 +832,15 @@ fn spawn_continuation_task(
                                 }
                             }
                             Err(err) => {
+                                if is_sibling_continuation_claim(&err) {
+                                    tracing::info!(
+                                        session_id = %run.session_id,
+                                        run_id = %run.run_id,
+                                        request_id = %request_id,
+                                        "BearWire continuation claim is already owned by a sibling; leaving the run active"
+                                    );
+                                    return;
+                                }
                                 let failure_reason =
                                     if matches!(err, DenError::RunStateConflict { .. }) {
                                         RunFailureReason::ContinuationRunStateConflict
@@ -1730,6 +1749,28 @@ mod tests {
     #[test]
     fn continuation_retry_schedule_and_idle_error_classification() {
         assert_eq!(continuation_retry_pauses_seconds(), vec![2, 4, 54]);
+        assert!(is_sibling_continuation_claim(&DenError::RunStateConflict {
+            operation: "technical budget continuation claim",
+            run_id: "run-1".to_string(),
+            expected_state: "running",
+            actual_state: Some("continuing".to_string()),
+        }));
+        assert!(!is_sibling_continuation_claim(
+            &DenError::RunStateConflict {
+                operation: "technical budget continuation claim",
+                run_id: "run-1".to_string(),
+                expected_state: "running",
+                actual_state: Some("completed".to_string()),
+            }
+        ));
+        assert!(!is_sibling_continuation_claim(
+            &DenError::RunStateConflict {
+                operation: "technical budget continuation claim",
+                run_id: "run-1".to_string(),
+                expected_state: "running",
+                actual_state: None,
+            }
+        ));
         for message in [
             "Server Error: LLM byte stream produced no data for 30s",
             "Server Error: connection reset by peer",
