@@ -48,6 +48,7 @@ RuntimeAuthorityState =
 × ResolvedCurrentTask
 × WorkAssignment
 × DocketTaskState
+× DeliveryState
 × TurnRunState
 × ObligationSet
 × LoopControlState
@@ -115,6 +116,8 @@ Exit gate for the reduced authority model:
 | Trust profile | Bear profile registry | per turn/template | `chat`, `pair`, `curate`, `work`, `watch`; memory/tool/default trust contract. |
 | Governance | runtime/workspace session | run-scoped mutable timeline | `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. |
 | Pair current task | conversation + client-session binding | durable conversation/session selection, resolved per run | A validated persisted `client_sessions.current_task_id` is Pair's optional objective; it may reference a session-local or Docket task. |
+| Pair task settlement | Docket task settlement | durable task outcome | A terminal user/model declaration appends the canonical outcome and task link. In Pair it is not gated on commit creation, publication, or artifact finalization. |
+| Delivery | runtime delivery coordinator + work surface | task/job delivery attempt and evidence | `commit_policy` schedules delivery after Pair settlement (`none`, `per_task`, `per_job`). Delivery can be pending, committed/finalized, skipped, or failed; it is retryable and cannot reopen the settled Pair task. Explicit Work/release policy may gate a job delivery projection. |
 | Work assignment | WorkRun + Docket | durable Work-run Job boundary, resolved per run | An explicit assigned Job is Work's execution boundary; optional in-run task progress remains constrained to that Job. |
 | Workflow state | current-turn state compiler | current turn | Inputs compiled into `TurnAuthority`; derived operational context is advisory. |
 | Permission policy | Den policy resolver + descriptors | current turn/tool call | Resolves Ask/Plan/Write, tool classes, approvals, and armature routes before `TurnAuthority`/routing consume them. |
