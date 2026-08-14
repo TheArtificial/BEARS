@@ -893,6 +893,61 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
 }
 
 #[tokio::test]
+async fn pair_task_settlement_does_not_wait_for_per_job_commit_delivery() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed Pair settlement test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "pair-settlement").await;
+    let service = PgDocketService::from_pool(&pool);
+    let mut create = two_task_job(user_id, bear_id);
+    create.commit_policy = Some(DocketCommitPolicy::PerJob);
+    let created = service.create_job(create).await.expect("create Pair job");
+    let run_id = created.job.current_run_id.expect("current run");
+    let task_id = created.tasks[0].id;
+
+    let settled = service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: Some(created.job.id),
+            task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: Some(
+                    "Declared complete; commit delivery is runtime-owned.".to_string(),
+                ),
+            }),
+        })
+        .await
+        .expect("Pair settlement must not wait for per-job commit delivery");
+
+    assert_eq!(
+        settled
+            .run_state
+            .as_ref()
+            .map(|state| state.status.as_str()),
+        Some("done")
+    );
+    let outcome = sqlx::query!(
+        "SELECT kind, scope FROM bear_docket_entries WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'",
+        task_id,
+        run_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("canonical Pair settlement outcome");
+    assert_eq!(outcome.kind, "outcome");
+    assert_eq!(outcome.scope, "task_journal");
+}
+
+#[tokio::test]
 async fn docket_execution_focus_prefers_conversation_over_client_session() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket conversation focus test; database unavailable");
