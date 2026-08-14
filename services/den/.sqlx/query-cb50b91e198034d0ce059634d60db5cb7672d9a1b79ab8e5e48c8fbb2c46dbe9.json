@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT latest_context_budget_json AS \"latest_context_budget_json!: serde_json::Value\", id, current_title, to_char(latest_context_budget_updated_at, 'YYYY-MM-DD HH24:MI') AS \"updated_at!: String\" FROM conversations WHERE bear_id = $1 AND latest_context_budget_json IS NOT NULL ORDER BY latest_context_budget_updated_at DESC NULLS LAST LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "latest_context_budget_json!: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "current_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "updated_at!: String",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "cb50b91e198034d0ce059634d60db5cb7672d9a1b79ab8e5e48c8fbb2c46dbe9"
+}

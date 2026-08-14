@@ -313,10 +313,26 @@ pub(crate) async fn handle_git_commit(
     })
     .await
     .map_err(|error| anyhow!("git_commit blocking task failed: {error}"))??;
+    let committed = run_git_command(
+        &repo,
+        &[
+            "log".to_string(),
+            "-1".to_string(),
+            "--format=%h%x00%s".to_string(),
+        ],
+        1_024,
+    )?;
+    let (short_sha, subject) = committed
+        .stdout
+        .trim_end()
+        .split_once('\0')
+        .ok_or_else(|| anyhow!("git log returned an invalid commit summary"))?;
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
         "message": message,
+        "short_sha": short_sha,
+        "subject": subject,
         "allow_empty": allow_empty,
         "stdout": output.stdout,
         "stderr": output.stderr,

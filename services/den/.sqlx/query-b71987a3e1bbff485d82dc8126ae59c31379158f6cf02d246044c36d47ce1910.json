@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO model_selection_options (\n            handle, display_name, selectable, recommended, sort_order, notes, metadata_json\n        )\n        VALUES ($1, $2, $3, $4, $5, $6, $7)\n        ON CONFLICT (handle) DO UPDATE SET\n            display_name = EXCLUDED.display_name,\n            selectable = EXCLUDED.selectable,\n            recommended = EXCLUDED.recommended,\n            sort_order = EXCLUDED.sort_order,\n            notes = EXCLUDED.notes,\n            metadata_json = EXCLUDED.metadata_json,\n            updated_at = NOW()\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Bool",
+        "Bool",
+        "Int4",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b71987a3e1bbff485d82dc8126ae59c31379158f6cf02d246044c36d47ce1910"
+}

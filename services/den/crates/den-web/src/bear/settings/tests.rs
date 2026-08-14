@@ -157,28 +157,30 @@ async fn create_test_bear(pool: &sqlx::PgPool, slug: &str) -> Uuid {
 /// and an admin membership on the given bear.
 async fn create_bear_admin_user(pool: &sqlx::PgPool, bear_id: Uuid) -> i32 {
     let unique = Uuid::new_v4().simple().to_string();
-    let user_id = sqlx::query_scalar::<_, i32>(
-        r"
+    let email = format!("web-settings-{unique}@example.test");
+    let username = format!("ws{}", &unique[..28]);
+    let user_id = sqlx::query_scalar!(
+        r#"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-            ",
+            "#,
+        email,
+        username,
+        "Admin Display",
+        "test-passhash"
     )
-    .bind(format!("web-settings-{unique}@example.test"))
-    .bind(format!("ws{}", &unique[..28]))
-    .bind("Admin Display")
-    .bind("test-passhash")
     .fetch_one(pool)
     .await
     .expect("create user");
-    sqlx::query(
-        r"
+    sqlx::query!(
+        r#"
             INSERT INTO email_configs (user_id, email_address, active, verified_at)
             VALUES ($1, $2, true, now())
-            ",
+            "#,
+        user_id,
+        format!("web-settings-{unique}@example.test")
     )
-    .bind(user_id)
-    .bind(format!("web-settings-{unique}@example.test"))
     .execute(pool)
     .await
     .expect("verify email");
@@ -224,10 +226,10 @@ async fn add_web_source_route_normalizes_host_and_flashes() {
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .contains("message=Web%20source%20saved"));
-    let stored: String = sqlx::query_scalar(
+    let stored: String = sqlx::query_scalar!(
         "SELECT scope_value FROM bear_web_sources WHERE bear_id = $1 AND scope_kind = 'host'",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_one(&pool)
     .await
     .expect("stored source");
@@ -272,12 +274,13 @@ async fn add_web_source_route_rejects_url_in_host_scope() {
         location.contains("host must be a bare hostname"),
         "unexpected redirect: {location}"
     );
-    let stored: i64 =
-        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM bear_web_sources WHERE bear_id = $1")
-            .bind(bear_id)
-            .fetch_one(&pool)
-            .await
-            .expect("source count");
+    let stored: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::bigint AS \"count!: i64\" FROM bear_web_sources WHERE bear_id = $1",
+        bear_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("source count");
     assert_eq!(stored, 0);
 }
 
@@ -315,11 +318,11 @@ async fn add_and_revoke_web_approval_routes_update_active_approvals() {
         );
     }
 
-    let approval_id: Uuid = sqlx::query_scalar(
-            "SELECT id FROM bear_web_approvals WHERE bear_id = $1 AND scope_value = 'docs.rs' AND revoked_at IS NULL",
-        )
-        .bind(bear_id)
-        .fetch_one(&pool)
+    let approval_id: Uuid = sqlx::query_scalar!(
+        "SELECT id FROM bear_web_approvals WHERE bear_id = $1 AND scope_value = 'docs.rs' AND revoked_at IS NULL",
+        bear_id
+    )
+    .fetch_one(&pool)
         .await
         .expect("active approval");
 
@@ -336,10 +339,10 @@ async fn add_and_revoke_web_approval_routes_update_active_approvals() {
         .expect("revoke response");
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-    let active_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM bear_web_approvals WHERE bear_id = $1 AND revoked_at IS NULL",
+    let active_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::bigint AS \"count!: i64\" FROM bear_web_approvals WHERE bear_id = $1 AND revoked_at IS NULL",
+        bear_id
     )
-    .bind(bear_id)
     .fetch_one(&pool)
     .await
     .expect("approval count");

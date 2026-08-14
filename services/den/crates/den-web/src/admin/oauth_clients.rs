@@ -923,10 +923,10 @@ pub async fn generate_token_action(
     }
 
     // Validate that the user exists
-    let user_exists = sqlx::query_scalar::<_, bool>(
-        r"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND active = true)",
+    let user_exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1) AS "exists!""#,
+        user_id,
     )
-    .bind(user_id)
     .fetch_one(&state.sqlx_pool)
     .await?;
 

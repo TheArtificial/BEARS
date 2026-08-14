@@ -187,6 +187,23 @@ fn command_name_from_tool_event(data: &Value) -> Option<String> {
 }
 
 fn default_tool_status_summary_with_context(data: &Value, tool_name: &str, failed: bool) -> String {
+    if tool_name == "git_commit" && !failed {
+        let result = data
+            .get("structured_content")
+            .or_else(|| data.get("result"))
+            .unwrap_or(data);
+        if let (Some(short_sha), Some(subject)) = (
+            result.get("short_sha").and_then(Value::as_str),
+            result.get("subject").and_then(Value::as_str),
+        ) {
+            let short_sha = short_sha.trim();
+            let subject = subject.trim();
+            if !short_sha.is_empty() && !subject.is_empty() {
+                return format!("Git commit created: {short_sha} {subject}.");
+            }
+        }
+    }
+
     if tool_name == "set_conversation_title" && !failed {
         if let Some(title) = normalized_tool_arguments(data)
             .as_ref()
@@ -3012,6 +3029,23 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn git_commit_finished_summary_includes_short_sha_and_subject() {
+        let data = json!({
+            "tool_name": "git_commit",
+            "summary": "Finished git_commit",
+            "structured_content": {
+                "short_sha": "cc88ad9a",
+                "subject": "fix: inject Pair Docket execution controls"
+            }
+        });
+
+        assert_eq!(
+            tool_call_finished_summary(&data, "git_commit", false),
+            "Git commit created: cc88ad9a fix: inject Pair Docket execution controls."
+        );
     }
 
     #[test]

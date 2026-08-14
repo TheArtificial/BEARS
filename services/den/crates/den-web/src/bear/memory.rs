@@ -1688,7 +1688,7 @@ async fn import_staged_bundle(
     let stores = state.memory_stores.clone();
     let store = stores.store_for_bear(bear_id).await?;
     let record_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
             .bind(bear_id.to_string())
             .fetch_one(store.pool())
             .await?;
@@ -2154,7 +2154,7 @@ async fn import_legacy_memory_post(
     let stores = state.memory_stores.clone();
     let store = stores.store_for_bear(bear.id).await?;
     let record_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
             .bind(bear.id.to_string())
             .fetch_one(store.pool())
             .await?;
@@ -2311,6 +2311,8 @@ async fn browse_delete_post(
     let store = manager.store_for_bear(bear.id).await?;
     let mut deleted = 0usize;
     for path in &paths {
+        // Per-Bear canonical memory is SQLite; the workspace SQLx prepare URL is
+        // Postgres, so this SQLite statement remains typed at the store boundary.
         let result = sqlx::query(
             "DELETE FROM memory_records WHERE bear_id = ? AND scope_profile = ? AND logical_path = ?",
         )

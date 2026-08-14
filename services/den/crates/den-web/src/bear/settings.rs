@@ -1509,12 +1509,14 @@ async fn import_bear_bundle(
 
     let birthdate = birthdate.trim();
     if !birthdate.is_empty() {
-        sqlx::query("UPDATE bears SET birthday = $1::date, updated_at = NOW() WHERE id = $2")
-            .bind(birthdate)
-            .bind(bear_id)
-            .execute(state.sqlx_pool())
-            .await
-            .map_err(|err| CustomError::ValidationError(format!("invalid Bear birthday: {err}")))?;
+        sqlx::query!(
+            "UPDATE bears SET birthday = $1::text::date, updated_at = NOW() WHERE id = $2",
+            birthdate,
+            bear_id
+        )
+        .execute(state.sqlx_pool())
+        .await
+        .map_err(|err| CustomError::ValidationError(format!("invalid Bear birthday: {err}")))?;
     }
 
     bears_db::grant_membership(state.sqlx_pool(), user.id, bear_id, Some(BEAR_ROLE_ADMIN)).await?;
@@ -1604,24 +1606,28 @@ async fn overview_view(
             }
         }
     };
-    let conversation_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM conversations WHERE bear_id = $1")
-            .bind(id)
-            .fetch_one(state.sqlx_pool())
-            .await
-            .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
+    let conversation_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::bigint AS \"count!: i64\" FROM conversations WHERE bear_id = $1",
+        id
+    )
+    .fetch_one(state.sqlx_pool())
+    .await
+    .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
     let pending_reviews: i64 = memory_stats
         .as_ref()
         .map(|s| s.pending_proposals + s.pending_observations)
         .unwrap_or(0);
-    let recent_rows: Vec<(Uuid, Option<String>, String)> = sqlx::query_as(
-        "SELECT id, current_title, to_char(updated_at, 'YYYY-MM-DD HH24:MI') \
+    let recent_rows: Vec<(Uuid, Option<String>, String)> = sqlx::query!(
+        "SELECT id, current_title, to_char(updated_at, 'YYYY-MM-DD HH24:MI') AS \"updated!: String\" \
          FROM conversations WHERE bear_id = $1 ORDER BY updated_at DESC LIMIT 5",
+        id
     )
-    .bind(id)
     .fetch_all(state.sqlx_pool())
     .await
-    .map_err(|err| CustomError::Database(format!("recent bear conversations: {err}")))?;
+    .map_err(|err| CustomError::Database(format!("recent bear conversations: {err}")))?
+    .into_iter()
+    .map(|row| (row.id, row.current_title, row.updated))
+    .collect();
     let recent_conversations: Vec<serde_json::Value> = recent_rows
         .into_iter()
         .map(|(cid, title, updated)| {
@@ -1632,16 +1638,20 @@ async fn overview_view(
             })
         })
         .collect();
-    let weekly_rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT to_char(date_trunc('week', updated_at), 'YYYY-MM-DD'), COUNT(*)::bigint \
+    let weekly_rows: Vec<(String, i64)> = sqlx::query!(
+        "SELECT to_char(date_trunc('week', updated_at), 'YYYY-MM-DD') AS \"week!: String\", \
+                COUNT(*)::bigint AS \"count!: i64\" \
          FROM conversations WHERE bear_id = $1 \
            AND updated_at > now() - interval '8 weeks' \
          GROUP BY 1 ORDER BY 1 DESC",
+        id
     )
-    .bind(id)
     .fetch_all(state.sqlx_pool())
     .await
-    .map_err(|err| CustomError::Database(format!("bear activity over time: {err}")))?;
+    .map_err(|err| CustomError::Database(format!("bear activity over time: {err}")))?
+    .into_iter()
+    .map(|row| (row.week, row.count))
+    .collect();
     let weekly_max = weekly_rows.iter().map(|(_, n)| *n).max().unwrap_or(0);
     let weekly_activity: Vec<serde_json::Value> = weekly_rows
         .into_iter()
@@ -2615,25 +2625,28 @@ async fn conversations_view(
         if external_ids.is_empty() {
             HashMap::new()
         } else {
-            sqlx::query_as::<_, (String, i64, String, time::OffsetDateTime)>(
-                r"
+            sqlx::query!(
+                r#"
                 SELECT DISTINCT ON (conversation_id)
-                       conversation_id,
-                       COUNT(*) OVER (PARTITION BY conversation_id)::bigint AS event_count,
-                       status,
-                       created_at
+                       conversation_id AS "conversation_id!: String",
+                       COUNT(*) OVER (PARTITION BY conversation_id)::bigint AS "event_count!: i64",
+                       status AS "status!: String",
+                       created_at AS "created_at!: time::OffsetDateTime"
                 FROM runtime_compaction_events
                 WHERE conversation_id = ANY($1)
                 ORDER BY conversation_id, created_at DESC
-                ",
+                "#,
+                &external_ids
             )
-            .bind(&external_ids)
             .fetch_all(state.sqlx_pool())
             .await
             .map_err(|err| CustomError::Database(format!("list compaction stats: {err}")))?
             .into_iter()
-            .map(|(conversation_id, count, status, created_at)| {
-                (conversation_id, (count, status, created_at))
+            .map(|row| {
+                (
+                    row.conversation_id,
+                    (row.event_count, row.status, row.created_at),
+                )
             })
             .collect()
         };
@@ -2904,18 +2917,26 @@ async fn context_view(
 
     // The most recent turn's budget report: per-component attribution of the
     // assembled context, persisted per conversation on every turn.
-    let latest_budget_row: Option<(serde_json::Value, Uuid, Option<String>, String)> =
-        sqlx::query_as(
-            "SELECT latest_context_budget_json, id, current_title, \
-                    to_char(latest_context_budget_updated_at, 'YYYY-MM-DD HH24:MI') \
-             FROM conversations \
-             WHERE bear_id = $1 AND latest_context_budget_json IS NOT NULL \
-             ORDER BY latest_context_budget_updated_at DESC NULLS LAST LIMIT 1",
+    let latest_budget_row: Option<(serde_json::Value, Uuid, Option<String>, String)> = sqlx::query!(
+        "SELECT latest_context_budget_json AS \"latest_context_budget_json!: serde_json::Value\", \
+                id, current_title, \
+                to_char(latest_context_budget_updated_at, 'YYYY-MM-DD HH24:MI') AS \"updated_at!: String\" \
+         FROM conversations \
+         WHERE bear_id = $1 AND latest_context_budget_json IS NOT NULL \
+         ORDER BY latest_context_budget_updated_at DESC NULLS LAST LIMIT 1",
+        id
+    )
+    .fetch_optional(state.sqlx_pool())
+    .await
+    .map_err(|err| CustomError::Database(format!("latest bear context budget: {err}")))?
+    .map(|row| {
+        (
+            row.latest_context_budget_json,
+            row.id,
+            row.current_title,
+            row.updated_at,
         )
-        .bind(id)
-        .fetch_optional(state.sqlx_pool())
-        .await
-        .map_err(|err| CustomError::Database(format!("latest bear context budget: {err}")))?;
+    });
     let latest_budget = latest_budget_row.and_then(|(value, conv_id, title, at)| {
         let report: ContextBudgetReport = serde_json::from_value(value).ok()?;
         let denominator: u32 = report.estimated_input_tokens.max(1);
@@ -3218,8 +3239,8 @@ async fn conversation_ids_for_reflection_action(
     form: &ReflectConversationsForm,
 ) -> Result<Vec<Uuid>, CustomError> {
     match form.bulk_action.as_str() {
-        "all_no_compaction" => sqlx::query_scalar::<_, Uuid>(
-            r"
+        "all_no_compaction" => sqlx::query_scalar!(
+            r#"
             SELECT c.id
             FROM conversations c
             WHERE c.bear_id = $1
@@ -3230,16 +3251,16 @@ async fn conversation_ids_for_reflection_action(
               )
             ORDER BY c.updated_at DESC
             LIMIT 25
-            ",
+            "#,
+            bear_id
         )
-        .bind(bear_id)
         .fetch_all(state.sqlx_pool())
         .await
         .map_err(|err| {
             CustomError::Database(format!("select conversations without compaction: {err}"))
         }),
-        "all_skipped_compaction" => sqlx::query_scalar::<_, Uuid>(
-            r"
+        "all_skipped_compaction" => sqlx::query_scalar!(
+            r#"
             SELECT c.id
             FROM conversations c
             JOIN LATERAL (
@@ -3253,9 +3274,9 @@ async fn conversation_ids_for_reflection_action(
               AND lower(latest.status) = 'skipped'
             ORDER BY c.updated_at DESC
             LIMIT 25
-            ",
+            "#,
+            bear_id
         )
-        .bind(bear_id)
         .fetch_all(state.sqlx_pool())
         .await
         .map_err(|err| {
@@ -3498,8 +3519,8 @@ async fn add_web_source_action(
             .into_response());
         }
     };
-    sqlx::query(
-        r"
+    sqlx::query!(
+        r#"
         INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, label, policy, priority)
         VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)
         ON CONFLICT (bear_id, scope_kind, scope_value)
@@ -3507,14 +3528,14 @@ async fn add_web_source_action(
                       policy = EXCLUDED.policy,
                       priority = EXCLUDED.priority,
                       updated_at = now()
-        ",
+        "#,
+        id,
+        scope_kind,
+        scope_value,
+        form.label.trim(),
+        policy,
+        form.priority.unwrap_or(0)
     )
-    .bind(id)
-    .bind(scope_kind)
-    .bind(scope_value)
-    .bind(form.label.trim())
-    .bind(policy)
-    .bind(form.priority.unwrap_or(0))
     .execute(state.sqlx_pool())
     .await?;
     Ok(Redirect::to(&format!(
@@ -3534,11 +3555,13 @@ async fn delete_web_source_action(
         Ok(b) => b,
         Err(r) => return Ok(r.into_response()),
     };
-    sqlx::query("DELETE FROM bear_web_sources WHERE bear_id = $1 AND id = $2")
-        .bind(bear.id)
-        .bind(source_id)
-        .execute(state.sqlx_pool())
-        .await?;
+    sqlx::query!(
+        "DELETE FROM bear_web_sources WHERE bear_id = $1 AND id = $2",
+        bear.id,
+        source_id
+    )
+    .execute(state.sqlx_pool())
+    .await?;
     Ok(Redirect::to(&format!(
         "/bear/{}/resources?message={}",
         bear.slug,
@@ -3606,11 +3629,13 @@ async fn revoke_web_approval_action(
         Ok(b) => b,
         Err(r) => return Ok(r.into_response()),
     };
-    sqlx::query("UPDATE bear_web_approvals SET revoked_at = now() WHERE bear_id = $1 AND id = $2")
-        .bind(bear.id)
-        .bind(approval_id)
-        .execute(state.sqlx_pool())
-        .await?;
+    sqlx::query!(
+        "UPDATE bear_web_approvals SET revoked_at = now() WHERE bear_id = $1 AND id = $2",
+        bear.id,
+        approval_id
+    )
+    .execute(state.sqlx_pool())
+    .await?;
     Ok(Redirect::to(&format!(
         "/bear/{}/resources?message={}",
         bear.slug,

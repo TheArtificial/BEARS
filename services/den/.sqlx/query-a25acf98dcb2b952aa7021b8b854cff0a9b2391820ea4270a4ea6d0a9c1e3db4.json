@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM model_selection_options WHERE handle = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a25acf98dcb2b952aa7021b8b854cff0a9b2391820ea4270a4ea6d0a9c1e3db4"
+}

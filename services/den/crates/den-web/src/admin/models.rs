@@ -111,7 +111,7 @@ async fn create_model(
 ) -> Result<impl IntoResponse, CustomError> {
     let form = normalize_form(form)?;
     let metadata_json = parse_metadata_json(form.metadata_json.as_deref().unwrap_or("{}"))?;
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO model_selection_options (
             handle, display_name, selectable, recommended, sort_order, notes, metadata_json
@@ -126,14 +126,14 @@ async fn create_model(
             metadata_json = EXCLUDED.metadata_json,
             updated_at = NOW()
         ",
+        &form.handle,
+        &form.display_name,
+        form.selectable.is_some(),
+        form.recommended.is_some(),
+        form.sort_order,
+        form.notes.as_deref(),
+        metadata_json,
     )
-    .bind(&form.handle)
-    .bind(&form.display_name)
-    .bind(form.selectable.is_some())
-    .bind(form.recommended.is_some())
-    .bind(form.sort_order)
-    .bind(form.notes.as_deref())
-    .bind(Json(metadata_json))
     .execute(state.sqlx_pool())
     .await?;
 
@@ -165,7 +165,7 @@ async fn add_from_catalog(
         )
     };
 
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO model_selection_options (
             handle, display_name, selectable, recommended, sort_order, notes, metadata_json
@@ -180,14 +180,14 @@ async fn add_from_catalog(
             metadata_json = EXCLUDED.metadata_json,
             updated_at = NOW()
         ",
+        &form.handle,
+        &display_name,
+        form.selectable.is_some(),
+        form.recommended.is_some(),
+        form.sort_order,
+        form.notes.as_deref(),
+        metadata_json,
     )
-    .bind(&form.handle)
-    .bind(&display_name)
-    .bind(form.selectable.is_some())
-    .bind(form.recommended.is_some())
-    .bind(form.sort_order)
-    .bind(form.notes.as_deref())
-    .bind(Json(metadata_json))
     .execute(state.sqlx_pool())
     .await?;
 
@@ -201,7 +201,7 @@ async fn update_model(
     Form(form): Form<ModelForm>,
 ) -> Result<impl IntoResponse, CustomError> {
     let form = normalize_form(form)?;
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r"
         UPDATE model_selection_options
         SET display_name = $2,
@@ -212,13 +212,13 @@ async fn update_model(
             updated_at = NOW()
         WHERE handle = $1
         ",
+        &form.handle,
+        &form.display_name,
+        form.selectable.is_some(),
+        form.recommended.is_some(),
+        form.sort_order,
+        form.notes.as_deref(),
     )
-    .bind(&form.handle)
-    .bind(&form.display_name)
-    .bind(form.selectable.is_some())
-    .bind(form.recommended.is_some())
-    .bind(form.sort_order)
-    .bind(form.notes.as_deref())
     .execute(state.sqlx_pool())
     .await?;
 
@@ -242,10 +242,12 @@ async fn delete_model(
             "model handle is required".to_string(),
         ));
     }
-    sqlx::query("DELETE FROM model_selection_options WHERE handle = $1")
-        .bind(handle)
-        .execute(state.sqlx_pool())
-        .await?;
+    sqlx::query!(
+        "DELETE FROM model_selection_options WHERE handle = $1",
+        handle
+    )
+    .execute(state.sqlx_pool())
+    .await?;
     Ok(Redirect::to("/admin/models?message=Deleted"))
 }
 

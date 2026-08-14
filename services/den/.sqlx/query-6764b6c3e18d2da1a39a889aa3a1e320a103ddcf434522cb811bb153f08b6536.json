@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE model_selection_options\n        SET display_name = $2,\n            selectable = $3,\n            recommended = $4,\n            sort_order = $5,\n            notes = $6,\n            updated_at = NOW()\n        WHERE handle = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Bool",
+        "Bool",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6764b6c3e18d2da1a39a889aa3a1e320a103ddcf434522cb811bb153f08b6536"
+}

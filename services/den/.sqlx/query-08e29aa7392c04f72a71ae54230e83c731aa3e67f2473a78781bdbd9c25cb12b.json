@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT to_char(date_trunc('week', updated_at), 'YYYY-MM-DD') AS \"week!: String\", COUNT(*)::bigint AS \"count!: i64\" FROM conversations WHERE bear_id = $1 AND updated_at > now() - interval '8 weeks' GROUP BY 1 ORDER BY 1 DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "week!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "count!: i64",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "08e29aa7392c04f72a71ae54230e83c731aa3e67f2473a78781bdbd9c25cb12b"
+}
