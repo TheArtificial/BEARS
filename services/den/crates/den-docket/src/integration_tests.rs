@@ -591,10 +591,13 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
 
     let outcome = sqlx::query!(
         r"
-        SELECT summary, disposition, jsonb_array_length(evidence_refs) AS evidence_count
-        FROM bear_docket_entries
-        WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'
-        ORDER BY created_at DESC
+        SELECT entry.id, entry.summary, entry.disposition,
+               jsonb_array_length(entry.evidence_refs) AS evidence_count,
+               task.settled_by_entry_id
+        FROM bear_docket_entries entry
+        JOIN bear_tasks task ON task.id = entry.task_id
+        WHERE entry.task_id = $1 AND entry.run_id = $2 AND entry.kind = 'outcome'
+        ORDER BY entry.created_at DESC
         LIMIT 1
         ",
         first_task_id,
@@ -606,6 +609,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     let outcome_summary = outcome.summary;
     let outcome_disposition = outcome.disposition;
     let evidence_count = outcome.evidence_count;
+    assert_eq!(outcome.settled_by_entry_id, Some(outcome.id));
     assert_eq!(
         outcome_summary,
         "Inventory findings recorded in the task result."
