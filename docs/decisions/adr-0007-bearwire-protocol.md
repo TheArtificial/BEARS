@@ -667,6 +667,18 @@ Den auth module ⇄ Den provisioning module in the same process
 
 This keeps BearWire from becoming unnecessary internal ceremony while still giving BEARS one runtime event/control vocabulary.
 
+## Live surface projection ordering (amendment)
+
+Canonical BearWire events are assigned a monotonic per-session `sequence_no`. A reconnecting armature may replay them in that order, but replay ordering alone is insufficient for a live surface: local tool workers, recovery paths, and surface renderers are concurrent producers.
+
+**Invariant:** each user-visible surface has exactly one ordered projection dispatcher per conversation/surface identity. Only that dispatcher may emit live surface updates. It accepts typed projection inputs carrying their canonical sequence where one exists, serializes output, suppresses stale or duplicate work, and treats unsequenced recovery projections explicitly as recovery after the last acknowledged canonical sequence.
+
+For ACP/BearWire, `bearwire_events.sequence_no` is the canonical ordering key. Local armature tasks may execute tools and settle callbacks concurrently, but they must not directly race canonical ACP `session/update` projection. A stdout/JSON write mutex is required for frame integrity, but is not an ordering mechanism.
+
+This invariant is transport-neutral. Web chat and future external channels keep their own transports and delivery semantics; they must nevertheless use an equivalent per-conversation ordered projection dispatcher over their canonical conversation/runtime ordering key. Channels must not be forced through BearWire merely to satisfy this rule.
+
+Changing the canonical ordering or replay guarantee is a protocol-compatible concern only when existing clients retain the same observable ordering semantics; otherwise it is a breaking BearWire change.
+
 ## Error model
 
 BearWire errors should be structured and actionable.

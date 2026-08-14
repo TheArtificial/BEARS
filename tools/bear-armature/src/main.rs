@@ -3,6 +3,7 @@ mod bearwire;
 mod headless;
 mod json_rpc;
 mod paths;
+mod projection_dispatcher;
 mod tool_tasks;
 mod tools;
 mod update;
@@ -40,6 +41,7 @@ use paths::{
     ensure_path_allowed_for_session, file_uri_or_path_to_path, is_absolute_local_path,
     normalize_requested_tool_path, resolve_requested_tool_path,
 };
+use projection_dispatcher::AcpProjectionDispatcher;
 
 use reqwest::Url;
 use rmcp::{
@@ -159,6 +161,7 @@ struct AdapterSharedState {
     approval_cache: ApprovalCache,
     cancellation_tx: broadcast::Sender<CancellationNotice>,
     active_prompts: Arc<TokioMutex<HashMap<String, ActivePromptTurn>>>,
+    projection_dispatcher: AcpProjectionDispatcher,
 }
 
 #[derive(Clone, Debug)]
@@ -1662,6 +1665,7 @@ async fn run() -> Result<()> {
         approval_cache,
         cancellation_tx,
         active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
+        projection_dispatcher: AcpProjectionDispatcher::default(),
     };
     tokio::spawn(read_stdin_messages(
         inbound_tx,
@@ -7902,6 +7906,8 @@ pub(crate) fn spawn_tool_request_task(
                 );
                 let _ = post_local_tool_error_result(
                     &config,
+                    &shared_state,
+                    turn_token,
                     &session_id,
                     &tool_call_id,
                     &tool_name,
@@ -7940,6 +7946,8 @@ pub(crate) fn spawn_tool_request_task(
             let local_err = LocalToolError::error(format!("local tool task failed: {err:#}"));
             let _ = post_local_tool_error_result(
                 &config,
+                &shared_state,
+                turn_token,
                 &session_id,
                 &tool_call_id,
                 &tool_name,
@@ -8137,8 +8145,10 @@ async fn handle_tool_request_event(
         return Ok(());
     }
     let preparing = friendly_tool_status(tool_name, event, "preparing");
-    send_tool_call_update(
+    send_detached_tool_call_update_for_turn(
+        shared_state,
         session_id,
+        turn_token,
         tool_call_id,
         tool_name,
         ToolCallUpdatePayload {
@@ -8221,8 +8231,10 @@ async fn handle_tool_request_event(
             ToolTaskPhase::PermissionRequested,
         );
         let permission = friendly_tool_status(tool_name, event, "permission");
-        send_tool_call_update(
+        send_detached_tool_call_update_for_turn(
+            shared_state,
             session_id,
+            turn_token,
             tool_call_id,
             tool_name,
             ToolCallUpdatePayload {
@@ -8295,6 +8307,8 @@ async fn handle_tool_request_event(
             };
             post_local_tool_error_result(
                 config,
+                shared_state,
+                turn_token,
                 session_id,
                 tool_call_id,
                 tool_name,
@@ -8351,8 +8365,10 @@ async fn handle_tool_request_event(
         );
     }
     let running = friendly_tool_status(tool_name, event, "running");
-    send_tool_call_update(
+    send_detached_tool_call_update_for_turn(
+        shared_state,
         session_id,
+        turn_token,
         tool_call_id,
         tool_name,
         ToolCallUpdatePayload {
@@ -8521,10 +8537,18 @@ async fn handle_tool_request_event(
                     .get("plan")
                     .map(plan_entries_from_work_plan_args)
                     .unwrap_or_default();
+                let _projection = shared_state
+                    .projection_dispatcher
+                    .begin_detached_projection(session_id, turn_token)
+                    .await;
                 send_plan_update(session_id, entries).await?;
             }
             if let Some(mode) = value.get("mode_update").and_then(Value::as_str) {
                 if matches!(mode, MODE_ASK | MODE_PLAN | MODE_WRITE) {
+                    let _projection = shared_state
+                        .projection_dispatcher
+                        .begin_detached_projection(session_id, turn_token)
+                        .await;
                     notify_mode_state(session_id, mode).await?;
                 }
             }
@@ -8609,8 +8633,10 @@ async fn handle_tool_request_event(
             ToolTaskPhase::ResultPostFailed,
         );
         let message = format!("Could not deliver local tool result to Den.\n\n{err:#}");
-        let _ = send_tool_call_update(
+        let _ = send_detached_tool_call_update_for_turn(
+            shared_state,
             session_id,
+            turn_token,
             tool_call_id,
             tool_name,
             ToolCallUpdatePayload {
@@ -8647,8 +8673,10 @@ async fn handle_tool_request_event(
         ToolTaskPhase::ResultPosted,
     );
     if let Some((status, text, raw_output, extra_content)) = deferred_ui_update {
-        if let Err(err) = send_tool_call_update(
+        if let Err(err) = send_detached_tool_call_update_for_turn(
+            shared_state,
             session_id,
+            turn_token,
             tool_call_id,
             tool_name,
             ToolCallUpdatePayload {
@@ -9076,6 +9104,8 @@ fn markdown_fence_for_content(content: &str) -> String {
 
 async fn post_local_tool_error_result(
     config: &Config,
+    shared_state: &AdapterSharedState,
+    turn_token: Uuid,
     session_id: &str,
     tool_call_id: &str,
     tool_name: &str,
@@ -9105,8 +9135,10 @@ async fn post_local_tool_error_result(
         }
     });
     merge_diagnostic(&mut payload["diagnostic"], local_err.diagnostic);
-    send_tool_call_update(
+    send_detached_tool_call_update_for_turn(
+        shared_state,
         session_id,
+        turn_token,
         tool_call_id,
         tool_name,
         ToolCallUpdatePayload {
@@ -11275,6 +11307,32 @@ struct ToolCallUpdatePayload<'a> {
     extra_content: Vec<ToolCallContent>,
 }
 
+/// Project a tool update emitted from a detached local-tool task. The task may
+/// execute concurrently, but its ACP write is serialized behind any live
+/// BearWire event-page projection for this session.
+async fn send_detached_tool_call_update_for_turn(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    tool_call_id: &str,
+    tool_name: &str,
+    payload: ToolCallUpdatePayload<'_>,
+) -> Result<()> {
+    let _projection = shared_state
+        .projection_dispatcher
+        .begin_detached_projection(session_id, turn_token)
+        .await;
+    send_tool_call_update_for_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        tool_call_id,
+        tool_name,
+        payload,
+    )
+    .await
+}
+
 pub(crate) async fn send_tool_call_update_for_turn(
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -12088,6 +12146,7 @@ mod tests {
             approval_cache: ApprovalCache::default(),
             cancellation_tx,
             active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
+            projection_dispatcher: AcpProjectionDispatcher::default(),
         }
     }
 

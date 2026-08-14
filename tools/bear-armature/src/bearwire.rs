@@ -541,6 +541,13 @@ pub(crate) async fn handle_prompt(
         {
             break;
         }
+        // Own this session's ACP projection lane before fetching the page. A
+        // detached local tool can keep executing, but cannot emit an ACP update
+        // ahead of lifecycle frames that are already in flight.
+        let page_projection = shared_state
+            .projection_dispatcher
+            .begin_live_page(session_id, turn_token)
+            .await;
         let replay = match fetch_events(http, config, session_id, after).await {
             Ok(replay) => {
                 consecutive_fetch_errors = 0;
@@ -574,6 +581,7 @@ pub(crate) async fn handle_prompt(
                                     session_id,
                                     run_id,
                                     event,
+                                    None,
                                     &mut diagnostics,
                                     turn_token,
                                 )
@@ -630,6 +638,7 @@ pub(crate) async fn handle_prompt(
                         "Den API connectivity failure: BearWire event delivery and run.state reconciliation both failed during the recovery grace period",
                     );
                 }
+                drop(page_projection);
                 sleep(event_fetch_retry_delay(consecutive_fetch_errors)).await;
                 continue;
             }
@@ -637,7 +646,8 @@ pub(crate) async fn handle_prompt(
         let replay_count = replay.frames.len();
         let next_after = replay.next_after;
         for frame in replay.frames {
-            let _sequence = frame.sequence;
+            let sequence = frame.sequence;
+            page_projection.observe_frame(sequence);
             let Some(event) = frame.event else {
                 continue;
             };
@@ -648,6 +658,7 @@ pub(crate) async fn handle_prompt(
                 session_id,
                 run_id,
                 &event,
+                sequence,
                 &mut diagnostics,
                 turn_token,
             )
@@ -775,6 +786,7 @@ pub(crate) async fn handle_prompt(
                 }
             }
         }
+        drop(page_projection);
         sleep(BEARWIRE_POLL_INTERVAL).await;
     }
 
@@ -786,6 +798,14 @@ pub(crate) async fn handle_prompt(
     } else {
         match fetch_run_state(http, config, session_id, run_id).await {
             Ok(state) => {
+                // Canonical recovery can create a permission projection; route
+                // it through the same session lane even though it has no event
+                // page frame sequence.
+                let recovery_projection = shared_state
+                    .projection_dispatcher
+                    .begin_live_page(session_id, turn_token)
+                    .await;
+                recovery_projection.observe_frame(None);
                 service_run_state_tool_obligations(
                     config,
                     shared_state,
@@ -795,6 +815,7 @@ pub(crate) async fn handle_prompt(
                     turn_token,
                 )
                 .await?;
+                drop(recovery_projection);
                 canonical_run_state_allows_prompt_end(&state)
             }
             Err(err) => {
@@ -1856,11 +1877,19 @@ async fn handle_bearwire_event(
     session_id: &str,
     current_run_id: &str,
     event: &Value,
+    frame_sequence: Option<i64>,
     diagnostics: &mut SseStreamDiagnostics,
     turn_token: Uuid,
 ) -> Result<SseFrameOutcome> {
     diagnostics.frames += 1;
     let outcome = SseFrameOutcome::default();
+    tracing::trace!(
+        target: "bear_armature::lifecycle",
+        session_id,
+        current_run_id,
+        bearwire_sequence = ?frame_sequence,
+        "handling ordered BearWire frame"
+    );
     let ty = event.get("type").and_then(Value::as_str).unwrap_or("");
     if current_run_id != "<unknown>" && event_is_run_scoped(ty) {
         if let Some(event_run_id) = event_run_id(event) {
