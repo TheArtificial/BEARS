@@ -2392,7 +2392,7 @@ pub(super) async fn update_task(
         }
         validate_parent_completion(&mut tx, &current, run_state.run_id).await?;
     }
-    let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
+    let mut patched = update_task_definition(&mut tx, &current, &update.definition).await?;
     append_task_updated_events(&mut tx, &patched, &update).await?;
     let append_outcome = should_append_terminal_outcome(&mut tx, &patched, &update).await?;
     let run_state = if let Some(run_state) = update.run_state.as_ref() {
@@ -2402,6 +2402,7 @@ pub(super) async fn update_task(
     };
     if append_outcome {
         append_terminal_outcome(&mut tx, &patched, &update).await?;
+        patched = select_task(&mut tx, update.bear_id, update.task_id).await?;
     }
     if let (Some(job_id), Some(run_state)) = (current.job_id, update.run_state.as_ref()) {
         reconcile_job_status(&mut tx, job_id, run_state.run_id).await?;

@@ -936,15 +936,39 @@ async fn pair_task_settlement_does_not_wait_for_per_job_commit_delivery() {
         Some("done")
     );
     let outcome = sqlx::query!(
-        "SELECT kind, scope FROM bear_docket_entries WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'",
+        "SELECT id, kind, scope FROM bear_docket_entries WHERE task_id = $1 AND run_id = $2 AND kind = 'outcome'",
         task_id,
         run_id,
     )
     .fetch_one(&pool)
     .await
     .expect("canonical Pair settlement outcome");
+    assert_eq!(settled.task.settled_by_entry_id, Some(outcome.id));
     assert_eq!(outcome.kind, "outcome");
     assert_eq!(outcome.scope, "task_journal");
+
+    let error = service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: Some(created.job.id),
+            task_id: created.tasks[1].id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: Some(primary_output_result_refs()),
+                result_summary: Some(
+                    "Declared complete with explicit output evidence.".to_string(),
+                ),
+            }),
+        })
+        .await
+        .expect_err("unregistered explicit primary output must remain rejected");
+    assert!(error.to_string().contains("finalized Git commit artifact"));
 }
 
 #[tokio::test]
