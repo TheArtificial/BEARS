@@ -1204,7 +1204,11 @@ mod tests {
         (bear_id, user_id)
     }
 
-    fn request(run_id: &str) -> RuntimeCheckpointRequest {
+    fn request(
+        run_id: &str,
+        docket_job_id: Option<Uuid>,
+        docket_task_id: Option<Uuid>,
+    ) -> RuntimeCheckpointRequest {
         RuntimeCheckpointRequest {
             checkpoint_id: "ckpt-1".to_string(),
             run_id: run_id.to_string(),
@@ -1217,8 +1221,8 @@ mod tests {
                 task_list_version: Some("2".to_string()),
                 active_item_id: Some("item-1".to_string()),
                 active_item_title: Some("Inspect runtime".to_string()),
-                docket_job_id: None,
-                docket_task_id: None,
+                docket_job_id: docket_job_id.map(|id| id.to_string()),
+                docket_task_id: docket_task_id.map(|id| id.to_string()),
             }),
             evidence_refs: vec![CheckpointEvidenceRef {
                 kind: "tool_result".to_string(),
@@ -1599,7 +1603,36 @@ mod tests {
     #[sqlx::test(migrations = "../../migrations")]
     async fn records_checkpoint_request_and_response(pool: PgPool) {
         let run_id = format!("run-{}", Uuid::new_v4().simple());
-        let (bear_id, _) = seed_run(&pool, &run_id).await;
+        let (bear_id, user_id) = seed_run(&pool, &run_id).await;
+        let job_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        sqlx::query!(
+            r"
+            INSERT INTO bear_jobs (id, bear_id, created_by_user_id, created_by_role, goal)
+            VALUES ($1, $2, $3, 'pair', 'Checkpoint correlation test')
+            ",
+            job_id,
+            bear_id,
+            user_id
+        )
+        .execute(&pool)
+        .await
+        .expect("create job");
+        sqlx::query!(
+            r"
+            INSERT INTO bear_tasks (
+                id, bear_id, job_id, title, body, created_by_role, created_by_user_id
+            )
+            VALUES ($1, $2, $3, 'Checkpoint task', 'Prove correlation.', 'pair', $4)
+            ",
+            task_id,
+            bear_id,
+            job_id,
+            user_id
+        )
+        .execute(&pool)
+        .await
+        .expect("create task");
 
         let recorded = record_checkpoint_request(
             &pool,
@@ -1607,7 +1640,7 @@ mod tests {
                 run_id: run_id.clone(),
                 turn_step_id: None,
                 orientation_kind: Some("focused".to_string()),
-                request: request(&run_id),
+                request: request(&run_id, Some(job_id), Some(task_id)),
                 visibility: CheckpointVisibility::AuditOnly,
                 replay_policy: CheckpointReplayPolicy::None,
             },
@@ -1622,6 +1655,7 @@ mod tests {
         assert_eq!(recorded.replay_policy, "none");
         assert_eq!(recorded.related_task_list_id.as_deref(), Some("list-1"));
         assert_eq!(recorded.related_task_item_id.as_deref(), Some("item-1"));
+        assert_eq!(recorded.related_docket_task_id, Some(task_id));
         assert!(recorded.response.is_none());
 
         let updated = record_checkpoint_response(
@@ -1655,6 +1689,8 @@ mod tests {
         assert_eq!(ledger[0].reason.as_deref(), Some("over_exploration"));
         assert_eq!(ledger[0].related_task_list_id.as_deref(), Some("list-1"));
         assert_eq!(ledger[0].related_task_item_id.as_deref(), Some("item-1"));
+        assert_eq!(ledger[0].related_docket_job_id, Some(job_id));
+        assert_eq!(ledger[0].related_docket_task_id, Some(task_id));
         assert_eq!(ledger[0].evidence_refs[0]["id"], "call-1");
         assert!(ledger[0].evidence_refs[0].get("summary").is_none());
         assert_eq!(
@@ -1680,8 +1716,8 @@ mod tests {
             checkpoint_id: Some("ckpt-1".to_string()),
             related_task_list_id: Some("list-1".to_string()),
             related_task_item_id: Some("item-1".to_string()),
-            related_docket_job_id: None,
-            related_docket_task_id: None,
+            related_docket_job_id: Some(job_id),
+            related_docket_task_id: Some(task_id),
             evidence_refs: vec![LedgerEvidenceRef {
                 kind: "tool_result".to_string(),
                 id: "call-1".to_string(),
