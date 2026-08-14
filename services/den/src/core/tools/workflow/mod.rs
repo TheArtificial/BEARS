@@ -6,11 +6,11 @@ use uuid::Uuid;
 use den_core::tools::constants::{
     DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_CREATE,
     DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST,
-    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS,
-    DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
-    DEN_TASK_SELECT, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
-    DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
-    DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
+    DEN_JOB_RECONCILE, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
+    DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
+    DEN_TASK_LIST_SYNC, DEN_TASK_SELECT, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS,
+    DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET,
+    DEN_WORK_RUN_LIST, DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
@@ -130,6 +130,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_JOB_FIND
             | DEN_JOB_UPDATE
             | DEN_JOB_EXECUTE
+            | DEN_JOB_RECONCILE
             | DEN_JOB_EVALUATE_CRITERION
             | DEN_TASK_CREATE
             | DEN_TASK_LIST
@@ -151,6 +152,16 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_WORK_CATALOG
             | DEN_WORK_SURFACE_CONFIRM
     )
+}
+
+#[cfg(test)]
+mod workflow_tool_tests {
+    use den_core::tools::constants::DEN_JOB_RECONCILE;
+
+    #[test]
+    fn reconcile_job_is_a_workflow_tool() {
+        assert!(super::is_workflow_tool(DEN_JOB_RECONCILE));
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1641,6 +1652,50 @@ pub(crate) async fn execute_job(
         "execution": {
             "requested": true,
             "state": execution_state,
+            "run_id": run.map(|run| run.id),
+        },
+        "outcome": outcome,
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "status_report": status_report,
+    }))
+}
+
+/// Repairs an explicitly reported stale Docket execution focus. This is kept
+/// separate from `execute_job` so recovery cannot be mistaken for a retry.
+pub(crate) async fn reconcile_job_execution(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketJobExecuteArguments = serde_json::from_value(arguments)?;
+    if role != BearProfile::Pair {
+        return Err(DenError::Authorization(
+            "reconcile_job_execution is currently limited to pair stance".to_string(),
+        )
+        .into());
+    }
+    let outcome = PgDocketService::from_pool(pool)
+        .reconcile_execution(DocketJobExecuteRequest {
+            bear_id: context.bear_id,
+            job_id: args.job_id,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+            session_id: Some(context.session_id.clone()),
+            source_conversation_id: clean_optional(&context.conversation_id),
+            source_client_session_id: context.client_session_id.clone(),
+        })
+        .await?;
+    let status_report = docket_job_status_report(&outcome.job);
+    update_focused_conversation_title(pool, context, &outcome.job, &status_report).await?;
+    let run = outcome.job.current_run.as_ref();
+    Ok(json!({
+        "action": "execution_reconciled",
+        "execution": {
+            "requested": true,
+            "state": run.map(|run| run.state.to_string()).unwrap_or_else(|| "not_started".to_string()),
             "run_id": run.map(|run| run.id),
         },
         "outcome": outcome,
