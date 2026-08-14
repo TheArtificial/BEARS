@@ -2846,6 +2846,78 @@ async fn run_recover_refuses_when_selected_pair_task_changed(pool: sqlx::PgPool)
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn technical_budget_recovery_lease_is_exclusive_and_releasable(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
+        .await
+        .expect("transition run to running");
+    let snapshot = serde_json::to_value(turn_runs::TechnicalBudgetRecoverySnapshot::new(
+        session_id,
+        bear_id,
+        user_id,
+        None,
+        json!({"client": "test-client"}),
+    ))
+    .expect("serialize recovery snapshot");
+    assert!(matches!(
+        turn_runs::claim_technical_budget_continuation(
+            &pool,
+            &run_id,
+            "emergency_hard_step_limit",
+            &snapshot,
+        )
+        .await
+        .expect("claim recovery continuation"),
+        turn_runs::TechnicalBudgetContinuationClaim::Claimed(_)
+    ));
+
+    let first_lease = Uuid::new_v4();
+    let leased = turn_runs::lease_technical_budget_recovery(&pool, &run_id, first_lease)
+        .await
+        .expect("lease recovery")
+        .expect("first recovery worker owns the lease");
+    assert_eq!(leased.recovery_lease_id, Some(first_lease));
+    assert!(leased.recovery_lease_expires_at.is_some());
+    assert!(
+        turn_runs::lease_technical_budget_recovery(&pool, &run_id, Uuid::new_v4())
+            .await
+            .expect("check second lease")
+            .is_none()
+    );
+
+    assert!(
+        turn_runs::release_technical_budget_recovery(&pool, &run_id, first_lease)
+            .await
+            .expect("release failed replacement-start lease")
+    );
+    let second_lease = Uuid::new_v4();
+    assert!(
+        turn_runs::lease_technical_budget_recovery(&pool, &run_id, second_lease)
+            .await
+            .expect("lease after release")
+            .is_some()
+    );
+    assert!(
+        turn_runs::complete_technical_budget_recovery(&pool, &run_id, second_lease)
+            .await
+            .expect("consume recovery after replacement starts")
+    );
+    assert!(
+        turn_runs::technical_budget_recovery_snapshot(&pool, &run_id)
+            .await
+            .expect("load consumed recovery")
+            .is_none()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn current_task_rpc_requires_confirmation_and_preserves_clear_title(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
