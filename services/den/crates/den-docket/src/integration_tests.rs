@@ -809,6 +809,22 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .await
         .expect("complete second");
 
+    // Direct task updates intentionally do not mutate the execution claim;
+    // reconcile clears the completed task's stale Pair focus before checking criteria.
+    service
+        .reconcile_execution(DocketJobExecuteRequest {
+            bear_id,
+            job_id: created.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: Some("pair-integration-session".to_string()),
+            source_conversation_id: None,
+            source_client_session_id: Some("pair-integration-session".to_string()),
+        })
+        .await
+        .expect("reconcile completed task focus before criteria");
+
     let blocked = service
         .execute_job(DocketJobExecuteRequest {
             bear_id,
