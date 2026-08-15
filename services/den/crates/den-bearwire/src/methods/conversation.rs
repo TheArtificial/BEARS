@@ -92,14 +92,22 @@ async fn list_docket_diagnostic_events(
     .map_err(|err| den_core::DenError::Database(format!("list docket diagnostic events: {err}")))
 }
 
+fn docket_artifact_resources(artifact_refs: &[String]) -> Vec<SurfaceResourceRef> {
+    artifact_refs
+        .iter()
+        .map(|artifact_ref| SurfaceResourceRef {
+            label: Some("Artifact".to_string()),
+            uri: None,
+            name: Some(artifact_ref.clone()),
+            mime_type: None,
+        })
+        .collect()
+}
+
 fn docket_diagnostic_surface_event(
     row: DocketDiagnosticEventRow,
     artifact_refs: &[String],
 ) -> Option<Value> {
-    let artifact_suffix = artifact_refs
-        .iter()
-        .map(|artifact_ref| format!("\nArtifact: {artifact_ref}"))
-        .collect::<String>();
     match row.event_type.as_str() {
         "created" | "updated" => {
             let definition = serde_json::from_value::<DocketTaskDefinition>(
@@ -111,15 +119,14 @@ fn docket_diagnostic_surface_event(
                 id: Some(DocketSurfaceEventId::new(row.id).to_string()),
                 role: "system".to_string(),
                 text: format!(
-                    "Docket task {}: {} ({}){}",
+                    "Docket task {}: {} ({})",
                     row.event_type,
                     title,
                     row.task_id
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "unknown task".to_string()),
-                    artifact_suffix
                 ),
-                resources: Vec::<SurfaceResourceRef>::new(),
+                resources: docket_artifact_resources(artifact_refs),
                 created_at: Some(row.created_at.to_string()),
             }))
         }
@@ -731,8 +738,14 @@ mod tests {
             &["artifact_0123456789abcdef0123456789abcdef".to_string()],
         )
         .expect("surface event");
-        let text = event["text"].as_str().expect("message text");
-        assert!(text.contains("artifact_0123456789abcdef0123456789abcdef"));
+        let message = event.as_object().expect("message event");
+        assert_eq!(
+            message["resources"][0]["name"],
+            "artifact_0123456789abcdef0123456789abcdef"
+        );
+        assert!(message["resources"][0].get("uri").is_none());
+        let text = message["text"].as_str().expect("message text");
+        assert!(!text.contains("artifact_"));
         assert!(!text.contains("storage_key"));
         assert!(!text.contains("content_sha256"));
     }
