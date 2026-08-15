@@ -1190,6 +1190,17 @@ pub(crate) async fn client_tool_result_result(
             obligation.state
         )));
     }
+    let session = client_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?
+    .ok_or_else(|| {
+        CustomError::Session("BearWire session disappeared during run continuation".to_string())
+    })?;
+    let continuation_conversation_id = continuation_conversation_id(&session);
     let mut compacted = compact_client_tool_result(&input);
     if compacted.truncated {
         if let Ok(artifact) = create_tool_output_artifact(
@@ -1198,7 +1209,7 @@ pub(crate) async fn client_tool_result_result(
                 bear_id: bear.id,
                 user_id: Some(user_id),
                 session_id: session_id.clone(),
-                conversation_id: None,
+                conversation_id: Some(continuation_conversation_id.clone()),
                 run_id: Some(run_id.clone()),
                 tool_call_id: tool_call_id.clone(),
                 tool_name: input.tool_name.clone(),
@@ -1226,17 +1237,6 @@ pub(crate) async fn client_tool_result_result(
     )
     .await;
 
-    let session = client_sessions::find_for_user_bear_session(
-        &state.sqlx_pool,
-        user_id,
-        &bear.slug,
-        &session_id,
-    )
-    .await?
-    .ok_or_else(|| {
-        CustomError::Session("BearWire session disappeared during run continuation".to_string())
-    })?;
-    let continuation_conversation_id = continuation_conversation_id(&session);
     if !den_runtime::native_runtime::native_client_session_exists(
         &continuation_conversation_id,
         &session_id,
