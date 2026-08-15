@@ -834,6 +834,7 @@ const TRANSCRIPT_LIKE_DECISION_KEYS: &[&str] = &[
     "raw_message",
     "transcript",
 ];
+const LOOP_CONTROL_LEDGER_RETENTION: time::Duration = time::Duration::days(30);
 
 fn reject_transcript_like_decision(value: &Value) -> Result<(), DenError> {
     match value {
@@ -878,6 +879,15 @@ pub async fn record_loop_control_decision(
     input: LoopControlLedgerInput,
 ) -> Result<LoopControlLedgerRow, DenError> {
     reject_transcript_like_decision(&input.decision)?;
+    let retain_after = OffsetDateTime::now_utc() - LOOP_CONTROL_LEDGER_RETENTION;
+    // ponytail: this bounded table-wide delete runs on ledger writes; move expiry to a
+    // scheduled batch job if ledger write volume makes it materially expensive.
+    sqlx::query!(
+        "DELETE FROM bear_loop_control_ledger WHERE created_at < $1",
+        retain_after
+    )
+    .execute(pool)
+    .await?;
     let evidence_refs = serde_json::to_value(&input.evidence_refs)
         .map_err(|err| DenError::System(format!("serialize loop-control evidence refs: {err}")))?;
     sqlx::query_as!(
@@ -1312,7 +1322,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
-    async fn purges_only_loop_control_decisions_before_retention_cutoff(pool: PgPool) {
+    async fn automatically_purges_loop_control_decisions_before_retention_cutoff(pool: PgPool) {
         let old_run = format!("run-{}", Uuid::new_v4().simple());
         let recent_run = format!("run-{}", Uuid::new_v4().simple());
         seed_run(&pool, &old_run).await;
@@ -1342,22 +1352,36 @@ mod tests {
             .expect("record ledger decision");
         }
         sqlx::query!(
-            "UPDATE bear_loop_control_ledger SET created_at = NOW() - INTERVAL '2 days' WHERE run_id = $1",
+            "UPDATE bear_loop_control_ledger SET created_at = NOW() - INTERVAL '31 days' WHERE run_id = $1",
             old_run
         )
         .execute(&pool)
         .await
         .expect("age old ledger decision");
 
-        assert_eq!(
-            purge_loop_control_decisions_before(
-                &pool,
-                OffsetDateTime::now_utc() - time::Duration::days(1),
-            )
-            .await
-            .expect("purge old ledger rows"),
-            1
-        );
+        record_loop_control_decision(
+            &pool,
+            LoopControlLedgerInput {
+                run_id: recent_run.clone(),
+                turn_step_id: None,
+                conversation_message_id: None,
+                decision_id: "retention-trigger".to_string(),
+                decision_kind: LoopControlDecisionKind::CheckpointRequested,
+                control_level: "standard".to_string(),
+                reason: None,
+                orientation_kind: None,
+                checkpoint_id: None,
+                related_task_list_id: None,
+                related_task_item_id: None,
+                related_docket_job_id: None,
+                related_docket_task_id: None,
+                evidence_refs: vec![],
+                decision: serde_json::json!({ "active_objective_present": true }),
+            },
+        )
+        .await
+        .expect("record retention trigger");
+
         assert!(list_loop_control_decisions_for_run(&pool, &old_run)
             .await
             .expect("list old rows")
@@ -1367,7 +1391,7 @@ mod tests {
                 .await
                 .expect("list recent rows")
                 .len(),
-            1
+            2
         );
     }
 
