@@ -36,6 +36,7 @@ use den_protocol::ContextBudgetReport;
 use den_runtime::current_task::{preview_pair_current_task_selection, select_pair_current_task};
 use den_service::archived_conversations;
 use den_service::{
+    artifacts::{self, ArtifactAccessContext},
     bears::{
         db::{self as bears_db, role_is_bear_admin},
         BearProfile,
@@ -53,6 +54,7 @@ pub fn router() -> Router<AppState> {
             patch(chat_conversation_patch),
         )
         .route("/chat/history", get(chat_history))
+        .route("/chat/artifacts", get(chat_artifacts))
         .route("/chat/model", get(chat_model_get).patch(chat_model_patch))
         .route("/chat/current-task", get(chat_current_task_get))
         .route("/chat/current-task", post(chat_current_task_create))
@@ -114,6 +116,13 @@ pub struct ChatHistoryQuery {
     pub limit: Option<u32>,
     #[serde(default)]
     pub debug: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatArtifactsQuery {
+    bear_id: Uuid,
+    #[serde(default)]
+    conversation_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -777,6 +786,48 @@ async fn chat_history(
             },
         ),
     }))
+}
+
+/// Access-filtered artifact citations for one durable chat conversation.
+///
+/// This deliberately exposes citations only: storage locations, hashes, and
+/// provenance stay inside the artifact registry.
+async fn chat_artifacts(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Query(q): Query<ChatArtifactsQuery>,
+) -> Result<Json<Value>, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    if !bears_db::user_may_use_bear(state.sqlx_pool(), user_id, q.bear_id).await? {
+        return Err(CustomError::Authorization(
+            "you do not have access to this bear".to_string(),
+        ));
+    }
+    let conversation_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
+    if conversation_id.starts_with("new-") {
+        return Err(CustomError::ValidationError(
+            "conversation artifacts are available after the conversation is created".to_string(),
+        ));
+    }
+    let citations = artifacts::list_conversation_artifact_citations(
+        state.sqlx_pool(),
+        q.bear_id,
+        &conversation_id,
+        ArtifactAccessContext {
+            bear_id: q.bear_id,
+            user_id: Some(user_id),
+            profile: BearProfile::Pair,
+        },
+    )
+    .await?;
+    Ok(Json(json!({
+        "conversation_id": conversation_id,
+        "artifacts": citations,
+    })))
 }
 
 /// Deep Chat history expects `ai`; Postgres stores `assistant`.

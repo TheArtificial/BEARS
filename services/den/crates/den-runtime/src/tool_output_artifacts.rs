@@ -13,7 +13,11 @@ struct ToolOutputArtifactSelectRow {
     metadata: Value,
 }
 
-use den_core::DenError;
+use den_core::{BearProfile, DenError};
+use den_service::artifacts::{
+    self, ArtifactStorageKind, ArtifactVisibility, AttachArtifactInput, FinalizeArtifactInput,
+    ReserveArtifactInput,
+};
 
 #[derive(Debug, Clone)]
 pub struct ToolOutputArtifactInput {
@@ -33,7 +37,10 @@ pub struct ToolOutputArtifactInput {
 #[derive(Debug, Clone)]
 pub struct ToolOutputArtifactRecord {
     pub id: Uuid,
+    /// Legacy session-scoped handle retained for `den.tool_output.read`.
     pub artifact_ref: String,
+    /// Registry-backed artifact citation for durable evidence surfaces.
+    pub durable_artifact_ref: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +83,7 @@ pub async fn create_tool_output_artifact(
         })
         .unwrap_or(0);
     let metadata = if input.metadata.is_object() {
-        input.metadata
+        input.metadata.clone()
     } else {
         json!({ "value": input.metadata })
     };
@@ -104,10 +111,83 @@ pub async fn create_tool_output_artifact(
     .fetch_one(pool)
     .await
     .map_err(|err| DenError::Database(format!("insert tool output artifact: {err}")))?;
+    let durable_artifact_ref = create_durable_tool_output_citation(pool, id, &input)
+        .await
+        .ok();
     Ok(ToolOutputArtifactRecord {
         id,
         artifact_ref: format!("tool-output://{id}"),
+        durable_artifact_ref,
     })
+}
+
+async fn create_durable_tool_output_citation(
+    pool: &PgPool,
+    legacy_id: Uuid,
+    input: &ToolOutputArtifactInput,
+) -> Result<String, DenError> {
+    let artifact = artifacts::reserve_artifact(
+        pool,
+        ReserveArtifactInput {
+            bear_id: input.bear_id,
+            created_by_user_id: input.user_id,
+            owner_profile: BearProfile::Pair,
+            kind: "tool_output".to_string(),
+            title: input.tool_name.clone(),
+            summary: Some("Truncated tool output retained for continuation".to_string()),
+            content_type: Some("application/json".to_string()),
+            storage_kind: ArtifactStorageKind::DbText,
+            visibility: ArtifactVisibility::PrivateToProfile,
+            provenance: json!({
+                "creating_stance": "pair",
+                "source": input.source,
+                "tool_call_id": input.tool_call_id,
+                "tool_name": input.tool_name,
+                "session_id": input.session_id,
+                "run_id": input.run_id,
+            }),
+            metadata: json!({ "legacy_tool_output_id": legacy_id }),
+            expires_at: None,
+        },
+    )
+    .await?;
+    let artifact = artifacts::finalize_metadata_only_artifact(
+        pool,
+        FinalizeArtifactInput {
+            artifact_ref: artifact.artifact_ref.clone(),
+            bear_id: input.bear_id,
+            storage_key: None,
+            content_bytes: input
+                .content_text
+                .as_ref()
+                .map(|content| content.len() as i64)
+                .or_else(|| {
+                    input
+                        .content_json
+                        .as_ref()
+                        .map(|content| content.to_string().len() as i64)
+                }),
+            content_sha256: None,
+            metadata: json!({ "legacy_tool_output_id": legacy_id }),
+        },
+    )
+    .await?;
+    if let Some(conversation_id) = &input.conversation_id {
+        artifacts::attach_artifact(
+            pool,
+            AttachArtifactInput {
+                artifact_ref: artifact.artifact_ref.clone(),
+                bear_id: input.bear_id,
+                target_kind: "conversation".to_string(),
+                target_id: conversation_id.clone(),
+                role: "output".to_string(),
+                metadata: json!({}),
+                created_by_user_id: input.user_id,
+            },
+        )
+        .await?;
+    }
+    Ok(artifact.artifact_ref)
 }
 
 pub async fn read_tool_output_artifact(
