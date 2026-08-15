@@ -303,5 +303,29 @@ mod tests {
         assert_eq!(read.total_chars, 6);
         assert!(read.truncated);
         assert_eq!(read.tool_call_id, "call-1");
+
+        let durable_ref = artifact
+            .durable_artifact_ref
+            .as_deref()
+            .expect("durable citation");
+        let citations = artifacts::list_conversation_artifact_citations(
+            &pool,
+            bear_id,
+            "conv-1",
+            artifacts::ArtifactAccessContext {
+                bear_id,
+                user_id: None,
+                profile: BearProfile::Pair,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(citations
+            .iter()
+            .any(|citation| citation.artifact_ref == durable_ref));
+        let rendered = serde_json::to_value(&citations[0]).unwrap();
+        assert!(rendered.get("storage_key").is_none());
+        assert!(rendered.get("content_sha256").is_none());
+        assert!(rendered.get("provenance").is_none());
     }
 }
