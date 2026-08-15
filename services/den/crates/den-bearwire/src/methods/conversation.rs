@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use axum::http::HeaderMap;
 use serde::Deserialize;
@@ -93,8 +93,10 @@ async fn list_docket_diagnostic_events(
 }
 
 fn docket_artifact_resources(artifact_refs: &[String]) -> Vec<SurfaceResourceRef> {
+    let mut seen = HashSet::new();
     artifact_refs
         .iter()
+        .filter(|artifact_ref| seen.insert(artifact_ref.as_str()))
         .map(|artifact_ref| SurfaceResourceRef {
             label: Some("Artifact".to_string()),
             uri: None,
@@ -735,7 +737,10 @@ mod tests {
         };
         let event = docket_diagnostic_surface_event(
             row,
-            &["artifact_0123456789abcdef0123456789abcdef".to_string()],
+            &[
+                "artifact_0123456789abcdef0123456789abcdef".to_string(),
+                "artifact_0123456789abcdef0123456789abcdef".to_string(),
+            ],
         )
         .expect("surface event");
         let message = event.as_object().expect("message event");
