@@ -740,10 +740,12 @@ mod tests {
         .expect("surface event");
         let message = event.as_object().expect("message event");
         assert_eq!(
-            message["resources"][0]["name"],
-            "artifact_0123456789abcdef0123456789abcdef"
+            message["resources"],
+            json!([{
+                "label": "Artifact",
+                "name": "artifact_0123456789abcdef0123456789abcdef",
+            }])
         );
-        assert!(message["resources"][0].get("uri").is_none());
         let text = message["text"].as_str().expect("message text");
         assert!(!text.contains("artifact_"));
         assert!(!text.contains("storage_key"));
