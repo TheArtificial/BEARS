@@ -63,6 +63,7 @@ struct RunEventView {
     session_id: String,
     created_at: String,
     event_json: String,
+    is_failure: bool,
 }
 
 async fn index(
@@ -115,13 +116,18 @@ async fn detail(
         bearwire_events::list_bearwire_events_for_run(state.sqlx_pool(), &run_id, RUN_EVENT_LIMIT)
             .await?
             .into_iter()
-            .map(|event| RunEventView {
-                sequence_no: event.sequence_no,
-                event_type: event.event_type,
-                session_id: event.session_id,
-                created_at: event.created_at.to_string(),
-                event_json: serde_json::to_string_pretty(&event.event)
-                    .unwrap_or_else(|_| "{}".to_string()),
+            .map(|event| {
+                let is_failure =
+                    matches!(event.event_type.as_str(), "tool_call.failed" | "run.failed");
+                RunEventView {
+                    sequence_no: event.sequence_no,
+                    event_type: event.event_type,
+                    session_id: event.session_id,
+                    created_at: event.created_at.to_string(),
+                    event_json: serde_json::to_string_pretty(&event.event)
+                        .unwrap_or_else(|_| "{}".to_string()),
+                    is_failure,
+                }
             })
             .collect::<Vec<_>>();
 

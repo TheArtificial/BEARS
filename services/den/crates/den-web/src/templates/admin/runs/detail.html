@@ -20,7 +20,13 @@
 {{ close("tbody") }}{{ close("table") }}
 
 {{ open("h4") }}Run-scoped BearWire events{{ close("h4") }}
-{{ open("p class=\"form-hint\"") }}Showing up to 500 persisted events whose canonical BearWire {{ open("code") }}run_id{{ close("code") }} matches this run.{{ close("p") }}
+{{ open("p class=\"form-hint\"") }}Showing up to 500 persisted events whose canonical BearWire {{ open("code") }}run_id{{ close("code") }} matches this run. Failed tool and run events are highlighted below.{{ close("p") }}
+{% for event in events if event.is_failure %}
+{{ open("details open") }}
+{{ open("summary") }}Failure · #{{ event.sequence_no }} · {{ event.event_type }} · {{ event.created_at }}{{ close("summary") }}
+{{ open("pre") }}{{ open("code") }}{{ event.event_json }}{{ close("code") }}{{ close("pre") }}
+{{ close("details") }}
+{% endfor %}
 {% for event in events %}
 {{ open("details") }}
 {{ open("summary") }}#{{ event.sequence_no }} · {{ event.event_type }} · {{ event.created_at }}{{ close("summary") }}

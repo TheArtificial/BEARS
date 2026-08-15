@@ -74,10 +74,32 @@ fn actionable_task_title(
         })
         .map(|task| task.title.clone())
         .ok_or_else(|| {
-            CustomError::ValidationError(
-                "selected task must be an actionable task anchored to the current session"
-                    .to_string(),
+            let actionable = task_list_projection_from_session_tasks_with_current_task(
+                bear_id,
+                BearProfile::Pair,
+                conversation_id,
+                session_id,
+                tasks,
+                None,
             )
+            .map(|task_list| {
+                task_list
+                    .items
+                    .into_iter()
+                    .filter(|task| {
+                        matches!(
+                            task.status,
+                            TaskListItemStatus::Pending | TaskListItemStatus::InProgress
+                        )
+                    })
+                    .map(|task| format!("{} ({})", task.id, task.title))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+            CustomError::ValidationError(format!(
+                "selected task must be an actionable task anchored to the current session; call get_task_list_status before retrying. Actionable task candidates: {}",
+                if actionable.is_empty() { "none".to_string() } else { actionable.join(", ") }
+            ))
         })
 }
 
