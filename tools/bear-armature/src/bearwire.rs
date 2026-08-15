@@ -1068,7 +1068,7 @@ fn latest_terminal_event_from_run_state(state: &Value) -> Option<&Value> {
         .find(|event| {
             matches!(
                 event.get("type").and_then(Value::as_str),
-                Some("run.completed" | "run.failed" | "run.cancelled")
+                Some("run.completed" | "run.failed" | "run.cancelled" | "run.interrupted")
             )
         })
 }
@@ -2148,6 +2148,21 @@ async fn handle_bearwire_event(
             }
             return Err(anyhow!(message));
         }
+        "run.interrupted" => {
+            // The server keeps this run retryable for reconciliation, but the current
+            // client delivery is over and must not leave the conversation spinner active.
+            outcome.saw_done = true;
+            outcome.saw_error = true;
+            outcome.saw_visible_output = true;
+            diagnostics.saw_error = true;
+            diagnostics.saw_visible_output = true;
+            let message = event
+                .pointer("/data/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Den lost the model connection before the response finished. Send another message to retry.");
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, message)
+                .await?;
+        }
         "run.cancelled" => {
             outcome.saw_done = true;
             outcome.saw_error = true;
@@ -2541,6 +2556,22 @@ mod tests {
                 .and_then(|event| event.get("type"))
                 .and_then(Value::as_str),
             Some("run.failed")
+        );
+    }
+
+    #[test]
+    fn retryable_interruption_is_recovered_as_a_terminal_delivery_event() {
+        let state = json!({
+            "recent_events": [
+                { "event": { "type": "run.started" } },
+                { "event": { "type": "run.interrupted", "run_id": "run-1", "data": { "retryable": true } } }
+            ]
+        });
+        assert_eq!(
+            latest_terminal_event_from_run_state(&state)
+                .and_then(|event| event.get("type"))
+                .and_then(Value::as_str),
+            Some("run.interrupted")
         );
     }
 

@@ -193,6 +193,19 @@ fn initial_stream_interruption_message() -> &'static str {
     "Den lost the model connection before the response finished. Your conversation and completed tool results were preserved. Send another message to retry."
 }
 
+fn retryable_stream_interruption_event(run_id: &str, detail: serde_json::Value) -> BearWireEvent {
+    BearWireEvent::ephemeral(
+        "run.interrupted",
+        json!({
+            "run_id": run_id,
+            "message": initial_stream_interruption_message(),
+            "retryable": true,
+            "reason": "initial_stream_interrupted",
+            "context": detail,
+        }),
+    )
+}
+
 async fn persist_visible_runtime_marker(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -2519,9 +2532,31 @@ async fn run_start_with_recovery_source(
                         user_id,
                         "initial_stream_interrupted",
                         initial_stream_interruption_message().to_string(),
-                        detail,
+                        detail.clone(),
                     )
                     .await;
+                    let mut interruption_event =
+                        retryable_stream_interruption_event(&run_id_for_task, detail);
+                    interruption_event.bear_id = Some(bear_id.to_string());
+                    interruption_event.human_id = Some(user_id.to_string());
+                    interruption_event.session_id = Some(session_for_task.clone());
+                    interruption_event.run_id = Some(run_id_for_task.clone());
+                    if let Err(err) = bearwire_events::append_bearwire_event(
+                        &pool,
+                        &session_for_task,
+                        Some(bear_id),
+                        Some(user_id),
+                        interruption_event,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            session_id = %session_for_task,
+                            run_id = %run_id_for_task,
+                            error = %err,
+                            "failed to persist retryable stream interruption event"
+                        );
+                    }
                 }
             }
             Err(err) => {
@@ -3038,6 +3073,20 @@ mod tests {
         assert!(initial_stream_eof_is_recoverable(false, false));
         // Explicit cancellation is never resumed.
         assert!(!initial_stream_eof_is_recoverable(false, true));
+    }
+
+    #[test]
+    fn retryable_stream_interruption_ends_delivery_without_settling_the_run() {
+        let event =
+            retryable_stream_interruption_event("run-test", json!({ "pending_tool_calls": [] }));
+
+        assert_eq!(event.event_type, "run.interrupted");
+        assert_eq!(event.data["run_id"], "run-test");
+        assert_eq!(event.data["retryable"], true);
+        assert_eq!(event.data["reason"], "initial_stream_interrupted");
+        assert!(event.data["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Send another message to retry")));
     }
 
     #[test]
