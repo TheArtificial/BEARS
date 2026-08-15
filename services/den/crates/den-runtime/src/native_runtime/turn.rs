@@ -214,6 +214,32 @@ fn render_host_context_for_model(prompt_context: Option<&serde_json::Value>) -> 
     Some(lines.join("\n"))
 }
 
+fn prompt_for_user_history(prompt: &str, prompt_context: Option<&serde_json::Value>) -> String {
+    let mut text = prompt.trim().to_string();
+    let resources = prompt_context
+        .and_then(|context| context.pointer("/host_context/resources"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten();
+    for resource in resources {
+        let label = resource
+            .get("label")
+            .or_else(|| resource.get("name"))
+            .or_else(|| resource.get("uri"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .unwrap_or("unnamed resource");
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str("[Referenced resource: ");
+        text.push_str(label);
+        text.push(']');
+    }
+    text
+}
+
 fn prompt_for_model(prompt: &str, prompt_context: Option<&serde_json::Value>) -> String {
     let Some(host_context) = render_host_context_for_model(prompt_context) else {
         return prompt.to_string();
@@ -1325,8 +1351,11 @@ pub async fn start_native_profile_turn_event_stream(
             content_json["host_context"] = host_context.clone();
         }
     }
-    let record =
-        CanonicalConversationRecord::visible_user_message(request.prompt, content_json, None);
+    let record = CanonicalConversationRecord::visible_user_message(
+        prompt_for_user_history(request.prompt, request.prompt_context.as_ref()),
+        content_json,
+        None,
+    );
     persist_canonical_conversation_record(
         &canonical_persistence_context(
             request.sqlx_pool.clone(),
