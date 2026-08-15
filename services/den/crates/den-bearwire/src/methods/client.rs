@@ -38,7 +38,9 @@ use den_runtime::{
     },
     native_runtime::continue_native_client_turn_event_stream,
     runtime::bearwire_projection::wire::{tool_call_finish_wire, tool_call_wire},
-    tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
+    tool_output_artifacts::{
+        create_tool_output_artifact, ToolOutputArtifactInput, ToolOutputArtifactRecord,
+    },
     turn_obligations::{self, ExpectedResponderAction},
     turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},
     turn_runs,
@@ -1208,8 +1210,10 @@ pub(crate) async fn client_tool_result_result(
         )
         .await
         {
-            compacted =
-                compact_client_tool_result_with_artifact(&input, Some(&artifact.artifact_ref));
+            compacted = compact_client_tool_result_with_artifact(
+                &input,
+                Some(compacted_artifact_ref(&artifact)),
+            );
         }
     }
     let payload = compacted.payload.clone();
@@ -1684,9 +1688,35 @@ pub(crate) async fn client_permission_result_result(
     }
 }
 
+fn compacted_artifact_ref(artifact: &ToolOutputArtifactRecord) -> &str {
+    artifact
+        .durable_artifact_ref
+        .as_deref()
+        .unwrap_or(&artifact.artifact_ref)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durable_tool_output_ref_is_preferred_for_compaction() {
+        let artifact = ToolOutputArtifactRecord {
+            id: Uuid::nil(),
+            artifact_ref: "tool-output://legacy".to_string(),
+            durable_artifact_ref: Some("artifact_durable".to_string()),
+        };
+        assert_eq!(compacted_artifact_ref(&artifact), "artifact_durable");
+    }
+
+    #[test]
+    fn legacy_tool_output_ref_is_used_when_durable_creation_fails() {
+        let artifact = ToolOutputArtifactRecord {
+            id: Uuid::nil(),
+            artifact_ref: "tool-output://legacy".to_string(),
+            durable_artifact_ref: None,
+        };
+        assert_eq!(compacted_artifact_ref(&artifact), "tool-output://legacy");
+    }
 
     #[test]
     fn cargo_offline_cache_miss_is_classified_from_structured_process_result() {
