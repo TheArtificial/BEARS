@@ -113,6 +113,18 @@ pub async fn docket_job_diagnostics_result(
         .await?;
         run_citations.push(json!({ "run_id": run.id, "citations": citations }));
     }
+    let mut criterion_citations = Vec::with_capacity(job.criteria.len());
+    for criterion in &job.criteria {
+        let citations = artifacts::list_docket_artifact_citations(
+            &state.sqlx_pool,
+            bear.id,
+            DocketArtifactTargetKind::Criterion,
+            criterion.id,
+            context.clone(),
+        )
+        .await?;
+        criterion_citations.push(json!({ "criterion_id": criterion.id, "citations": citations }));
+    }
 
     let run_diagnostics: Vec<Value> = runs.iter().map(work_run_diagnostic).collect();
 
@@ -123,6 +135,7 @@ pub async fn docket_job_diagnostics_result(
         "artifact_citations": {
             "tasks": task_citations,
             "runs": run_citations,
+            "criteria": criterion_citations,
         },
     }))
 }
@@ -375,5 +388,21 @@ mod tests {
         assert_eq!(status["reason"], "active_task_is_stale");
         assert_eq!(status["resources"]["run_id"], run_id.to_string());
         assert_eq!(status["resources"]["selected_task_id"], task_id.to_string());
+    }
+
+    #[test]
+    fn docket_diagnostics_include_criterion_citation_slot() {
+        let citations = json!({
+            "tasks": [],
+            "runs": [],
+            "criteria": [{
+                "criterion_id": Uuid::from_u128(4),
+                "citations": [],
+            }],
+        });
+        assert_eq!(
+            citations["criteria"][0]["criterion_id"],
+            Uuid::from_u128(4).to_string()
+        );
     }
 }
