@@ -1534,6 +1534,40 @@ pub struct DocketTaskUpdate {
 pub struct DocketTaskProjection {
     pub task: DocketTaskRow,
     pub run_state: Option<DocketTaskRunStateRow>,
+    /// Canonical task status for query consumers. A settlement is terminal
+    /// even when session-owned work has no run-state row.
+    pub status: DocketTaskStatus,
+    /// Present only for impossible persisted combinations that need repair.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub integrity_conflict: Option<String>,
+}
+
+impl DocketTaskProjection {
+    pub fn new(task: DocketTaskRow, run_state: Option<DocketTaskRunStateRow>) -> Self {
+        let active_work = run_state
+            .as_ref()
+            .is_some_and(|state| matches!(state.status.as_str(), "pending" | "in_progress"));
+        let integrity_conflict = (task.settled_by_entry_id.is_some() && active_work)
+            .then(|| "integrity conflict: task is settled but has active work".to_string());
+        let status = if integrity_conflict.is_some() {
+            DocketTaskStatus::Blocked
+        } else if task.settled_by_entry_id.is_some() {
+            DocketTaskStatus::Done
+        } else {
+            match run_state.as_ref().map(|state| state.status.as_str()) {
+                Some("done") => DocketTaskStatus::Done,
+                Some("blocked") => DocketTaskStatus::Blocked,
+                Some("cancelled") => DocketTaskStatus::Cancelled,
+                _ => DocketTaskStatus::Pending,
+            }
+        };
+        Self {
+            task,
+            run_state,
+            status,
+            integrity_conflict,
+        }
+    }
 }
 
 /// Settles a session-owned task without fabricating a Job run. The settlement
@@ -2688,6 +2722,8 @@ mod tests {
             &[DocketTaskProjection {
                 task: task.clone(),
                 run_state: None,
+                status: DocketTaskStatus::Pending,
+                integrity_conflict: None,
             }],
         )
         .expect("session projection");
@@ -2715,6 +2751,8 @@ mod tests {
                     finished_at: None,
                     updated_at: OffsetDateTime::UNIX_EPOCH,
                 }),
+                status: DocketTaskStatus::Pending,
+                integrity_conflict: None,
             }],
         )
         .expect("active session projection");
@@ -2738,6 +2776,8 @@ mod tests {
                     finished_at: Some(OffsetDateTime::UNIX_EPOCH),
                     updated_at: OffsetDateTime::UNIX_EPOCH,
                 }),
+                status: DocketTaskStatus::Pending,
+                integrity_conflict: None,
             }],
         )
         .expect("completed session projection");
@@ -2754,6 +2794,8 @@ mod tests {
             &[DocketTaskProjection {
                 task: task.clone(),
                 run_state: None,
+                status: DocketTaskStatus::Pending,
+                integrity_conflict: None,
             }],
         )
         .expect("settled session projection");
@@ -2778,6 +2820,8 @@ mod tests {
                     finished_at: None,
                     updated_at: OffsetDateTime::UNIX_EPOCH,
                 }),
+                status: DocketTaskStatus::Pending,
+                integrity_conflict: None,
             }],
         )
         .expect("conflicting session projection");
@@ -2823,6 +2867,8 @@ mod tests {
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             },
             run_state: None,
+            status: DocketTaskStatus::Pending,
+            integrity_conflict: None,
         };
 
         let projection = task_list_projection_from_session_tasks_with_current_task(
@@ -2875,6 +2921,8 @@ mod tests {
                 updated_at: OffsetDateTime::UNIX_EPOCH,
             },
             run_state: None,
+            status: DocketTaskStatus::Pending,
+            integrity_conflict: None,
         };
 
         let projection = task_list_projection_from_session_tasks_with_current_task(

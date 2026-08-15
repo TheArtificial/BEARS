@@ -2017,10 +2017,7 @@ pub(super) async fn list_tasks(
     let states = current_run_states_for_tasks(pool, filter.job_id, &tasks).await?;
     Ok(tasks
         .into_iter()
-        .map(|task| DocketTaskProjection {
-            run_state: states.get(&task.id).cloned(),
-            task,
-        })
+        .map(|task| DocketTaskProjection::new(task.clone(), states.get(&task.id).cloned()))
         .collect())
 }
 
@@ -2408,10 +2405,7 @@ pub(super) async fn update_task(
         reconcile_job_status(&mut tx, job_id, run_state.run_id).await?;
     }
     tx.commit().await?;
-    Ok(DocketTaskProjection {
-        task: patched,
-        run_state,
-    })
+    Ok(DocketTaskProjection::new(patched, run_state))
 }
 
 pub(super) async fn settle_session_task(
@@ -2489,10 +2483,7 @@ pub(super) async fn settle_session_task(
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(DocketTaskProjection {
-        task,
-        run_state: None,
-    })
+    Ok(DocketTaskProjection::new(task, None))
 }
 
 async fn validate_primary_output_registry(
