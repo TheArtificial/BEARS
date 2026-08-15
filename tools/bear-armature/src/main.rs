@@ -7070,6 +7070,12 @@ fn prompt_context_from_params(params: &Value) -> Result<AcpPromptContextBundle> 
                     if reference.text_bytes.is_some() {
                         bundle.diagnostics.resource_bodies_not_in_human_message += 1;
                     }
+                    let label = reference
+                        .name
+                        .as_deref()
+                        .or(reference.uri.as_deref())
+                        .unwrap_or("unnamed resource");
+                    human_parts.push(format!("[Referenced resource: {label}]"));
                     bundle.resource_references.push(reference);
                 }
             }
