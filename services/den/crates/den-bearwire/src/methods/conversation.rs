@@ -201,14 +201,15 @@ fn surface_resource_refs_from_content_json(content_json: &Value) -> Vec<SurfaceR
         .iter()
         .filter_map(|resource| {
             let label = trimmed_string(resource, &["label"])
-                .or_else(|| trimmed_string(resource, &["name", "title"]))
-                .or_else(|| trimmed_string(resource, &["uri", "url"]));
-            let uri = trimmed_string(resource, &["uri", "url"]);
+                .or_else(|| trimmed_string(resource, &["name", "title"]));
             let name = trimmed_string(resource, &["name", "title"]);
             let mime_type = trimmed_string(
                 resource,
                 &["mime_type", "mimeType", "media_type", "mediaType"],
             );
+            let artifact_ref = trimmed_string(resource, &["artifact_ref"])
+                .filter(|artifact_ref| is_canonical_artifact_ref(artifact_ref));
+            let uri = artifact_ref.map(|artifact_ref| format!("artifact:{artifact_ref}"));
             if label.is_none() && uri.is_none() && name.is_none() {
                 return None;
             }
@@ -768,6 +769,42 @@ mod tests {
         assert!(!text.contains("content_sha256"));
     }
 
+    #[test]
+    fn host_context_resources_only_project_canonical_artifact_refs() {
+        let resources = surface_resource_refs_from_content_json(&json!({
+            "host_context": {
+                "resources": [
+                    {
+                        "label": "Build report",
+                        "artifact_ref": "artifact_0123456789abcdef0123456789abcdef",
+                        "url": "https://untrusted.invalid/report"
+                    },
+                    {
+                        "label": "Untrusted link",
+                        "url": "https://untrusted.invalid/secret"
+                    }
+                ]
+            }
+        }));
+
+        assert_eq!(
+            resources,
+            vec![
+                SurfaceResourceRef {
+                    label: Some("Build report".to_string()),
+                    uri: Some("artifact:artifact_0123456789abcdef0123456789abcdef".to_string()),
+                    name: None,
+                    mime_type: None,
+                },
+                SurfaceResourceRef {
+                    label: Some("Untrusted link".to_string()),
+                    uri: None,
+                    name: None,
+                    mime_type: None,
+                },
+            ]
+        );
+    }
     #[test]
     fn docket_task_definition_rejects_unknown_fields() {
         assert!(serde_json::from_value::<DocketTaskDefinition>(json!({
