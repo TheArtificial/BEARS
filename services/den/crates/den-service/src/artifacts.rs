@@ -828,6 +828,31 @@ pub async fn attach_docket_artifact(
     .await
 }
 
+/// Attaches an artifact to a durable conversation without exposing the registry target spelling.
+pub async fn attach_conversation_artifact(
+    pool: &PgPool,
+    artifact_ref: String,
+    bear_id: Uuid,
+    conversation_id: String,
+    role: String,
+    metadata: Value,
+    created_by_user_id: Option<i32>,
+) -> Result<ArtifactLink, DenError> {
+    attach_artifact(
+        pool,
+        AttachArtifactInput {
+            artifact_ref,
+            bear_id,
+            target_kind: "conversation".to_string(),
+            target_id: conversation_id,
+            role,
+            metadata,
+            created_by_user_id,
+        },
+    )
+    .await
+}
+
 pub async fn list_artifact_citations(
     pool: &PgPool,
     bear_id: Uuid,

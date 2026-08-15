@@ -15,8 +15,7 @@ struct ToolOutputArtifactSelectRow {
 
 use den_core::{BearProfile, DenError};
 use den_service::artifacts::{
-    self, ArtifactStorageKind, ArtifactVisibility, AttachArtifactInput, FinalizeArtifactInput,
-    ReserveArtifactInput,
+    self, ArtifactStorageKind, ArtifactVisibility, FinalizeArtifactInput, ReserveArtifactInput,
 };
 
 #[derive(Debug, Clone)]
@@ -173,17 +172,14 @@ async fn create_durable_tool_output_citation(
     )
     .await?;
     if let Some(conversation_id) = &input.conversation_id {
-        artifacts::attach_artifact(
+        artifacts::attach_conversation_artifact(
             pool,
-            AttachArtifactInput {
-                artifact_ref: artifact.artifact_ref.clone(),
-                bear_id: input.bear_id,
-                target_kind: "conversation".to_string(),
-                target_id: conversation_id.clone(),
-                role: "output".to_string(),
-                metadata: json!({}),
-                created_by_user_id: input.user_id,
-            },
+            artifact.artifact_ref.clone(),
+            input.bear_id,
+            conversation_id.clone(),
+            "output".to_string(),
+            json!({}),
+            input.user_id,
         )
         .await?;
     }
