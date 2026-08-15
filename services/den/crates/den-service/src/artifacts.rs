@@ -308,6 +308,16 @@ pub struct AttachDocketArtifactInput {
     pub created_by_user_id: Option<i32>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AttachConversationArtifactInput {
+    pub artifact_ref: String,
+    pub bear_id: Uuid,
+    pub conversation_id: String,
+    pub role: String,
+    pub metadata: Value,
+    pub created_by_user_id: Option<i32>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ArtifactCitation {
     pub artifact_ref: String,
@@ -831,23 +841,18 @@ pub async fn attach_docket_artifact(
 /// Attaches an artifact to a durable conversation without exposing the registry target spelling.
 pub async fn attach_conversation_artifact(
     pool: &PgPool,
-    artifact_ref: String,
-    bear_id: Uuid,
-    conversation_id: String,
-    role: String,
-    metadata: Value,
-    created_by_user_id: Option<i32>,
+    input: AttachConversationArtifactInput,
 ) -> Result<ArtifactLink, DenError> {
     attach_artifact(
         pool,
         AttachArtifactInput {
-            artifact_ref,
-            bear_id,
+            artifact_ref: input.artifact_ref,
+            bear_id: input.bear_id,
             target_kind: "conversation".to_string(),
-            target_id: conversation_id,
-            role,
-            metadata,
-            created_by_user_id,
+            target_id: input.conversation_id,
+            role: input.role,
+            metadata: input.metadata,
+            created_by_user_id: input.created_by_user_id,
         },
     )
     .await
