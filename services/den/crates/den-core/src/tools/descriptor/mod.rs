@@ -591,11 +591,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_UPDATE,
             "Update task list",
-            "Use durable Docket job/task tools for user-visible task and job state. For pair conversation-scoped plans, checklists, next steps, and roadmap slices, create or reuse the current Pair task tree; create a work Docket job only for distinct objectives with their own lifecycle, managed work surface, commit policy, or execution tracking. session_anchor_id identifies the Pair task-tree root. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status with job_id and run_id when known; otherwise it infers the active run. Docket tools record durable state and do not authorize autonomous execution by themselves.",
+            "Activate a reviewed Pair session task list by selecting its actionable task as the current Pair task. This transitions the session projection from planned to active and authorizes execution; it does not start a background job or alter task definition/status. Use durable Docket task tools for task definition edits and terminal outcomes. For a distinct lifecycle, managed work surface, commit policy, or autonomous execution, create a Docket Job instead.",
             "bear.activity",
             &["task_list.write"],
             TASK_LIST_UPDATE_PROFILES,
-            json!({"type":"object","properties":{},"additionalProperties":false}),
+            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid","description":"Actionable task anchored to the current Pair session to select and activate."}},"required":["task_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LISTS_REQUEST_HANDOFF,

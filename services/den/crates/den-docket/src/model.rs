@@ -1940,6 +1940,7 @@ pub fn task_list_projection_from_session_tasks_with_current_task(
     } else if items
         .iter()
         .any(|item| item.status == TaskListItemStatus::InProgress)
+        || current_item.is_some()
     {
         "active"
     } else {
@@ -2772,6 +2773,7 @@ mod tests {
         )
         .expect("session projection");
 
+        assert_eq!(projection.status, "active");
         assert_eq!(projection.current_item.unwrap().id, selected_id.to_string());
         assert_eq!(projection.items.len(), 1);
         assert_eq!(projection.items[0].id, selected_id.to_string());

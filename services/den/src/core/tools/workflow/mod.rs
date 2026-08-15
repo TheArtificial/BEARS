@@ -37,6 +37,7 @@ use crate::{
     errors::{CustomError, DenError},
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
+use den_runtime::current_task::select_pair_current_task;
 use den_runtime::plan_mode;
 use den_service::bears::db::get_bear;
 use den_service::{
@@ -657,18 +658,50 @@ pub(crate) async fn get_task_list_status(
 }
 
 pub(crate) async fn update_task_list(
-    _pool: &PgPool,
-    _context: &DenToolInvocationContext,
-    _role: BearProfile,
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
     arguments: Value,
     _activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
-    let _ignored_arguments: Value = serde_json::from_value(arguments)?;
-    Err(DenError::ValidationError(
-        "update_task_list is unavailable; use Docket job/task tools for durable task and job state"
-            .to_string(),
+    if role != BearProfile::Pair {
+        return Err(DenError::ValidationError(
+            "update_task_list activation is available only in Pair stance".to_string(),
+        )
+        .into());
+    }
+    let args: DocketTaskSelectArguments = serde_json::from_value(arguments)?;
+    let task_id = args.task_id.ok_or_else(|| {
+        DenError::ValidationError(
+            "update_task_list needs task_id to activate a Pair task list".to_string(),
+        )
+    })?;
+    let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
+        DenError::ValidationError("update_task_list needs the current client session".to_string())
+    })?;
+    let selection = select_pair_current_task(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+        Some(task_id),
     )
-    .into())
+    .await?;
+    let task_list = selection.task_list.ok_or_else(|| {
+        DenError::ValidationError("Pair task list disappeared during activation".to_string())
+    })?;
+    let phase = task_list.status.clone();
+    Ok(json!({
+        "domain": "activity",
+        "content": "Activated the Pair task list.",
+        "summary": "Activated the Pair task list and selected its current task.",
+        "task_id": task_id,
+        "phase": phase,
+        "status": task_list.status,
+        "execution_allowed": true,
+        "task_list": task_list,
+        "plan": task_list,
+    }))
 }
 
 // Resolve a `work_surface_ref` against managed work surfaces. When the ref
