@@ -788,7 +788,12 @@ impl SessionTrackingStream {
                             Ok(artifact) => {
                                 compact_json_tool_result_with_artifact(
                                     value,
-                                    Some(&artifact.artifact_ref),
+                                    Some(
+                                        artifact
+                                            .durable_artifact_ref
+                                            .as_deref()
+                                            .unwrap_or(&artifact.artifact_ref),
+                                    ),
                                 )
                                 .content
                             }
