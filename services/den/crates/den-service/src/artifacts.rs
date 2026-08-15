@@ -891,6 +891,19 @@ pub async fn list_docket_artifact_citations(
     .await
 }
 
+/// Lists citations linked to a durable conversation identifier.
+///
+/// Keep the target kind here rather than making callers repeat the persistence
+/// spelling. Conversation links remain registry-backed and access-filtered.
+pub async fn list_conversation_artifact_citations(
+    pool: &PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+    context: ArtifactAccessContext,
+) -> Result<Vec<ArtifactCitation>, DenError> {
+    list_artifact_citations(pool, bear_id, "conversation", conversation_id, context).await
+}
+
 pub async fn list_expired_artifact_gc_candidates(
     pool: &PgPool,
     bear_id: Uuid,

@@ -107,6 +107,19 @@ fn docket_artifact_resources(artifact_refs: &[String]) -> Vec<SurfaceResourceRef
         .collect()
 }
 
+fn conversation_artifact_surface_event(
+    conversation_id: &str,
+    artifact_refs: &[String],
+) -> Option<SurfaceHistoryEvent> {
+    (!artifact_refs.is_empty()).then(|| SurfaceHistoryEvent::Message {
+        id: Some(format!("conversation-artifacts:{conversation_id}")),
+        role: "system".to_string(),
+        text: "Conversation artifacts".to_string(),
+        resources: docket_artifact_resources(artifact_refs),
+        created_at: None,
+    })
+}
+
 fn is_canonical_artifact_ref(value: &str) -> bool {
     value.len() == "artifact_".len() + 32
         && value.starts_with("artifact_")
@@ -628,6 +641,26 @@ async fn conversation_history_like_result(
             }
         }
 
+        let conversation_artifact_refs = artifacts::list_conversation_artifact_citations(
+            &state.sqlx_pool,
+            bear.id,
+            &conversation_id,
+            ArtifactAccessContext {
+                bear_id: bear.id,
+                user_id: Some(user_id),
+                profile: den_core::BearProfile::Pair,
+            },
+        )
+        .await?
+        .into_iter()
+        .map(|citation| citation.artifact_ref)
+        .collect::<Vec<_>>();
+        if let Some(event) =
+            conversation_artifact_surface_event(&conversation_id, &conversation_artifact_refs)
+        {
+            messages.push(json!(event));
+        }
+
         for row in list_docket_diagnostic_events(&state.sqlx_pool, bear.id, &conversation_id, limit)
             .await?
         {
@@ -767,6 +800,27 @@ mod tests {
         assert!(!text.contains("artifact_"));
         assert!(!text.contains("storage_key"));
         assert!(!text.contains("content_sha256"));
+    }
+
+    #[test]
+    fn conversation_artifact_event_renders_only_canonical_refs() {
+        let event = conversation_artifact_surface_event(
+            "conversation-1",
+            &[
+                "artifact_0123456789abcdef0123456789abcdef".to_string(),
+                "https://untrusted.invalid/object-key".to_string(),
+            ],
+        )
+        .expect("nonempty inputs produce an event");
+
+        let event = serde_json::to_value(event).unwrap();
+        assert_eq!(event["text"], "Conversation artifacts");
+        assert_eq!(
+            event["resources"][0]["name"],
+            "artifact_0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(event["resources"].as_array().unwrap().len(), 1);
+        assert!(!event.to_string().contains("untrusted.invalid"));
     }
 
     #[test]
