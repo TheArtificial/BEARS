@@ -1197,21 +1197,6 @@ async fn complete_job(
                 .await?;
         }
     }
-    service
-        .update_job(DocketJobUpdate {
-            bear_id,
-            job_id,
-            actor_role: BearProfile::Pair,
-            actor_user_id: Some(user_id),
-            actor_agent_id: None,
-            goal: None,
-            work_surface_id: None,
-            commit_policy: None,
-            work_branch: None,
-            status: Some(DocketJobStatus::Completed),
-            visibility: None,
-        })
-        .await?;
     Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
@@ -1358,21 +1343,6 @@ async fn add_top_level_task(
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
             created_in_run_id: Some(run_id),
-        })
-        .await?;
-    service
-        .update_job(DocketJobUpdate {
-            bear_id,
-            job_id,
-            actor_role: BearProfile::Pair,
-            actor_user_id: Some(user_id),
-            actor_agent_id: None,
-            goal: None,
-            work_surface_id: None,
-            commit_policy: None,
-            work_branch: None,
-            status: Some(DocketJobStatus::Ready),
-            visibility: None,
         })
         .await?;
     Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())

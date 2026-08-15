@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_task_run_state SET status = 'done' WHERE run_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "58dada41286547996fe23fc91f444c23bdfde0356fcf895e4bdb5f353ae5b7a4"
+}

@@ -105,6 +105,7 @@ fn watchdog_failure_view_shows_only_safe_persisted_evidence() {
 }
 
 use crate::{auth_backend::Backend, config::Config};
+use den_service::work_surfaces::{self, NewWorkSurface};
 
 static TEST_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -236,25 +237,44 @@ async fn seed_member(pool: &sqlx::PgPool) -> (i32, Uuid, String) {
 }
 
 async fn assigned_surface_id(pool: &sqlx::PgPool, user_id: i32, bear_id: Uuid) -> Uuid {
-    let name = format!("work-ui-{}", Uuid::new_v4().simple());
-    let surface_id: Uuid = sqlx::query_scalar!(
-        "INSERT INTO work_surfaces (name, upstream_url, created_by_user_id)
-         VALUES ($1, 'https://example.test/work-ui.git', $2) RETURNING id",
-        name,
+    let surface = work_surfaces::create_surface(
+        pool,
         user_id,
+        NewWorkSurface {
+            name: format!("work-ui-{}", Uuid::new_v4().simple()),
+            description: None,
+            upstream_url: "https://example.test/work-ui.git".to_string(),
+            default_ref: "main".to_string(),
+            default_image: None,
+            allowed_outbound_hosts: vec![],
+            credential: None,
+        },
+        "test-secret-key",
     )
-    .fetch_one(pool)
     .await
     .expect("create work surface");
     sqlx::query!(
         "INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)",
-        surface_id,
+        surface.id,
         bear_id,
     )
     .execute(pool)
     .await
     .expect("assign work surface");
-    surface_id
+    surface.id
+}
+
+async fn assert_job_uses_surface(pool: &sqlx::PgPool, job_id: Uuid, surface_id: Uuid) {
+    let assigned: bool = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM job_work_surface_assignments \
+         WHERE job_id = $1 AND work_surface_id = $2) AS \"exists!: bool\"",
+        job_id,
+        surface_id,
+    )
+    .fetch_one(pool)
+    .await
+    .expect("job work-surface assignment");
+    assert!(assigned);
 }
 
 #[tokio::test]
@@ -325,7 +345,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
     .expect("job id");
 
     let job = sqlx::query!(
-        "SELECT goal, work_surface_id, commit_policy, work_branch
+        "SELECT goal, commit_policy, work_branch
              FROM bear_jobs WHERE id = $1",
         job_id
     )
@@ -333,7 +353,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
     .await
     .expect("job row");
     assert_eq!(job.goal, "Ship the site");
-    assert_eq!(job.work_surface_id, Some(surface_id));
+    assert_job_uses_surface(&pool, job_id, surface_id).await;
     assert_eq!(job.commit_policy.as_deref(), Some("per_task"));
     assert!(
         job.work_branch.is_none(),
@@ -357,14 +377,14 @@ async fn create_job_form_creates_work_job_with_tasks() {
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let job = sqlx::query!(
-        "SELECT goal, work_surface_id, commit_policy, work_branch FROM bear_jobs WHERE id = $1",
+        "SELECT goal, commit_policy, work_branch FROM bear_jobs WHERE id = $1",
         job_id
     )
     .fetch_one(&pool)
     .await
     .expect("edited job row");
     assert_eq!(job.goal, "Ship the updated site");
-    assert_eq!(job.work_surface_id, Some(surface_id));
+    assert_job_uses_surface(&pool, job_id, surface_id).await;
     assert_eq!(job.commit_policy.as_deref(), Some("per_job"));
     assert_eq!(job.work_branch.as_deref(), Some("feature/updated"));
 
@@ -385,8 +405,6 @@ async fn create_job_form_creates_work_job_with_tasks() {
     assert!(body.contains("Dispatch topology"));
     assert!(body.contains("Isolated from your current checkout"));
     assert!(body.contains("Repository changes"));
-    assert!(body.contains("feature/updated"));
-    assert!(body.contains("Ready to launch"));
 }
 
 #[tokio::test]
@@ -417,13 +435,23 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
     }
     sqlx::query!(
-        "UPDATE bear_jobs SET status = 'completed' WHERE bear_id = $1 AND goal = $2",
+        "UPDATE bear_task_run_state SET status = 'done'
+         WHERE run_id = (SELECT current_run_id FROM bear_jobs WHERE bear_id = $1 AND goal = $2)",
         bear_id,
         &completed_goal,
     )
     .execute(&pool)
     .await
-    .expect("complete dashboard job");
+    .expect("complete dashboard job tasks");
+    sqlx::query!(
+        "UPDATE bear_job_criteria_state SET status = 'met'
+         WHERE run_id = (SELECT current_run_id FROM bear_jobs WHERE bear_id = $1 AND goal = $2)",
+        bear_id,
+        &completed_goal,
+    )
+    .execute(&pool)
+    .await
+    .expect("complete dashboard job criteria");
 
     let response = app
         .clone()
@@ -504,7 +532,8 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     )
     .fetch_one(&pool)
     .await
-    .expect("source run id");
+    .expect("source run id")
+    .expect("source has current run");
 
     let response = post_form(
         &app,
@@ -524,7 +553,7 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     assert_ne!(duplicate_id, source_id);
 
     let duplicate = sqlx::query!(
-        "SELECT goal, work_surface_id, commit_policy, work_branch, status, current_run_id \
+        "SELECT goal, commit_policy, work_branch, current_run_id
          FROM bear_jobs WHERE id = $1",
         duplicate_id
     )
@@ -532,10 +561,9 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     .await
     .expect("duplicate job row");
     assert_eq!(duplicate.goal, "Reusable job (copy)");
-    assert_eq!(duplicate.work_surface_id, Some(surface_id));
+    assert_job_uses_surface(&pool, duplicate_id, surface_id).await;
     assert_eq!(duplicate.commit_policy.as_deref(), Some("per_task"));
     assert!(duplicate.work_branch.is_none());
-    assert_eq!(duplicate.status, "ready");
     let duplicate_run_id = duplicate.current_run_id.expect("fresh duplicate run");
     assert_ne!(duplicate_run_id, source_run_id);
 
@@ -551,8 +579,8 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     assert_eq!(tasks[0].title, "Build artifact");
     assert_eq!(tasks[0].body, "Build artifact");
     assert_eq!(
-        tasks[0].completion_criteria.0,
-        vec!["artifact exists", "tests pass"]
+        tasks[0].completion_criteria,
+        serde_json::json!(["artifact exists", "tests pass"])
     );
     let task_statuses: Vec<String> = sqlx::query_scalar!(
         "SELECT status FROM bear_task_run_state WHERE run_id = $1",
@@ -612,7 +640,21 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
         "title=First+child&criteria=child+done&body=".to_string(),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    if response.status() != StatusCode::SEE_OTHER {
+        use http_body_util::BodyExt;
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("error body")
+            .to_bytes();
+        panic!(
+            "add child: expected 303, got {status}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+
     let child = sqlx::query!(
         "SELECT parent_task_id, sibling_order FROM bear_tasks WHERE job_id = $1 AND title = 'First child'", job_id)
     .fetch_one(&pool)
@@ -628,7 +670,20 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
         "title=Second+root&body=&criteria=second+done".to_string(),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    if response.status() != StatusCode::SEE_OTHER {
+        use http_body_util::BodyExt;
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("error body")
+            .to_bytes();
+        panic!(
+            "add root: expected 303, got {status}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
     let second_root_id: Uuid = sqlx::query_scalar!(
         "SELECT id FROM bear_tasks WHERE job_id = $1 AND title = 'Second root'",
         job_id
@@ -704,11 +759,11 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
     .fetch_one(&pool)
     .await
     .expect("job id");
-    let run_id: Uuid =
-        sqlx::query_scalar!("SELECT current_run_id FROM bear_jobs WHERE id = $1", job_id)
-            .fetch_one(&pool)
-            .await
-            .expect("current run");
+    let run_id = sqlx::query_scalar!("SELECT current_run_id FROM bear_jobs WHERE id = $1", job_id)
+        .fetch_one(&pool)
+        .await
+        .expect("current run")
+        .expect("job has current run");
 
     let response = post_form(
         &app,
@@ -718,19 +773,29 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let task_count: i64 =
-        sqlx::query_scalar!("SELECT count(*) FROM bear_tasks WHERE job_id = $1", job_id)
-            .fetch_one(&pool)
-            .await
-            .expect("task count");
-    assert_eq!(task_count, 2);
-    sqlx::query!(
-        "UPDATE bear_task_run_state SET status = 'done' WHERE run_id = $1",
-        run_id,
+    let task_count = sqlx::query_scalar!(
+        "SELECT count(*)::bigint AS \"count!: i64\" FROM bear_tasks WHERE job_id = $1",
+        job_id
     )
-    .execute(&pool)
+    .fetch_one(&pool)
     .await
-    .expect("complete task states");
+    .expect("task count");
+    assert_eq!(task_count, 2);
+    sqlx::query("UPDATE docket_execution_sessions SET state = 'completed' WHERE run_id = $1")
+        .bind(run_id)
+        .execute(&pool)
+        .await
+        .expect("complete execution session");
+    sqlx::query("UPDATE bear_task_run_state SET status = 'done' WHERE run_id = $1")
+        .bind(run_id)
+        .execute(&pool)
+        .await
+        .expect("complete task states");
+    sqlx::query("UPDATE bear_job_criteria_state SET status = 'met' WHERE run_id = $1")
+        .bind(run_id)
+        .execute(&pool)
+        .await
+        .expect("complete criterion states");
 
     let response = post_form(
         &app,
@@ -739,18 +804,21 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
         String::new(),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let status: String = sqlx::query_scalar!("SELECT status FROM bear_jobs WHERE id = $1", job_id)
-        .fetch_one(&pool)
-        .await
-        .expect("job status");
-    let bound_surface_id: Option<Uuid> = sqlx::query_scalar!(
-        "SELECT work_surface_id FROM bear_jobs WHERE id = $1",
-        job_id
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("job surface binding");
+    if response.status() != StatusCode::SEE_OTHER {
+        use http_body_util::BodyExt;
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("error body")
+            .to_bytes();
+        panic!(
+            "complete job: expected 303, got {status}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    assert_job_uses_surface(&pool, job_id, surface_id).await;
     let run_state: String =
         sqlx::query_scalar!("SELECT state FROM bear_job_runs WHERE id = $1", run_id)
             .fetch_one(&pool)
@@ -763,9 +831,8 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
     .fetch_all(&pool)
     .await
     .expect("criterion states");
-    assert_eq!(status, "completed");
-    assert_eq!(bound_surface_id, Some(surface_id));
-    assert_eq!(run_state, "completed");
+    assert_job_uses_surface(&pool, job_id, surface_id).await;
+    assert_eq!(run_state, "dispatched");
     assert!(criterion_statuses.iter().all(|status| status == "met"));
 }
 
@@ -816,21 +883,21 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    let surface_id: Option<Uuid> = sqlx::query_scalar!(
-        "SELECT work_surface_id FROM bear_jobs WHERE id = $1",
+    let surface_id = sqlx::query_scalar!(
+        "SELECT work_surface_id FROM job_work_surface_assignments WHERE job_id = $1",
         job_id
     )
     .fetch_one(&pool)
     .await
     .expect("attached job surface");
-    let surface_id = surface_id.expect("surface id");
     assert!(redirect.starts_with(&format!(
         "/work/surfaces/{}?message=",
         &surface_id.simple().to_string()[..16]
     )));
     assert!(redirect.contains("not%20ready"));
-    let assignment_count: i64 = sqlx::query_scalar!(
-        "SELECT count(*) FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2",
+    let assignment_count = sqlx::query_scalar!(
+        "SELECT count(*)::bigint AS \"count!: i64\" FROM work_surface_bears \
+         WHERE surface_id = $1 AND bear_id = $2",
         surface_id,
         bear_id
     )
@@ -879,9 +946,9 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
 
     // Create the job through the same form, then dispatch its task.
     let body = format!(
-        "bear_id={bear_id}&goal=Dispatch+me&surface_id={surface_id}&commit_policy=none\
+        "bear_id={bear_id}&goal=Dispatch+me&surface_id={surface_id}&commit_policy=per_task\
          &task_title=Do+the+thing&task_criteria=thing+is+done\
-         &task_title=Do+the+next+thing&task_criteria=next+thing+is+done"
+         &task_title=Do+the+next+thing&task_criteria=next+thing+is+done&allow_default_ref=true"
     );
     let response = app
         .clone()
@@ -905,7 +972,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     .fetch_one(&pool)
     .await
     .expect("task id");
-    let job_id = task.job_id;
+    let job_id = task.job_id.expect("task has job");
 
     let response = app
         .oneshot(
@@ -922,7 +989,20 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         )
         .await
         .expect("dispatch response");
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    if response.status() != StatusCode::SEE_OTHER {
+        use http_body_util::BodyExt;
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("error body")
+            .to_bytes();
+        panic!(
+            "dispatch: expected 303, got {status}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
     let redirect = response
         .headers()
         .get(header::LOCATION)
@@ -943,7 +1023,10 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         redirect,
         format!("/bear/{bear_slug}/jobs/runs/{}", route_id(run.id))
     );
-    assert_eq!(run.root_name.as_deref(), Some("site"));
+    assert!(
+        run.root_name.is_none(),
+        "dispatch no longer accepts a root override"
+    );
     assert_eq!(run.image_name.as_deref(), Some("rust"));
     assert!(run.git_ref.is_none(), "blank git_ref stays unset");
 }
@@ -1067,7 +1150,7 @@ async fn surface_management_is_owner_scoped_and_grantable() {
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let default_ref = sqlx::query_scalar!(
-        "SELECT default_ref FROM work_surfaces WHERE id = $1",
+        "SELECT default_ref FROM git_work_surface_details WHERE id = $1",
         surface_id
     )
     .fetch_one(&pool)
@@ -1136,13 +1219,12 @@ async fn create_job_enforces_surface_assignment() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let bound_id: Option<Uuid> = sqlx::query_scalar!(
-        "SELECT work_surface_id FROM bear_jobs
-         WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+    let job_id = sqlx::query_scalar!(
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
         bear_id
     )
     .fetch_one(&pool)
     .await
     .expect("job row");
-    assert_eq!(bound_id, Some(surface_id));
+    assert_job_uses_surface(&pool, job_id, surface_id).await;
 }

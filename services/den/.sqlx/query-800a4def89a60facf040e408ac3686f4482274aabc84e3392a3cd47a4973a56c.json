@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_jobs SET work_branch = 'feature/original' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "800a4def89a60facf040e408ac3686f4482274aabc84e3392a3cd47a4973a56c"
+}
