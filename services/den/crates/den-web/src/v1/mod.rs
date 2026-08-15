@@ -12,6 +12,7 @@ use axum::{
 use axum_extra::extract::Query;
 use axum_login::login_required;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -26,14 +27,20 @@ use crate::{
     web::AppState,
     web_chat_runtime::WebChatRuntimeRequest,
 };
+use den_docket::{
+    DocketEffortHint, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskKind,
+    DocketTaskListFilter, DocketTaskScope, PgDocketService, RoutingStrategy,
+};
 use den_llm::ModelOption;
 use den_protocol::ContextBudgetReport;
+use den_runtime::current_task::{preview_pair_current_task_selection, select_pair_current_task};
 use den_service::archived_conversations;
 use den_service::{
     bears::{
         db::{self as bears_db, role_is_bear_admin},
         BearProfile,
     },
+    client_sessions,
     conversation::persistence as conversation_persistence,
 };
 
@@ -47,6 +54,14 @@ pub fn router() -> Router<AppState> {
         )
         .route("/chat/history", get(chat_history))
         .route("/chat/model", get(chat_model_get).patch(chat_model_patch))
+        .route("/chat/current-task", get(chat_current_task_get))
+        .route("/chat/current-task", post(chat_current_task_create))
+        .route(
+            "/chat/current-task/selection-request",
+            post(chat_current_task_selection_request),
+        )
+        .route("/chat/current-task/select", post(chat_current_task_select))
+        .route("/chat/current-task/clear", post(chat_current_task_clear))
         .route("/chat/send", post(chat_send))
         .route_layer(login_required!(Backend, login_url = "/login"))
 }
@@ -222,6 +237,262 @@ fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomE
             "invalid conversation_id (expected 'default', a runtime conv-/den-conv- id, or a pending new- id): {s}"
         )))
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCurrentTaskQuery {
+    bear_id: Uuid,
+    #[serde(default)]
+    conversation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCurrentTaskMutation {
+    bear_id: Uuid,
+    conversation_id: String,
+    #[serde(default)]
+    task_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCurrentTaskCreate {
+    bear_id: Uuid,
+    conversation_id: String,
+    title: String,
+}
+
+fn browser_pair_session_id(user_id: i32, bear_id: Uuid, conversation_id: &str) -> String {
+    format!("den-web:{user_id}:{bear_id}:{conversation_id}")
+}
+
+async fn browser_pair_session(
+    state: &AppState,
+    user_id: i32,
+    bear: &den_service::bears::Bear,
+    conversation_id: &str,
+) -> Result<den_service::client_sessions::ClientSessionRow, CustomError> {
+    if conversation_id.starts_with("new-") {
+        return Err(CustomError::ValidationError(
+            "choose a task after the conversation is created".to_string(),
+        ));
+    }
+    let session_id = browser_pair_session_id(user_id, bear.id, conversation_id);
+    client_sessions::upsert_session(
+        state.sqlx_pool(),
+        client_sessions::UpsertClientSession {
+            user_id,
+            bear_id: bear.id,
+            bear_slug: bear.slug.clone(),
+            client_session_id: session_id.clone(),
+            runtime_session_id: session_id.clone(),
+            conversation_id: conversation_id.to_string(),
+            resolved_conversation_id: None,
+            client: "den-web".to_string(),
+            cwd: None,
+            current_mode: Some(client_sessions::ClientSessionMode::Ask),
+        },
+    )
+    .await?;
+    client_sessions::find_for_user_bear_session_id(state.sqlx_pool(), user_id, bear.id, &session_id)
+        .await?
+        .ok_or_else(|| CustomError::System("browser Pair session was not persisted".to_string()))
+}
+
+async fn current_task_bear(
+    state: &AppState,
+    user_id: i32,
+    bear_id: Uuid,
+) -> Result<den_service::bears::Bear, CustomError> {
+    if !bears_db::user_may_use_bear(state.sqlx_pool(), user_id, bear_id).await? {
+        return Err(CustomError::Authorization(
+            "you do not have access to this bear".to_string(),
+        ));
+    }
+    let bear = bears_db::get_bear(state.sqlx_pool(), bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    if !bear.work_enabled {
+        return Err(CustomError::ValidationError(
+            "Pair task controls are disabled".to_string(),
+        ));
+    }
+    Ok(bear)
+}
+
+async fn chat_current_task_get(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    Query(q): Query<ChatCurrentTaskQuery>,
+) -> Result<Json<Value>, CustomError> {
+    let user_id = auth
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let conversation_id = normalize_client_conversation_id(q.conversation_id.as_deref())?;
+    let bear = current_task_bear(&state, user_id, q.bear_id).await?;
+    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
+    let tasks = PgDocketService::from_pool(state.sqlx_pool())
+        .list_tasks(
+            bear.id,
+            DocketTaskListFilter {
+                job_id: None,
+                session_anchor_id: Some(session.id),
+                parent_task_id: None,
+                include_descendants: false,
+                limit: 500,
+            },
+        )
+        .await?;
+    Ok(Json(json!({
+        "session_id": session.client_session_id,
+        "current_task_id": session.current_task_id,
+        "tasks": tasks,
+    })))
+}
+
+async fn chat_current_task_create(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    Json(body): Json<ChatCurrentTaskCreate>,
+) -> Result<Json<Value>, CustomError> {
+    let user_id = auth
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let conversation_id = normalize_client_conversation_id(Some(&body.conversation_id))?;
+    if conversation_id.starts_with("new-") {
+        return Err(CustomError::ValidationError(
+            "create a task after the conversation is created".to_string(),
+        ));
+    }
+    let title = body.title.trim();
+    if title.is_empty() {
+        return Err(CustomError::ValidationError(
+            "task title is required".to_string(),
+        ));
+    }
+    let bear = current_task_bear(&state, user_id, body.bear_id).await?;
+    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let task = service
+        .create_task(DocketTaskCreate {
+            bear_id: bear.id,
+            job_id: None,
+            session_anchor_id: Some(session.id),
+            parent_task_id: None,
+            sibling_order: 0,
+            placement: None,
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Run,
+            title: title.to_string(),
+            body: title.to_string(),
+            completion_criteria: vec!["Complete the task".to_string()],
+            difficulty: Some(DocketTaskDifficulty::Trivial),
+            effort_hint: Some(DocketEffortHint::Low),
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: None,
+        })
+        .await?;
+    Ok(Json(json!({ "task": task })))
+}
+
+async fn chat_current_task_selection_request(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    Json(body): Json<ChatCurrentTaskMutation>,
+) -> Result<Json<Value>, CustomError> {
+    let user_id = auth
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let conversation_id = normalize_client_conversation_id(Some(&body.conversation_id))?;
+    let task_id = body
+        .task_id
+        .ok_or_else(|| CustomError::ValidationError("task_id is required".to_string()))?;
+    let bear = current_task_bear(&state, user_id, body.bear_id).await?;
+    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
+    let title = preview_pair_current_task_selection(
+        state.sqlx_pool(),
+        user_id,
+        bear.id,
+        &session.client_session_id,
+        task_id,
+    )
+    .await?;
+    Ok(Json(json!({
+        "ok": true,
+        "confirmation_required": true,
+        "task_id": task_id,
+        "title": title,
+    })))
+}
+
+async fn chat_current_task_select(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    Json(body): Json<ChatCurrentTaskMutation>,
+) -> Result<Json<Value>, CustomError> {
+    let user_id = auth
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let conversation_id = normalize_client_conversation_id(Some(&body.conversation_id))?;
+    let task_id = body
+        .task_id
+        .ok_or_else(|| CustomError::ValidationError("task_id is required".to_string()))?;
+    let bear = current_task_bear(&state, user_id, body.bear_id).await?;
+    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
+    let result = select_pair_current_task(
+        state.sqlx_pool(),
+        user_id,
+        bear.id,
+        &session.client_session_id,
+        Some(task_id),
+    )
+    .await?;
+    Ok(Json(json!({
+        "ok": true,
+        "current_task_id": task_id,
+        "title": result.title,
+        "task_list": result.task_list,
+    })))
+}
+
+async fn chat_current_task_clear(
+    State(state): State<AppState>,
+    auth: AuthSession,
+    Json(body): Json<ChatCurrentTaskMutation>,
+) -> Result<Json<Value>, CustomError> {
+    let user_id = auth
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let conversation_id = normalize_client_conversation_id(Some(&body.conversation_id))?;
+    let bear = current_task_bear(&state, user_id, body.bear_id).await?;
+    let session = browser_pair_session(&state, user_id, &bear, &conversation_id).await?;
+    let result = select_pair_current_task(
+        state.sqlx_pool(),
+        user_id,
+        bear.id,
+        &session.client_session_id,
+        None,
+    )
+    .await?;
+    Ok(Json(json!({
+        "ok": true,
+        "current_task_id": Value::Null,
+        "task_list": result.task_list,
+    })))
 }
 
 async fn chat_conversations(
@@ -1178,6 +1449,21 @@ async fn chat_send_inner(
         conv_id,
     )
     .await
+}
+
+#[cfg(test)]
+mod browser_pair_session_tests {
+    use super::browser_pair_session_id;
+    use uuid::Uuid;
+
+    #[test]
+    fn browser_session_id_is_scoped_to_user_bear_and_conversation() {
+        let bear_id = Uuid::from_u128(7);
+        assert_eq!(
+            browser_pair_session_id(42, bear_id, "conv-chat_1"),
+            "den-web:42:00000000-0000-0000-0000-000000000007:conv-chat_1"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -35,6 +35,15 @@ block head %} {{ super() }}
         >
             <option value="auto">Auto / stance default</option>
         </select>
+        <button id="den-current-task" type="button" class="button-link">
+            Current task
+        </button>
+        <button id="den-create-current-task" type="button" class="button-link">
+            New task
+        </button>
+        <button id="den-clear-current-task" type="button" class="button-link" hidden>
+            Clear task
+        </button>
         <a class="button-link" href="/bear/{{ bear_slug | e }}/overview"
             >Overview</a
         >
@@ -84,6 +93,100 @@ block head %} {{ super() }}
         errEl.textContent = msg;
         errEl.hidden = false;
     }
+
+    function loadCurrentTask() {
+        if (!BEAR_ID || String(CONVERSATION_ID).indexOf("new-") === 0)
+            return Promise.resolve();
+        var params = new URLSearchParams({
+            bear_id: BEAR_ID,
+            conversation_id: CONVERSATION_ID || "default",
+        });
+        return fetch("/v1/chat/current-task?" + params.toString(), {
+            credentials: "same-origin",
+        })
+            .then(function (response) {
+                if (!response.ok) throw new Error("Could not load current task");
+                return response.json();
+            })
+            .then(function (data) {
+                var current = data.current_task_id;
+                var task = (data.tasks || []).filter(function (item) {
+                    return item.id === current;
+                })[0];
+                var select = document.getElementById("den-current-task");
+                var clear = document.getElementById("den-clear-current-task");
+                select.textContent = task ? "Task: " + task.title : "Current task";
+                clear.hidden = !current;
+            })
+            .catch(function (err) { showErr(String(err.message || err)); });
+    }
+
+    function selectCurrentTask() {
+        loadCurrentTask().then(function () {
+            var taskId = window.prompt("Task UUID to select for this conversation:");
+            if (!taskId) return;
+            var body = { bear_id: BEAR_ID, conversation_id: CONVERSATION_ID || "default", task_id: taskId };
+            fetch("/v1/chat/current-task/selection-request", {
+                method: "POST", credentials: "same-origin",
+                headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+            }).then(function (response) { return response.json().then(function (data) { if (!response.ok) throw new Error(data.message || "Could not preview task"); return data; }); })
+              .then(function (preview) {
+                  if (!window.confirm("Make ‘" + preview.title + "’ the current task?")) return;
+                  return fetch("/v1/chat/current-task/select", {
+                      method: "POST", credentials: "same-origin",
+                      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+                  });
+              }).then(function (response) {
+                  if (!response) return;
+                  if (!response.ok) throw new Error("Could not select current task");
+                  return loadCurrentTask();
+              }).catch(function (err) { showErr(String(err.message || err)); });
+        });
+    }
+
+    function clearCurrentTask() {
+        fetch("/v1/chat/current-task/clear", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bear_id: BEAR_ID, conversation_id: CONVERSATION_ID || "default" }),
+        }).then(function (response) {
+            if (!response.ok) throw new Error("Could not clear current task");
+            return loadCurrentTask();
+        }).catch(function (err) { showErr(String(err.message || err)); });
+    }
+
+    function createCurrentTask() {
+        var title = window.prompt("Task title:");
+        if (!title || !title.trim()) return;
+        fetch("/v1/chat/current-task", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bear_id: BEAR_ID, conversation_id: CONVERSATION_ID || "default", title: title.trim() }),
+        }).then(function (response) { return response.json().then(function (data) { if (!response.ok) throw new Error(data.message || "Could not create task"); return data; }); })
+          .then(function (data) {
+              var taskId = data.task && data.task.id;
+              if (!taskId) throw new Error("Task creation returned no task id");
+              var body = { bear_id: BEAR_ID, conversation_id: CONVERSATION_ID || "default", task_id: taskId };
+              return fetch("/v1/chat/current-task/selection-request", {
+                  method: "POST", credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+              }).then(function (response) { return response.json().then(function (preview) { if (!response.ok) throw new Error(preview.message || "Could not preview task"); return { body: body, preview: preview }; }); });
+          }).then(function (selection) {
+              if (!selection || !window.confirm("Make ‘" + selection.preview.title + "’ the current task?")) return;
+              return fetch("/v1/chat/current-task/select", {
+                  method: "POST", credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" }, body: JSON.stringify(selection.body),
+              });
+          }).then(function (response) {
+              if (!response) return;
+              if (!response.ok) throw new Error("Could not select current task");
+              return loadCurrentTask();
+          }).catch(function (err) { showErr(String(err.message || err)); });
+    }
+
+    document.getElementById("den-current-task").addEventListener("click", selectCurrentTask);
+    document.getElementById("den-create-current-task").addEventListener("click", createCurrentTask);
+    document.getElementById("den-clear-current-task").addEventListener("click", clearCurrentTask);
 
     function currentModelSelect() {
         return document.getElementById("den-model-select");
@@ -1527,6 +1630,8 @@ block head %} {{ super() }}
                 renderConversationTabs();
                 syncConversationUrl(CONVERSATION_ID);
                 return loadConversationModel().then(function () {
+                    return loadCurrentTask();
+                }).then(function () {
                     return "ok";
                 });
             })
@@ -1537,6 +1642,8 @@ block head %} {{ super() }}
                 renderConversationTabs();
                 syncConversationUrl(CONVERSATION_ID);
                 return loadConversationModel().then(function () {
+                    return loadCurrentTask();
+                }).then(function () {
                     return "ok";
                 });
             });
