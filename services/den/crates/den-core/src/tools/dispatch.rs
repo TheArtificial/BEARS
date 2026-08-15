@@ -66,6 +66,16 @@ pub trait ToolContext:
 {
 }
 
+pub async fn authorize_den_tool(
+    ctx: &impl ToolContext,
+    tool_name: &str,
+    context: &DenToolInvocationContext,
+) -> Result<crate::BearProfile, DenError> {
+    let role = identity::authorize_context(ctx, context).await?;
+    identity::authorize_tool_for_profile(tool_name, role)?;
+    Ok(role)
+}
+
 pub async fn invoke_den_tool(
     ctx: &impl ToolContext,
     tool_name: &str,
@@ -78,8 +88,7 @@ pub async fn invoke_den_tool(
             return Ok(tool_warning_payload(tool_name, warning));
         }
     }
-    let role = identity::authorize_context(ctx, &context).await?;
-    identity::authorize_tool_for_profile(tool_name, role)?;
+    let role = authorize_den_tool(ctx, tool_name, &context).await?;
     match tool_name {
         DEN_BEAR_GET_SELF => identity::get_bear_self(ctx, &context).await,
         DEN_USER_GET_CURRENT => identity::get_current_user(ctx, &context).await,

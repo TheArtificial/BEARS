@@ -12,7 +12,7 @@ use den_core::tools::{
         DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_CREATE,
         DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST,
         DEN_JOB_RECONCILE, DEN_JOB_SETTLE_TASK, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND,
-        DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
+        DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_LISTS_UPDATE,
         DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_SELECT, DEN_TASK_UPDATE,
         DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
         DEN_WORK_PREPARE_RUST_DEPENDENCIES, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND,
@@ -23,6 +23,7 @@ use den_core::tools::{
 use den_memory::MemoryStoreManager;
 use den_service::bears::BearProfile;
 use den_service::conversation::persistence as conversation_persistence;
+use den_docket::{DocketService, PgDocketService, TaskListHandoffRequest};
 
 // The per-call context value now lives in `den-tools` (it is data, not a
 // capability), so tool executors can move there. Re-exported here so existing
@@ -122,6 +123,22 @@ pub async fn invoke_den_tool(
                 serde_json::to_value(result).expect("Rust dependency result is serializable")
             })
             .map_err(CustomError::from);
+    }
+
+    if tool_name == DEN_TASK_LISTS_REQUEST_HANDOFF {
+        let request: TaskListHandoffRequest = serde_json::from_value(arguments)
+            .map_err(|error| CustomError::ValidationError(error.to_string()))?;
+        let ctx = DenToolContext::new(pool, config, stores);
+        den_core::tools::dispatch::authorize_den_tool(&ctx, tool_name, &context)
+            .await
+            .map_err(CustomError::from)?;
+        return serde_json::to_value(
+            PgDocketService::from_pool(pool)
+                .request_task_list_handoff(request)
+                .await
+                .map_err(CustomError::from)?,
+        )
+        .map_err(|error| CustomError::System(error.to_string()));
     }
 
     if workflow::is_workflow_tool(tool_name) {

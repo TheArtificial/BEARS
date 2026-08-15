@@ -545,7 +545,7 @@ impl TaskListSyncOutcome {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TaskListHandoffRequest {
     pub task_list: TaskListProjection,
     pub item_ids: Vec<String>,
