@@ -913,9 +913,7 @@ impl SessionTrackingStream {
                                     .as_ref()
                                     .map(|list| list.id.to_string()),
                                 related_task_item_id: active_item.map(|item| item.id.clone()),
-                                related_docket_job_id: task_list
-                                    .as_ref()
-                                    .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok()),
+                                related_docket_job_id: None,
                                 related_docket_task_id: active_item
                                     .and_then(|item| Uuid::parse_str(&item.id).ok()),
                                 evidence_refs: vec![LedgerEvidenceRef {
@@ -933,7 +931,7 @@ impl SessionTrackingStream {
                         {
                             let _ =
                                 turn_runs::release_claimed_run_continuation(&pool, &run_id).await;
-                            return Err(error);
+                            return Err(DenError::LoopControlLedgerPersistence(error.to_string()));
                         }
                         store.update(&session_key, |session| {
                             session.turn_budget_state = Default::default();
@@ -1598,9 +1596,7 @@ impl SessionTrackingStream {
                 .and_then(|list| list.current_item.as_ref());
             let related_docket_task_id =
                 active_item.and_then(|item| Uuid::parse_str(&item.id).ok());
-            let related_docket_job_id = task_list
-                .as_ref()
-                .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok());
+            let related_docket_job_id = None;
             record_loop_control_decision(
                 &pool,
                 LoopControlLedgerInput {
@@ -1629,7 +1625,8 @@ impl SessionTrackingStream {
                     }),
                 },
             )
-            .await?;
+            .await
+            .map_err(|error| DenError::LoopControlLedgerPersistence(error.to_string()))?;
             Ok(RuntimeSemanticEvent::RunPaused {
                 reason: "active_task_repeated_terminal_objection".to_string(),
                 resume_token: None,
@@ -1750,9 +1747,7 @@ impl SessionTrackingStream {
                     checkpoint_id: None,
                     related_task_list_id: task_list_id,
                     related_task_item_id: active_item.map(|item| item.id.clone()),
-                    related_docket_job_id: task_list
-                        .as_ref()
-                        .and_then(|list| Uuid::parse_str(&list.id.to_string()).ok()),
+                    related_docket_job_id: None,
                     related_docket_task_id: active_item
                         .and_then(|item| Uuid::parse_str(&item.id).ok()),
                     evidence_refs: vec![LedgerEvidenceRef {
@@ -1766,7 +1761,8 @@ impl SessionTrackingStream {
                     }),
                 },
             )
-            .await?;
+            .await
+            .map_err(|error| DenError::LoopControlLedgerPersistence(error.to_string()))?;
             let session = store.get(&session_key).ok_or_else(|| {
                 DenError::System("native agent loop session not found".to_string())
             })?;

@@ -28,6 +28,8 @@ pub enum DenError {
     Database(String),
     /// Pool exhaustion or closed — semantically distinct from a query-level Database error.
     DatabaseUnavailable(String),
+    /// A loop-control decision could not be persisted after model execution completed.
+    LoopControlLedgerPersistence(String),
     Session(String),
     Authentication(String),
     Authorization(String),
@@ -57,6 +59,9 @@ impl fmt::Display for DenError {
             ),
             DenError::Database(ref cause) => write!(f, "Database Error: {cause}"),
             DenError::DatabaseUnavailable(ref cause) => write!(f, "Database Unavailable: {cause}"),
+            DenError::LoopControlLedgerPersistence(ref cause) => {
+                write!(f, "Loop-control ledger persistence failed: {cause}")
+            }
             DenError::Session(ref cause) => write!(f, "Session Error: {cause}"),
             DenError::Authentication(ref cause) => write!(f, "Authentication Error: {cause}"),
             DenError::Authorization(ref cause) => write!(f, "Authorization Error: {cause}"),

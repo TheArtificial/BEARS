@@ -841,12 +841,15 @@ fn spawn_continuation_task(
                                     );
                                     return;
                                 }
-                                let failure_reason =
-                                    if matches!(err, DenError::RunStateConflict { .. }) {
+                                let failure_reason = match err {
+                                    DenError::RunStateConflict { .. } => {
                                         RunFailureReason::ContinuationRunStateConflict
-                                    } else {
-                                        RunFailureReason::ContinuationStreamError
-                                    };
+                                    }
+                                    DenError::LoopControlLedgerPersistence(_) => {
+                                        RunFailureReason::ContinuationLoopControlLedgerPersistence
+                                    }
+                                    _ => RunFailureReason::ContinuationStreamError,
+                                };
                                 let err_message = err.to_string();
                                 let is_retryable =
                                     is_retryable_continuation_stream_error(&err_message);

@@ -199,6 +199,9 @@ impl From<DenError> for CustomError {
             )),
             DenError::Database(cause) => CustomError::Database(cause),
             DenError::DatabaseUnavailable(cause) => CustomError::DatabaseUnavailable(cause),
+            DenError::LoopControlLedgerPersistence(cause) => CustomError::System(format!(
+                "Loop-control ledger persistence failed: {cause}"
+            )),
             DenError::Session(cause) => CustomError::Session(cause),
             DenError::Authentication(cause) => CustomError::Authentication(cause),
             DenError::Authorization(cause) => CustomError::Authorization(cause),
