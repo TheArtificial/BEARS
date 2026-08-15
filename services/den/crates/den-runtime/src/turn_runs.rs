@@ -609,7 +609,12 @@ impl TechnicalBudgetRecoverySnapshot {
 
 pub enum TechnicalBudgetContinuationClaim {
     Claimed(TurnRunRow),
-    RunStateConflict { actual_state: Option<String> },
+    /// A sibling continuation already owns the successor slice for this run.
+    AlreadyClaimed,
+    /// The run is terminal or missing, so it cannot be continued.
+    RunStateConflict {
+        actual_state: Option<String>,
+    },
 }
 
 pub struct TurnRunRecoverySnapshotRow {
@@ -669,7 +674,10 @@ pub async fn claim_technical_budget_continuation(
                     .bind(run_id)
                     .fetch_optional(&mut *tx)
                     .await?;
-            TechnicalBudgetContinuationClaim::RunStateConflict { actual_state }
+            match actual_state.as_deref() {
+                Some("continuing") => TechnicalBudgetContinuationClaim::AlreadyClaimed,
+                _ => TechnicalBudgetContinuationClaim::RunStateConflict { actual_state },
+            }
         }
     };
     tx.commit().await?;

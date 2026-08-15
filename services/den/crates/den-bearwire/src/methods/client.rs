@@ -291,10 +291,7 @@ fn should_retry_continuation_error(message: &str, attempt_index: usize) -> bool 
 fn is_sibling_continuation_claim(err: &DenError) -> bool {
     matches!(
         err,
-        DenError::RunStateConflict {
-            actual_state: Some(actual_state),
-            ..
-        } if actual_state == "continuing"
+        DenError::TechnicalBudgetContinuationAlreadyClaimed { .. }
     )
 }
 
@@ -1785,12 +1782,11 @@ mod tests {
     #[test]
     fn continuation_retry_schedule_and_idle_error_classification() {
         assert_eq!(continuation_retry_pauses_seconds(), vec![2, 4, 54]);
-        assert!(is_sibling_continuation_claim(&DenError::RunStateConflict {
-            operation: "technical budget continuation claim",
-            run_id: "run-1".to_string(),
-            expected_state: "running",
-            actual_state: Some("continuing".to_string()),
-        }));
+        assert!(is_sibling_continuation_claim(
+            &DenError::TechnicalBudgetContinuationAlreadyClaimed {
+                run_id: "run-1".to_string(),
+            }
+        ));
         assert!(!is_sibling_continuation_claim(
             &DenError::RunStateConflict {
                 operation: "technical budget continuation claim",

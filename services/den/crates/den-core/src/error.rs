@@ -32,6 +32,10 @@ pub enum DenError {
     LoopControlLedgerPersistence(String),
     /// Pair could not begin an otherwise eligible technical-budget continuation.
     TechnicalBudgetContinuation(String),
+    /// Another continuation worker already owns this Pair technical-budget successor.
+    TechnicalBudgetContinuationAlreadyClaimed {
+        run_id: String,
+    },
     Session(String),
     Authentication(String),
     Authorization(String),
@@ -66,6 +70,9 @@ impl fmt::Display for DenError {
             }
             DenError::TechnicalBudgetContinuation(ref cause) => {
                 write!(f, "Technical-budget continuation failed: {cause}")
+            }
+            DenError::TechnicalBudgetContinuationAlreadyClaimed { ref run_id } => {
+                write!(f, "Technical-budget continuation already claimed for run {run_id}")
             }
             DenError::Session(ref cause) => write!(f, "Session Error: {cause}"),
             DenError::Authentication(ref cause) => write!(f, "Authentication Error: {cause}"),

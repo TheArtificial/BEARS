@@ -2846,6 +2846,91 @@ async fn run_recover_refuses_when_selected_pair_task_changed(pool: sqlx::PgPool)
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn duplicate_concurrent_technical_budget_claim_leaves_run_continuing(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
+        .await
+        .expect("transition run to running");
+    let snapshot = serde_json::to_value(turn_runs::TechnicalBudgetRecoverySnapshot::new(
+        session_id,
+        bear_id,
+        user_id,
+        None,
+        json!({"client": "test-client"}),
+    ))
+    .expect("serialize recovery snapshot");
+
+    let (first, second) = tokio::join!(
+        turn_runs::claim_technical_budget_continuation(
+            &pool,
+            &run_id,
+            "emergency_hard_step_limit",
+            &snapshot,
+        ),
+        turn_runs::claim_technical_budget_continuation(
+            &pool,
+            &run_id,
+            "emergency_hard_step_limit",
+            &snapshot,
+        ),
+    );
+    assert!(matches!(
+        (first, second),
+        (
+            Ok(turn_runs::TechnicalBudgetContinuationClaim::Claimed(_)),
+            Ok(turn_runs::TechnicalBudgetContinuationClaim::AlreadyClaimed)
+        ) | (
+            Ok(turn_runs::TechnicalBudgetContinuationClaim::AlreadyClaimed),
+            Ok(turn_runs::TechnicalBudgetContinuationClaim::Claimed(_))
+        )
+    ));
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run remains present");
+    assert_eq!(run.state, "continuing");
+    assert_ne!(run.state, "failed");
+
+    assert!(matches!(
+        turn_runs::claim_technical_budget_continuation(
+            &pool,
+            "missing-run",
+            "emergency_hard_step_limit",
+            &snapshot,
+        )
+        .await
+        .expect("check missing run"),
+        turn_runs::TechnicalBudgetContinuationClaim::RunStateConflict { actual_state: None }
+    ));
+    sqlx::query("UPDATE turn_runs SET state = 'failed' WHERE run_id = $1")
+        .bind(&run_id)
+        .execute(&pool)
+        .await
+        .expect("force terminal state for claim disposition test");
+    assert!(matches!(
+        turn_runs::claim_technical_budget_continuation(
+            &pool,
+            &run_id,
+            "emergency_hard_step_limit",
+            &snapshot,
+        )
+        .await
+        .expect("check terminal run"),
+        turn_runs::TechnicalBudgetContinuationClaim::RunStateConflict {
+            actual_state: Some(state)
+        } if state == "failed"
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn technical_budget_recovery_lease_is_exclusive_and_releasable(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

@@ -888,12 +888,20 @@ impl SessionTrackingStream {
                         .await?
                         {
                             turn_runs::TechnicalBudgetContinuationClaim::Claimed(run) => run,
+                            turn_runs::TechnicalBudgetContinuationClaim::AlreadyClaimed => {
+                                return Err(DenError::TechnicalBudgetContinuationAlreadyClaimed {
+                                    run_id,
+                                });
+                            }
                             turn_runs::TechnicalBudgetContinuationClaim::RunStateConflict {
                                 actual_state,
                             } => {
-                                return Err(DenError::TechnicalBudgetContinuation(format!(
-                                    "run {run_id} was {actual_state:?}, expected running when claiming continuation"
-                                )));
+                                return Err(DenError::RunStateConflict {
+                                    operation: "technical budget continuation claim",
+                                    run_id,
+                                    expected_state: "running",
+                                    actual_state,
+                                });
                             }
                         };
                         if let Err(error) = record_loop_control_decision(

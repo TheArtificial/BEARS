@@ -205,6 +205,11 @@ impl From<DenError> for CustomError {
             DenError::TechnicalBudgetContinuation(cause) => CustomError::System(format!(
                 "Technical-budget continuation failed: {cause}"
             )),
+            DenError::TechnicalBudgetContinuationAlreadyClaimed { run_id } => {
+                CustomError::System(format!(
+                    "Technical-budget continuation already claimed for run {run_id}"
+                ))
+            }
             DenError::Session(cause) => CustomError::Session(cause),
             DenError::Authentication(cause) => CustomError::Authentication(cause),
             DenError::Authorization(cause) => CustomError::Authorization(cause),
