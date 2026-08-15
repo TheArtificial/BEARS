@@ -987,10 +987,7 @@ fn docket_job_rows_summary(jobs: &[docket::DocketJobRow]) -> String {
 }
 
 fn task_projection_status(task: &docket::DocketTaskProjection) -> &str {
-    task.run_state
-        .as_ref()
-        .map(|state| state.status.as_str())
-        .unwrap_or("pending")
+    task.status.as_str()
 }
 
 fn docket_task_row_summary(task: &docket::DocketTaskRow) -> String {
@@ -2659,6 +2656,8 @@ mod test {
                 updated_at: now,
             },
             run_state: None,
+            status: den_docket::DocketTaskStatus::Pending,
+            integrity_conflict: None,
         }
     }
 
@@ -2713,6 +2712,22 @@ mod test {
         assert!(content.contains("Found 1 Docket task."));
         assert!(content.contains("1 pending"));
         assert!(content.contains("Improve cards"));
+    }
+
+    #[test]
+    fn docket_tasks_card_content_projects_settled_tasks_as_done() {
+        let mut task = task_projection(Uuid::new_v4(), None);
+        task.task.title = "Reconcile task state".to_string();
+        task.task.settled_by_entry_id = Some(Uuid::new_v4());
+        task.status = den_docket::DocketTaskStatus::Done;
+
+        let content = docket_tasks_card_content(&[task.clone()]);
+        let counts = docket_task_counts(&[task]);
+
+        assert!(content.contains("0 pending, 0 in progress, 1 done"));
+        assert!(content.contains("Reconcile task state — done"));
+        assert_eq!(counts["done"], 1);
+        assert_eq!(counts["pending"], 0);
     }
 
     #[test]
