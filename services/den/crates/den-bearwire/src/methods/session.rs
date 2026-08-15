@@ -411,31 +411,20 @@ fn active_activity_plan_projection(
         "current_item_id": current_item_id,
         "current_task": current_task,
         "items": plan.items.into_iter().map(|item| {
-            let status = acp_plan_item_status(&item, current_item_id.as_deref());
+            let selection = (current_item_id.as_deref() == Some(item.id.as_str()))
+                .then_some("current");
             json!({
                 "id": item.id,
                 "title": item.title,
                 "summary": item.summary,
-                "status": status,
+                "status": item.status,
+                "selection": selection,
                 "blocked_reason": item.blocked_reason,
                 "source_ref": item.source_ref,
                 "sync_state": item.sync_state,
             })
         }).collect::<Vec<_>>(),
     })
-}
-
-fn acp_plan_item_status(item: &TaskListItem, current_item_id: Option<&str>) -> &'static str {
-    if current_item_id == Some(item.id.as_str()) {
-        return "in_progress";
-    }
-    match item.status {
-        TaskListItemStatus::Completed => "completed",
-        TaskListItemStatus::InProgress => "in_progress",
-        TaskListItemStatus::Pending
-        | TaskListItemStatus::Blocked
-        | TaskListItemStatus::Cancelled => "pending",
-    }
 }
 
 #[cfg(test)]
@@ -499,6 +488,9 @@ mod tests {
             Some(projected),
         );
         assert_eq!(acp_projection["current_task"]["id"], task_id.to_string());
+        assert_eq!(acp_projection["status"], "active");
+        assert_eq!(acp_projection["items"][0]["status"], "pending");
+        assert_eq!(acp_projection["items"][0]["selection"], "current");
 
         let mut no_selection = session_current_task_context(task_id);
         no_selection.current_task_id = None;
