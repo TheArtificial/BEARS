@@ -135,15 +135,15 @@ Initial implementation decisions:
 
 **Goal:** Replace ad hoc content handles in common Den surfaces.
 
-- [ ] Allow conversation events/messages to cite artifact refs for attachments and generated outputs.
-- [ ] Add generic artifact link/attachment records for Den subjects, including at least conversation, job, task, run, criterion, and delegated-run anchors.
-- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `primary_output`, `input`, `source`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`. A primary output may be a Git-commit `external_ref` or Den-owned content artifact, but a finalized/link-verified artifact is only required when the task or work-surface policy says so.
-- [ ] Record task-required validation attempts against the task's primary-output ref and, when available, stable identity (Git OID or finalized content digest), including the executed check, observed result, execution provenance, and durable diagnostics where relevant. Identity agreement preserves evidence integrity; it does not prove correctness.
-- [ ] Settle task completion only after structured primary-output evidence and the task's required validation evidence are recorded. Preserve candidate evidence and a blocked recovery path when an explicitly required observation (such as publication or finalization) fails.
+- [x] Allow conversation events/messages to cite artifact refs for attachments and generated outputs.
+- [x] Add generic artifact link/attachment records for Den subjects, including at least conversation, job, task, run, criterion, and delegated-run anchors.
+- [x] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `primary_output`, `input`, `source`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`. A primary output may be a Git-commit `external_ref` or Den-owned content artifact, but a finalized/link-verified artifact is only required when the task or work-surface policy says so.
+- [x] Record task-required validation attempts against the task's primary-output ref and, when available, stable identity (Git OID or finalized content digest), including the executed check, observed result, execution provenance, and durable diagnostics where relevant. Identity agreement preserves evidence integrity; it does not prove correctness.
+- [x] Settle task completion only after structured primary-output evidence and the task's required validation evidence are recorded. Preserve candidate evidence and a blocked recovery path when an explicitly required observation (such as publication or finalization) fails.
 - [ ] Add run/task provenance when artifacts are created by work/runtime activity.
-- [ ] Render artifact refs in task/run completion receipts.
-- [ ] Keep criterion/task/job state separate from artifact presence; completion decisions cite evidence refs but are not implied by them.
-- [ ] Stop leaking object keys or workspace paths as durable evidence handles.
+- [x] Render artifact refs in task/run completion receipts.
+- [x] Keep criterion/task/job state separate from artifact presence; completion decisions cite evidence refs but are not implied by them.
+- [x] Stop leaking object keys or workspace paths as durable evidence handles.
 
 **Exit gate:** A task/run can produce or cite artifact-backed evidence. A Docket task that requires output records structured primary-output evidence and its required validation attempts, with consistent identities where supplied; UI/model layers can display artifact metadata by ref. Finalization, link verification, publication observations, and successful checks remain explicit stronger policies, not universal correctness certificates.
 
