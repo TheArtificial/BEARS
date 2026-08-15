@@ -1466,6 +1466,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn conversation_artifact_attach_and_citations_are_model_safe() {
+        let _guard = DB_LOCK.lock().await;
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let user_id = create_user(&pool).await;
+        let bear_id = create_bear(&pool).await;
+        let conversation_id = format!("conversation-{}", Uuid::new_v4());
+
+        let reserved = reserve_artifact(&pool, reserve_input(bear_id, user_id))
+            .await
+            .expect("reserve artifact");
+        finalize_metadata_only_artifact(
+            &pool,
+            FinalizeArtifactInput {
+                artifact_ref: reserved.artifact_ref.clone(),
+                bear_id,
+                storage_key: Some("db-text-placeholder".to_string()),
+                content_bytes: Some(12),
+                content_sha256: Some(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                ),
+                metadata: json!({}),
+            },
+        )
+        .await
+        .expect("finalize artifact");
+
+        let link = attach_conversation_artifact(
+            &pool,
+            AttachConversationArtifactInput {
+                artifact_ref: reserved.artifact_ref.clone(),
+                bear_id,
+                conversation_id: conversation_id.clone(),
+                role: "output".to_string(),
+                metadata: json!({}),
+                created_by_user_id: Some(user_id),
+            },
+        )
+        .await
+        .expect("attach conversation artifact");
+        assert_eq!(link.target_kind, "conversation");
+        assert_eq!(link.target_id, conversation_id);
+
+        let citations = list_conversation_artifact_citations(
+            &pool,
+            bear_id,
+            &conversation_id,
+            ArtifactAccessContext {
+                bear_id,
+                user_id: Some(user_id),
+                profile: BearProfile::Pair,
+            },
+        )
+        .await
+        .expect("list conversation citations");
+        assert_eq!(citations.len(), 1);
+        let rendered = serde_json::to_value(&citations[0]).expect("serialize citation");
+        assert!(rendered.get("storage_key").is_none());
+        assert!(rendered.get("content_sha256").is_none());
+        assert!(rendered.get("provenance").is_none());
+    }
+
+    #[tokio::test]
     async fn garage_artifact_finalize_content_location_and_gc() {
         let _guard = DB_LOCK.lock().await;
         let Some(pool) = test_pool().await else {
