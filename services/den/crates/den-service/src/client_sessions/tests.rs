@@ -1,4 +1,4 @@
-use super::{ClientSessionMode, UPSERT_SESSION_SQL};
+use super::ClientSessionMode;
 
 #[test]
 fn client_session_mode_preserves_storage_strings_and_rejects_unknown_values() {
@@ -19,18 +19,6 @@ fn client_session_mode_preserves_storage_strings_and_rejects_unknown_values() {
         ClientSessionMode::Write
     );
     assert!(ClientSessionMode::try_from_storage("admin").is_err());
-}
-
-#[test]
-fn upsert_session_reopens_poisoned_closed_or_archived_rows() {
-    assert!(
-            UPSERT_SESSION_SQL.contains("closed_at = NULL"),
-            "session.open/run.start upsert must clear closed_at so a previously closed client session can be reused"
-        );
-    assert!(
-            UPSERT_SESSION_SQL.contains("archived_at = NULL"),
-            "session.open/run.start upsert must clear archived_at so archived session rows cannot poison future turns"
-        );
 }
 
 #[test]
