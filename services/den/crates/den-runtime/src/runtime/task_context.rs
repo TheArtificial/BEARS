@@ -85,6 +85,10 @@ pub fn active_docket_execution_lookup_for_session(
     active_docket_execution_lookup(Some(client_session_id), conversation_id)
 }
 
+fn is_actionable_session_task_status(status: den_docket::DocketTaskStatus) -> bool {
+    status == den_docket::DocketTaskStatus::Pending
+}
+
 fn durable_execution_current_task_id(
     execution_task_id: Option<Uuid>,
     plan: Option<&TaskListProjection>,
@@ -137,9 +141,12 @@ pub async fn resolve_runtime_task_context(
             },
         )
         .await?;
-    let current_task_id = session
-        .current_task_id
-        .filter(|selected_task_id| tasks.iter().any(|task| task.task.id == *selected_task_id));
+    let current_task_id = session.current_task_id.filter(|selected_task_id| {
+        tasks
+            .iter()
+            .find(|task| task.task.id == *selected_task_id)
+            .is_some_and(|task| is_actionable_session_task_status(task.status))
+    });
     if current_task_id.is_some() {
         let plan = task_list_projection_from_session_tasks_with_current_task(
             bear_id,
@@ -208,6 +215,22 @@ pub async fn resolve_runtime_task_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_session_tasks_are_not_current_task_candidates() {
+        assert!(is_actionable_session_task_status(
+            den_docket::DocketTaskStatus::Pending
+        ));
+        assert!(!is_actionable_session_task_status(
+            den_docket::DocketTaskStatus::Done
+        ));
+        assert!(!is_actionable_session_task_status(
+            den_docket::DocketTaskStatus::Blocked
+        ));
+        assert!(!is_actionable_session_task_status(
+            den_docket::DocketTaskStatus::Cancelled
+        ));
+    }
 
     #[test]
     fn session_current_task_exposes_its_projection() {
