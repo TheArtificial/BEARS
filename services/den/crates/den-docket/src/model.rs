@@ -1939,8 +1939,13 @@ pub fn task_list_projection_from_session_tasks_with_current_task(
         "completed"
     } else if items
         .iter()
+        .any(|item| item.status == TaskListItemStatus::Blocked)
+    {
+        "blocked"
+    } else if items
+        .iter()
         .any(|item| item.status == TaskListItemStatus::InProgress)
-        || current_item.is_some()
+        || (selected_task_id.is_some() && current_item.is_some())
     {
         "active"
     } else {
@@ -2059,7 +2064,15 @@ fn task_list_item_from_docket_task(
     state: Option<&DocketTaskRunStateRow>,
     is_executing: bool,
 ) -> TaskListItem {
-    let status = if is_executing {
+    let settled_with_active_work = task.settled_by_entry_id.is_some()
+        && (is_executing
+            || state
+                .is_some_and(|state| matches!(state.status.as_str(), "pending" | "in_progress")));
+    let status = if settled_with_active_work {
+        TaskListItemStatus::Blocked
+    } else if task.settled_by_entry_id.is_some() {
+        TaskListItemStatus::Completed
+    } else if is_executing {
         TaskListItemStatus::InProgress
     } else {
         state
@@ -2071,9 +2084,13 @@ fn task_list_item_from_docket_task(
         title: task.title.clone(),
         summary: Some(task.body.clone()),
         status,
-        blocked_reason: (status == TaskListItemStatus::Blocked)
-            .then(|| state.and_then(|state| state.result_summary.clone()))
-            .flatten(),
+        blocked_reason: if settled_with_active_work {
+            Some("integrity conflict: task is settled but has active work".to_string())
+        } else {
+            (status == TaskListItemStatus::Blocked)
+                .then(|| state.and_then(|state| state.result_summary.clone()))
+                .flatten()
+        },
         source_ref: TaskListSourceRef::docket_task(
             task.job_id.map(|job_id| job_id.to_string()),
             task.id.to_string(),
@@ -2638,7 +2655,7 @@ mod tests {
         let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
         let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
         let run_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
-        let task = DocketTaskRow {
+        let mut task = DocketTaskRow {
             id: task_id,
             bear_id,
             job_id: None,
@@ -2710,7 +2727,7 @@ mod tests {
             "conversation-1",
             session_anchor_id,
             &[DocketTaskProjection {
-                task,
+                task: task.clone(),
                 run_state: Some(DocketTaskRunStateRow {
                     run_id,
                     task_id,
@@ -2726,6 +2743,51 @@ mod tests {
         .expect("completed session projection");
 
         assert_eq!(completed.status, "completed");
+
+        task.settled_by_entry_id =
+            Some(Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap());
+        let settled = task_list_projection_from_session_tasks(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[DocketTaskProjection {
+                task: task.clone(),
+                run_state: None,
+            }],
+        )
+        .expect("settled session projection");
+
+        assert_eq!(settled.status, "completed");
+        assert_eq!(settled.items[0].status, TaskListItemStatus::Completed);
+
+        let conflict = task_list_projection_from_session_tasks(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[DocketTaskProjection {
+                task,
+                run_state: Some(DocketTaskRunStateRow {
+                    run_id,
+                    task_id,
+                    status: "in_progress".to_string(),
+                    result_refs: None,
+                    result_summary: None,
+                    started_at: Some(OffsetDateTime::UNIX_EPOCH),
+                    finished_at: None,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                }),
+            }],
+        )
+        .expect("conflicting session projection");
+
+        assert_eq!(conflict.status, "blocked");
+        assert_eq!(conflict.items[0].status, TaskListItemStatus::Blocked);
+        assert_eq!(
+            conflict.items[0].blocked_reason.as_deref(),
+            Some("integrity conflict: task is settled but has active work")
+        );
     }
 
     #[test]
