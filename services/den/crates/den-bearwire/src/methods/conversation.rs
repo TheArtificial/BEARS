@@ -96,6 +96,7 @@ fn docket_artifact_resources(artifact_refs: &[String]) -> Vec<SurfaceResourceRef
     let mut seen = HashSet::new();
     artifact_refs
         .iter()
+        .filter(|artifact_ref| is_canonical_artifact_ref(artifact_ref))
         .filter(|artifact_ref| seen.insert(artifact_ref.as_str()))
         .map(|artifact_ref| SurfaceResourceRef {
             label: Some("Artifact".to_string()),
@@ -104,6 +105,14 @@ fn docket_artifact_resources(artifact_refs: &[String]) -> Vec<SurfaceResourceRef
             mime_type: None,
         })
         .collect()
+}
+
+fn is_canonical_artifact_ref(value: &str) -> bool {
+    value.len() == "artifact_".len() + 32
+        && value.starts_with("artifact_")
+        && value["artifact_".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn docket_diagnostic_surface_event(
@@ -740,6 +749,8 @@ mod tests {
             &[
                 "artifact_0123456789abcdef0123456789abcdef".to_string(),
                 "artifact_0123456789abcdef0123456789abcdef".to_string(),
+                "storage_key=secret/path".to_string(),
+                "artifact_0123456789abcdef0123456789abcdeF".to_string(),
             ],
         )
         .expect("surface event");
