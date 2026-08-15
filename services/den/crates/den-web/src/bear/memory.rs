@@ -977,14 +977,14 @@ async fn get_reflection_run_detail(
         }
     }
 
-    let item_count = sqlx::query_scalar::<_, i64>(
-        r"
-        SELECT COUNT(*)::bigint
+    let item_count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)::bigint AS "count!: i64"
         FROM bear_reflection_run_items
         WHERE run_id = $1
-        ",
+        "#,
+        run_id,
     )
-    .bind(run_id)
     .fetch_one(pool)
     .await
     .unwrap_or(0);
@@ -1530,9 +1530,11 @@ async fn requeue_source_reflection_sessions(
     }
     let session_ids = session_ids.iter().cloned().collect::<Vec<_>>();
     let conversation_ids = conversation_ids.iter().cloned().collect::<Vec<_>>();
-    let rows = sqlx::query_as::<_, (String, i32)>(
-        r"
-        SELECT DISTINCT client_session_id, user_id
+    let rows = sqlx::query!(
+        r#"
+        SELECT DISTINCT
+            client_session_id AS "client_session_id!: String",
+            user_id AS "user_id!: i32"
         FROM client_sessions
         WHERE bear_id = $1
           AND (
@@ -1540,16 +1542,18 @@ async fn requeue_source_reflection_sessions(
               OR conversation_id = ANY($3::text[])
               OR resolved_conversation_id = ANY($3::text[])
           )
-        ",
+        "#,
+        bear_id,
+        &session_ids,
+        &conversation_ids,
     )
-    .bind(bear_id)
-    .bind(&session_ids)
-    .bind(&conversation_ids)
     .fetch_all(state.sqlx_pool())
     .await?;
 
     let mut requeued = 0;
-    for (session_id, user_id) in rows {
+    for row in rows {
+        let session_id = row.client_session_id;
+        let user_id = row.user_id;
         let mut event = BearWireEvent::ephemeral(
             "session.reflection_requeued",
             json!({

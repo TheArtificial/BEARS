@@ -307,7 +307,9 @@ async fn create_job_form_creates_work_job_with_tasks() {
             "/bear/{bear_slug}/jobs/{}",
             route_id(
                 sqlx::query_scalar!(
-                    "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1", bear_id)
+                    "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+                    bear_id
+                )
                 .fetch_one(&pool)
                 .await
                 .expect("job id")
@@ -315,27 +317,35 @@ async fn create_job_form_creates_work_job_with_tasks() {
         )
     );
     let job_id: Uuid = sqlx::query_scalar!(
-        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1", bear_id)
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+        bear_id
+    )
     .fetch_one(&pool)
     .await
     .expect("job id");
 
     let job = sqlx::query!(
         "SELECT goal, work_surface_id, commit_policy, work_branch
-             FROM bear_jobs WHERE id = $1", job_id)
+             FROM bear_jobs WHERE id = $1",
+        job_id
+    )
     .fetch_one(&pool)
     .await
     .expect("job row");
     assert_eq!(job.goal, "Ship the site");
     assert_eq!(job.work_surface_id, Some(surface_id));
     assert_eq!(job.commit_policy.as_deref(), Some("per_task"));
-    assert!(job.work_branch.is_none(), "blank branch stays unset until dispatch");
+    assert!(
+        job.work_branch.is_none(),
+        "blank branch stays unset until dispatch"
+    );
 
     // Exactly one non-blank task with the criterion.
-    let tasks: Vec<String> = sqlx::query_scalar!("SELECT title FROM bear_tasks WHERE job_id = $1", job_id)
-        .fetch_all(&pool)
-        .await
-        .expect("tasks");
+    let tasks: Vec<String> =
+        sqlx::query_scalar!("SELECT title FROM bear_tasks WHERE job_id = $1", job_id)
+            .fetch_all(&pool)
+            .await
+            .expect("tasks");
     assert_eq!(tasks, vec!["Update headline"]);
 
     let response = post_form(
@@ -347,7 +357,9 @@ async fn create_job_form_creates_work_job_with_tasks() {
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let job = sqlx::query!(
-        "SELECT goal, work_surface_id, commit_policy, work_branch FROM bear_jobs WHERE id = $1", job_id)
+        "SELECT goal, work_surface_id, commit_policy, work_branch FROM bear_jobs WHERE id = $1",
+        job_id
+    )
     .fetch_one(&pool)
     .await
     .expect("edited job row");
@@ -473,7 +485,9 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let source_id: Uuid = sqlx::query_scalar!(
-        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1", bear_id)
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+        bear_id
+    )
     .fetch_one(&pool)
     .await
     .expect("source job");
@@ -484,11 +498,13 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     .execute(&pool)
     .await
     .expect("set source branch");
-    let source_run_id: Uuid =
-        sqlx::query_scalar!("SELECT current_run_id FROM bear_jobs WHERE id = $1", source_id)
-            .fetch_one(&pool)
-            .await
-            .expect("source run id");
+    let source_run_id: Uuid = sqlx::query_scalar!(
+        "SELECT current_run_id FROM bear_jobs WHERE id = $1",
+        source_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("source run id");
 
     let response = post_form(
         &app,
@@ -499,7 +515,9 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let duplicate_id: Uuid = sqlx::query_scalar!(
-        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1", bear_id)
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+        bear_id
+    )
     .fetch_one(&pool)
     .await
     .expect("duplicate job");
@@ -507,7 +525,9 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
 
     let duplicate = sqlx::query!(
         "SELECT goal, work_surface_id, commit_policy, work_branch, status, current_run_id \
-         FROM bear_jobs WHERE id = $1", duplicate_id)
+         FROM bear_jobs WHERE id = $1",
+        duplicate_id
+    )
     .fetch_one(&pool)
     .await
     .expect("duplicate job row");
@@ -521,19 +541,26 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
 
     let tasks = sqlx::query!(
         "SELECT title, body, completion_criteria \
-             FROM bear_tasks WHERE job_id = $1 ORDER BY sibling_order", duplicate_id)
+             FROM bear_tasks WHERE job_id = $1 ORDER BY sibling_order",
+        duplicate_id
+    )
     .fetch_all(&pool)
     .await
     .expect("duplicate tasks");
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].title, "Build artifact");
     assert_eq!(tasks[0].body, "Build artifact");
-    assert_eq!(tasks[0].completion_criteria.0, vec!["artifact exists", "tests pass"]);
-    let task_statuses: Vec<String> =
-        sqlx::query_scalar!("SELECT status FROM bear_task_run_state WHERE run_id = $1", duplicate_run_id)
-            .fetch_all(&pool)
-            .await
-            .expect("duplicate task states");
+    assert_eq!(
+        tasks[0].completion_criteria.0,
+        vec!["artifact exists", "tests pass"]
+    );
+    let task_statuses: Vec<String> = sqlx::query_scalar!(
+        "SELECT status FROM bear_task_run_state WHERE run_id = $1",
+        duplicate_run_id
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("duplicate task states");
     assert_eq!(task_statuses, vec!["pending"]);
 }
 
@@ -560,15 +587,19 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let job_id: Uuid = sqlx::query_scalar!(
-        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1", bear_id)
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+        bear_id
+    )
     .fetch_one(&pool)
     .await
     .expect("job id");
-    let first_root_id: Uuid =
-        sqlx::query_scalar!("SELECT id FROM bear_tasks WHERE job_id = $1 AND title = 'First root'", job_id)
-            .fetch_one(&pool)
-            .await
-            .expect("first root task");
+    let first_root_id: Uuid = sqlx::query_scalar!(
+        "SELECT id FROM bear_tasks WHERE job_id = $1 AND title = 'First root'",
+        job_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("first root task");
 
     let response = post_form(
         &app,
@@ -598,11 +629,13 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let second_root_id: Uuid =
-        sqlx::query_scalar!("SELECT id FROM bear_tasks WHERE job_id = $1 AND title = 'Second root'", job_id)
-            .fetch_one(&pool)
-            .await
-            .expect("second root task");
+    let second_root_id: Uuid = sqlx::query_scalar!(
+        "SELECT id FROM bear_tasks WHERE job_id = $1 AND title = 'Second root'",
+        job_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("second root task");
 
     let response = post_form(
         &app,
@@ -645,10 +678,13 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let surface_id: Uuid = sqlx::query_scalar!("SELECT id FROM work_surfaces WHERE name = $1", &surface_name)
-        .fetch_one(&pool)
-        .await
-        .expect("surface id");
+    let surface_id: Uuid = sqlx::query_scalar!(
+        "SELECT id FROM work_surfaces WHERE name = $1",
+        &surface_name
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("surface id");
 
     let response = post_form(
         &app,
@@ -662,14 +698,17 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let job_id: Uuid = sqlx::query_scalar!(
-        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1", bear_id)
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+        bear_id
+    )
     .fetch_one(&pool)
     .await
     .expect("job id");
-    let run_id: Uuid = sqlx::query_scalar!("SELECT current_run_id FROM bear_jobs WHERE id = $1", job_id)
-        .fetch_one(&pool)
-        .await
-        .expect("current run");
+    let run_id: Uuid =
+        sqlx::query_scalar!("SELECT current_run_id FROM bear_jobs WHERE id = $1", job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("current run");
 
     let response = post_form(
         &app,
@@ -679,10 +718,11 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let task_count: i64 = sqlx::query_scalar!("SELECT count(*) FROM bear_tasks WHERE job_id = $1", job_id)
-        .fetch_one(&pool)
-        .await
-        .expect("task count");
+    let task_count: i64 =
+        sqlx::query_scalar!("SELECT count(*) FROM bear_tasks WHERE job_id = $1", job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("task count");
     assert_eq!(task_count, 2);
     sqlx::query!(
         "UPDATE bear_task_run_state SET status = 'done' WHERE run_id = $1",
@@ -704,20 +744,25 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
         .fetch_one(&pool)
         .await
         .expect("job status");
-    let bound_surface_id: Option<Uuid> =
-        sqlx::query_scalar!("SELECT work_surface_id FROM bear_jobs WHERE id = $1", job_id)
+    let bound_surface_id: Option<Uuid> = sqlx::query_scalar!(
+        "SELECT work_surface_id FROM bear_jobs WHERE id = $1",
+        job_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("job surface binding");
+    let run_state: String =
+        sqlx::query_scalar!("SELECT state FROM bear_job_runs WHERE id = $1", run_id)
             .fetch_one(&pool)
             .await
-            .expect("job surface binding");
-    let run_state: String = sqlx::query_scalar!("SELECT state FROM bear_job_runs WHERE id = $1", run_id)
-        .fetch_one(&pool)
-        .await
-        .expect("run state");
-    let criterion_statuses: Vec<String> =
-        sqlx::query_scalar!("SELECT status FROM bear_job_criteria_state WHERE run_id = $1", run_id)
-            .fetch_all(&pool)
-            .await
-            .expect("criterion states");
+            .expect("run state");
+    let criterion_statuses: Vec<String> = sqlx::query_scalar!(
+        "SELECT status FROM bear_job_criteria_state WHERE run_id = $1",
+        run_id
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("criterion states");
     assert_eq!(status, "completed");
     assert_eq!(bound_surface_id, Some(surface_id));
     assert_eq!(run_state, "completed");
@@ -746,7 +791,9 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let job_id: Uuid = sqlx::query_scalar!(
-        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1", bear_id)
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+        bear_id
+    )
     .fetch_one(&pool)
     .await
     .expect("job id");
@@ -769,11 +816,13 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    let surface_id: Option<Uuid> =
-        sqlx::query_scalar!("SELECT work_surface_id FROM bear_jobs WHERE id = $1", job_id)
-            .fetch_one(&pool)
-            .await
-            .expect("attached job surface");
+    let surface_id: Option<Uuid> = sqlx::query_scalar!(
+        "SELECT work_surface_id FROM bear_jobs WHERE id = $1",
+        job_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("attached job surface");
     let surface_id = surface_id.expect("surface id");
     assert!(redirect.starts_with(&format!(
         "/work/surfaces/{}?message=",
@@ -781,7 +830,10 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     )));
     assert!(redirect.contains("not%20ready"));
     let assignment_count: i64 = sqlx::query_scalar!(
-        "SELECT count(*) FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2", surface_id, bear_id)
+        "SELECT count(*) FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2",
+        surface_id,
+        bear_id
+    )
     .fetch_one(&pool)
     .await
     .expect("surface assignment");
@@ -847,7 +899,9 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
     let task = sqlx::query!(
-        "SELECT id, job_id FROM bear_tasks WHERE bear_id = $1 AND title = 'Do the thing'", bear_id)
+        "SELECT id, job_id FROM bear_tasks WHERE bear_id = $1 AND title = 'Do the thing'",
+        bear_id
+    )
     .fetch_one(&pool)
     .await
     .expect("task id");
@@ -877,7 +931,9 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
 
     let runs = sqlx::query!(
         "SELECT id, root_name, image_name, git_ref FROM bear_work_runs
-         WHERE job_id = $1 AND state = 'queued' ORDER BY queued_at", job_id)
+         WHERE job_id = $1 AND state = 'queued' ORDER BY queued_at",
+        job_id
+    )
     .fetch_all(&pool)
     .await
     .expect("queued job runs");
@@ -956,10 +1012,13 @@ async fn surface_management_is_owner_scoped_and_grantable() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let surface = sqlx::query!("SELECT id, created_by_user_id FROM work_surfaces WHERE name = $1", &name)
-        .fetch_one(&pool)
-        .await
-        .expect("surface row");
+    let surface = sqlx::query!(
+        "SELECT id, created_by_user_id FROM work_surfaces WHERE name = $1",
+        &name
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("surface row");
     let surface_id = surface.id;
     assert_eq!(surface.created_by_user_id, owner_id);
 
@@ -986,10 +1045,11 @@ async fn surface_management_is_owner_scoped_and_grantable() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Owner grants the other user; the grantee can now update.
-    let other_username: String = sqlx::query_scalar!("SELECT username FROM users WHERE id = $1", other_id)
-        .fetch_one(&pool)
-        .await
-        .expect("username");
+    let other_username: String =
+        sqlx::query_scalar!("SELECT username FROM users WHERE id = $1", other_id)
+            .fetch_one(&pool)
+            .await
+            .expect("username");
     let response = post_form(
         &app,
         &owner_cookie,
@@ -1006,11 +1066,13 @@ async fn surface_management_is_owner_scoped_and_grantable() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let default_ref =
-        sqlx::query_scalar!("SELECT default_ref FROM work_surfaces WHERE id = $1", surface_id)
-            .fetch_one(&pool)
-            .await
-            .expect("updated row");
+    let default_ref = sqlx::query_scalar!(
+        "SELECT default_ref FROM work_surfaces WHERE id = $1",
+        surface_id
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("updated row");
     assert_eq!(default_ref, "trunk");
 }
 
@@ -1076,7 +1138,9 @@ async fn create_job_enforces_surface_assignment() {
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let bound_id: Option<Uuid> = sqlx::query_scalar!(
         "SELECT work_surface_id FROM bear_jobs
-         WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1", bear_id)
+         WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+        bear_id
+    )
     .fetch_one(&pool)
     .await
     .expect("job row");

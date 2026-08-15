@@ -251,10 +251,7 @@ fn web_server_url_shape(cfg: &crate::config::Config) -> HealthCheck {
 }
 
 async fn check_den_postgres(pool: &PgPool) -> HealthCheck {
-    match sqlx::query_scalar::<_, i32>("SELECT 1")
-        .fetch_one(pool)
-        .await
-    {
+    match sqlx::query_scalar!("SELECT 1").fetch_one(pool).await {
         Ok(_) => HealthCheck {
             id: "den_postgres",
             label: "Den PostgreSQL",

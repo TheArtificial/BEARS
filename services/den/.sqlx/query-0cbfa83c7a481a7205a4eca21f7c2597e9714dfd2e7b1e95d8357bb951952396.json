@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            bear_slug,\n            current_mode,\n            count(*) AS sessions,\n            count(*) FILTER (WHERE closed_at IS NULL) AS open_sessions,\n            max(updated_at) AS last_updated_at\n        FROM client_sessions\n        GROUP BY bear_slug, current_mode\n        ORDER BY bear_slug, current_mode\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bear_slug",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "current_mode",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "sessions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "open_sessions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "0cbfa83c7a481a7205a4eca21f7c2597e9714dfd2e7b1e95d8357bb951952396"
+}

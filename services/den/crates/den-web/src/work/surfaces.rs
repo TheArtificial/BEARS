@@ -32,7 +32,7 @@ use den_service::work_surfaces::{
     SURFACE_ROLE_OWNER,
 };
 
-use super::{entity_ref, member_bears, require_user, resolve_uuid_prefix, route_id};
+use super::{entity_ref, member_bears, require_user, resolve_work_surface_prefix, route_id};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -330,8 +330,7 @@ async fn create(
             CustomError::ValidationError("return job requires a selected bear".to_string())
         })?;
         let job_bear_id: Option<Uuid> =
-            sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
-                .bind(job_id)
+            sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
                 .fetch_optional(state.sqlx_pool())
                 .await
                 .map_err(den_core::DenError::from)?;
@@ -400,7 +399,7 @@ async fn diff_detail(
     Path(surface_ref): Path<String>,
     Query(query): Query<DiffQuery>,
 ) -> Result<Response, CustomError> {
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
     let base = query.base.unwrap_or_else(|| surface.default_ref.clone());
     let head = query.head.unwrap_or_else(|| "origin/HEAD".to_string());
@@ -432,7 +431,7 @@ async fn detail(
     Query(query): Query<MessageQuery>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
     let managers = work_surfaces::list_managers(state.sqlx_pool(), surface_id).await?;
     let assigned = work_surfaces::list_assigned_bears(state.sqlx_pool(), surface_id).await?;
@@ -467,13 +466,13 @@ async fn detail(
     let assigned_ids: std::collections::HashSet<Uuid> =
         assigned.iter().map(|bear| bear.bear_id).collect();
     let assignable: Vec<(String, String)> = if viewer_is_admin(&auth_session) {
-        sqlx::query_as::<_, (Uuid, String)>("SELECT id, slug FROM bears ORDER BY slug")
+        sqlx::query!("SELECT id, slug FROM bears ORDER BY slug")
             .fetch_all(state.sqlx_pool())
             .await
             .map_err(den_core::DenError::from)?
             .into_iter()
-            .filter(|(id, _)| !assigned_ids.contains(id))
-            .map(|(id, slug)| (id.to_string(), slug))
+            .filter(|row| !assigned_ids.contains(&row.id))
+            .map(|row| (row.id.to_string(), row.slug))
             .collect()
     } else {
         let mut bears: Vec<(String, String)> = member_bears(&state, user_id)
@@ -542,7 +541,7 @@ async fn update(
     Path(surface_ref): Path<String>,
     Form(form): Form<UpdateSurfaceForm>,
 ) -> Result<Response, CustomError> {
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::update_surface(
         state.sqlx_pool(),
@@ -572,7 +571,7 @@ async fn set_credential(
     Path(surface_ref): Path<String>,
     Form(form): Form<CredentialForm>,
 ) -> Result<Response, CustomError> {
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     let Some((kind, value)) = credential_from_form(&form.credential_kind, &form.credential_value)?
     else {
@@ -601,7 +600,7 @@ async fn clear_credential(
     auth_session: AuthSession,
     Path(surface_ref): Path<String>,
 ) -> Result<Response, CustomError> {
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::clear_credential(state.sqlx_pool(), surface_id).await?;
     let sync_note = push_surfaces_best_effort(&state).await;
@@ -626,7 +625,7 @@ async fn grant_manager(
     Form(form): Form<GrantManagerForm>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     let username = form.username.trim();
     let Some(target) = user_db::get_user_by_username(state.sqlx_pool(), username).await? else {
@@ -664,7 +663,7 @@ async fn revoke_manager(
     Path(surface_ref): Path<String>,
     Form(form): Form<RevokeManagerForm>,
 ) -> Result<Response, CustomError> {
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::revoke_manager(state.sqlx_pool(), surface_id, form.user_id).await?;
     Ok(surface_redirect(surface_id, "Manager removed.", None))
@@ -682,7 +681,7 @@ async fn assign_bear(
     Form(form): Form<BearForm>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     // Managers assign from their own member bears; site admins any bear.
     if !viewer_is_admin(&auth_session)
@@ -700,7 +699,7 @@ async fn unassign_bear(
     Path(surface_ref): Path<String>,
     Form(form): Form<BearForm>,
 ) -> Result<Response, CustomError> {
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::unassign_bear(state.sqlx_pool(), surface_id, form.bear_id).await?;
     Ok(surface_redirect(surface_id, "Bear unassigned.", None))
@@ -711,7 +710,7 @@ async fn delete(
     auth_session: AuthSession,
     Path(surface_ref): Path<String>,
 ) -> Result<Response, CustomError> {
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::delete_surface(state.sqlx_pool(), surface_id).await?;
     let sync_note = push_surfaces_best_effort(&state).await;
@@ -731,7 +730,7 @@ async fn sync_now(
     auth_session: AuthSession,
     Path(surface_ref): Path<String>,
 ) -> Result<Response, CustomError> {
-    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
     let message = match prepare_surface(&state, &surface.name).await {
         Ok(message) => message,

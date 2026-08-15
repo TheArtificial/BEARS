@@ -4,7 +4,6 @@ use axum::{
     routing::get,
     Router,
 };
-use sqlx::Row as _;
 
 use crate::errors::CustomError;
 use crate::web::AppState;
@@ -14,7 +13,7 @@ pub fn router() -> Router<AppState> {
 }
 
 pub async fn index(State(state): State<AppState>) -> Result<Response, CustomError> {
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         r"
         SELECT
             bear_slug,
@@ -35,18 +34,15 @@ pub async fn index(State(state): State<AppState>) -> Result<Response, CustomErro
     );
 
     for row in rows {
-        let bear_slug: String = row.try_get("bear_slug")?;
-        let current_mode: String = row.try_get("current_mode")?;
-        let sessions: i64 = row.try_get("sessions")?;
-        let open_sessions: i64 = row.try_get("open_sessions")?;
-        let last_updated_at: Option<time::OffsetDateTime> = row.try_get("last_updated_at")?;
         body.push_str(&format!(
             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-            html_escape(&bear_slug),
-            html_escape(&current_mode),
-            sessions,
-            open_sessions,
-            last_updated_at.map(|v| v.to_string()).unwrap_or_default()
+            html_escape(&row.bear_slug),
+            html_escape(&row.current_mode),
+            row.sessions.unwrap_or_default(),
+            row.open_sessions.unwrap_or_default(),
+            row.last_updated_at
+                .map(|v| v.to_string())
+                .unwrap_or_default()
         ));
     }
 

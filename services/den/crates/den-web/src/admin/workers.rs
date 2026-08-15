@@ -1,8 +1,6 @@
 use axum::{extract::State, response::Response, routing::get, Router};
 use minijinja::context;
 use serde::Serialize;
-use sqlx::Row as _;
-use time::OffsetDateTime;
 
 use crate::auth_backend::AuthSession;
 use crate::errors::CustomError;
@@ -46,7 +44,7 @@ pub async fn index(
 }
 
 async fn reflection_runs_row(pool: &sqlx::PgPool) -> Result<WorkerHealthRow, CustomError> {
-    let row = sqlx::query(
+    let row = sqlx::query!(
         r"
         SELECT
             count(*) AS total,
@@ -62,11 +60,20 @@ async fn reflection_runs_row(pool: &sqlx::PgPool) -> Result<WorkerHealthRow, Cus
     .fetch_one(pool)
     .await?;
 
-    worker_health_row("Reflection runs", row)
+    Ok(WorkerHealthRow {
+        worker: "Reflection runs".to_string(),
+        total: row.total.unwrap_or_default(),
+        pending: row.pending.unwrap_or_default(),
+        running: row.running.unwrap_or_default(),
+        succeeded: row.succeeded.unwrap_or_default(),
+        failed: row.failed.unwrap_or_default(),
+        blocked: row.blocked.unwrap_or_default(),
+        most_recent_at: row.most_recent_at.map(|value| value.to_string()),
+    })
 }
 
 async fn compaction_events_row(pool: &sqlx::PgPool) -> Result<WorkerHealthRow, CustomError> {
-    let row = sqlx::query(
+    let row = sqlx::query!(
         r"
         SELECT
             count(*) AS total,
@@ -82,11 +89,20 @@ async fn compaction_events_row(pool: &sqlx::PgPool) -> Result<WorkerHealthRow, C
     .fetch_one(pool)
     .await?;
 
-    worker_health_row("Compaction events", row)
+    Ok(WorkerHealthRow {
+        worker: "Compaction events".to_string(),
+        total: row.total.unwrap_or_default(),
+        pending: row.pending.unwrap_or_default(),
+        running: row.running.unwrap_or_default(),
+        succeeded: row.succeeded.unwrap_or_default(),
+        failed: row.failed.unwrap_or_default(),
+        blocked: row.blocked.unwrap_or_default(),
+        most_recent_at: row.most_recent_at.map(|value| value.to_string()),
+    })
 }
 
 async fn work_runs_row(pool: &sqlx::PgPool) -> Result<WorkerHealthRow, CustomError> {
-    let row = sqlx::query(
+    let row = sqlx::query!(
         r"
         SELECT
             count(*) AS total,
@@ -102,22 +118,14 @@ async fn work_runs_row(pool: &sqlx::PgPool) -> Result<WorkerHealthRow, CustomErr
     .fetch_one(pool)
     .await?;
 
-    worker_health_row("Work runs", row)
-}
-
-fn worker_health_row(
-    worker: &str,
-    row: sqlx::postgres::PgRow,
-) -> Result<WorkerHealthRow, CustomError> {
-    let most_recent_at: Option<OffsetDateTime> = row.try_get("most_recent_at")?;
     Ok(WorkerHealthRow {
-        worker: worker.to_string(),
-        total: row.try_get("total")?,
-        pending: row.try_get("pending")?,
-        running: row.try_get("running")?,
-        succeeded: row.try_get("succeeded")?,
-        failed: row.try_get("failed")?,
-        blocked: row.try_get("blocked")?,
-        most_recent_at: most_recent_at.map(|value| value.to_string()),
+        worker: "Work runs".to_string(),
+        total: row.total.unwrap_or_default(),
+        pending: row.pending.unwrap_or_default(),
+        running: row.running.unwrap_or_default(),
+        succeeded: row.succeeded.unwrap_or_default(),
+        failed: row.failed.unwrap_or_default(),
+        blocked: row.blocked.unwrap_or_default(),
+        most_recent_at: row.most_recent_at.map(|value| value.to_string()),
     })
 }

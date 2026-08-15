@@ -349,12 +349,12 @@ pub async fn send_test_email_action(
     let cfg = match email::get_current_config(&sqlx_pool, user.id).await {
         Ok(c) => c,
         Err(_) => {
-            sqlx::query(
+            sqlx::query!(
                 r"INSERT INTO email_configs (user_id, email_address, active, verified_at)
                    VALUES ($1, $2, true, NOW())",
+                user.id,
+                user.email,
             )
-            .bind(user.id)
-            .bind(&user.email)
             .execute(&sqlx_pool)
             .await?;
             email::get_current_config(&sqlx_pool, user.id).await?

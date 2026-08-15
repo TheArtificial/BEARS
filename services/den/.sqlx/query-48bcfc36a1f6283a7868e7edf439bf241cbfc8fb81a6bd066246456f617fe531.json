@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT\n            client_session_id AS \"client_session_id!: String\",\n            user_id AS \"user_id!: i32\"\n        FROM client_sessions\n        WHERE bear_id = $1\n          AND (\n              client_session_id = ANY($2::text[])\n              OR conversation_id = ANY($3::text[])\n              OR resolved_conversation_id = ANY($3::text[])\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "client_session_id!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id!: i32",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "48bcfc36a1f6283a7868e7edf439bf241cbfc8fb81a6bd066246456f617fe531"
+}

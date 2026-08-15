@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM work_surfaces WHERE replace(id::text, '-', '') LIKE $1 || '%' LIMIT 2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "995f58cee1e0b0c0a2aeac999de82b8238951ee7119af02a0dc5a7331c179f0c"
+}

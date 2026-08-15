@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(NULLIF(resolved_conversation_id, ''), conversation_id) AS \"conversation_id!: String\" FROM client_sessions WHERE client_session_id = $1 AND bear_id = $2 ORDER BY updated_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "conversation_id!: String",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "dcc105ed9c057ef53a1e20adc23f5f1d17e073d2583aeae87df8077301ebb7c0"
+}

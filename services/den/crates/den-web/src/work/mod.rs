@@ -96,19 +96,18 @@ fn unique_scoped_id(ids: Vec<Uuid>) -> Result<Uuid, CustomError> {
 
 /// Resolve a global operator-owned work-surface reference. Docket resources
 /// must use the Bear-scoped resolvers below instead.
-async fn resolve_uuid_prefix(
+async fn resolve_work_surface_prefix(
     pool: &sqlx::PgPool,
-    table: &'static str,
     prefix: &str,
 ) -> Result<Uuid, CustomError> {
     let prefix = normalized_route_prefix(prefix)?;
-    let sql =
-        format!("SELECT id FROM {table} WHERE replace(id::text, '-', '') LIKE $1 || '%' LIMIT 2");
-    let ids: Vec<Uuid> = sqlx::query_scalar(&sql)
-        .bind(prefix)
-        .fetch_all(pool)
-        .await
-        .map_err(den_core::DenError::from)?;
+    let ids = sqlx::query_scalar!(
+        "SELECT id FROM work_surfaces WHERE replace(id::text, '-', '') LIKE $1 || '%' LIMIT 2",
+        prefix,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(den_core::DenError::from)?;
     unique_scoped_id(ids)
 }
 
@@ -625,14 +624,15 @@ async fn index(
         )
         .await?;
     let job_ids: Vec<Uuid> = jobs.iter().map(|job| job.id).collect();
-    let run_counts: std::collections::HashMap<Uuid, i64> = sqlx::query_as(
-        "SELECT job_id, count(*) FROM bear_work_runs WHERE job_id = ANY($1) GROUP BY job_id",
+    let run_counts: std::collections::HashMap<Uuid, i64> = sqlx::query!(
+        "SELECT job_id AS \"job_id!: Uuid\", count(*)::bigint AS \"count!: i64\" FROM bear_work_runs WHERE job_id = ANY($1) GROUP BY job_id",
+        &job_ids,
     )
-    .bind(&job_ids)
     .fetch_all(state.sqlx_pool())
     .await
     .map_err(den_core::DenError::from)?
     .into_iter()
+    .map(|row| (row.job_id, row.count))
     .collect();
     for job in jobs {
         if !show_completed && job.status == "completed" {
@@ -927,11 +927,11 @@ async fn edit_job(
     let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
-        .fetch_optional(state.sqlx_pool())
-        .await
-        .map_err(den_core::DenError::from)?;
+    let bear_id: Option<Uuid> =
+        sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
+            .fetch_optional(state.sqlx_pool())
+            .await
+            .map_err(den_core::DenError::from)?;
     let Some(bear_id) = bear_id.filter(|bear_id| bears.contains_key(bear_id)) else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };
@@ -1036,12 +1036,11 @@ async fn duplicate_job(
     let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
+    let owner = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
         .fetch_optional(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?;
-    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+    let Some(bear_id) = owner.filter(|bear_id| bears.contains_key(bear_id)) else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };
 
@@ -1148,12 +1147,11 @@ async fn complete_job(
     let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
+    let owner = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
         .fetch_optional(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?;
-    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+    let Some(bear_id) = owner.filter(|bear_id| bears.contains_key(bear_id)) else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };
     let service = PgDocketService::from_pool(state.sqlx_pool());
@@ -1226,12 +1224,11 @@ async fn archive_job(
     let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
+    let owner = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
         .fetch_optional(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?;
-    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+    let Some(bear_id) = owner.filter(|bear_id| bears.contains_key(bear_id)) else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };
     let service = PgDocketService::from_pool(state.sqlx_pool());
@@ -1289,12 +1286,11 @@ async fn add_top_level_task(
     ensure_safe_task_mutation_boundary(state.sqlx_pool(), job_id).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
+    let owner = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
         .fetch_optional(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?;
-    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+    let Some(bear_id) = owner.filter(|bear_id| bears.contains_key(bear_id)) else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };
     let service = PgDocketService::from_pool(state.sqlx_pool());
@@ -1400,12 +1396,11 @@ async fn job_detail(
 
     // Resolve which member bear owns this job.
     let owner: Option<(Uuid, String)> = {
-        let row: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
-            .bind(job_id)
+        let row = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
             .fetch_optional(state.sqlx_pool())
             .await
             .map_err(den_core::DenError::from)?;
-        row.and_then(|(bear_id,)| bears.get(&bear_id).map(|slug| (bear_id, slug.clone())))
+        row.and_then(|bear_id| bears.get(&bear_id).map(|slug| (bear_id, slug.clone())))
     };
     let Some((bear_id, bear_slug)) = owner else {
         return Err(CustomError::NotFound("job not found".to_string()));
@@ -1635,11 +1630,10 @@ async fn ensure_safe_task_mutation_boundary(
     pool: &sqlx::PgPool,
     job_id: Uuid,
 ) -> Result<(), CustomError> {
-    // sqlx-dynamic: static query pending checked-metadata refresh; guarded by the repository ratchet.
-    let unsafe_active: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_id=$1 AND state IN ('claimed','provisioning','running','reporting'))",
+    let unsafe_active = sqlx::query_scalar!(
+        "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_id=$1 AND state IN ('claimed','provisioning','running','reporting')) AS \"exists!: bool\"",
+        job_id,
     )
-    .bind(job_id)
     .fetch_one(pool)
     .await
     .map_err(den_core::DenError::from)?;
@@ -1663,8 +1657,7 @@ async fn add_child_task(
     let parent_task_id = resolve_task_prefix(state.sqlx_pool(), bear.id, &parent_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let Some(bear_id) = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
+    let Some(bear_id) = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
         .fetch_optional(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?
@@ -1745,8 +1738,7 @@ async fn move_task(
     let task_id = resolve_task_prefix(state.sqlx_pool(), bear.id, &task_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let Some(bear_id) = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
+    let Some(bear_id) = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
         .fetch_optional(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?
@@ -1791,24 +1783,30 @@ async fn move_task(
     };
     let other = siblings[other_position];
     let temporary_order = -2_147_483_648_i32;
-    sqlx::query("UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3")
-        .bind(temporary_order)
-        .bind(bear_id)
-        .bind(task.id)
+    sqlx::query!(
+        "UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3",
+        temporary_order,
+        bear_id,
+        task.id,
+    )
         .execute(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?;
-    sqlx::query("UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3")
-        .bind(task.sibling_order)
-        .bind(bear_id)
-        .bind(other.id)
+    sqlx::query!(
+        "UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3",
+        task.sibling_order,
+        bear_id,
+        other.id,
+    )
         .execute(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?;
-    sqlx::query("UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3")
-        .bind(other.sibling_order)
-        .bind(bear_id)
-        .bind(task.id)
+    sqlx::query!(
+        "UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3",
+        other.sibling_order,
+        bear_id,
+        task.id,
+    )
         .execute(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?;
@@ -1826,8 +1824,7 @@ async fn retry_task(
     let task_id = resolve_task_prefix(state.sqlx_pool(), bear.id, &task_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let Some(bear_id) = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
+    let Some(bear_id) = sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
         .fetch_optional(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?
@@ -1941,13 +1938,13 @@ async fn run_detail(
         &log_tail,
     );
     let conversation_id: Option<String> = match run.bearwire_session_id.as_deref() {
-        Some(session_id) => sqlx::query_scalar(
-            "SELECT COALESCE(NULLIF(resolved_conversation_id, ''), conversation_id) \
+        Some(session_id) => sqlx::query_scalar!(
+            "SELECT COALESCE(NULLIF(resolved_conversation_id, ''), conversation_id) AS \"conversation_id!: String\" \
              FROM client_sessions WHERE client_session_id = $1 AND bear_id = $2 \
              ORDER BY updated_at DESC LIMIT 1",
+            session_id,
+            run.bear_id,
         )
-        .bind(session_id)
-        .bind(run.bear_id)
         .fetch_optional(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?,
@@ -2053,11 +2050,11 @@ async fn dispatch_job(
     let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
-        .bind(job_id)
-        .fetch_optional(state.sqlx_pool())
-        .await
-        .map_err(den_core::DenError::from)?;
+    let bear_id: Option<Uuid> =
+        sqlx::query_scalar!("SELECT bear_id FROM bear_jobs WHERE id = $1", job_id)
+            .fetch_optional(state.sqlx_pool())
+            .await
+            .map_err(den_core::DenError::from)?;
     let Some(bear_id) = bear_id.filter(|bear_id| bears.contains_key(bear_id)) else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };

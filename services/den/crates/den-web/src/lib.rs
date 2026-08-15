@@ -177,7 +177,7 @@ async fn web_manifest(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn web_readiness(State(state): State<AppState>) -> Result<&'static str, StatusCode> {
-    sqlx::query_scalar::<_, i32>("SELECT 1")
+    sqlx::query_scalar!("SELECT 1")
         .fetch_one(state.sqlx_pool())
         .await
         .map_err(|e| {

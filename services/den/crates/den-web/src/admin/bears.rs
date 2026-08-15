@@ -245,41 +245,28 @@ pub(crate) async fn bear_web_sources(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearWebSourceRow>, CustomError> {
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            String,
-            Option<String>,
-            String,
-            i32,
-            time::OffsetDateTime,
-        ),
-    >(
+    let rows = sqlx::query!(
         r"
         SELECT id, scope_kind, scope_value, label, policy, priority, created_at
         FROM bear_web_sources
         WHERE bear_id = $1
         ORDER BY policy ASC, priority DESC, scope_kind ASC, scope_value ASC
         ",
+        bear_id,
     )
-    .bind(bear_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(
-            |(id, scope_kind, scope_value, label, policy, priority, created_at)| BearWebSourceRow {
-                id,
-                scope_kind,
-                scope_value,
-                label,
-                policy,
-                priority,
-                created_at: created_at.to_string(),
-            },
-        )
+        .map(|row| BearWebSourceRow {
+            id: row.id,
+            scope_kind: row.scope_kind,
+            scope_value: row.scope_value,
+            label: row.label,
+            policy: row.policy,
+            priority: row.priority,
+            created_at: row.created_at.to_string(),
+        })
         .collect())
 }
 
@@ -287,25 +274,13 @@ pub(crate) async fn bear_web_approvals(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearWebApprovalRow>, CustomError> {
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            time::OffsetDateTime,
-            Option<time::OffsetDateTime>,
-        ),
-    >(
-        r"
+    let rows = sqlx::query!(
+        r#"
         SELECT a.id,
                a.scope_kind,
                a.scope_value,
                a.source,
-               u.username,
+               u.username AS "username?",
                NULLIF(u.display_name, '') AS display_name,
                a.created_at,
                a.expires_at
@@ -313,40 +288,29 @@ pub(crate) async fn bear_web_approvals(
         LEFT JOIN users u ON u.id = a.approved_by_user_id
         WHERE a.bear_id = $1 AND a.revoked_at IS NULL
         ORDER BY a.created_at DESC
-        ",
+        "#,
+        bear_id,
     )
-    .bind(bear_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(
-            |(
-                id,
-                scope_kind,
-                scope_value,
-                source,
-                username,
-                display_name,
-                created_at,
-                expires_at,
-            )| BearWebApprovalRow {
-                id,
-                scope_kind,
-                scope_value,
-                source,
-                approved_by_user_label: match (display_name, username) {
-                    (Some(display_name), Some(username)) => {
-                        Some(format!("{display_name} (@{username})"))
-                    }
-                    (Some(display_name), None) => Some(display_name),
-                    (None, Some(username)) => Some(format!("@{username}")),
-                    (None, None) => None,
-                },
-                created_at: created_at.to_string(),
-                expires_at: expires_at.map(|t| t.to_string()),
+        .map(|row| BearWebApprovalRow {
+            id: row.id,
+            scope_kind: row.scope_kind,
+            scope_value: row.scope_value,
+            source: row.source,
+            approved_by_user_label: match (row.display_name, row.username) {
+                (Some(display_name), Some(username)) => {
+                    Some(format!("{display_name} (@{username})"))
+                }
+                (Some(display_name), None) => Some(display_name),
+                (None, Some(username)) => Some(format!("@{username}")),
+                (None, None) => None,
             },
-        )
+            created_at: row.created_at.to_string(),
+            expires_at: row.expires_at.map(|t| t.to_string()),
+        })
         .collect())
 }
 
@@ -354,7 +318,7 @@ pub(crate) async fn bear_web_fetches(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearWebFetchRow>, CustomError> {
-    let rows = sqlx::query_as::<_, (String, Option<String>, String, String, String, Option<i32>, Option<String>, Option<i64>, time::OffsetDateTime)>(
+    let rows = sqlx::query!(
         r"
         SELECT url, final_url, host, execution_location, approval_kind, http_status, content_type, bytes, fetched_at
         FROM bear_web_fetches
@@ -362,35 +326,23 @@ pub(crate) async fn bear_web_fetches(
         ORDER BY fetched_at DESC
         LIMIT 25
         ",
+        bear_id,
     )
-    .bind(bear_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(
-            |(
-                url,
-                final_url,
-                host,
-                execution_location,
-                approval_kind,
-                http_status,
-                content_type,
-                bytes,
-                fetched_at,
-            )| BearWebFetchRow {
-                url,
-                final_url,
-                host,
-                execution_location,
-                approval_kind,
-                http_status,
-                content_type,
-                bytes,
-                fetched_at: fetched_at.to_string(),
-            },
-        )
+        .map(|row| BearWebFetchRow {
+            url: row.url,
+            final_url: row.final_url,
+            host: row.host,
+            execution_location: row.execution_location,
+            approval_kind: row.approval_kind,
+            http_status: row.http_status,
+            content_type: row.content_type,
+            bytes: row.bytes,
+            fetched_at: row.fetched_at.to_string(),
+        })
         .collect())
 }
 
@@ -398,21 +350,7 @@ pub(crate) async fn bear_plan_mode_rows(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
 ) -> Result<Vec<BearPlanModeRow>, CustomError> {
-    let rows = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            i32,
-            Option<String>,
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            time::OffsetDateTime,
-            time::OffsetDateTime,
-        ),
-    >(
+    let rows = sqlx::query!(
         r"
         SELECT p.id, p.user_id, u.username, p.client_session_id, p.state, p.reason,
                p.plan_artifact_path, p.plan_title, p.created_at, p.updated_at
@@ -422,37 +360,24 @@ pub(crate) async fn bear_plan_mode_rows(
         ORDER BY p.updated_at DESC
         LIMIT 10
         ",
+        bear_id,
     )
-    .bind(bear_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(
-            |(
-                id,
-                user_id,
-                username,
-                acp_session_id,
-                state,
-                reason,
-                plan_artifact_path,
-                plan_title,
-                created_at,
-                updated_at,
-            )| BearPlanModeRow {
-                id,
-                user_id,
-                username,
-                acp_session_id,
-                state,
-                reason,
-                plan_artifact_path,
-                plan_title,
-                created_at: created_at.to_string(),
-                updated_at: updated_at.to_string(),
-            },
-        )
+        .map(|row| BearPlanModeRow {
+            id: row.id,
+            user_id: row.user_id,
+            username: Some(row.username),
+            acp_session_id: row.client_session_id,
+            state: row.state,
+            reason: row.reason,
+            plan_artifact_path: row.plan_artifact_path,
+            plan_title: row.plan_title,
+            created_at: row.created_at.to_string(),
+            updated_at: row.updated_at.to_string(),
+        })
         .collect())
 }
 
@@ -506,12 +431,14 @@ async fn bear_detail_response(
         }
     };
 
-    let conversation_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM conversations WHERE bear_id = $1")
-            .bind(id)
-            .fetch_one(state.sqlx_pool())
-            .await
-            .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
+    let conversation_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::bigint FROM conversations WHERE bear_id = $1",
+        id
+    )
+    .fetch_one(state.sqlx_pool())
+    .await
+    .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?
+    .unwrap_or_default();
 
     web::render_template(
         state,
@@ -1046,7 +973,7 @@ async fn add_web_source_action(
             .into_response());
         }
     };
-    sqlx::query(
+    sqlx::query!(
         r"
         INSERT INTO bear_web_sources (bear_id, scope_kind, scope_value, label, policy, priority)
         VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)
@@ -1056,13 +983,13 @@ async fn add_web_source_action(
                       priority = EXCLUDED.priority,
                       updated_at = now()
         ",
+        id,
+        scope_kind,
+        scope_value,
+        form.label.trim(),
+        policy,
+        form.priority.unwrap_or(0),
     )
-    .bind(id)
-    .bind(scope_kind)
-    .bind(scope_value)
-    .bind(form.label.trim())
-    .bind(policy)
-    .bind(form.priority.unwrap_or(0))
     .execute(state.sqlx_pool())
     .await?;
     Ok(Redirect::to(&format!(
@@ -1076,11 +1003,13 @@ async fn delete_web_source_action(
     Path((id, source_id)): Path<(Uuid, Uuid)>,
     State(state): State<AppState>,
 ) -> Result<Response, CustomError> {
-    sqlx::query("DELETE FROM bear_web_sources WHERE bear_id = $1 AND id = $2")
-        .bind(id)
-        .bind(source_id)
-        .execute(state.sqlx_pool())
-        .await?;
+    sqlx::query!(
+        "DELETE FROM bear_web_sources WHERE bear_id = $1 AND id = $2",
+        id,
+        source_id
+    )
+    .execute(state.sqlx_pool())
+    .await?;
     Ok(Redirect::to(&format!(
         "/admin/bears/{id}/policy?message={}",
         urlencoding::encode("Web source deleted.")
@@ -1133,11 +1062,13 @@ async fn revoke_web_approval_action(
     Path((id, approval_id)): Path<(Uuid, Uuid)>,
     State(state): State<AppState>,
 ) -> Result<Response, CustomError> {
-    sqlx::query("UPDATE bear_web_approvals SET revoked_at = now() WHERE bear_id = $1 AND id = $2")
-        .bind(id)
-        .bind(approval_id)
-        .execute(state.sqlx_pool())
-        .await?;
+    sqlx::query!(
+        "UPDATE bear_web_approvals SET revoked_at = now() WHERE bear_id = $1 AND id = $2",
+        id,
+        approval_id
+    )
+    .execute(state.sqlx_pool())
+    .await?;
     Ok(Redirect::to(&format!(
         "/admin/bears/{id}/policy?message={}",
         urlencoding::encode("Web approval revoked.")

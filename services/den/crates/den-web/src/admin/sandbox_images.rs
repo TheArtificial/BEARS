@@ -404,14 +404,14 @@ mod tests {
 
     async fn seed_user(pool: &sqlx::PgPool, is_admin: bool) -> i32 {
         let unique = Uuid::new_v4().simple().to_string();
-        sqlx::query_scalar::<_, i32>(
+        sqlx::query_scalar!(
             "INSERT INTO users (email, username, display_name, passhash, is_admin)
              VALUES ($1, $2, $3, 'x', $4) RETURNING id",
+            format!("sbx-admin-{unique}@example.test"),
+            format!("sa{}", &unique[..28]),
+            "Sandbox Admin Test",
+            is_admin,
         )
-        .bind(format!("sbx-admin-{unique}@example.test"))
-        .bind(format!("sa{}", &unique[..28]))
-        .bind("Sandbox Admin Test")
-        .bind(is_admin)
         .fetch_one(pool)
         .await
         .expect("seed user")
@@ -490,12 +490,14 @@ mod tests {
         // Admin creates, sets default, deletes.
         let response = post_form(&app, &admin_cookie, "/admin/sandbox/catalog", body).await;
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        let (image_id,): (Uuid,) =
-            sqlx::query_as("SELECT id FROM sandbox_catalog_images WHERE name = $1")
-                .bind(&name)
-                .fetch_one(&pool)
-                .await
-                .expect("catalog row");
+        let image_id = sqlx::query!(
+            "SELECT id FROM sandbox_catalog_images WHERE name = $1",
+            name
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("catalog row")
+        .id;
         let response = post_form(
             &app,
             &admin_cookie,

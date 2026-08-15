@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8869dc472d4d003a0cb1cfc7b0bf92b560b1955c432206b8744e85a7116ed179"
+}

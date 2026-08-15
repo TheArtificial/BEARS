@@ -830,16 +830,18 @@ async fn generate_token_view(
     let clients = oauth_db::list_oauth_clients(&state.sqlx_pool).await?;
 
     // Get all active users
-    let users = sqlx::query_as::<_, (i32, String, String, String)>(
+    let users = sqlx::query!(
         r"
         SELECT id, username, display_name, email
         FROM users
-        WHERE active = true
         ORDER BY username
         ",
     )
     .fetch_all(&state.sqlx_pool)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|row| (row.id, row.username, row.display_name, row.email))
+    .collect::<Vec<_>>();
 
     let available_scopes = available_scope_names();
 
@@ -881,11 +883,14 @@ pub async fn generate_token_action(
             auth_session,
             context! {
                 clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
-                users => sqlx::query_as::<_, (i32, String, String, String)>(
-                    r"SELECT id, username, display_name, email FROM users WHERE active = true ORDER BY username"
+                users => sqlx::query!(
+                    r"SELECT id, username, display_name, email FROM users ORDER BY username"
                 )
                 .fetch_all(&state.sqlx_pool)
-                .await?,
+                .await?
+                .into_iter()
+                .map(|row| (row.id, row.username, row.display_name, row.email))
+                .collect::<Vec<_>>(),
                 available_scopes => available_scope_names(),
                 form_data => Some(form),
                 errors => Some(context! {
@@ -972,11 +977,14 @@ pub async fn generate_token_action(
         auth_session,
         context! {
             clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
-            users => sqlx::query_as::<_, (i32, String, String, String)>(
-                r"SELECT id, username, display_name, email FROM users WHERE active = true ORDER BY username"
+            users => sqlx::query!(
+                r"SELECT id, username, display_name, email FROM users ORDER BY username"
             )
             .fetch_all(&state.sqlx_pool)
-            .await?,
+            .await?
+            .into_iter()
+            .map(|row| (row.id, row.username, row.display_name, row.email))
+            .collect::<Vec<_>>(),
             available_scopes => available_scope_names(),
             form_data => Some(form),
             errors => None::<Option<minijinja::value::Value>>,

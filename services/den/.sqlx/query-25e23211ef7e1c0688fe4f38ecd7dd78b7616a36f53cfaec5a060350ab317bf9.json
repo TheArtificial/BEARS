@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            count(*) AS total,\n            0::BIGINT AS pending,\n            count(*) FILTER (WHERE status = 'started') AS running,\n            count(*) FILTER (WHERE status = 'completed') AS succeeded,\n            count(*) FILTER (WHERE status = 'failed') AS failed,\n            count(*) FILTER (WHERE status = 'skipped') AS blocked,\n            max(coalesce(completed_at, created_at)) AS most_recent_at\n        FROM pair_reflection_runs\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "pending",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "running",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "succeeded",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "failed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "blocked",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "most_recent_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "25e23211ef7e1c0688fe4f38ecd7dd78b7616a36f53cfaec5a060350ab317bf9"
+}

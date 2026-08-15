@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            count(*) AS total,\n            count(*) FILTER (WHERE state = 'queued') AS pending,\n            count(*) FILTER (WHERE state IN ('claimed', 'provisioning', 'running', 'reporting')) AS running,\n            count(*) FILTER (WHERE state = 'succeeded') AS succeeded,\n            count(*) FILTER (WHERE state IN ('failed', 'timed_out')) AS failed,\n            count(*) FILTER (WHERE state IN ('blocked', 'cancelled')) AS blocked,\n            max(updated_at) AS most_recent_at\n        FROM bear_work_runs\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "pending",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "running",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "succeeded",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "failed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "blocked",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "most_recent_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "73c805675f4b1c89c88985d0b82e42a7b56d636a21f1bb90f3aa3f3335f01a28"
+}
