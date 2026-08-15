@@ -850,6 +850,9 @@ fn spawn_continuation_task(
                                     DenError::LoopControlLedgerPersistence(_) => {
                                         RunFailureReason::ContinuationLoopControlLedgerPersistence
                                     }
+                                    DenError::TechnicalBudgetContinuation(_) => {
+                                        RunFailureReason::ContinuationTechnicalBudgetSetup
+                                    }
                                     _ => RunFailureReason::ContinuationStreamError,
                                 };
                                 let err_message = err.to_string();

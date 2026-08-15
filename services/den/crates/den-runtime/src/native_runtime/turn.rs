@@ -1475,6 +1475,13 @@ fn parse_args_or_empty_object(raw: &str) -> serde_json::Value {
     serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::Object(Default::default()))
 }
 
+fn pair_budget_stop_resumes_automatically(
+    profile: BearProfile,
+    reason: &TurnBudgetStopReason,
+) -> bool {
+    profile == BearProfile::Pair && reason.resumes_pair_execution_automatically()
+}
+
 fn continuation_budget_stop(
     reason: TurnBudgetStopReason,
 ) -> (RuntimeStreamContinuation, RuntimeEventStream) {
@@ -2134,8 +2141,14 @@ pub async fn continue_native_client_turn_event_stream(
             limit = session.turn_budget.emergency_hard_steps,
             "client continuation stopped by turn budget"
         );
-        SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
-        return Ok(continuation_budget_stop(reason));
+        if pair_budget_stop_resumes_automatically(profile, &reason) {
+            // Client-owned tools resume within the same persisted Pair run; only the
+            // per-slice budget resets here.
+            SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
+        } else {
+            SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
+            return Ok(continuation_budget_stop(reason));
+        }
     }
     if let Some(refreshed_plan) = refresh_cached_activity_plan_projection_from_docket(
         request.sqlx_pool,
@@ -2435,6 +2448,24 @@ mod tests {
                 Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text })),
                 Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { turn: None })),
             ] if text.contains("Send “continue”") && !text.contains("elapsed=")
+        ));
+    }
+
+    #[test]
+    fn pair_auto_resumes_tool_class_budget_stop() {
+        let reason = TurnBudgetStopReason::ToolClassCallLimit {
+            class: ToolBudgetClass::Other,
+            count: 18,
+            limit: 16,
+        };
+
+        assert!(pair_budget_stop_resumes_automatically(
+            BearProfile::Pair,
+            &reason
+        ));
+        assert!(!pair_budget_stop_resumes_automatically(
+            BearProfile::Chat,
+            &reason
         ));
     }
 

@@ -30,6 +30,8 @@ pub enum DenError {
     DatabaseUnavailable(String),
     /// A loop-control decision could not be persisted after model execution completed.
     LoopControlLedgerPersistence(String),
+    /// Pair could not begin an otherwise eligible technical-budget continuation.
+    TechnicalBudgetContinuation(String),
     Session(String),
     Authentication(String),
     Authorization(String),
@@ -61,6 +63,9 @@ impl fmt::Display for DenError {
             DenError::DatabaseUnavailable(ref cause) => write!(f, "Database Unavailable: {cause}"),
             DenError::LoopControlLedgerPersistence(ref cause) => {
                 write!(f, "Loop-control ledger persistence failed: {cause}")
+            }
+            DenError::TechnicalBudgetContinuation(ref cause) => {
+                write!(f, "Technical-budget continuation failed: {cause}")
             }
             DenError::Session(ref cause) => write!(f, "Session Error: {cause}"),
             DenError::Authentication(ref cause) => write!(f, "Authentication Error: {cause}"),

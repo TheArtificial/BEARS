@@ -130,6 +130,7 @@ pub(crate) enum RunFailureReason {
     ContinuationWatchdogTimeout,
     ContinuationStreamError,
     ContinuationRunStateConflict,
+    ContinuationTechnicalBudgetSetup,
     ContinuationLoopControlLedgerPersistence,
     ContinuationStreamEndedWithoutRuntimeTerminal,
     ContinuationStartFailed,
@@ -150,6 +151,7 @@ impl RunFailureReason {
             Self::ContinuationWatchdogTimeout => "continuation_watchdog_timeout",
             Self::ContinuationStreamError => "continuation_stream_error",
             Self::ContinuationRunStateConflict => "continuation_run_state_conflict",
+            Self::ContinuationTechnicalBudgetSetup => "continuation_technical_budget_setup_failed",
             Self::ContinuationLoopControlLedgerPersistence => {
                 "continuation_loop_control_ledger_persistence_failed"
             }
@@ -3009,6 +3011,10 @@ mod tests {
         assert_eq!(
             RunFailureReason::ContinuationLoopControlLedgerPersistence.as_str(),
             "continuation_loop_control_ledger_persistence_failed"
+        );
+        assert_eq!(
+            RunFailureReason::ContinuationTechnicalBudgetSetup.as_str(),
+            "continuation_technical_budget_setup_failed"
         );
         assert_eq!(
             RunFailureReason::ContinuationStreamEndedWithoutRuntimeTerminal.as_str(),

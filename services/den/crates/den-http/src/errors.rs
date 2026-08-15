@@ -202,6 +202,9 @@ impl From<DenError> for CustomError {
             DenError::LoopControlLedgerPersistence(cause) => CustomError::System(format!(
                 "Loop-control ledger persistence failed: {cause}"
             )),
+            DenError::TechnicalBudgetContinuation(cause) => CustomError::System(format!(
+                "Technical-budget continuation failed: {cause}"
+            )),
             DenError::Session(cause) => CustomError::Session(cause),
             DenError::Authentication(cause) => CustomError::Authentication(cause),
             DenError::Authorization(cause) => CustomError::Authorization(cause),

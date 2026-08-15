@@ -843,7 +843,7 @@ impl SessionTrackingStream {
                     if profile == BearProfile::Pair && reason.resumes_pair_execution_automatically()
                     {
                         let run_id = session.run_id.clone().ok_or_else(|| {
-                            DenError::System(
+                            DenError::TechnicalBudgetContinuation(
                                 "active Pair execution cannot resume without a persisted run ID"
                                     .to_string(),
                             )
@@ -858,7 +858,7 @@ impl SessionTrackingStream {
                         let start_request = session
                             .technical_budget_recovery_start_payload
                             .clone()
-                            .ok_or_else(|| DenError::System(
+                            .ok_or_else(|| DenError::TechnicalBudgetContinuation(
                                 "Pair technical-budget continuation lacks its recovery start payload"
                                     .to_string(),
                             ))?;
@@ -866,7 +866,7 @@ impl SessionTrackingStream {
                             session.client_session_id.clone(),
                             session.bear_id,
                             session.user_id.ok_or_else(|| {
-                                DenError::System(
+                                DenError::TechnicalBudgetContinuation(
                                 "Pair technical-budget continuation lacks an authenticated user"
                                     .to_string(),
                             )
@@ -875,7 +875,7 @@ impl SessionTrackingStream {
                             start_request,
                         );
                         let snapshot = serde_json::to_value(snapshot).map_err(|error| {
-                            DenError::System(format!(
+                            DenError::TechnicalBudgetContinuation(format!(
                                 "serialize Pair technical-budget recovery snapshot failed: {error}"
                             ))
                         })?;
@@ -891,12 +891,9 @@ impl SessionTrackingStream {
                             turn_runs::TechnicalBudgetContinuationClaim::RunStateConflict {
                                 actual_state,
                             } => {
-                                return Err(DenError::RunStateConflict {
-                                    operation: "technical budget continuation claim",
-                                    run_id,
-                                    expected_state: "running",
-                                    actual_state,
-                                });
+                                return Err(DenError::TechnicalBudgetContinuation(format!(
+                                    "run {run_id} was {actual_state:?}, expected running when claiming continuation"
+                                )));
                             }
                         };
                         if let Err(error) = record_loop_control_decision(
@@ -979,7 +976,7 @@ impl SessionTrackingStream {
                     turn_runs::begin_claimed_run_continuation(&pool, run_id)
                         .await?
                         .ok_or_else(|| {
-                            DenError::System(format!(
+                            DenError::TechnicalBudgetContinuation(format!(
                                 "Pair run {run_id} was not continuing when its successor slice began"
                             ))
                         })?;
