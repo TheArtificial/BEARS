@@ -771,6 +771,19 @@ struct BuildSessionInput<'a> {
     tool_messages: Vec<ChatMessage>,
 }
 
+fn native_turn_control_profile(
+    agent_loop_control: crate::agent_loop::ResolvedAgentLoopControl,
+    tool_budget_multiplier: f64,
+) -> crate::agent_loop::ResolvedAgentLoopControl {
+    let resolved_profile = agent_loop_control
+        .profile
+        .with_tool_budget_multiplier(tool_budget_multiplier);
+    crate::agent_loop::ResolvedAgentLoopControl {
+        profile: resolved_profile,
+        ..agent_loop_control
+    }
+}
+
 async fn build_session(
     deps: &NativeRuntimeDeps<'_>,
     input: BuildSessionInput<'_>,
@@ -938,13 +951,8 @@ async fn build_session(
         objective_orientation: Some(&objective_orientation),
         pre_risk: false,
     });
-    let resolved_profile = agent_loop_control
-        .profile
-        .with_tool_budget_multiplier(tool_budget_multiplier);
-    let agent_loop_control = crate::agent_loop::ResolvedAgentLoopControl {
-        profile: resolved_profile,
-        ..agent_loop_control
-    };
+    let agent_loop_control =
+        native_turn_control_profile(agent_loop_control, tool_budget_multiplier);
     // `work.checkout` binds the Armature session before the native loop starts.
     // Carry that authoritative binding into hosted-tool invocations instead of
     // deriving authority from a model-provided path or identifier.
@@ -2303,6 +2311,59 @@ mod tests {
         crate::agent_loop::ObjectiveOrientation::Freeform {
             policy: FreeformPolicy::closed(),
         }
+    }
+
+    #[test]
+    fn native_turn_profile_keeps_resolved_safety_limits() {
+        let resolved = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/test"),
+            model_default: Some(den_core::AgentLoopControlLevel::Strict),
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearProfile::Pair),
+            objective_orientation: None,
+            pre_risk: false,
+        });
+        let base = resolved.profile;
+        let initialized = native_turn_control_profile(resolved, 1.5);
+
+        assert_eq!(initialized.level, den_core::AgentLoopControlLevel::Strict);
+        assert_eq!(
+            initialized.profile.budget.tool_call_limits.total,
+            (f64::from(base.budget.tool_call_limits.total) * 1.5).ceil() as u32
+        );
+        assert_eq!(
+            initialized.profile.budget.max_wall_clock_ms,
+            base.budget.max_wall_clock_ms
+        );
+        assert_eq!(
+            initialized.profile.budget.emergency_hard_steps,
+            base.budget.emergency_hard_steps
+        );
+        assert_eq!(
+            initialized.profile.budget.max_consecutive_tool_failures,
+            base.budget.max_consecutive_tool_failures
+        );
+        assert_eq!(
+            initialized.profile.ko.max_same_tool_signature_repeats,
+            base.ko.max_same_tool_signature_repeats
+        );
+        assert_eq!(
+            initialized
+                .profile
+                .budget
+                .post_mutation_verification_window
+                .expect("strict profile has a verification window")
+                .replenish_read,
+            (f64::from(
+                base.budget
+                    .post_mutation_verification_window
+                    .expect("strict profile has a verification window")
+                    .replenish_read
+            ) * 1.5)
+                .ceil() as u32
+        );
     }
 
     #[test]
