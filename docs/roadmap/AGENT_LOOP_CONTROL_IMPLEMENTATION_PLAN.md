@@ -736,6 +736,8 @@ When a trigger fires:
 
 ## Phase 8 — Model-task routing and reasoning effort
 
+**Status: In progress (2026-08-17).** The shared typed `ModelRequestProfile` resolver now owns symbolic `agent_primary` step classification and optional provider-neutral reasoning effort. Native agent-loop request construction consumes its approved model reference and compatibility-filtered thinking override; direct loop-local model-profile construction is removed. Registry capability detection, delegation/escalation, and full routing diagnostics remain open.
+
 **Goal:** route loop-control model calls through the model tasks layer, with reasoning effort as one provider-neutral request-profile field.
 
 Loop control classifies the call, but it does not select raw provider/model identifiers directly. For foreground agent-loop calls, it passes `agent_primary` step metadata such as `ordinary_turn`, `planning`, `task_selection`, `execution`, `checkpoint`, `pre_risk_review`, `summarization`, or `cheap_probe` to the model tasks layer. The model tasks layer resolves an approved `ModelRequestProfile` from the Bear model library, registry capabilities, loop-control policy, risk, budget, governance, and objective orientation.
