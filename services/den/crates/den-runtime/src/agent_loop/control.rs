@@ -816,6 +816,31 @@ impl AgentLoopControlProfile {
         self
     }
 
+    /// Apply a model-specific multiplier only to ordinary tool capacity.
+    ///
+    /// The resolved profile remains authoritative for wall-clock, hard-step,
+    /// failure, and KO limits; those are safety boundaries, not throughput knobs.
+    pub fn with_tool_budget_multiplier(mut self, multiplier: f64) -> Self {
+        if !multiplier.is_finite() || (multiplier - 1.0).abs() < f64::EPSILON {
+            return self;
+        }
+        self.budget.tool_call_limits = ToolCallBudgetLimits {
+            total: scaled_count(self.budget.tool_call_limits.total, multiplier),
+            read: scaled_count(self.budget.tool_call_limits.read, multiplier),
+            search: scaled_count(self.budget.tool_call_limits.search, multiplier),
+            fetch: scaled_count(self.budget.tool_call_limits.fetch, multiplier),
+            execute: scaled_count(self.budget.tool_call_limits.execute, multiplier),
+            write: scaled_count(self.budget.tool_call_limits.write, multiplier),
+            destructive: scaled_count(self.budget.tool_call_limits.destructive, multiplier),
+            other: scaled_count(self.budget.tool_call_limits.other, multiplier),
+        };
+        if let Some(window) = self.budget.post_mutation_verification_window.as_mut() {
+            window.replenish_read = scaled_count(window.replenish_read, multiplier);
+            window.replenish_search = scaled_count(window.replenish_search, multiplier);
+        }
+        self
+    }
+
     fn new(
         _level: AgentLoopControlLevel,
         budget: TurnBudgetPolicy,
@@ -832,6 +857,12 @@ impl AgentLoopControlProfile {
             thinking,
         }
     }
+}
+
+fn scaled_count(value: u32, multiplier: f64) -> u32 {
+    (f64::from(value) * multiplier)
+        .ceil()
+        .clamp(1.0, f64::from(u32::MAX)) as u32
 }
 
 fn limits(
@@ -1183,6 +1214,33 @@ mod tests {
         assert_eq!(
             failures.trigger.as_ref().map(|trigger| trigger.reason),
             Some(CheckpointReason::ConsecutiveFailure)
+        );
+    }
+
+    #[test]
+    fn tool_budget_multiplier_preserves_profile_safety_limits() {
+        let base = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Strict);
+        let scaled = base.with_tool_budget_multiplier(1.5);
+
+        assert_eq!(
+            scaled.budget.tool_call_limits.total,
+            (f64::from(base.budget.tool_call_limits.total) * 1.5).ceil() as u32
+        );
+        assert_eq!(
+            scaled.budget.max_wall_clock_ms,
+            base.budget.max_wall_clock_ms
+        );
+        assert_eq!(
+            scaled.budget.emergency_hard_steps,
+            base.budget.emergency_hard_steps
+        );
+        assert_eq!(
+            scaled.budget.max_consecutive_tool_failures,
+            base.budget.max_consecutive_tool_failures
+        );
+        assert_eq!(
+            scaled.ko.max_same_tool_signature_repeats,
+            base.ko.max_same_tool_signature_repeats
         );
     }
 

@@ -900,7 +900,6 @@ async fn build_session(
     if let Some(model_multiplier) = deps.config.model_tool_budget_multipliers.get(&model) {
         tool_budget_multiplier *= *model_multiplier;
     }
-    let profile = profile.with_tool_budget_multiplier(tool_budget_multiplier);
     let model_option =
         den_service::model_selection::resolve_model_option(deps.pool, &model).await?;
     // Best-effort: calibration only improves the approximate estimator, so a
@@ -939,8 +938,11 @@ async fn build_session(
         objective_orientation: Some(&objective_orientation),
         pre_risk: false,
     });
+    let resolved_profile = agent_loop_control
+        .profile
+        .with_tool_budget_multiplier(tool_budget_multiplier);
     let agent_loop_control = crate::agent_loop::ResolvedAgentLoopControl {
-        profile: agent_loop_control.profile.with_budget(profile.turn_budget),
+        profile: resolved_profile,
         ..agent_loop_control
     };
     // `work.checkout` binds the Armature session before the native loop starts.
