@@ -2814,6 +2814,30 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_trigger_runtime_event_is_observe_only_progress() {
+        let trigger = CheckpointTrigger {
+            reason: crate::agent_loop::CheckpointReason::OverExploration,
+            message: "summarize before more reads".to_string(),
+        };
+        let event = checkpoint_trigger_runtime_event(&trigger);
+
+        match event {
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+                kind,
+                phase,
+                detail: Some(detail),
+                ..
+            }) => {
+                assert_eq!(kind, "runtime_checkpoint_would_trigger");
+                assert_eq!(phase.as_deref(), Some("agent_loop_control"));
+                assert_eq!(detail["reason"], "over_exploration");
+                assert_eq!(detail["mode"], "observe_only");
+            }
+            other => panic!("expected observe-only checkpoint progress, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn prompt_for_model_wraps_human_prompt_with_structured_host_context() {
         let prompt = prompt_for_model(
             "Please inspect this.",
