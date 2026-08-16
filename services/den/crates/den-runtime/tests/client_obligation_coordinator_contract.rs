@@ -170,7 +170,7 @@ async fn multi_tool_step_continues_exactly_once_after_all_results_settle(pool: s
     .expect("settle second tool result");
     assert!(matches!(
         second_outcome,
-        ToolResultCoordinatorOutcome::ContinueModel { .. }
+        ToolResultCoordinatorOutcome::ContinueModel { run: Some(_), .. }
     ));
 
     let duplicate_second = client_obligation_coordinator::record_and_settle_tool_result(
@@ -241,7 +241,7 @@ async fn tool_execution_error_is_a_settling_result_and_can_continue(pool: sqlx::
 
     assert!(matches!(
         outcome,
-        ToolResultCoordinatorOutcome::ContinueModel { .. }
+        ToolResultCoordinatorOutcome::ContinueModel { run: Some(_), .. }
     ));
     let stored =
         turn_obligations::get_tool_call_obligation(&pool, &run.run_id, "call-missing-file")
@@ -473,7 +473,7 @@ async fn permission_denial_path_continues_without_dispatching_local_tool(pool: s
 
     assert!(matches!(
         outcome,
-        PermissionResultCoordinatorOutcome::ContinueModel { .. }
+        PermissionResultCoordinatorOutcome::ContinueModel { run: Some(_), .. }
     ));
     let stored = turn_obligations::get_permission_obligation(&pool, &run.run_id, "perm-denied")
         .await
@@ -512,8 +512,39 @@ async fn den_hosted_approved_permission_continues_without_local_tool_dispatch(po
 
     assert!(matches!(
         outcome,
-        PermissionResultCoordinatorOutcome::ContinueModel { .. }
+        PermissionResultCoordinatorOutcome::ContinueModel { run: Some(_), .. }
     ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn continuation_claim_is_one_shot_from_waiting_for_client(pool: sqlx::PgPool) {
+    let (run, _step, _session_id) = create_run_with_step(&pool).await;
+    let waiting = turn_runs::transition_run(
+        &pool,
+        &run.run_id,
+        turn_runs::TurnRunState::WaitingForClient,
+        None,
+    )
+    .await
+    .expect("mark run waiting")
+    .expect("run exists");
+    assert_eq!(waiting.state, "waiting_for_client");
+
+    let winner = turn_runs::claim_run_continuation(&pool, &run.run_id, None)
+        .await
+        .expect("claim continuation");
+    let loser = turn_runs::claim_run_continuation(&pool, &run.run_id, None)
+        .await
+        .expect("repeat continuation claim");
+
+    assert!(
+        winner.is_some(),
+        "the first claimant owns continuation startup"
+    );
+    assert!(
+        loser.is_none(),
+        "a second claimant must not start a model stream"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

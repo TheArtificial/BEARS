@@ -538,6 +538,23 @@ fn spawn_continuation_task(
     let _ = cancel_handle.record_run_id(&run.run_id);
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
+        let Some(run) = turn_runs::begin_claimed_run_continuation(&pool, &run.run_id)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::error!(
+                    run_id = %run.run_id,
+                    error = %error,
+                    "failed to begin claimed BearWire continuation"
+                );
+                None
+            })
+        else {
+            tracing::info!(
+                run_id = %run.run_id,
+                "BearWire continuation claim was already consumed"
+            );
+            return;
+        };
         let continuation_started_at = Instant::now();
         persist_run_progress(
             &pool,
@@ -551,13 +568,6 @@ fn spawn_continuation_task(
             json!({
                 "request_id": request_id,
             }),
-        )
-        .await;
-        let _ = turn_runs::transition_run(
-            &pool,
-            &run.run_id,
-            turn_runs::TurnRunState::Continuing,
-            None,
         )
         .await;
         let binding = RoleRuntimeBinding {
@@ -1375,9 +1385,19 @@ pub(crate) async fn client_tool_result_result(
                 | ToolResultStatus::Incomplete
                 | ToolResultStatus::Cancelled => RuntimeToolResultStatus::Error,
             };
+            let Some(transitioned) = transitioned else {
+                return Ok(json!({
+                    "ok": true,
+                    "duplicate": false,
+                    "result_id": result.id,
+                    "event_sequence": persisted.sequence_no,
+                    "run_state": "continuing",
+                    "continuation": "already_started",
+                }));
+            };
             spawn_continuation_task(
                 state,
-                transitioned.clone().unwrap_or_else(|| run.clone()),
+                transitioned.clone(),
                 binding_id,
                 continuation_conversation_id,
                 RuntimeContinuation::ToolResult {
@@ -1392,7 +1412,7 @@ pub(crate) async fn client_tool_result_result(
                 "duplicate": false,
                 "result_id": result.id,
                 "event_sequence": persisted.sequence_no,
-                "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
+                "run_state": transitioned.state,
                 "continuation": "started",
             }))
         }
@@ -1664,9 +1684,19 @@ pub(crate) async fn client_permission_result_result(
             } else {
                 RuntimeApprovalDecision::Deny
             };
+            let Some(transitioned) = transitioned else {
+                return Ok(json!({
+                    "ok": true,
+                    "duplicate": false,
+                    "result_id": result.id,
+                    "event_sequence": persisted.sequence_no,
+                    "run_state": "continuing",
+                    "continuation": "already_started",
+                }));
+            };
             spawn_continuation_task(
                 state,
-                transitioned.clone().unwrap_or_else(|| run.clone()),
+                transitioned.clone(),
                 binding_id,
                 continuation_conversation_id,
                 RuntimeContinuation::ApprovalDecision {
@@ -1681,7 +1711,7 @@ pub(crate) async fn client_permission_result_result(
                 "duplicate": false,
                 "result_id": result.id,
                 "event_sequence": persisted.sequence_no,
-                "run_state": transitioned.map(|run| run.state).unwrap_or_else(|| "unknown".to_string()),
+                "run_state": transitioned.state,
                 "continuation": "started",
             }))
         }

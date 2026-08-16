@@ -816,7 +816,7 @@ pub async fn claim_run_continuation(
             updated_at = NOW(),
             completed_at = completed_at
         WHERE run_id = $1
-          AND state = 'running'
+          AND state IN ('accepted', 'running', 'waiting_for_client')
         RETURNING id, run_id, session_id, bear_id, user_id, state,
                   terminal_reason AS "terminal_reason?", created_at, updated_at,
                   completed_at AS "completed_at?"
