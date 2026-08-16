@@ -2349,6 +2349,10 @@ mod tests {
             tools: Vec::new(),
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_request_profile: den_core::ModelRequestProfile {
+                approved_model_ref: "openai/test".to_string(),
+                ..Default::default()
+            },
             model_context_window: None,
             model_max_output_tokens: None,
             model_token_calibration: None,

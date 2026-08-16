@@ -1006,9 +1006,9 @@ async fn build_session(
         messages,
         tools,
         budget_components,
-        model,
+        model: model.clone(),
         model_request_profile: den_core::ModelRequestProfile {
-            approved_model_ref: model.clone(),
+            approved_model_ref: model,
             ..Default::default()
         },
         model_context_window: model_option
@@ -2504,6 +2504,10 @@ mod tests {
             tools: vec![],
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_request_profile: den_core::ModelRequestProfile {
+                approved_model_ref: "openai/test".to_string(),
+                ..Default::default()
+            },
             model_context_window: None,
             model_max_output_tokens: None,
             model_token_calibration: None,
@@ -2603,6 +2607,10 @@ mod tests {
             tools: vec![],
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_request_profile: den_core::ModelRequestProfile {
+                approved_model_ref: "openai/test".to_string(),
+                ..Default::default()
+            },
             model_context_window: None,
             model_max_output_tokens: None,
             model_token_calibration: None,
@@ -2692,6 +2700,10 @@ mod tests {
             tools: vec![],
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_request_profile: den_core::ModelRequestProfile {
+                approved_model_ref: "openai/test".to_string(),
+                ..Default::default()
+            },
             model_context_window: None,
             model_max_output_tokens: None,
             model_token_calibration: None,
@@ -2752,6 +2764,10 @@ mod tests {
             tools: vec![],
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_request_profile: den_core::ModelRequestProfile {
+                approved_model_ref: "openai/test".to_string(),
+                ..Default::default()
+            },
             model_context_window: None,
             model_max_output_tokens: None,
             model_token_calibration: None,
@@ -2945,6 +2961,10 @@ mod tests {
             tools: Vec::new(),
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_request_profile: den_core::ModelRequestProfile {
+                approved_model_ref: "openai/test".to_string(),
+                ..Default::default()
+            },
             model_context_window: None,
             model_max_output_tokens: None,
             model_token_calibration: None,
@@ -3065,6 +3085,10 @@ mod tests {
             tools: Vec::new(),
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_request_profile: den_core::ModelRequestProfile {
+                approved_model_ref: "openai/test".to_string(),
+                ..Default::default()
+            },
             model_context_window: None,
             model_max_output_tokens: None,
             model_token_calibration: None,
@@ -3234,6 +3258,10 @@ mod tests {
             tools: Vec::new(),
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_request_profile: den_core::ModelRequestProfile {
+                approved_model_ref: "openai/test".to_string(),
+                ..Default::default()
+            },
             model_context_window: None,
             model_max_output_tokens: None,
             model_token_calibration: None,
@@ -3395,6 +3423,10 @@ mod tests {
             tools: Vec::new(),
             budget_components: Default::default(),
             model: "openai/test".to_string(),
+            model_request_profile: den_core::ModelRequestProfile {
+                approved_model_ref: "openai/test".to_string(),
+                ..Default::default()
+            },
             model_context_window: None,
             model_max_output_tokens: None,
             model_token_calibration: None,

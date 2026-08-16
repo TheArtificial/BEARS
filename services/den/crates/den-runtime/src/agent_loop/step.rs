@@ -600,40 +600,43 @@ fn api_compatible_thinking_effort(
     }
 }
 
-fn checkpoint_thinking_effort(
+fn primary_request_profile(
     approved_model_ref: impl Into<String>,
-    api_style: Option<LlmApiStyle>,
-    has_function_tools: bool,
     checkpoint_active: bool,
     configured_effort: Option<ThinkingEffort>,
-) -> Option<ThinkingEffort> {
+) -> den_core::ModelRequestProfile {
     let step = if checkpoint_active {
         AgentPrimaryStep::Checkpoint
     } else {
         AgentPrimaryStep::OrdinaryTurn
     };
-    let resolved =
-        resolve_agent_primary_request_profile(approved_model_ref, step, configured_effort);
-    api_compatible_thinking_effort(api_style, has_function_tools, resolved.thinking_effort)
+    resolve_agent_primary_request_profile(approved_model_ref, step, configured_effort)
 }
 
-fn checkpoint_thinking_effort_for_session(
+fn primary_request_profile_for_session(
     session: &AgentLoopSession,
-    has_function_tools: bool,
-) -> Option<ThinkingEffort> {
+) -> den_core::ModelRequestProfile {
     let policy = session.agent_loop_control.profile.thinking;
     let configured_effort = policy
         .enabled
         .then_some(policy.checkpoint_turn_effort)
         .flatten();
-    let checkpoint_active = session.checkpoint_state.last_checkpoint_reason.is_some();
-    let compatible_effort = checkpoint_thinking_effort(
+    primary_request_profile(
         session.model_request_profile.approved_model_ref.clone(),
-        session.api_style,
-        has_function_tools,
-        checkpoint_active,
+        session.checkpoint_state.last_checkpoint_reason.is_some(),
         configured_effort,
-    );
+    )
+}
+
+fn compatible_thinking_effort_for_session(
+    session: &AgentLoopSession,
+    request_profile: &den_core::ModelRequestProfile,
+    has_function_tools: bool,
+) -> Option<ThinkingEffort> {
+    let checkpoint_active = request_profile.agent_primary_step == AgentPrimaryStep::Checkpoint;
+    let configured_effort = request_profile.thinking_effort;
+    let compatible_effort =
+        api_compatible_thinking_effort(session.api_style, has_function_tools, configured_effort);
     if checkpoint_active && configured_effort.is_some() && compatible_effort.is_none() {
         tracing::warn!(
             session_key = %session.session_key,
@@ -792,9 +795,11 @@ pub async fn run_agent_step_stream(
     }
     let (request, budget, context_budget_evaluation) = loop {
         let tools = tools_with_checkpoint_tool(&session);
-        let thinking_effort = checkpoint_thinking_effort_for_session(&session, !tools.is_empty());
+        let request_profile = primary_request_profile_for_session(&session);
+        let thinking_effort =
+            compatible_thinking_effort_for_session(&session, &request_profile, !tools.is_empty());
         let request = ChatCompletionRequest {
-            model: session.model.clone(),
+            model: request_profile.approved_model_ref,
             messages,
             tools,
             stream: true,
@@ -1003,22 +1008,20 @@ mod tests {
     #[test]
     fn shared_request_policy_limits_reasoning_effort_to_checkpoint_steps() {
         assert_eq!(
-            checkpoint_thinking_effort(
-                "openai/gpt-5",
+            api_compatible_thinking_effort(
                 Some(LlmApiStyle::ResponsesStream),
                 false,
-                false,
-                Some(ThinkingEffort::High),
+                primary_request_profile("openai/gpt-5", false, Some(ThinkingEffort::High),)
+                    .thinking_effort,
             ),
             None
         );
         assert_eq!(
-            checkpoint_thinking_effort(
-                "openai/gpt-5",
+            api_compatible_thinking_effort(
                 Some(LlmApiStyle::ResponsesStream),
                 false,
-                true,
-                Some(ThinkingEffort::High),
+                primary_request_profile("openai/gpt-5", true, Some(ThinkingEffort::High),)
+                    .thinking_effort,
             ),
             Some(ThinkingEffort::High)
         );
