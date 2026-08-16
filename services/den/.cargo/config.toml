@@ -4,7 +4,7 @@ rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 [env]
 MEMORY_SERVE_QUIET = "1"
 # SQLx macros compile from member-crate directories; use the shared checked-in cache.
-SQLX_OFFLINE_DIR = { value = "../.sqlx", relative = true }
+SQLX_OFFLINE_DIR = { value = ".sqlx", relative = true }
 
 # ARM64 — use lld for fast linking. Do NOT set target-cpu=native here;
 # Docker images must run on any aarch64 host (baseline ARMv8-A / "generic").
