@@ -601,6 +601,7 @@ fn api_compatible_thinking_effort(
 }
 
 fn checkpoint_thinking_effort(
+    approved_model_ref: impl Into<String>,
     api_style: Option<LlmApiStyle>,
     has_function_tools: bool,
     checkpoint_active: bool,
@@ -611,7 +612,8 @@ fn checkpoint_thinking_effort(
     } else {
         AgentPrimaryStep::OrdinaryTurn
     };
-    let resolved = resolve_agent_primary_request_profile(step, configured_effort);
+    let resolved =
+        resolve_agent_primary_request_profile(approved_model_ref, step, configured_effort);
     api_compatible_thinking_effort(api_style, has_function_tools, resolved.thinking_effort)
 }
 
@@ -626,6 +628,7 @@ fn checkpoint_thinking_effort_for_session(
         .flatten();
     let checkpoint_active = session.checkpoint_state.last_checkpoint_reason.is_some();
     let compatible_effort = checkpoint_thinking_effort(
+        session.model_request_profile.approved_model_ref.clone(),
         session.api_style,
         has_function_tools,
         checkpoint_active,
@@ -1001,6 +1004,7 @@ mod tests {
     fn shared_request_policy_limits_reasoning_effort_to_checkpoint_steps() {
         assert_eq!(
             checkpoint_thinking_effort(
+                "openai/gpt-5",
                 Some(LlmApiStyle::ResponsesStream),
                 false,
                 false,
@@ -1010,6 +1014,7 @@ mod tests {
         );
         assert_eq!(
             checkpoint_thinking_effort(
+                "openai/gpt-5",
                 Some(LlmApiStyle::ResponsesStream),
                 false,
                 true,

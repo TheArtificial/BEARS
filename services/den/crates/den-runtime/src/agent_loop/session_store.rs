@@ -110,6 +110,9 @@ pub struct AgentLoopSession {
     pub tools: Vec<LlmToolDefinition>,
     pub budget_components: AssembledTurnBudgetComponents,
     pub model: String,
+    /// Base model-task policy resolved at native turn construction. Per-step metadata is
+    /// derived from this approved model reference immediately before each request.
+    pub model_request_profile: den_core::ModelRequestProfile,
     pub model_context_window: Option<u32>,
     pub model_max_output_tokens: Option<u32>,
     /// Observed chars→tokens correction for this model, mirrored from the Den

@@ -37,17 +37,32 @@ impl AgentPrimaryStep {
 ///
 /// This does not select a raw provider model. Model selection remains with the existing
 /// Bear/model-library resolver; transports may omit unsupported optional fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRequestProfile {
+    /// Canonical Den model handle approved by the existing Bear/model-library resolver.
+    /// This is not a raw provider identifier and does not grant routing authority.
+    pub approved_model_ref: String,
     pub agent_primary_step: AgentPrimaryStep,
     pub thinking_effort: Option<ThinkingEffort>,
 }
 
-pub const fn resolve_agent_primary_request_profile(
+impl Default for ModelRequestProfile {
+    fn default() -> Self {
+        Self {
+            approved_model_ref: String::new(),
+            agent_primary_step: AgentPrimaryStep::OrdinaryTurn,
+            thinking_effort: None,
+        }
+    }
+}
+
+pub fn resolve_agent_primary_request_profile(
+    approved_model_ref: impl Into<String>,
     agent_primary_step: AgentPrimaryStep,
     checkpoint_thinking_effort: Option<ThinkingEffort>,
 ) -> ModelRequestProfile {
     ModelRequestProfile {
+        approved_model_ref: approved_model_ref.into(),
         agent_primary_step,
         thinking_effort: match agent_primary_step {
             AgentPrimaryStep::Checkpoint | AgentPrimaryStep::PreRiskReview => {
@@ -71,6 +86,7 @@ mod tests {
     fn only_checkpoint_and_pre_risk_steps_receive_reasoning_effort() {
         assert_eq!(
             resolve_agent_primary_request_profile(
+                "openai/gpt-5",
                 AgentPrimaryStep::Checkpoint,
                 Some(ThinkingEffort::High),
             )
@@ -79,6 +95,7 @@ mod tests {
         );
         assert_eq!(
             resolve_agent_primary_request_profile(
+                "openai/gpt-5",
                 AgentPrimaryStep::PreRiskReview,
                 Some(ThinkingEffort::Medium),
             )
@@ -87,12 +104,24 @@ mod tests {
         );
         assert_eq!(
             resolve_agent_primary_request_profile(
+                "openai/gpt-5",
                 AgentPrimaryStep::Execution,
                 Some(ThinkingEffort::High),
             )
             .thinking_effort,
             None
         );
+    }
+
+    #[test]
+    fn resolved_profile_keeps_approved_model_reference() {
+        let profile = resolve_agent_primary_request_profile(
+            "openai/gpt-5",
+            AgentPrimaryStep::OrdinaryTurn,
+            None,
+        );
+
+        assert_eq!(profile.approved_model_ref, "openai/gpt-5");
     }
 
     #[test]

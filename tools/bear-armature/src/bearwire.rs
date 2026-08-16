@@ -859,7 +859,10 @@ pub(crate) async fn handle_prompt(
         } else {
             "Den BearWire delivery ended without visible output, tool activity, or a terminal run event"
         };
-        return Err(anyhow!("{reason}. Diagnostics: {}", diagnostics.summary()));
+        return Err(anyhow!(
+            "{reason}. run_id={run_id}. Diagnostics: {}",
+            diagnostics.summary()
+        ));
     }
 
     if let Some(response_id) = response.claim() {

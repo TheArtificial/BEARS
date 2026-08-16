@@ -1007,6 +1007,10 @@ async fn build_session(
         tools,
         budget_components,
         model,
+        model_request_profile: den_core::ModelRequestProfile {
+            approved_model_ref: model.clone(),
+            ..Default::default()
+        },
         model_context_window: model_option
             .as_ref()
             .and_then(|option| option.context_window),

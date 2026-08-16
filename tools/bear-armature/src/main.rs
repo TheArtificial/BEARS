@@ -19,6 +19,13 @@ fn classify_prompt_failure(error_chain: &str) -> (&'static str, String) {
         || error_chain.starts_with("BEARS prompt stopped:")
     {
         ("bearwire_run_failed", error_chain.to_string())
+    } else if error_chain.contains("Den BearWire delivery ended before a terminal run event")
+        || error_chain.contains("Den BearWire delivery ended without visible output, tool activity, or a terminal run event")
+    {
+        (
+            "bearwire_missing_terminal_event",
+            "Den stopped delivering this turn before it reported a final outcome. No further work was performed after the last reported tool result. Try again; if it repeats, provide the run ID from the work-surface logs when reporting it.".to_string(),
+        )
     } else if error_chain.contains("BearWire event page HTTP")
         || error_chain.contains("parse BearWire event page JSON")
         || error_chain.contains("event handling failed")
@@ -45,6 +52,15 @@ mod prompt_failure_tests {
             classify_prompt_failure("parse BearWire event page JSON: unexpected end of JSON input");
         assert_eq!(kind, "bearwire_event_delivery");
         assert!(message.contains("work surface"));
+    }
+
+    #[test]
+    fn classifies_missing_terminal_event() {
+        let (kind, message) = classify_prompt_failure(
+            "Den BearWire delivery ended before a terminal run event. run_id=run-1. Diagnostics: frames=1",
+        );
+        assert_eq!(kind, "bearwire_missing_terminal_event");
+        assert!(message.contains("final outcome"));
     }
 
     #[test]
