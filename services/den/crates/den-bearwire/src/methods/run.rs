@@ -1896,7 +1896,7 @@ pub(crate) async fn run_recover_result(
             "recoverable technical-budget run not found".to_string(),
         ));
     }
-    let payload: TechnicalBudgetRecoveryStartPayload =
+    let _payload: TechnicalBudgetRecoveryStartPayload =
         serde_json::from_value(snapshot.start_request).map_err(|_| {
             CustomError::ValidationError("recovery start payload is invalid".to_string())
         })?;
@@ -1926,66 +1926,23 @@ pub(crate) async fn run_recover_result(
         task_id,
     )
     .await?;
-    let lease_id = Uuid::new_v4();
-    turn_runs::lease_technical_budget_recovery(&state.sqlx_pool, &request.run_id, lease_id)
+    // The original run remains the single active run for its session. A process
+    // loss has no live stream to resume, so consume the continuation claim and
+    // let the normal run lifecycle drive its next step; never create a second
+    // active run during recovery.
+    let recovered = turn_runs::begin_claimed_run_continuation(&state.sqlx_pool, &request.run_id)
         .await?
         .ok_or_else(|| {
-            CustomError::ValidationError("recovery is already in progress".to_string())
-        })?;
-
-    let mut start_params = serde_json::Map::new();
-    start_params.insert("bear_slug".to_string(), json!(bear.slug));
-    start_params.insert("session_id".to_string(), json!(snapshot.session_id));
-    start_params.insert("client".to_string(), json!(payload.client));
-    start_params.insert(
-        "conversation_id".to_string(),
-        json!(payload.conversation_id),
-    );
-    start_params.insert("prompt".to_string(), json!(payload.prompt));
-    if let Some(cwd) = payload.cwd {
-        start_params.insert("cwd".to_string(), json!(cwd));
-    }
-    if let Some(context) = payload.prompt_context {
-        start_params.insert("prompt_context".to_string(), context);
-    }
-    if let Some(context) = payload.client_context {
-        start_params.insert("client_context".to_string(), context);
-    }
-    if let Some(mode) = payload.requested_mode {
-        start_params.insert("requested_mode".to_string(), json!(mode));
-    }
-    let recovery_start: RunStartRequest = serde_json::from_value(Value::Object(start_params))
-        .map_err(|_| {
-            CustomError::ValidationError("recovery start payload is invalid".to_string())
-        })?;
-    let result = match run_start_with_recovery_source(
-        state,
-        recovery_start,
-        user_id,
-        bear.clone(),
-        Some(&request.run_id),
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(error) => {
-            let _ = turn_runs::release_technical_budget_recovery(
-                &state.sqlx_pool,
-                &request.run_id,
-                lease_id,
+            CustomError::ValidationError(
+                "continuation recovery was claimed concurrently".to_string(),
             )
-            .await;
-            return Err(error);
-        }
-    };
-    if !turn_runs::complete_technical_budget_recovery(&state.sqlx_pool, &request.run_id, lease_id)
-        .await?
-    {
-        return Err(CustomError::ValidationError(
-            "recovery lease was lost".to_string(),
-        ));
-    }
-    Ok(json!({"ok": true, "recovered_run_id": request.run_id, "run_id": result["run_id"].clone()}))
+        })?;
+    Ok(json!({
+        "ok": true,
+        "recovered_run_id": request.run_id,
+        "run_id": recovered.run_id,
+        "state": recovered.state,
+    }))
 }
 
 pub(crate) async fn run_start_result(

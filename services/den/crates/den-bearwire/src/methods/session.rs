@@ -896,6 +896,32 @@ pub(crate) async fn session_current_task_start_result(
             .await?
             .filter(|run| run.bear_id == bear.id && run.user_id == user_id)
     {
+        if run.state == "continuing" {
+            // A continuing run has no live stream after process loss. Return the
+            // same durable run to retryable state; creating a successor here
+            // would violate the one-active-run-per-session invariant.
+            let recovered = den_runtime::turn_runs::begin_claimed_run_continuation(
+                &state.sqlx_pool,
+                &run.run_id,
+            )
+            .await?
+            .ok_or_else(|| {
+                CustomError::ValidationError(
+                    "continuation recovery was claimed concurrently".to_string(),
+                )
+            })?;
+            return Ok(json!({
+                "ok": true,
+                "started": false,
+                "recovered": true,
+                "reused": true,
+                "recovered_run_id": recovered.run_id,
+                "run_id": recovered.run_id,
+                "session_id": request.session_id,
+                "task_id": task_id,
+                "state": recovered.state,
+            }));
+        }
         return Ok(json!({
             "ok": true,
             "started": false,

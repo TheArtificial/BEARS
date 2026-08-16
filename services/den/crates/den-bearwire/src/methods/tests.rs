@@ -2781,6 +2781,75 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn current_task_start_recovers_an_abandoned_continuation(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let task_id =
+        create_session_task(&pool, user_id, bear_id, &session_id, "Recover Pair task").await;
+    client_sessions::set_current_task(&pool, user_id, bear_id, &session_id, Some(task_id))
+        .await
+        .expect("select test task");
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create source run");
+    turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
+        .await
+        .expect("start source run");
+    let snapshot = serde_json::to_value(turn_runs::TechnicalBudgetRecoverySnapshot::new(
+        session_id.clone(),
+        bear_id,
+        user_id,
+        Some(task_id),
+        json!({
+            "client": "test-client", "cwd": null, "conversation_id": "conversation-1",
+            "prompt": "Continue.", "prompt_context": null, "client_context": null,
+            "requested_mode": null,
+        }),
+    ))
+    .expect("serialize recovery snapshot");
+    assert!(matches!(
+        turn_runs::claim_technical_budget_continuation(
+            &pool,
+            &run_id,
+            "emergency_hard_step_limit",
+            &snapshot,
+        )
+        .await
+        .expect("claim continuation"),
+        turn_runs::TechnicalBudgetContinuationClaim::Claimed(_)
+    ));
+
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let response = rpc_value(
+        test_state_with_config(pool.clone(), config),
+        &token,
+        "session.current_task.start",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(response["result"]["recovered"], true, "{response}");
+    assert_eq!(response["result"]["recovered_run_id"], run_id, "{response}");
+    assert_eq!(response["result"]["run_id"], run_id, "{response}");
+    assert_eq!(response["result"]["state"], "running", "{response}");
+    assert_eq!(
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
+            .await
+            .expect("load session")
+            .expect("session exists")
+            .current_task_id,
+        Some(task_id)
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn run_recover_refuses_when_selected_pair_task_changed(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
@@ -2906,27 +2975,20 @@ async fn run_recovery_preserves_selected_task_and_source_run(pool: sqlx::PgPool)
     )
     .await;
     assert_eq!(response["result"]["ok"], true, "{response}");
-    let successor_run_id = response["result"]["run_id"]
-        .as_str()
-        .expect("recovery returns successor run id");
-    assert_ne!(successor_run_id, run_id);
+    assert_eq!(response["result"]["run_id"], run_id, "{response}");
+    assert_eq!(response["result"]["state"], "running", "{response}");
 
     let source = turn_runs::get_run(&pool, &run_id)
         .await
         .expect("load source run")
         .expect("source run remains durable");
-    assert_eq!(source.state, "continuing");
+    assert_eq!(source.state, "running");
     assert!(
         turn_runs::technical_budget_recovery_snapshot(&pool, &run_id)
             .await
             .expect("load consumed snapshot")
             .is_none()
     );
-    let successor = turn_runs::get_run(&pool, successor_run_id)
-        .await
-        .expect("load successor run")
-        .expect("successor run exists");
-    assert_eq!(successor.session_id, session_id);
     let current_task: Option<Uuid> = sqlx::query_scalar(
         "SELECT current_task_id FROM client_sessions WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3",
     )
