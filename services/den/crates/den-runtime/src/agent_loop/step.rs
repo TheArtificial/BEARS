@@ -600,6 +600,21 @@ fn api_compatible_thinking_effort(
     }
 }
 
+fn checkpoint_thinking_effort(
+    api_style: Option<LlmApiStyle>,
+    has_function_tools: bool,
+    checkpoint_active: bool,
+    configured_effort: Option<ThinkingEffort>,
+) -> Option<ThinkingEffort> {
+    let step = if checkpoint_active {
+        AgentPrimaryStep::Checkpoint
+    } else {
+        AgentPrimaryStep::OrdinaryTurn
+    };
+    let resolved = resolve_agent_primary_request_profile(step, configured_effort);
+    api_compatible_thinking_effort(api_style, has_function_tools, resolved.thinking_effort)
+}
+
 fn checkpoint_thinking_effort_for_session(
     session: &AgentLoopSession,
     has_function_tools: bool,
@@ -609,18 +624,14 @@ fn checkpoint_thinking_effort_for_session(
         .enabled
         .then_some(policy.checkpoint_turn_effort)
         .flatten();
-    let step = if session.checkpoint_state.last_checkpoint_reason.is_some() {
-        AgentPrimaryStep::Checkpoint
-    } else {
-        AgentPrimaryStep::OrdinaryTurn
-    };
-    let resolved = resolve_agent_primary_request_profile(step, configured_effort);
-    let compatible_effort = api_compatible_thinking_effort(
+    let checkpoint_active = session.checkpoint_state.last_checkpoint_reason.is_some();
+    let compatible_effort = checkpoint_thinking_effort(
         session.api_style,
         has_function_tools,
-        resolved.thinking_effort,
+        checkpoint_active,
+        configured_effort,
     );
-    if resolved.thinking_effort.is_some() && compatible_effort.is_none() {
+    if checkpoint_active && configured_effort.is_some() && compatible_effort.is_none() {
         tracing::warn!(
             session_key = %session.session_key,
             model = %session.model,
@@ -984,6 +995,28 @@ mod tests {
         );
         assert!(detail.get("prompt").is_none());
         assert!(detail.get("transcript").is_none());
+    }
+
+    #[test]
+    fn shared_request_policy_limits_reasoning_effort_to_checkpoint_steps() {
+        assert_eq!(
+            checkpoint_thinking_effort(
+                Some(LlmApiStyle::ResponsesStream),
+                false,
+                false,
+                Some(ThinkingEffort::High),
+            ),
+            None
+        );
+        assert_eq!(
+            checkpoint_thinking_effort(
+                Some(LlmApiStyle::ResponsesStream),
+                false,
+                true,
+                Some(ThinkingEffort::High),
+            ),
+            Some(ThinkingEffort::High)
+        );
     }
 
     #[test]
