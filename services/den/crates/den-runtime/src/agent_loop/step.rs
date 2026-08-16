@@ -712,6 +712,23 @@ fn tools_with_checkpoint_tool(session: &AgentLoopSession) -> Vec<crate::llm::Llm
     tools
 }
 
+fn resolved_control_progress_event(
+    control: &crate::agent_loop::ResolvedAgentLoopControl,
+) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+        kind: "agent_loop_control_resolved".to_string(),
+        text: Some(format!(
+            "Applied `{}` agent-loop control policy.",
+            control.level.as_str()
+        )),
+        phase: Some("agent_loop_control".to_string()),
+        detail: Some(serde_json::json!({
+            "control_level": control.level.as_str(),
+            "source": control.source,
+        })),
+    })
+}
+
 pub async fn run_agent_step_stream(
     llm: &LlmClient,
     session: &AgentLoopSession,
@@ -902,11 +919,15 @@ pub async fn run_agent_step_stream(
         session.api_style,
         overflow,
     )) as RuntimeEventStream;
-    let prefix_events = [context_budget_pressure_event, checkpoint_thinking_event]
-        .into_iter()
-        .flatten()
-        .map(Ok)
-        .collect::<Vec<_>>();
+    let prefix_events = [
+        Some(resolved_control_progress_event(&session.agent_loop_control)),
+        context_budget_pressure_event,
+        checkpoint_thinking_event,
+    ]
+    .into_iter()
+    .flatten()
+    .map(Ok)
+    .collect::<Vec<_>>();
     if prefix_events.is_empty() {
         Ok(base_stream)
     } else {
@@ -917,6 +938,42 @@ pub async fn run_agent_step_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolved_control_progress_is_typed_and_transcript_free() {
+        let control = crate::agent_loop::resolve_agent_loop_control(
+            crate::agent_loop::AgentLoopControlResolutionInput {
+                model_handle: Some("openai/test"),
+                model_default: None,
+                bear_override: None,
+                stance_override: None,
+                task_escalation: None,
+                stance: None,
+                objective_orientation: None,
+                pre_risk: false,
+            },
+        );
+
+        let RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+            kind,
+            phase,
+            detail: Some(detail),
+            ..
+        }) = resolved_control_progress_event(&control)
+        else {
+            panic!("expected resolved control progress event");
+        };
+
+        assert_eq!(kind, "agent_loop_control_resolved");
+        assert_eq!(phase.as_deref(), Some("agent_loop_control"));
+        assert_eq!(detail["control_level"], control.level.as_str());
+        assert_eq!(
+            detail["source"],
+            serde_json::to_value(control.source).unwrap()
+        );
+        assert!(detail.get("prompt").is_none());
+        assert!(detail.get("transcript").is_none());
+    }
 
     #[test]
     fn reasoning_effort_is_omitted_for_chat_completions_with_function_tools() {
