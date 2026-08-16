@@ -23,6 +23,9 @@ pub struct BifrostModelMetadata {
     pub supports_tools: Option<bool>,
     pub supports_responses_api: Option<bool>,
     pub supports_vision: Option<bool>,
+    /// Whether the catalog advertises provider reasoning/thinking controls.
+    /// `None` means the upstream catalog did not say; callers must omit the override.
+    pub supports_reasoning_effort: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,6 +40,7 @@ pub struct BifrostCatalogEntry {
     pub supports_tools: Option<bool>,
     pub supports_responses_api: Option<bool>,
     pub supports_vision: Option<bool>,
+    pub supports_reasoning_effort: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,6 +106,7 @@ impl BifrostCatalogSnapshot {
                     supports_tools: model.supports_tools,
                     supports_responses_api: model.supports_responses_api,
                     supports_vision: model.supports_vision,
+                    supports_reasoning_effort: model.supports_reasoning_effort,
                 },
             );
         }
@@ -132,6 +137,7 @@ impl BifrostCatalogSnapshot {
                 supports_tools: entry.supports_tools,
                 supports_responses_api: entry.supports_responses_api,
                 supports_vision: entry.supports_vision,
+                supports_reasoning_effort: entry.supports_reasoning_effort,
             })
             .collect::<Vec<_>>();
         sort_models(&mut models);
@@ -315,6 +321,11 @@ impl BifrostLiveModel {
             .supported_methods
             .as_ref()
             .map(|methods| methods.iter().any(|m| m.contains("response")));
+        let supports_reasoning_effort = self.supported_parameters.as_ref().map(|parameters| {
+            parameters.iter().any(|parameter| {
+                matches!(parameter.as_str(), "reasoning_effort" | "thinking_effort")
+            })
+        });
         let supports_vision = self.architecture.as_ref().map(|arch| {
             let input_has_image = arch
                 .input_modalities
@@ -347,6 +358,7 @@ impl BifrostLiveModel {
             supports_tools,
             supports_responses_api,
             supports_vision,
+            supports_reasoning_effort,
         })
     }
 }

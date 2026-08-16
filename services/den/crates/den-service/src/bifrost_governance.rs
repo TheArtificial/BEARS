@@ -224,6 +224,11 @@ impl ModelDetailsEntry {
         let supports_responses_api = supported_methods
             .as_ref()
             .map(|methods| methods.iter().any(|value| value.contains("response")));
+        let supports_reasoning_effort = supported_parameters.as_ref().map(|parameters| {
+            parameters.iter().any(|parameter| {
+                matches!(parameter.as_str(), "reasoning_effort" | "thinking_effort")
+            })
+        });
         let supports_vision = self.architecture.as_ref().map(|architecture| {
             architecture
                 .input_modalities
@@ -263,6 +268,7 @@ impl ModelDetailsEntry {
             supports_tools,
             supports_responses_api,
             supports_vision,
+            supports_reasoning_effort,
         }))
     }
 }

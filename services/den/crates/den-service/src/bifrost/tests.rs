@@ -10,7 +10,7 @@ fn maps_live_models_response_to_metadata() {
                     "context_length": 1047576,
                     "max_output_tokens": 32768,
                     "architecture": { "input_modalities": ["text", "image"] },
-                    "supported_parameters": ["tools", "temperature"],
+                    "supported_parameters": ["tools", "temperature", "reasoning_effort"],
                     "supported_methods": ["chat_completion", "responses"]
                 }]
             }"#,
@@ -32,4 +32,5 @@ fn maps_live_models_response_to_metadata() {
     assert_eq!(model.supports_tools, Some(true));
     assert_eq!(model.supports_responses_api, Some(true));
     assert_eq!(model.supports_vision, Some(true));
+    assert_eq!(model.supports_reasoning_effort, Some(true));
 }
