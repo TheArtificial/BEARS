@@ -1935,20 +1935,35 @@ pub(crate) async fn select_current_task(
             "select_current_task needs the current client session".to_string(),
         )
     })?;
-    let selection = den_runtime::current_task::select_pair_current_task(
+    match den_runtime::current_task::select_pair_current_task(
         pool,
         context.user_id,
         context.bear_id,
         client_session_id,
         args.task_id,
     )
-    .await?;
-    Ok(json!({
-        "domain": "docket",
-        "current_task_id": args.task_id,
-        "task_list": selection.task_list,
-        "summary": if args.task_id.is_some() { "Selected the current Pair task." } else { "Cleared the current Pair task." },
-    }))
+    .await
+    {
+        Ok(selection) => Ok(json!({
+            "domain": "docket",
+            "status": "selected",
+            "current_task_id": args.task_id,
+            "task_list": selection.task_list,
+            "summary": if args.task_id.is_some() { "Selected the current Pair task." } else { "Cleared the current Pair task." },
+        })),
+        Err(CustomError::ValidationError(message)) => Ok(json!({
+            "domain": "docket",
+            "status": "selection_rejected",
+            "requested_task_id": args.task_id,
+            "error": {
+                "code": "selected_task_not_actionable_for_session",
+                "message": message,
+                "next_action": "Call get_task_list_status, then select only a listed actionable task ID.",
+            },
+            "summary": "Task selection was rejected because the requested task is not actionable for this session. Read the current task list before selecting another task.",
+        })),
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) async fn list_tasks(
