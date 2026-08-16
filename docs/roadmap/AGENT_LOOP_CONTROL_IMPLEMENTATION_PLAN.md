@@ -804,6 +804,7 @@ Runtime/BearWire events:
 - `run.progress kind=runtime_checkpoint_required`,
 - `run.progress kind=checkpoint_response_recorded`,
 - `run.progress kind=checkpoint_thinking_override_applied`,
+- `run.progress kind=reasoning_effort_override` with typed applied/skipped disposition,
 - `run.progress kind=checkpoint_invalid`.
 
 Visibility defaults:
