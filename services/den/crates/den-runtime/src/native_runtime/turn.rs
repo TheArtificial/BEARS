@@ -1567,6 +1567,19 @@ fn checkpoint_trigger_runtime_event(trigger: &CheckpointTrigger) -> RuntimeStrea
     })
 }
 
+fn checkpoint_required_runtime_event(request: &RuntimeCheckpointRequest) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+        kind: "runtime_checkpoint_required".to_string(),
+        text: Some("A runtime checkpoint is required before continuing.".to_string()),
+        phase: Some("runtime_checkpoint".to_string()),
+        detail: Some(serde_json::json!({
+            "checkpoint_id": request.checkpoint_id,
+            "reason": request.reason,
+            "control_level": request.control_level,
+        })),
+    })
+}
+
 fn runtime_checkpoint_request_for_trigger(
     session: &AgentLoopSession,
     trigger: &CheckpointTrigger,
@@ -2150,6 +2163,7 @@ pub async fn continue_native_client_turn_event_stream(
     let mut session = SESSION_STORE
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
+    let mut required_checkpoint_event = None;
     if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
         record_checkpoint_request_if_audited(request.sqlx_pool, request.config, &session, trigger)
             .await;
@@ -2160,6 +2174,8 @@ pub async fn continue_native_client_turn_event_stream(
                 SESSION_STORE.update(&session_key, |session| {
                     apply_checkpoint_nudge(session, &checkpoint_request, trigger);
                 });
+                required_checkpoint_event =
+                    Some(checkpoint_required_runtime_event(&checkpoint_request));
                 session = SESSION_STORE.get(&session_key).ok_or_else(|| {
                     DenError::System(
                         "native agent loop session not found after checkpoint nudge".to_string(),
@@ -2220,7 +2236,9 @@ pub async fn continue_native_client_turn_event_stream(
             prefix_events.push(Ok(budget_warning_runtime_event(warning)));
         }
     }
-    if agent_loop_control_observe_enabled(request.config) {
+    if let Some(event) = required_checkpoint_event {
+        prefix_events.push(Ok(event));
+    } else if agent_loop_control_observe_enabled(request.config) {
         if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
             prefix_events.push(Ok(checkpoint_trigger_runtime_event(trigger)));
         }
@@ -2834,6 +2852,37 @@ mod tests {
                 assert_eq!(detail["mode"], "observe_only");
             }
             other => panic!("expected observe-only checkpoint progress, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_required_runtime_event_is_typed_progress() {
+        let request = RuntimeCheckpointRequest {
+            checkpoint_id: "ckpt-required".to_string(),
+            run_id: "run-test".to_string(),
+            reason: crate::agent_loop::CheckpointReason::OverExploration,
+            control_level: den_core::AgentLoopControlLevel::Careful,
+            profile_fingerprint: None,
+            active_objective: None,
+            task_context: None,
+            evidence_refs: Vec::new(),
+            required_fields: Vec::new(),
+        };
+
+        match checkpoint_required_runtime_event(&request) {
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+                kind,
+                phase,
+                detail: Some(detail),
+                ..
+            }) => {
+                assert_eq!(kind, "runtime_checkpoint_required");
+                assert_eq!(phase.as_deref(), Some("runtime_checkpoint"));
+                assert_eq!(detail["checkpoint_id"], "ckpt-required");
+                assert_eq!(detail["reason"], "over_exploration");
+                assert_eq!(detail["control_level"], "careful");
+            }
+            other => panic!("expected required checkpoint progress, got {other:?}"),
         }
     }
 
