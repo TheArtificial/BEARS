@@ -8,6 +8,56 @@ mod tool_tasks;
 mod tools;
 mod update;
 
+fn classify_prompt_failure(error_chain: &str) -> (&'static str, String) {
+    if error_chain.contains("Den API connectivity failure:") {
+        (
+            "den_api_unavailable",
+            "Den could not continue this turn because its API is unavailable. Check your connection or try again shortly.".to_string(),
+        )
+    } else if error_chain.starts_with("BEARS run failed:")
+        || error_chain.starts_with("BEARS run failed (")
+        || error_chain.starts_with("BEARS prompt stopped:")
+    {
+        ("bearwire_run_failed", error_chain.to_string())
+    } else if error_chain.contains("BearWire event page HTTP")
+        || error_chain.contains("parse BearWire event page JSON")
+        || error_chain.contains("event handling failed")
+    {
+        (
+            "bearwire_event_delivery",
+            "Den could not finish delivering this turn to the work surface. Try again; if it repeats, check the Den and work-surface logs.".to_string(),
+        )
+    } else {
+        (
+            "unclassified_prompt_failure",
+            "Den could not complete this turn. Please try again or start a fresh turn.".to_string(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod prompt_failure_tests {
+    use super::classify_prompt_failure;
+
+    #[test]
+    fn classifies_event_delivery_failure() {
+        let (kind, message) =
+            classify_prompt_failure("parse BearWire event page JSON: unexpected end of JSON input");
+        assert_eq!(kind, "bearwire_event_delivery");
+        assert!(message.contains("work surface"));
+    }
+
+    #[test]
+    fn preserves_bearwire_failure_message() {
+        let (kind, message) = classify_prompt_failure(
+            "BEARS run failed (continuation_watchdog_timeout): Den did not resume after a tool result.\n\nRun: `run-1`",
+        );
+        assert_eq!(kind, "bearwire_run_failed");
+        assert!(message.contains("continuation_watchdog_timeout"));
+        assert!(message.contains("run-1"));
+    }
+}
+
 use agent_client_protocol::schema::{
     AgentCapabilities, AuthEnvVar, AuthMethod, AuthMethodEnvVar, AuthenticateResponse,
     AvailableCommand, AvailableCommandsUpdate, CloseSessionResponse, ConfigOptionUpdate,
@@ -3058,39 +3108,29 @@ async fn handle_request(
                     {
                         Ok(()) => {}
                         Err(err) => {
-                            let user_message = if err.chain().any(|cause| {
-                                cause
-                                    .to_string()
-                                    .starts_with("Den API connectivity failure:")
-                            }) {
-                                "Den could not continue this turn because its API is unavailable. Check your connection or try again shortly."
-                            } else {
-                                "Den could not complete this turn. Please try again or start a fresh turn."
-                            };
+                            let error_chain = format!("{err:#}");
+                            let (failure_kind, user_message) =
+                                classify_prompt_failure(&error_chain);
                             let server_version = fetch_server_version(&http, &config).await.ok();
                             tracing::error!(
                                 session_id,
                                 turn_token = %turn_token,
                                 conversation_id = ?conversation_id_for_turn,
-                                error = %format!("{err:#}"),
+                                failure_kind,
+                                error = %error_chain,
                                 user_message,
                                 server_version = ?server_version.as_ref().map(ServerVersion::summary),
                                 armature_version = adapter_version(),
                                 "session/prompt failed"
                             );
-                            let user_message = if err.chain().any(|cause| {
-                                cause
-                                    .to_string()
-                                    .starts_with("Den API connectivity failure:")
-                            }) {
-                                "Den could not continue this turn because its API is unavailable. Check your connection or try again shortly."
-                            } else {
-                                "Den could not complete this turn. Please try again or start a fresh turn."
-                            };
+                            eprintln!(
+                                "bear-armature: session/prompt failed session_id={} turn_token={} failure_kind={} error={}",
+                                session_id, turn_token, failure_kind, error_chain
+                            );
                             if let Some(response_id) = response.claim() {
                                 if let Err(write_err) = write_response(
                                     response_id,
-                                    Err(json_rpc_error(-32003, user_message, None)),
+                                    Err(json_rpc_error(-32003, &user_message, None)),
                                 )
                                 .await
                                 {
