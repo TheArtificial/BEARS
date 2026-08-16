@@ -750,6 +750,14 @@ impl BifrostGovernanceClient {
             }))
     }
 
+    /// Returns Bifrost's aggregate rankings for the fixed rolling 30-day window.
+    ///
+    /// Contract verified against Bifrost v1.6.4's management endpoint:
+    /// `GET /api/logs/rankings?period=30d` with management authentication, and
+    /// optionally `virtual_key_ids`. The response provides aggregate rows only;
+    /// it does not establish request-level timestamps, pagination, retention, or
+    /// preservation of Den's `x-bears-*` attribution headers. Consumers must not
+    /// present this as a calendar-week or request-level attribution data source.
     async fn usage_rankings(
         &self,
         virtual_key_id: Option<&str>,

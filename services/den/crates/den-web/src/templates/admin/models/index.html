@@ -16,6 +16,12 @@
 </p>
 
 <h4>Usage and cost</h4>
+<p>
+    Rolling 30-day aggregate from Bifrost. This view can identify a model and
+    provider, but not the Bear, conversation, background operation, or exact
+    week that produced a request. Bifrost’s aggregate rankings endpoint does
+    not provide request-level timestamps or Den attribution metadata.
+</p>
 {% if usage.status == "ok" and usage.has_rows %}
 <table>
     <thead>

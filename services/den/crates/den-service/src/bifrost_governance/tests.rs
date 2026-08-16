@@ -143,6 +143,12 @@ fn spawn_bifrost_management_mock(mode: LoginMode) -> (String, Arc<Mutex<Vec<Requ
                     &[],
                     r#"{"is_bifrost_error":false,"status_code":403,"error":{"message":"Authentication is not enabled"},"extra_fields":{}}"#,
                 ),
+                (_, path) if path.starts_with("/api/logs/rankings?period=30d") => write_response(
+                    &mut stream,
+                    200,
+                    &[],
+                    r#"{"rankings":[{"model":"gpt-5.5","provider":"openai","total_requests":1,"total_tokens":42,"total_cost":0.01}]}"#,
+                ),
                 (_, "/api/governance/virtual-keys") => write_response(
                     &mut stream,
                     200,
@@ -363,6 +369,27 @@ async fn auth_disabled_login_error_includes_config_store_reset_hint() {
     assert!(records
         .iter()
         .all(|record| record.path == "/api/session/login"));
+}
+
+#[tokio::test]
+async fn usage_rankings_request_uses_fixed_30_day_period_and_management_auth() {
+    let (management_url, records) = spawn_bifrost_management_mock(LoginMode::BearerToken);
+    let client = BifrostGovernanceClient::new(&test_config(management_url));
+
+    let rankings = client
+        .get_server_model_usage_rankings()
+        .await
+        .expect("usage rankings");
+
+    assert_eq!(rankings["rankings"][0]["model"], "gpt-5.5");
+    let records = records.lock().expect("records mutex");
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].path, "/api/session/login");
+    assert_eq!(records[1].path, "/api/logs/rankings?period=30d");
+    assert_eq!(
+        records[1].authorization.as_deref(),
+        Some("Bearer bearer-token-123")
+    );
 }
 
 #[tokio::test]

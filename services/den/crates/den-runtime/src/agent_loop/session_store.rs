@@ -162,6 +162,7 @@ impl AgentLoopSession {
             conversation_id: Some(self.conversation_id.clone()),
             bear_id: Some(self.bear_id.to_string()),
             stance: Some(self.profile.as_str().to_string()),
+            operation: Some(den_llm::LlmOperation::AgentTurn),
             bifrost_virtual_key: self.bifrost_virtual_key.clone(),
         }
     }

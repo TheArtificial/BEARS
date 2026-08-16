@@ -122,6 +122,29 @@ pub struct LlmToolDefinition {
     pub parameters: Value,
 }
 
+/// Content-free category of Den work that issued an LLM request.
+///
+/// This intentionally has a closed vocabulary: usage attribution must never
+/// accidentally contain a prompt, tool argument, or other user-provided text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmOperation {
+    AgentTurn,
+    Compaction,
+    Memory,
+    BackgroundWork,
+}
+
+impl LlmOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentTurn => "agent_turn",
+            Self::Compaction => "compaction",
+            Self::Memory => "memory",
+            Self::BackgroundWork => "background_work",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LlmRequestTelemetry {
     pub request_id: Option<String>,
@@ -130,6 +153,8 @@ pub struct LlmRequestTelemetry {
     pub conversation_id: Option<String>,
     pub bear_id: Option<String>,
     pub stance: Option<String>,
+    /// Stable, content-free category of Den work that issued this request.
+    pub operation: Option<LlmOperation>,
     pub bifrost_virtual_key: Option<String>,
 }
 
@@ -266,6 +291,7 @@ impl LlmRequestTelemetry {
             "conversation_id" => self.conversation_id.as_deref(),
             "bear_id" => self.bear_id.as_deref(),
             "stance" => self.stance.as_deref(),
+            "operation" => self.operation.map(LlmOperation::as_str),
             "bifrost_virtual_key" => self.bifrost_virtual_key.as_deref(),
             _ => None,
         }
@@ -455,7 +481,8 @@ fn apply_bears_telemetry_headers(
         telemetry.field("conversation_id"),
     );
     req = apply_optional_header(req, "x-bears-bear-id", telemetry.field("bear_id"));
-    apply_optional_header(req, "x-bears-stance", telemetry.field("stance"))
+    req = apply_optional_header(req, "x-bears-stance", telemetry.field("stance"));
+    apply_optional_header(req, "x-bears-operation", telemetry.field("operation"))
 }
 
 fn has_bifrost_virtual_key(telemetry: Option<&LlmRequestTelemetry>) -> bool {
@@ -1176,6 +1203,41 @@ mod tests {
         assert_eq!(provider.as_str(), "gpt-5.5");
     }
 
+    #[test]
+    fn telemetry_exposes_content_free_operation() {
+        let telemetry = LlmRequestTelemetry {
+            request_id: None,
+            run_id: None,
+            session_id: None,
+            conversation_id: None,
+            bear_id: None,
+            stance: None,
+            operation: Some(LlmOperation::AgentTurn),
+            bifrost_virtual_key: None,
+        };
+
+        assert_eq!(telemetry.field("operation"), Some("agent_turn"));
+        assert_eq!(telemetry.field("unknown"), None);
+    }
+
+    #[test]
+    fn telemetry_transport_emits_only_the_allowlisted_operation_label() {
+        let telemetry = LlmRequestTelemetry {
+            operation: Some(LlmOperation::BackgroundWork),
+            ..Default::default()
+        };
+        let request = apply_bears_telemetry_headers(
+            reqwest::Client::new().post("http://example.invalid/v1/responses"),
+            Some(&telemetry),
+        )
+        .build()
+        .expect("valid local request");
+
+        assert_eq!(
+            request.headers().get("x-bears-operation").and_then(|v| v.to_str().ok()),
+            Some("background_work")
+        );
+    }
     #[test]
     fn preferred_api_style_uses_explicit_catalog_support() {
         assert_eq!(
