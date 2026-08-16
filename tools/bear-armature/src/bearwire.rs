@@ -877,6 +877,29 @@ pub(crate) async fn handle_prompt(
         ));
     }
 
+    if saw_done && !saw_visible_output {
+        // ponytail: A completed run is valid even when the model emits no text, but
+        // ending the ACP turn empty makes the host invent an unhelpful status message.
+        // If Den later supplies a structured completion summary, project that instead.
+        let message = format!(
+            "Den finished this turn without an assistant response (run `{run_id}`). If you expected an answer, send a follow-up message."
+        );
+        tracing::warn!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            diagnostics = %diagnostics.summary(),
+            "BearWire run completed without visible assistant output"
+        );
+        eprintln!(
+            "bear-armature: BearWire run completed without visible assistant output session_id={} run_id={} diagnostics={}",
+            session_id,
+            run_id,
+            diagnostics.summary()
+        );
+        send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message).await?;
+    }
+
     if let Some(response_id) = response.claim() {
         crate::write_prompt_end_turn_response(response_id).await
     } else {
