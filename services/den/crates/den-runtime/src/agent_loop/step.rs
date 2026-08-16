@@ -655,6 +655,39 @@ fn compatible_thinking_effort_for_session(
     compatible_effort
 }
 
+fn reasoning_effort_disposition_event(
+    request_profile: &den_core::ModelRequestProfile,
+    configured_effort: Option<ThinkingEffort>,
+    compatible_effort: Option<ThinkingEffort>,
+) -> Option<RuntimeStreamEvent> {
+    if !matches!(
+        request_profile.agent_primary_step,
+        AgentPrimaryStep::Checkpoint | AgentPrimaryStep::PreRiskReview
+    ) {
+        return None;
+    }
+    let configured_effort = configured_effort?;
+    let disposition = match (request_profile.supports_reasoning_effort, compatible_effort) {
+        (Some(true), Some(_)) => "applied",
+        (Some(false), _) => "skipped_unsupported",
+        (None, _) => "skipped_unknown",
+        (Some(true), None) => "skipped_api_incompatible",
+    };
+    Some(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::RunProgress {
+            kind: "reasoning_effort_override".to_string(),
+            text: None,
+            phase: Some("agent_loop_control".to_string()),
+            detail: Some(serde_json::json!({
+                "disposition": disposition,
+                "step": request_profile.agent_primary_step.as_str(),
+                "catalog_support": request_profile.supports_reasoning_effort,
+                "configured_effort": configured_effort.as_str(),
+            })),
+        },
+    ))
+}
+
 fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
     crate::llm::LlmToolDefinition {
         name: RUNTIME_CHECKPOINT_TOOL_NAME.to_string(),
@@ -800,13 +833,26 @@ pub async fn run_agent_step_stream(
             .budget_components
             .recently_discovered_capabilities_chars = chars;
     }
+    let request_profile = primary_request_profile_for_session(&session);
+    let configured_effort = session
+        .agent_loop_control
+        .profile
+        .thinking
+        .enabled
+        .then_some(
+            session
+                .agent_loop_control
+                .profile
+                .thinking
+                .checkpoint_turn_effort,
+        )
+        .flatten();
     let (request, budget, context_budget_evaluation) = loop {
         let tools = tools_with_checkpoint_tool(&session);
-        let request_profile = primary_request_profile_for_session(&session);
         let thinking_effort =
             compatible_thinking_effort_for_session(&session, &request_profile, !tools.is_empty());
         let request = ChatCompletionRequest {
-            model: request_profile.approved_model_ref,
+            model: request_profile.approved_model_ref.clone(),
             messages,
             tools,
             stream: true,
@@ -933,6 +979,11 @@ pub async fn run_agent_step_stream(
             })),
         })
     });
+    let reasoning_effort_disposition_event = reasoning_effort_disposition_event(
+        &request_profile,
+        configured_effort,
+        request.thinking_effort,
+    );
     let checkpoint_thinking_event = request.thinking_effort.map(|effort| {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
             kind: "checkpoint_thinking_override_applied".to_string(),
@@ -959,6 +1010,7 @@ pub async fn run_agent_step_stream(
     let prefix_events = [
         Some(resolved_control_progress_event(&session.agent_loop_control)),
         context_budget_pressure_event,
+        reasoning_effort_disposition_event,
         checkpoint_thinking_event,
     ]
     .into_iter()
@@ -1042,6 +1094,38 @@ mod tests {
             ),
             Some(ThinkingEffort::High)
         );
+    }
+
+    #[test]
+    fn reasoning_effort_disposition_distinguishes_catalog_support() {
+        for (support, expected) in [
+            (Some(true), "applied"),
+            (Some(false), "skipped_unsupported"),
+            (None, "skipped_unknown"),
+        ] {
+            let profile = den_core::ModelRequestProfile {
+                agent_primary_step: AgentPrimaryStep::Checkpoint,
+                supports_reasoning_effort: support,
+                thinking_effort: Some(ThinkingEffort::High),
+                ..Default::default()
+            };
+            let event = reasoning_effort_disposition_event(
+                &profile,
+                Some(ThinkingEffort::High),
+                support.and_then(|supported| supported.then_some(ThinkingEffort::High)),
+            )
+            .expect("configured checkpoint effort emits a disposition");
+            let RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { detail, .. }) =
+                event
+            else {
+                panic!("expected reasoning effort progress event");
+            };
+            let detail = detail.expect("typed detail");
+            assert_eq!(detail["disposition"], expected);
+            assert_eq!(detail["step"], "checkpoint");
+            assert!(detail.get("prompt").is_none());
+            assert!(detail.get("transcript").is_none());
+        }
     }
 
     #[test]
