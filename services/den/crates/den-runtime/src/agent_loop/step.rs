@@ -4,7 +4,10 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use den_core::{config::Config, profile::BearProfile, DenError, ThinkingEffort};
+use den_core::{
+    config::Config, profile::BearProfile, resolve_agent_primary_request_profile, AgentPrimaryStep,
+    DenError, ThinkingEffort,
+};
 use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
 use futures::{stream, Stream, StreamExt, TryStreamExt};
 use sqlx::PgPool;
@@ -601,15 +604,23 @@ fn checkpoint_thinking_effort_for_session(
     session: &AgentLoopSession,
     has_function_tools: bool,
 ) -> Option<ThinkingEffort> {
-    session.checkpoint_state.last_checkpoint_reason?;
     let policy = session.agent_loop_control.profile.thinking;
     let configured_effort = policy
         .enabled
         .then_some(policy.checkpoint_turn_effort)
         .flatten();
-    let compatible_effort =
-        api_compatible_thinking_effort(session.api_style, has_function_tools, configured_effort);
-    if configured_effort.is_some() && compatible_effort.is_none() {
+    let step = if session.checkpoint_state.last_checkpoint_reason.is_some() {
+        AgentPrimaryStep::Checkpoint
+    } else {
+        AgentPrimaryStep::OrdinaryTurn
+    };
+    let resolved = resolve_agent_primary_request_profile(step, configured_effort);
+    let compatible_effort = api_compatible_thinking_effort(
+        session.api_style,
+        has_function_tools,
+        resolved.thinking_effort,
+    );
+    if resolved.thinking_effort.is_some() && compatible_effort.is_none() {
         tracing::warn!(
             session_key = %session.session_key,
             model = %session.model,
