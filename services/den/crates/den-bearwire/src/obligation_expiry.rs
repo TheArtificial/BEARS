@@ -162,7 +162,11 @@ pub async fn expire_client_obligations_once(
         // blocked on this client response.
         state.turn_cancellations.cancel_session(&run.session_id);
         state.tool_turns.cancel_active_turn(&run.session_id);
-        if reason == RunFailureReason::PermissionDecisionExpired {
+        if matches!(
+            reason,
+            RunFailureReason::PermissionDecisionExpired
+                | RunFailureReason::ServerRestartInterrupted
+        ) {
             persist_run_blocked(
                 pool,
                 &run.session_id,
@@ -173,8 +177,12 @@ pub async fn expire_client_obligations_once(
                 message,
                 Some(json!({
                     "affected_obligations": affected_obligations,
-                    "expired_obligations": json!(affected_obligations),
-                    "source": "bearwire_client_obligation_expiry_loop",
+                    "expired_obligations": if interrupted_by_restart { Value::Null } else { json!(affected_obligations) },
+                    "source": if interrupted_by_restart {
+                        "bearwire_client_obligation_restart_reconciliation"
+                    } else {
+                        "bearwire_client_obligation_expiry_loop"
+                    },
                     "current_process_epoch_id": state.process_epoch_id,
                     "recovery": recovery,
                 })),

@@ -2069,6 +2069,41 @@ async fn handle_bearwire_event(
             );
             outcome.saw_done = true;
         }
+        "run.blocked" => {
+            let run_id = event
+                .get("run_id")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let reason = event
+                .pointer("/data/reason")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let message = bearwire_run_failed_user_message(event);
+            tracing::info!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                run_id,
+                reason,
+                "BearWire run blocked"
+            );
+            eprintln!(
+                "bear-armature: BearWire run blocked session_id={} reason={} message={}",
+                session_id,
+                reason,
+                truncate_for_log(&message, 500)
+            );
+            if let Some(context) = bearwire_run_failed_stderr_context(event) {
+                eprintln!(
+                    "bear-armature: BearWire run blocked diagnostic session_id={} context={}",
+                    session_id, context
+                );
+            }
+            outcome.saw_done = true;
+            outcome.saw_visible_output = true;
+            diagnostics.saw_visible_output = true;
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
+                .await?;
+        }
         "run.failed" => {
             let run_id = event
                 .get("run_id")

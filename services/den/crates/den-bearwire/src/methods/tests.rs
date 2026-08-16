@@ -2483,7 +2483,7 @@ async fn prior_process_obligation_is_reported_as_den_restart(pool: sqlx::PgPool)
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "failed");
+    assert_eq!(run.state, "blocked");
     assert_eq!(
         run.terminal_reason.as_deref(),
         Some("server_restart_interrupted")
@@ -2493,8 +2493,8 @@ async fn prior_process_obligation_is_reported_as_den_restart(pool: sqlx::PgPool)
         .expect("list events");
     let failed = events
         .iter()
-        .find(|row| row.event_type == "run.failed")
-        .expect("run.failed event");
+        .find(|row| row.event_type == "run.blocked")
+        .expect("run.blocked event");
     assert_eq!(failed.event.data["reason"], "server_restart_interrupted");
     assert_eq!(
         failed.event.data["context"]["source"],

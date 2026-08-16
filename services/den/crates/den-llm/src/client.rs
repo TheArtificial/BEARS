@@ -1234,7 +1234,10 @@ mod tests {
         .expect("valid local request");
 
         assert_eq!(
-            request.headers().get("x-bears-operation").and_then(|v| v.to_str().ok()),
+            request
+                .headers()
+                .get("x-bears-operation")
+                .and_then(|v| v.to_str().ok()),
             Some("background_work")
         );
     }
