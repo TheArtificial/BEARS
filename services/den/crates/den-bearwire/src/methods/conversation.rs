@@ -351,11 +351,22 @@ pub(crate) async fn conversation_diagnostics_result(
             .take(limit as usize)
             .collect::<Vec<_>>();
 
+    let checkpoints = if request.include_checkpoints {
+        den_runtime::agent_loop::list_checkpoints_for_run(&state.sqlx_pool, &run.run_id)
+            .await?
+            .into_iter()
+            .take(limit as usize)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
     Ok(json!({
         "kind": "conversation_diagnostics",
         "conversation_id": conversation.external_conversation_id,
         "run_id": run.run_id,
         "records": records,
+        "checkpoints": checkpoints,
     }))
 }
 

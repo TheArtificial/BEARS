@@ -77,6 +77,8 @@ pub struct ConversationHistoryRequest {
 #[serde(deny_unknown_fields)]
 pub struct ConversationDiagnosticsRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
     pub conversation_id: String,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub run_id: Option<String>,
@@ -84,6 +86,9 @@ pub struct ConversationDiagnosticsRequest {
     pub message_id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub task_id: Option<String>,
+    /// Include persisted runtime checkpoint artifacts for the authorized run.
+    #[serde(default)]
+    pub include_checkpoints: bool,
     #[serde(default = "default_history_limit")]
     pub limit: i64,
 }

@@ -643,6 +643,8 @@ Do not force learned facts and uncertainty into required JSON arrays. Keep model
 
 ## Phase 6 — Checkpoint artifact retention and audit policy
 
+**Status: In progress (2026-08-16).** `bear_run_checkpoints` persists request/response audit payloads by run and keeps them separate from Docket events and replay data. Authenticated `conversation.diagnostics` now has an opt-in, bounded checkpoint projection for an owned Pair run (`include_checkpoints: true`), with SQLx coverage. Artifact-ref migration, Work/Job audit linking, and distinct Pair-vs-Work retention policy remain open.
+
 **Goal:** make checkpoints useful for `work` run audit without polluting conversation history or Docket task events.
 
 Checkpoint reports are artifacts, not status reports. They are durable audit/debug payloads attached to a run, not user-facing progress prose, conversation history, model replay context, or Docket task/job events.

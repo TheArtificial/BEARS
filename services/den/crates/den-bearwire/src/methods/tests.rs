@@ -3429,3 +3429,83 @@ async fn bear_scoped_methods_require_bearer_token() {
     )
     .await;
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn conversation_diagnostics_includes_bounded_owned_checkpoint_artifacts(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let conversation_id: String = sqlx::query_scalar(
+        "SELECT conversation_id FROM client_sessions WHERE client_session_id = $1",
+    )
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load conversation id");
+    ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(user_id),
+        &conversation_id,
+        Some(&session_id),
+        None,
+    )
+    .await
+    .expect("ensure conversation");
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
+        .await
+        .expect("start run");
+    den_runtime::agent_loop::record_checkpoint_request(
+        &pool,
+        den_runtime::agent_loop::CheckpointArtifactInput {
+            run_id: run_id.clone(),
+            turn_step_id: None,
+            orientation_kind: None,
+            request: den_runtime::agent_loop::RuntimeCheckpointRequest {
+                checkpoint_id: "ckpt-diagnostics".to_string(),
+                run_id: run_id.clone(),
+                reason: den_runtime::agent_loop::CheckpointReason::OverExploration,
+                control_level: den_core::AgentLoopControlLevel::Standard,
+                profile_fingerprint: None,
+                active_objective: Some("test checkpoint audit".to_string()),
+                task_context: None,
+                evidence_refs: vec![],
+                required_fields: vec![],
+            },
+            visibility: den_runtime::agent_loop::CheckpointVisibility::AuditOnly,
+            replay_policy: den_runtime::agent_loop::CheckpointReplayPolicy::None,
+        },
+    )
+    .await
+    .expect("record checkpoint");
+
+    let response = rpc_value(
+        test_state(pool),
+        &token,
+        "conversation.diagnostics",
+        json!({
+            "bear_slug": bear_slug,
+            "conversation_id": conversation_id,
+            "run_id": run_id,
+            "include_checkpoints": true,
+            "limit": 1,
+        }),
+    )
+    .await;
+    assert_eq!(
+        response["result"]["checkpoints"].as_array().map(Vec::len),
+        Some(1),
+        "{response}"
+    );
+    assert_eq!(
+        response["result"]["checkpoints"][0]["checkpoint_id"],
+        "ckpt-diagnostics"
+    );
+    assert!(response["result"]["records"].as_array().is_some());
+}
