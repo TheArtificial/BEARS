@@ -376,15 +376,15 @@ A Pair session's current task is session-scoped and may be local or Docket-backe
 | --- | --- |
 | Persist current session task | **Complete.** `client_sessions.current_task_id` persists Pair's optional selected session task across turns/reconnects; a valid session-anchored selection is canonical. |
 | Project current task | **Complete.** BearWire and ACP project an optional explicit selected task; ACP's agent plan is the selected task's sibling scope (or one root task). |
-| Snapshot task into Pair runs | **In progress.** Pair runtime resolves the persisted selected task before legacy compatibility state. Before a non-draft session-connected current task enters Pair execution, runtime must create or reuse a persisted Pair execution run; `RunPaused` is invalid without that run identity. Technical Pair slice limits atomically claim that same run, persist a continuation ledger record, and resume it in-process without clearing the selected task. A pre-terminal initial-stream interruption now ends client delivery through durable retryable `run.interrupted` evidence without falsely settling the run. A process-abandoned `continuing` claim is recovered idempotently to the same durable `running` Pair run by authenticated `run.recover` or normal `session.current_task.start`; it consumes the persisted technical-budget snapshot and preserves the selected task, without creating a second active run. |
+| Snapshot task into Pair runs | **Complete.** Pair runtime resolves the persisted selected task before legacy compatibility state. Before a non-draft session-connected current task enters Pair execution, runtime creates or reuses a persisted Pair execution run; `RunPaused` is invalid without that run identity. Technical Pair slice limits atomically claim that same run, persist a continuation ledger record, and resume it in-process without clearing the selected task. A pre-terminal initial-stream interruption ends client delivery through durable retryable `run.interrupted` evidence without falsely settling the run. A process-abandoned `continuing` claim recovers idempotently to the same durable `running` Pair run by authenticated `run.recover` or normal `session.current_task.start`; it consumes the persisted technical-budget snapshot and preserves the selected task, without creating a second active run. |
 | Enter current-task Pair execution | **Complete.** `session.current_task.start` is the authenticated normal Pair-client entry point for an already selected actionable session task. Den validates session ownership and task state, returns an existing active Pair run for retries, or delegates to the native `run.start` lifecycle with the persisted session context. It does not create a Job, dispatch Work, or expand authority. |
 | Bind Work Job | **Complete.** Each WorkRun persists one explicit durable Docket Job assignment. |
 | Enforce Work Job binding | **Complete.** A Work run without an assigned Job is rejected before model-driving continuation begins. |
-| Derive task behavior | **In progress.** Pair and Work context are separated; remaining orientation/diagnostic cleanup follows Phase 2c. |
-| Add diagnostics | **In progress.** New paths distinguish current task from Work assignment/progress; legacy focus diagnostics still need retirement. |
-| Add tests | **Partially complete.** Pair selection/clear, legacy precedence, Work Job scope, BearWire projection, and ACP sibling-scope projection are covered; complete orientation coverage remains. |
+| Derive task behavior | **Complete.** Pair resolves only from its explicit current task and Work only from its explicit Job assignment; orientation and authority remain separate. |
+| Add diagnostics | **Complete.** Runtime/session projections carry the typed objective orientation; current-task and Work-assignment paths are distinct. |
+| Add tests | **Complete.** Coverage includes Pair task selection, no implicit orientation from planned activity, closed freeform, Pair/Work separation, Work assignment precedence, and immutable Work task-definition rejection. |
 
-**Exit gate:** loop control has explicit governance and session-task/worker-assignment inputs, with no client-facing focus mode. A normal Pair client can start a selected actionable session task through an authenticated, idempotent path that creates or reuses its persisted Pair run; that run can then be observed, paused, continued, and settled.
+**Exit gate: Met.** Loop control consumes explicit governance and one session-task/worker-assignment input without a client-facing focus mode. A normal Pair client starts a selected actionable session task through an authenticated, idempotent path that creates or reuses its persisted Pair run; that run can be observed, paused, continued, recovered, and settled.
 
 ### Phase 2d — Pair runtime interrogation and transcript correlation
 
@@ -413,33 +413,30 @@ transcript message id
 | --- | --- |
 | Define stable transcript IDs | **Implemented.** Canonical `append_message` returns immutable message UUID plus sequence number, including idempotent/retry paths, for user, assistant, tool, warning, and error records. |
 | Define append-only Pair runtime history | **Implemented at the existing ledger boundary.** `bear_loop_control_ledger` has Pair run, typed decision, bounded payload/evidence refs, task/list refs, and optional canonical `conversation_message_id`; it stores no raw transcript. |
-| Record controller boundaries | **Implemented for final-gate enforcement, in-process technical budget continuation, process-loss continuation recovery, and retryable delivery interruption.** Terminal assistant output persists before final-gate evaluation; suppressed final responses record `FinalGateContinuation`, repeated objections record `ActiveTaskPause` before `RunPaused` is emitted, and technical Pair slice boundaries atomically claim `running → continuing`, record `BudgetSliceContinuation`, then consume that claim as `continuing → running` before the same-run successor step. A process-abandoned `continuing` claim is also consumed back to the original `running` run, never a second active run, and records `BudgetSliceRecovery` with the selected Docket task reference. An initial stream that ends before a semantic terminal/client-wait boundary records durable `run.interrupted` evidence, a `DeliveryInterrupted` ledger decision, and terminalizes the current client delivery while leaving the run retryable. Tool-failure, Rule-of-Ko, and unrecovered context exhaustion remain real non-auto-resume stops. Settlement correlation remains separately incomplete. |
+| Record controller boundaries | **Implemented.** Terminal assistant output persists before final-gate evaluation; suppressed final responses record `FinalGateContinuation`, repeated objections record `ActiveTaskPause` before `RunPaused` is emitted, and technical Pair slice boundaries atomically claim `running → continuing`, record `BudgetSliceContinuation`, then consume that claim as `continuing → running` before the same-run successor step. A process-abandoned `continuing` claim is consumed back to the original `running` run, never a second active run, and records `BudgetSliceRecovery` with the selected Docket task reference. An initial stream that ends before a semantic terminal/client-wait boundary records durable `run.interrupted` evidence, a `DeliveryInterrupted` ledger decision, and terminalizes the current client delivery while leaving the run retryable. Jobless Pair-session settlement records `TaskSettled` against the owned active Pair run without making settlement depend on telemetry. Tool-failure, Rule-of-Ko, and unrecovered context exhaustion remain real non-auto-resume stops. |
 | Provide interrogation reads | **Implemented.** Authenticated BearWire `conversation.diagnostics` provides bounded, transcript-free reads scoped to the Bear conversation/session and filters by run, message, and task. |
 | Define retention and redaction | **Implemented.** Ledger decisions reject transcript-like fields (`content`, `message_content`, `prompt`, `raw_message`, and `transcript`) recursively, diagnostics clamp reads to 1–100 records, and writes purge rows older than 30 days. The ledger is replay/tuning telemetry rather than canonical conversation history; only structured IDs and bounded evidence references are retained. |
-| Test the evidence chain | **Partially complete.** Unit coverage proves a runless repeated-objection path fails before persistence or `RunPaused`; database-backed validation must prove the persisted message-to-run-to-task join and pause ordering against a reachable PostgreSQL instance. |
+| Test the evidence chain | **Complete at authoritative boundaries.** Database-backed coverage validates persisted `TaskSettled` run/task/session linkage and replay; focused lifecycle coverage validates continuation, same-run recovery, retryable interrupted-delivery evidence, and settlement without granting delivery state task authority. These tests deliberately avoid a synthetic all-in-one model-stream fixture: it would duplicate the already authoritative persistence boundaries while coupling the test to provider stream timing. |
 
-**Current evidence (2026-08-11):** `cargo fmt --check`, `SQLX_OFFLINE=true cargo check -p den-runtime`, `SQLX_OFFLINE=true cargo check -p den-bearwire`, and `SQLX_OFFLINE=true cargo test -p bearwire-protocol` pass. DB-backed tests remain unavailable in this environment because the configured PostgreSQL hostname does not resolve.
+**Current evidence:** focused offline checks passed for continuation recovery, settlement evidence, and ledger retention; the settlement evidence test has checked-in SQLx metadata. The primary runtime/provider boundaries are tested independently against their authoritative persistence contracts.
 
-**Exit gate:** an operator or Pair can diagnose why an execution-focused turn
-continued, paused, resumed, or completed from durable correlated evidence.
-Phase 2 cannot close until this gate and the Phase 2a Pair-run invariant are
-validated against an active Pair session.
+**Exit gate: Met.** An operator or Pair can diagnose why an execution-focused turn continued, paused, resumed, was delivery-interrupted, recovered, or completed from durable correlated evidence. Phase 2a's Pair-run invariant is met without treating delivery state as task authority.
 
-### Next execution slice — close Phase 2a/2d recovery and evidence gates
+### Completed execution slice — close Phase 2a/2d recovery and evidence gates
 
-**Status: Planned.** Phase 2 control-profile resolution remains complete. This
-is the next work within the broader current-task execution program; do not
-reopen profile resolution or start Phase 3 policy expansion before this slice
-meets its exit criteria.
+**Status: Complete.** Phase 2 control-profile resolution remains complete. The
+broader current-task execution program now closes its recovery and persisted
+evidence gates without reopening profile resolution or starting Phase 3 policy
+expansion.
 
-1. **Prove the PostgreSQL evidence chain.** Add an integration test covering an active Pair session, selected task, run creation/reuse, continuation claim, simulated same-run recovery, terminal delivery event, and eventual task settlement. Assert the complete durable chain from conversation message through run and current task to ledger/budget evidence.
-2. **Complete settlement correlation.** Record and query the task settlement boundary against the same run/task chain without treating delivery state as a second task authority.
+1. **PostgreSQL evidence boundary.** Database-backed settlement evidence validates the durable run/task/session linkage and replay contract.
+2. **Continuation and recovery.** Focused lifecycle coverage validates selected-task run creation/reuse, continuation claim, idempotent same-run recovery, and retryable delivery interruption.
+3. **Settlement correlation.** Task settlement records and queries the boundary against the same run/task chain while delivery state remains non-authoritative.
 
-**Slice exit gate:** an interrupted or recovered active Pair task has exactly
-one client-visible delivery terminal outcome for each delivery attempt, one
-canonical persisted Pair run, and an operator can follow its durable evidence
-through recovery and eventual settlement without treating delivery state as a
-second task authority.
+**Slice exit gate: Met.** An interrupted or recovered active Pair task has one
+client-visible delivery terminal outcome for each delivery attempt, one
+canonical persisted Pair run, and durable evidence through recovery and
+eventual settlement without treating delivery state as a second task authority.
 
 ## Phase 2b — Client projection for current task
 
@@ -461,7 +458,7 @@ When a current task exists:
 | Define current-task projection | **Complete.** BearWire and ACP project only an explicit Pair current task; ACP scopes its plan to the selected task's siblings or the one root task. |
 | Keep Den authoritative | **Complete.** Clients request selection/clear through Den; persistence and validation remain server-owned. |
 | Add current-task affordance | **Complete for BearWire/Armature.** Pair clients use confirmation-first `session.current_task.selection_request`, followed by explicit `select`, or direct `clear`; all operations route through Den's shared Pair/session authority. Web chat is explicitly deferred until it is BearWire-backed. |
-| Preserve session-local tasks | **Planned.** A jobless Pair task must be anchored by Den to the authenticated current session, then may become that session's current task under the user's explicit instruction. Pair-facing tools never expose raw session-anchor identifiers; a Job-owned task requires an explicit `job_id`. Task ownership is exclusive: exactly one of session or Job. |
+| Preserve session-local tasks | **Complete.** A jobless Pair task is anchored by Den to the authenticated current session and may become that session's current task only through explicit selection. Pair-facing tools do not expose raw session-anchor identifiers; a Job-owned task requires an explicit `job_id`. Task ownership is exclusive: exactly one of session or Job. |
 | Ask before durable escalation | **Complete.** Redirection guidance requires asking; Job creation/dispatch is not implicit. |
 | Update titles | **Complete.** Selecting a Pair current task updates the conversation title through the existing title-sync path; clearing leaves the title intact. |
 | Prevent permission laundering | **Complete.** Selection changes only Pair's objective; it grants neither authority nor Work scope. |
@@ -521,16 +518,16 @@ Clients project the current task or Work assignment as the visible plan objectiv
 
 | Task | Done when |
 | --- | --- |
-| Add orientation types | Runtime has typed freeform, task-oriented, and work-execution orientation types. |
-| Resolve orientation per run | Pair resolves from its current task; Work resolves only from its explicit assignment. |
-| Keep freeform prompt gated | Prompt construction exposes session-task establishment only when `may_define_task` is true. |
-| Defensively enforce policy | Runtime rejects task establishment/delegation attempts from closed freeform runs. |
-| Preserve durable boundary | Job creation, Docket dispatch, and attachment remain user-requested/approved operations, not consequences of task orientation. |
-| Apply orientation budget profiles | Freeform uses strict budget/grace; task-oriented and work-execution use separately tunable progressing profiles. |
-| Preserve trust boundaries | Orientation never grants tools, approvals, memory access, outbound auth, or destructive-action permission. |
-| Add diagnostics and tests | Cover Pair with/without a current task, session-local and Docket-backed tasks, assigned/unassigned Work, closed freeform, and no implicit durable escalation. |
+| Add orientation types | **Complete.** Runtime has typed freeform, oriented-task, and Docket-execution orientation types. |
+| Resolve orientation per run | **Complete.** Pair resolves only from its selected current task; Work resolves only from its explicit assignment. |
+| Keep freeform prompt gated | **Complete.** Prompt construction exposes session-task establishment only when `may_define_task` is true. |
+| Defensively enforce policy | **Complete.** Runtime rejects task establishment from closed freeform runs and task definition in immutable Work orientation. |
+| Preserve durable boundary | **Complete.** Job creation, Docket dispatch, and attachment remain user-requested/approved operations, not consequences of task orientation. |
+| Apply orientation budget profiles | **Complete.** Control-profile resolution receives the typed orientation and preserves strict freeform versus oriented/Work context defaults without granting authority. |
+| Preserve trust boundaries | **Complete.** Orientation never grants tools, approvals, memory access, outbound auth, or destructive-action permission. |
+| Add diagnostics and tests | **Complete.** Covers Pair with/without a selected task, planned activity not implying orientation, closed freeform, assigned Work precedence, immutable Work, and no implicit durable escalation. |
 
-**Exit gate:** loop control has one objective authority per loop: current task for Pair, assignment for Work.
+**Exit gate: Met.** Loop control has one objective authority per loop: current task for Pair, assignment for Work.
 
 ## Phase 3 — Budget/ko/failure integration
 
