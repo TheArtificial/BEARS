@@ -281,6 +281,7 @@ pub struct SessionTrackingStream {
     pending_tool_event: Option<RuntimeStreamEvent>,
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
     pending_checkpoint_thinking: Option<RuntimeSemanticEvent>,
+    pending_checkpoint_progress: Option<RuntimeSemanticEvent>,
     pending_server_tool: Option<ServerToolFuture>,
     pending_server_tool_stream: Option<ServerToolContinuationFuture>,
     pending_server_tool_continuation: Option<String>,
@@ -336,6 +337,7 @@ impl SessionTrackingStream {
             pending_tool_event: None,
             pending_pause_after_tool: None,
             pending_checkpoint_thinking: None,
+            pending_checkpoint_progress: None,
             pending_server_tool: None,
             pending_server_tool_stream: None,
             pending_server_tool_continuation: None,
@@ -1269,6 +1271,15 @@ impl SessionTrackingStream {
                 .clone_from(&required_task_action);
             session.checkpoint_state.reset_after_checkpoint_report();
         });
+        self.pending_checkpoint_progress = Some(RuntimeSemanticEvent::RunProgress {
+            kind: "checkpoint_response_recorded".to_string(),
+            text: Some("Runtime checkpoint response recorded.".to_string()),
+            phase: Some("runtime_checkpoint".to_string()),
+            detail: Some(serde_json::json!({
+                "checkpoint_id": request.checkpoint_id,
+                "reason": request.reason,
+            })),
+        });
         self.pending_checkpoint_thinking =
             checkpoint_summary.map(|text| RuntimeSemanticEvent::ReasoningTextDelta {
                 text: format!("{text}\n"),
@@ -1282,6 +1293,12 @@ impl SessionTrackingStream {
             reason = %reason,
             "degrading invalid checkpoint response without failing turn"
         );
+        self.pending_checkpoint_progress = Some(RuntimeSemanticEvent::RunProgress {
+            kind: "checkpoint_invalid".to_string(),
+            text: Some("Runtime checkpoint response was invalid; continuing with deterministic runtime signals.".to_string()),
+            phase: Some("runtime_checkpoint".to_string()),
+            detail: Some(serde_json::json!({ "reason": reason })),
+        });
         self.store.update(&self.session_key, |session| {
             session.pending_checkpoint_request = None;
             session.pending_checkpoint_recovery_attempts = 0;
@@ -1830,6 +1847,10 @@ impl Stream for SessionTrackingStream {
                 self.finished = true;
             }
             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(pause))));
+        }
+
+        if let Some(event) = self.pending_checkpoint_progress.take() {
+            return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(event))));
         }
 
         if let Some(event) = self.pending_checkpoint_thinking.take() {
@@ -2897,6 +2918,13 @@ mod tests {
             stream.pending_checkpoint_task_action(),
             Some(crate::agent_loop::CheckpointNextAction::UpdateTaskList)
         ));
+        assert!(matches!(
+            stream.pending_checkpoint_progress,
+            Some(RuntimeSemanticEvent::RunProgress { ref kind, ref detail, .. })
+                if kind == "checkpoint_response_recorded"
+                    && detail.as_ref().and_then(|detail| detail.get("checkpoint_id"))
+                        == Some(&serde_json::json!("ckpt-follow-through"))
+        ));
         assert!(stream.pending_checkpoint_thinking.is_some());
         assert!(matches!(
             stream.pending_checkpoint_thinking,
@@ -2966,8 +2994,34 @@ mod tests {
         .expect("checkpoint response json");
 
         let _ = stream.handle_checkpoint_tool_call("call-checkpoint".to_string(), arguments);
+        assert!(matches!(
+            stream.pending_checkpoint_progress,
+            Some(RuntimeSemanticEvent::RunProgress { ref kind, ref detail, .. })
+                if kind == "checkpoint_response_recorded"
+                    && detail
+                        .as_ref()
+                        .and_then(|detail| detail.get("checkpoint_id"))
+                        == Some(&serde_json::json!("ckpt-advisory-action"))
+        ));
         assert!(stream.pending_checkpoint_request().is_none());
         assert!(stream.pending_checkpoint_task_action().is_none());
+    }
+
+    #[tokio::test]
+    async fn malformed_checkpoint_response_emits_invalid_progress() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.pending_checkpoint_request = Some(checkpoint_request("ckpt-invalid"));
+        let mut stream = test_tracking_stream_with_session(&session);
+
+        let _ = stream.handle_checkpoint_tool_call(
+            "call-checkpoint".to_string(),
+            serde_json::json!({ "checkpoint_id": 7 }),
+        );
+
+        assert!(matches!(
+            stream.pending_checkpoint_progress,
+            Some(RuntimeSemanticEvent::RunProgress { ref kind, .. }) if kind == "checkpoint_invalid"
+        ));
     }
 
     #[test]
