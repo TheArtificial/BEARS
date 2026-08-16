@@ -390,6 +390,7 @@ struct ResolvedRunModel {
     /// Set authoritatively by `preflight_pair_run_model` from the catalog
     /// snapshot; `resolve_pair_run_model` leaves it at a placeholder.
     api_style: den_llm::LlmApiStyle,
+    supports_reasoning_effort: Option<bool>,
     source: ResolvedRunModelSource,
 }
 
@@ -495,6 +496,7 @@ async fn resolve_pair_run_model(
                     let provider_model_id = provider_model_id_for_den_handle(&handle);
                     return Ok(ResolvedRunModel {
                         api_style: RESOLVE_PLACEHOLDER_API_STYLE,
+                        supports_reasoning_effort: None,
                         provider_model_id,
                         handle,
                         source: ResolvedRunModelSource::ConversationExplicit,
@@ -509,6 +511,7 @@ async fn resolve_pair_run_model(
                 let provider_model_id = provider_model_id_for_den_handle(&handle);
                 return Ok(ResolvedRunModel {
                     api_style: RESOLVE_PLACEHOLDER_API_STYLE,
+                    supports_reasoning_effort: None,
                     provider_model_id,
                     handle,
                     source: ResolvedRunModelSource::ConversationAuto,
@@ -522,6 +525,7 @@ async fn resolve_pair_run_model(
         let provider_model_id = provider_model_id_for_den_handle(&handle);
         return Ok(ResolvedRunModel {
             api_style: RESOLVE_PLACEHOLDER_API_STYLE,
+            supports_reasoning_effort: None,
             provider_model_id,
             handle,
             source: ResolvedRunModelSource::ProfileDefault,
@@ -538,6 +542,7 @@ async fn resolve_pair_run_model(
         let provider_model_id = provider_model_id_for_den_handle(&handle);
         return Ok(ResolvedRunModel {
             api_style: RESOLVE_PLACEHOLDER_API_STYLE,
+            supports_reasoning_effort: None,
             provider_model_id,
             handle,
             source: ResolvedRunModelSource::BearDefault,
@@ -548,6 +553,7 @@ async fn resolve_pair_run_model(
     let provider_model_id = provider_model_id_for_den_handle(&handle);
     Ok(ResolvedRunModel {
         api_style: RESOLVE_PLACEHOLDER_API_STYLE,
+        supports_reasoning_effort: None,
         provider_model_id,
         handle,
         source: ResolvedRunModelSource::SystemDefault,
@@ -594,6 +600,7 @@ async fn preflight_pair_run_model(
                             api_style: pair_api_style_for_catalog_support(
                                 entry.supports_responses_api,
                             ),
+                            supports_reasoning_effort: entry.supports_reasoning_effort,
                             ..resolved
                         });
                     }
@@ -611,6 +618,7 @@ async fn preflight_pair_run_model(
                 );
                 return Ok(ResolvedRunModel {
                     api_style: den_llm::LlmApiStyle::ResponsesStream,
+                    supports_reasoning_effort: None,
                     ..resolved
                 });
             }
@@ -650,6 +658,7 @@ async fn preflight_pair_run_model(
     }
     let resolved = ResolvedRunModel {
         api_style: pair_api_style_for_catalog_support(catalog_entry.supports_responses_api),
+        supports_reasoning_effort: catalog_entry.supports_reasoning_effort,
         ..resolved
     };
     if available
@@ -2255,6 +2264,7 @@ async fn run_start_with_recovery_source(
     let run_id_for_task = session_run_id.clone();
     let client_tools_for_task = client_tools.clone();
     let api_style_for_task = resolved_model.api_style;
+    let supports_reasoning_effort_for_task = resolved_model.supports_reasoning_effort;
     let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
@@ -2360,6 +2370,7 @@ async fn run_start_with_recovery_source(
                 ),
                 stream_tokens: true,
                 api_style: Some(api_style_for_task),
+                supports_reasoning_effort: supports_reasoning_effort_for_task,
             },
             stance,
         )

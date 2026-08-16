@@ -603,6 +603,7 @@ fn api_compatible_thinking_effort(
 fn primary_request_profile(
     approved_model_ref: impl Into<String>,
     checkpoint_active: bool,
+    supports_reasoning_effort: Option<bool>,
     configured_effort: Option<ThinkingEffort>,
 ) -> den_core::ModelRequestProfile {
     let step = if checkpoint_active {
@@ -610,7 +611,12 @@ fn primary_request_profile(
     } else {
         AgentPrimaryStep::OrdinaryTurn
     };
-    resolve_agent_primary_request_profile(approved_model_ref, step, configured_effort)
+    resolve_agent_primary_request_profile(
+        approved_model_ref,
+        step,
+        supports_reasoning_effort,
+        configured_effort,
+    )
 }
 
 fn primary_request_profile_for_session(
@@ -624,6 +630,7 @@ fn primary_request_profile_for_session(
     primary_request_profile(
         session.model_request_profile.approved_model_ref.clone(),
         session.checkpoint_state.last_checkpoint_reason.is_some(),
+        session.model_request_profile.supports_reasoning_effort,
         configured_effort,
     )
 }
@@ -1011,8 +1018,13 @@ mod tests {
             api_compatible_thinking_effort(
                 Some(LlmApiStyle::ResponsesStream),
                 false,
-                primary_request_profile("openai/gpt-5", false, Some(ThinkingEffort::High),)
-                    .thinking_effort,
+                primary_request_profile(
+                    "openai/gpt-5",
+                    false,
+                    Some(true),
+                    Some(ThinkingEffort::High),
+                )
+                .thinking_effort,
             ),
             None
         );
@@ -1020,8 +1032,13 @@ mod tests {
             api_compatible_thinking_effort(
                 Some(LlmApiStyle::ResponsesStream),
                 false,
-                primary_request_profile("openai/gpt-5", true, Some(ThinkingEffort::High),)
-                    .thinking_effort,
+                primary_request_profile(
+                    "openai/gpt-5",
+                    true,
+                    Some(true),
+                    Some(ThinkingEffort::High),
+                )
+                .thinking_effort,
             ),
             Some(ThinkingEffort::High)
         );

@@ -46,6 +46,9 @@ pub struct TurnStartRequest<'a> {
     pub technical_budget_recovery_start_payload: Option<serde_json::Value>,
     pub stream_tokens: bool,
     pub api_style: Option<LlmApiStyle>,
+    /// Catalog-authoritative support for optional reasoning effort request metadata.
+    /// Unknown stays `None` so runtime request construction omits the override.
+    pub supports_reasoning_effort: Option<bool>,
 }
 
 pub struct TurnContinueRequest<'a> {

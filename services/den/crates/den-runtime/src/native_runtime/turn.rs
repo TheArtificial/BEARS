@@ -767,6 +767,7 @@ struct BuildSessionInput<'a> {
     run_id: Option<&'a str>,
     stream_tokens: bool,
     api_style: Option<crate::llm::LlmApiStyle>,
+    supports_reasoning_effort: Option<bool>,
     technical_budget_recovery_start_payload: Option<serde_json::Value>,
     tool_messages: Vec<ChatMessage>,
 }
@@ -806,6 +807,7 @@ async fn build_session(
         run_id,
         stream_tokens,
         api_style,
+        supports_reasoning_effort,
         technical_budget_recovery_start_payload,
         tool_messages,
     } = input;
@@ -1009,6 +1011,7 @@ async fn build_session(
         model: model.clone(),
         model_request_profile: den_core::ModelRequestProfile {
             approved_model_ref: model,
+            supports_reasoning_effort,
             ..Default::default()
         },
         model_context_window: model_option
@@ -1182,6 +1185,7 @@ pub async fn run_native_profile_turn_collect_assistant_text(
             run_id: None,
             stream_tokens: false,
             api_style: None,
+            supports_reasoning_effort: None,
             technical_budget_recovery_start_payload: None,
             tool_messages: Vec::new(),
         },
@@ -1245,6 +1249,7 @@ pub async fn start_native_web_chat_turn_event_stream(
             run_id: None,
             stream_tokens: true,
             api_style: None,
+            supports_reasoning_effort: None,
             technical_budget_recovery_start_payload: None,
             tool_messages: Vec::new(),
         },
@@ -1337,6 +1342,7 @@ pub async fn start_native_profile_turn_event_stream(
             run_id: request.run_id,
             stream_tokens: request.stream_tokens,
             api_style: request.api_style,
+            supports_reasoning_effort: request.supports_reasoning_effort,
             technical_budget_recovery_start_payload: request
                 .technical_budget_recovery_start_payload,
             tool_messages: Vec::new(),

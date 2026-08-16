@@ -43,6 +43,9 @@ pub struct ModelRequestProfile {
     /// This is not a raw provider identifier and does not grant routing authority.
     pub approved_model_ref: String,
     pub agent_primary_step: AgentPrimaryStep,
+    /// Catalog-authoritative support for optional reasoning metadata. Unknown is treated as
+    /// unsupported so request construction never guesses from a provider or model name.
+    pub supports_reasoning_effort: Option<bool>,
     pub thinking_effort: Option<ThinkingEffort>,
 }
 
@@ -51,6 +54,7 @@ impl Default for ModelRequestProfile {
         Self {
             approved_model_ref: String::new(),
             agent_primary_step: AgentPrimaryStep::OrdinaryTurn,
+            supports_reasoning_effort: None,
             thinking_effort: None,
         }
     }
@@ -59,22 +63,22 @@ impl Default for ModelRequestProfile {
 pub fn resolve_agent_primary_request_profile(
     approved_model_ref: impl Into<String>,
     agent_primary_step: AgentPrimaryStep,
+    supports_reasoning_effort: Option<bool>,
     checkpoint_thinking_effort: Option<ThinkingEffort>,
 ) -> ModelRequestProfile {
     ModelRequestProfile {
         approved_model_ref: approved_model_ref.into(),
         agent_primary_step,
-        thinking_effort: match agent_primary_step {
-            AgentPrimaryStep::Checkpoint | AgentPrimaryStep::PreRiskReview => {
-                checkpoint_thinking_effort
-            }
-            AgentPrimaryStep::OrdinaryTurn
-            | AgentPrimaryStep::Planning
-            | AgentPrimaryStep::TaskSelection
-            | AgentPrimaryStep::Execution
-            | AgentPrimaryStep::Summarization
-            | AgentPrimaryStep::CheapProbe => None,
-        },
+        supports_reasoning_effort,
+        thinking_effort: matches!(supports_reasoning_effort, Some(true))
+            .then_some(checkpoint_thinking_effort)
+            .flatten()
+            .filter(|_| {
+                matches!(
+                    agent_primary_step,
+                    AgentPrimaryStep::Checkpoint | AgentPrimaryStep::PreRiskReview
+                )
+            }),
     }
 }
 
@@ -88,6 +92,7 @@ mod tests {
             resolve_agent_primary_request_profile(
                 "openai/gpt-5",
                 AgentPrimaryStep::Checkpoint,
+                Some(true),
                 Some(ThinkingEffort::High),
             )
             .thinking_effort,
@@ -97,6 +102,7 @@ mod tests {
             resolve_agent_primary_request_profile(
                 "openai/gpt-5",
                 AgentPrimaryStep::PreRiskReview,
+                Some(true),
                 Some(ThinkingEffort::Medium),
             )
             .thinking_effort,
@@ -106,6 +112,7 @@ mod tests {
             resolve_agent_primary_request_profile(
                 "openai/gpt-5",
                 AgentPrimaryStep::Execution,
+                Some(true),
                 Some(ThinkingEffort::High),
             )
             .thinking_effort,
@@ -114,10 +121,24 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_or_unknown_capability_omits_reasoning_effort() {
+        for support in [Some(false), None] {
+            let profile = resolve_agent_primary_request_profile(
+                "openai/gpt-5",
+                AgentPrimaryStep::Checkpoint,
+                support,
+                Some(ThinkingEffort::High),
+            );
+            assert_eq!(profile.thinking_effort, None);
+        }
+    }
+
+    #[test]
     fn resolved_profile_keeps_approved_model_reference() {
         let profile = resolve_agent_primary_request_profile(
             "openai/gpt-5",
             AgentPrimaryStep::OrdinaryTurn,
+            None,
             None,
         );
 
