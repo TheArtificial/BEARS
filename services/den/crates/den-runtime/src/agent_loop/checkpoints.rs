@@ -113,6 +113,7 @@ pub enum LoopControlDecisionKind {
     BudgetSliceContinuation,
     BudgetSliceRecovery,
     DeliveryInterrupted,
+    TaskSettled,
 }
 
 impl LoopControlDecisionKind {
@@ -126,6 +127,7 @@ impl LoopControlDecisionKind {
             Self::BudgetSliceContinuation => "budget_slice_continuation",
             Self::BudgetSliceRecovery => "budget_slice_recovery",
             Self::DeliveryInterrupted => "delivery_interrupted",
+            Self::TaskSettled => "task_settled",
         }
     }
 
@@ -139,6 +141,7 @@ impl LoopControlDecisionKind {
             "budget_slice_continuation" => Some(Self::BudgetSliceContinuation),
             "budget_slice_recovery" => Some(Self::BudgetSliceRecovery),
             "delivery_interrupted" => Some(Self::DeliveryInterrupted),
+            "task_settled" => Some(Self::TaskSettled),
             _ => None,
         }
     }
@@ -1928,5 +1931,84 @@ mod tests {
                 .expect("list checkpoints by session");
         assert_eq!(by_session.len(), 1);
         assert_eq!(by_session[0].checkpoint_id, "ckpt-1");
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn task_settlement_decision_preserves_pair_run_and_task_correlation(pool: PgPool) {
+        let run_id = format!("run-{}", Uuid::new_v4().simple());
+        let (bear_id, user_id) = seed_run(&pool, &run_id).await;
+        let task_id = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+        let task_id_text = task_id.to_string();
+        sqlx::query!(
+            "INSERT INTO bear_jobs (id, bear_id, created_by_user_id, created_by_role, goal) VALUES ($1, $2, $3, 'pair', 'Settlement correlation test')",
+            job_id,
+            bear_id,
+            user_id
+        )
+        .execute(&pool)
+        .await
+        .expect("create correlation job");
+        sqlx::query!(
+            "INSERT INTO bear_tasks (id, bear_id, job_id, title, body, created_by_role, created_by_user_id) VALUES ($1, $2, $3, 'Settlement task', 'Prove settlement correlation.', 'pair', $4)",
+            task_id,
+            bear_id,
+            job_id,
+            user_id
+        )
+        .execute(&pool)
+        .await
+        .expect("create correlation task");
+
+        record_loop_control_decision(
+            &pool,
+            LoopControlLedgerInput {
+                run_id: run_id.clone(),
+                turn_step_id: None,
+                conversation_message_id: None,
+                decision_id: format!("task-settled:{task_id}:done"),
+                decision_kind: LoopControlDecisionKind::TaskSettled,
+                control_level: "standard".to_string(),
+                reason: Some("done".to_string()),
+                orientation_kind: Some("task_oriented".to_string()),
+                checkpoint_id: None,
+                related_task_list_id: Some("session-correlation".to_string()),
+                related_task_item_id: Some(task_id_text.clone()),
+                related_docket_job_id: None,
+                related_docket_task_id: Some(task_id),
+                evidence_refs: vec![LedgerEvidenceRef {
+                    kind: "task_settlement".to_string(),
+                    id: "done".to_string(),
+                }],
+                decision: serde_json::json!({
+                    "action": "settle_task",
+                    "status": "done",
+                    "outcome_disposition": "completed",
+                }),
+            },
+        )
+        .await
+        .expect("record settlement decision");
+
+        let ledger = list_loop_control_decisions_for_run(&pool, &run_id)
+            .await
+            .expect("list settlement decision");
+        assert_eq!(ledger.len(), 1);
+        assert_eq!(ledger[0].decision_kind, "task_settled");
+        assert_eq!(ledger[0].related_docket_task_id, Some(task_id));
+        assert_eq!(
+            ledger[0].related_task_item_id.as_deref(),
+            Some(task_id_text.as_str())
+        );
+        assert_eq!(ledger[0].evidence_refs[0]["kind"], "task_settlement");
+        assert_eq!(ledger[0].decision["status"], "done");
+
+        let replay = replay_loop_control_observations(&ledger).expect("replay settlement decision");
+        assert_eq!(replay[0].run_id, run_id);
+        assert_eq!(
+            replay[0].decision_kind,
+            LoopControlDecisionKind::TaskSettled
+        );
+        assert_eq!(replay[0].related_docket_task_id, Some(task_id));
     }
 }

@@ -37,8 +37,11 @@ use crate::{
     errors::{CustomError, DenError},
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
-use den_runtime::current_task::select_pair_current_task;
 use den_runtime::plan_mode;
+use den_runtime::{
+    agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
+    current_task::select_pair_current_task,
+};
 use den_service::bears::db::get_bear;
 use den_service::{
     bears::BearProfile, client_sessions, conversation::persistence as conversation_persistence,
@@ -2157,6 +2160,47 @@ pub(crate) async fn update_current_task_status(
                 })
                 .await?;
             let status = args.status.as_str();
+            if let Some(client_session_id) = context.client_session_id.as_deref() {
+                if let Some(run) =
+                    den_runtime::turn_runs::active_run_for_session(pool, client_session_id)
+                        .await?
+                        .filter(|run| {
+                            run.bear_id == context.bear_id && run.user_id == context.user_id
+                        })
+                {
+                    if let Err(error) = den_runtime::agent_loop::record_loop_control_decision(
+                        pool,
+                        LoopControlLedgerInput {
+                            run_id: run.run_id,
+                            turn_step_id: None,
+                            conversation_message_id: None,
+                            decision_id: format!("task-settled:{}:{}", args.task_id, status),
+                            decision_kind: LoopControlDecisionKind::TaskSettled,
+                            control_level: "standard".to_string(),
+                            reason: Some(status.to_string()),
+                            orientation_kind: Some("task_oriented".to_string()),
+                            checkpoint_id: None,
+                            related_task_list_id: Some(session_anchor_id.expect("jobless task scope resolves session").to_string()),
+                            related_task_item_id: Some(args.task_id.to_string()),
+                            related_docket_job_id: None,
+                            related_docket_task_id: Some(args.task_id),
+                            evidence_refs: vec![LedgerEvidenceRef {
+                                kind: "task_settlement".to_string(),
+                                id: status.to_string(),
+                            }],
+                            decision: json!({
+                                "action": "settle_task",
+                                "status": status,
+                                "outcome_disposition": args.outcome_disposition.map(|value| value.as_str()),
+                            }),
+                        },
+                    )
+                    .await
+                    {
+                        tracing::warn!(task_id = %args.task_id, error = %error, "failed to record Pair task settlement in loop-control ledger");
+                    }
+                }
+            }
             return Ok(json!({
                 "domain": "docket",
                 "bear_id": context.bear_id,
