@@ -111,6 +111,8 @@ pub enum LoopControlDecisionKind {
     FinalGateContinuation,
     ActiveTaskPause,
     BudgetSliceContinuation,
+    BudgetSliceRecovery,
+    DeliveryInterrupted,
 }
 
 impl LoopControlDecisionKind {
@@ -122,6 +124,8 @@ impl LoopControlDecisionKind {
             Self::FinalGateContinuation => "final_gate_continuation",
             Self::ActiveTaskPause => "active_task_pause",
             Self::BudgetSliceContinuation => "budget_slice_continuation",
+            Self::BudgetSliceRecovery => "budget_slice_recovery",
+            Self::DeliveryInterrupted => "delivery_interrupted",
         }
     }
 
@@ -133,6 +137,8 @@ impl LoopControlDecisionKind {
             "final_gate_continuation" => Some(Self::FinalGateContinuation),
             "active_task_pause" => Some(Self::ActiveTaskPause),
             "budget_slice_continuation" => Some(Self::BudgetSliceContinuation),
+            "budget_slice_recovery" => Some(Self::BudgetSliceRecovery),
+            "delivery_interrupted" => Some(Self::DeliveryInterrupted),
             _ => None,
         }
     }

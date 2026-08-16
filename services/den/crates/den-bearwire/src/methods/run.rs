@@ -18,6 +18,7 @@ use bearwire_protocol::{
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
+    agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
     bearwire_events,
     current_task::preview_pair_current_task_selection,
     native_runtime::start_native_profile_turn_event_stream,
@@ -2492,6 +2493,42 @@ async fn run_start_with_recovery_source(
                         detail.clone(),
                     )
                     .await;
+                    if let Err(error) = den_runtime::agent_loop::record_loop_control_decision(
+                        &pool,
+                        LoopControlLedgerInput {
+                            run_id: run_id_for_task.clone(),
+                            turn_step_id: None,
+                            conversation_message_id: None,
+                            decision_id: format!("delivery-interrupted:{run_id_for_task}"),
+                            decision_kind: LoopControlDecisionKind::DeliveryInterrupted,
+                            control_level: "standard".to_string(),
+                            reason: Some("initial_stream_interrupted".to_string()),
+                            orientation_kind: None,
+                            checkpoint_id: None,
+                            related_task_list_id: None,
+                            related_task_item_id: None,
+                            related_docket_job_id: None,
+                            related_docket_task_id: None,
+                            evidence_refs: vec![LedgerEvidenceRef {
+                                kind: "bearwire_event".to_string(),
+                                id: "run.interrupted".to_string(),
+                            }],
+                            decision: json!({
+                                "action": "terminalize_delivery",
+                                "retryable": true,
+                                "settles_run": false,
+                            }),
+                        },
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            session_id = %session_for_task,
+                            run_id = %run_id_for_task,
+                            error = %error,
+                            "failed to record retryable delivery interruption in loop-control ledger"
+                        );
+                    }
                     let mut interruption_event =
                         retryable_stream_interruption_event(&run_id_for_task, detail);
                     interruption_event.bear_id = Some(bear_id.to_string());

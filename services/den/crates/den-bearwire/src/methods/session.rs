@@ -14,6 +14,7 @@ use bearwire_protocol::{
 };
 use den_http::errors::CustomError;
 use den_runtime::{
+    agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
     bearwire_events,
     conversation_review::{
         ConversationReview, ConversationReviewFinding, ConversationReviewFindingDetail,
@@ -910,6 +911,30 @@ pub(crate) async fn session_current_task_start_result(
                     "continuation recovery was claimed concurrently".to_string(),
                 )
             })?;
+            den_runtime::agent_loop::record_loop_control_decision(
+                &state.sqlx_pool,
+                LoopControlLedgerInput {
+                    run_id: recovered.run_id.clone(),
+                    turn_step_id: None,
+                    conversation_message_id: None,
+                    decision_id: format!("budget-slice-recovery:{}", recovered.run_id),
+                    decision_kind: LoopControlDecisionKind::BudgetSliceRecovery,
+                    control_level: "standard".to_string(),
+                    reason: Some("process_abandoned_continuation".to_string()),
+                    orientation_kind: Some("task_oriented".to_string()),
+                    checkpoint_id: None,
+                    related_task_list_id: None,
+                    related_task_item_id: Some(task_id.to_string()),
+                    related_docket_job_id: None,
+                    related_docket_task_id: Some(task_id),
+                    evidence_refs: vec![LedgerEvidenceRef {
+                        kind: "turn_run_state".to_string(),
+                        id: "continuing_to_running".to_string(),
+                    }],
+                    decision: json!({ "action": "recover", "same_run": true }),
+                },
+            )
+            .await?;
             return Ok(json!({
                 "ok": true,
                 "started": false,

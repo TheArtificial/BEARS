@@ -2847,6 +2847,14 @@ async fn current_task_start_recovers_an_abandoned_continuation(pool: sqlx::PgPoo
             .current_task_id,
         Some(task_id)
     );
+    let ledger = den_runtime::agent_loop::list_loop_control_decisions_for_run(&pool, &run_id)
+        .await
+        .expect("list recovery ledger");
+    assert!(ledger.iter().any(|entry| {
+        entry.decision_kind == "budget_slice_recovery"
+            && entry.related_docket_task_id == Some(task_id)
+            && entry.decision["same_run"] == true
+    }));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
