@@ -376,7 +376,7 @@ A Pair session's current task is session-scoped and may be local or Docket-backe
 | --- | --- |
 | Persist current session task | **Complete.** `client_sessions.current_task_id` persists Pair's optional selected session task across turns/reconnects; a valid session-anchored selection is canonical. |
 | Project current task | **Complete.** BearWire and ACP project an optional explicit selected task; ACP's agent plan is the selected task's sibling scope (or one root task). |
-| Snapshot task into Pair runs | **In progress.** Pair runtime resolves the persisted selected task before legacy compatibility state. Before a non-draft session-connected current task enters Pair execution, runtime must create or reuse a persisted Pair execution run; `RunPaused` is invalid without that run identity. Technical Pair slice limits atomically claim that same run, persist a continuation ledger record, and resume it in-process without clearing the selected task. A pre-terminal initial-stream interruption now ends client delivery through durable retryable `run.interrupted` evidence without falsely settling the run. This is not yet crash-recoverable: a process-loss recovery worker for a claimed `continuing` run remains required. |
+| Snapshot task into Pair runs | **In progress.** Pair runtime resolves the persisted selected task before legacy compatibility state. Before a non-draft session-connected current task enters Pair execution, runtime must create or reuse a persisted Pair execution run; `RunPaused` is invalid without that run identity. Technical Pair slice limits atomically claim that same run, persist a continuation ledger record, and resume it in-process without clearing the selected task. A pre-terminal initial-stream interruption now ends client delivery through durable retryable `run.interrupted` evidence without falsely settling the run. A process-abandoned `continuing` claim is recovered idempotently to the same durable `running` Pair run by authenticated `run.recover` or normal `session.current_task.start`; it consumes the persisted technical-budget snapshot and preserves the selected task, without creating a second active run. |
 | Enter current-task Pair execution | **Complete.** `session.current_task.start` is the authenticated normal Pair-client entry point for an already selected actionable session task. Den validates session ownership and task state, returns an existing active Pair run for retries, or delegates to the native `run.start` lifecycle with the persisted session context. It does not create a Job, dispatch Work, or expand authority. |
 | Bind Work Job | **Complete.** Each WorkRun persists one explicit durable Docket Job assignment. |
 | Enforce Work Job binding | **Complete.** A Work run without an assigned Job is rejected before model-driving continuation begins. |
@@ -413,7 +413,7 @@ transcript message id
 | --- | --- |
 | Define stable transcript IDs | **Implemented.** Canonical `append_message` returns immutable message UUID plus sequence number, including idempotent/retry paths, for user, assistant, tool, warning, and error records. |
 | Define append-only Pair runtime history | **Implemented at the existing ledger boundary.** `bear_loop_control_ledger` has Pair run, typed decision, bounded payload/evidence refs, task/list refs, and optional canonical `conversation_message_id`; it stores no raw transcript. |
-| Record controller boundaries | **Implemented for final-gate enforcement, in-process technical budget continuation, and retryable delivery interruption.** Terminal assistant output persists before final-gate evaluation; suppressed final responses record `FinalGateContinuation`, repeated objections record `ActiveTaskPause` before `RunPaused` is emitted, and technical Pair slice boundaries atomically claim `running → continuing`, record `BudgetSliceContinuation`, then consume that claim as `continuing → running` before the same-run successor step. An initial stream that ends before a semantic terminal/client-wait boundary records durable `run.interrupted` evidence and terminalizes the current client delivery while leaving the run retryable. Tool-failure, Rule-of-Ko, and unrecovered context exhaustion remain real non-auto-resume stops. Process-loss recovery for a persisted `continuing` run, task-focus resolution, and settlement correlation remain separately incomplete. |
+| Record controller boundaries | **Implemented for final-gate enforcement, in-process technical budget continuation, process-loss continuation recovery, and retryable delivery interruption.** Terminal assistant output persists before final-gate evaluation; suppressed final responses record `FinalGateContinuation`, repeated objections record `ActiveTaskPause` before `RunPaused` is emitted, and technical Pair slice boundaries atomically claim `running → continuing`, record `BudgetSliceContinuation`, then consume that claim as `continuing → running` before the same-run successor step. A process-abandoned `continuing` claim is also consumed back to the original `running` run, never a second active run. An initial stream that ends before a semantic terminal/client-wait boundary records durable `run.interrupted` evidence and terminalizes the current client delivery while leaving the run retryable. Tool-failure, Rule-of-Ko, and unrecovered context exhaustion remain real non-auto-resume stops. Task-focus resolution and settlement correlation remain separately incomplete. |
 | Provide interrogation reads | **Implemented.** Authenticated BearWire `conversation.diagnostics` provides bounded, transcript-free reads scoped to the Bear conversation/session and filters by run, message, and task. |
 | Define retention and redaction | **Partially complete.** The ledger is transcript-free and diagnostic reads clamp to 1–100 records; explicit retention/expiry and field-redaction policy remain pending. |
 | Test the evidence chain | **Partially complete.** Unit coverage proves a runless repeated-objection path fails before persistence or `RunPaused`; database-backed validation must prove the persisted message-to-run-to-task join and pause ordering against a reachable PostgreSQL instance. |
@@ -432,23 +432,9 @@ is the next work within the broader current-task execution program; do not
 reopen profile resolution or start Phase 3 policy expansion before this slice
 meets its exit criteria.
 
-1. **Recover abandoned continuation claims.** On startup/reconciliation, find a
-   persisted Pair run left in `continuing` by process loss, atomically choose a
-   safe outcome, and emit correlated recovery evidence. The normal outcome is
-   to return the run to retryable `running`/resumable state; it must never
-   silently create a second run or clear the selected task.
-2. **Make terminal delivery correlation explicit.** Include the retryable
-   `run.interrupted` delivery event in the same run/message/ledger join used by
-   pause, continuation, resume, and settlement. A delivery-terminal event is
-   not task settlement.
-3. **Prove the PostgreSQL evidence chain.** Add an integration test covering an
-   active Pair session, selected task, run creation/reuse, continuation claim,
-   simulated recovery, terminal delivery event, and eventual task settlement.
-   Assert the complete durable chain from conversation message through run and
-   current task to ledger/budget evidence.
-4. **Set ledger lifecycle policy.** Specify and implement retention/expiry and
-   field-redaction rules for loop-control ledger payloads and evidence refs;
-   test that diagnostics remain bounded and transcript-free after expiry.
+1. **Correlate recovery and terminal delivery.** Include same-run continuation recovery and the retryable `run.interrupted` delivery event in the run/message/ledger join used by pause, continuation, resume, and settlement. A delivery-terminal event is not task settlement.
+2. **Prove the PostgreSQL evidence chain.** Add an integration test covering an active Pair session, selected task, run creation/reuse, continuation claim, simulated same-run recovery, terminal delivery event, and eventual task settlement. Assert the complete durable chain from conversation message through run and current task to ledger/budget evidence.
+3. **Set ledger lifecycle policy.** Specify and implement retention/expiry and field-redaction rules for loop-control ledger payloads and evidence refs; test that diagnostics remain bounded and transcript-free after expiry.
 
 **Slice exit gate:** an interrupted or recovered active Pair task has exactly
 one client-visible delivery terminal outcome for each delivery attempt, one
