@@ -124,6 +124,7 @@ pub(crate) enum RunFailureReason {
     StreamError,
     StartFailed,
     ClientObligationTimeout,
+    PermissionDecisionExpired,
     ServerRestartInterrupted,
     CommandOutcomeUnknown,
     #[cfg(test)]
@@ -145,6 +146,7 @@ impl RunFailureReason {
             Self::StreamError => "stream_error",
             Self::StartFailed => "start_failed",
             Self::ClientObligationTimeout => "client_obligation_timeout",
+            Self::PermissionDecisionExpired => "permission_decision_expired",
             Self::ServerRestartInterrupted => "server_restart_interrupted",
             Self::CommandOutcomeUnknown => "command_outcome_unknown",
             #[cfg(test)]
@@ -1414,6 +1416,91 @@ pub(crate) async fn fail_run_lifecycle(
                 }),
             )
             .await;
+        }
+    }
+}
+
+pub(crate) async fn persist_run_blocked(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    reason: RunFailureReason,
+    message: String,
+    context: Option<serde_json::Value>,
+) {
+    let bear_name = bear_display_name(pool, bear_id).await;
+    let projection = run_failure_projection(reason.as_str(), &message, run_id, &bear_name, context);
+    let user_message = projection.user_message.as_deref();
+    let context = projection.diagnostic_context.clone();
+    tracing::info!(session_id, run_id, reason = %reason, "BearWire run blocked");
+    let mut event = BearWireEvent::ephemeral(
+        "run.blocked",
+        json!({
+            "run_id": run_id,
+            "message": message,
+            "user_message": user_message,
+            "reason": reason.as_str(),
+            "context": context,
+        }),
+    );
+    event.bear_id = Some(bear_id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.to_string());
+    event.run_id = Some(run_id.to_string());
+    let finished = turn_runs::finish_run_with_bearwire_event(
+        pool, session_id, run_id, bear_id, user_id, turn_runs::TurnRunState::Blocked,
+        Some(reason.as_str()), event,
+    ).await.unwrap_or_else(|err| {
+        tracing::error!(session_id, run_id, reason = %reason, error = %err, "failed to atomically persist BearWire run block");
+        None
+    });
+    if finished.is_none() {
+        return;
+    }
+    record_work_run_outcome_if_bound(
+        pool,
+        session_id,
+        run_id,
+        "blocked",
+        Some(json!({
+            "category": reason.as_str(), "message": message, "forensics": context,
+        })),
+    )
+    .await;
+    if let Ok(Some(session)) =
+        client_sessions::find_for_user_bear_session_id(pool, user_id, bear_id, session_id).await
+    {
+        let conversation_id = session
+            .resolved_conversation_id
+            .clone()
+            .unwrap_or(session.conversation_id);
+        let provenance = ConversationEventProvenance::client_session(session_id.to_string());
+        let content_json = projection.content.clone();
+        let _ = persist_canonical_conversation_record(
+            &canonical_persistence_context(
+                pool.clone(),
+                bear_id,
+                Some(user_id),
+                conversation_id,
+                Some(session_id.to_string()),
+                Some(run_id.to_string()),
+                provenance.scope_id,
+                false,
+            ),
+            &CanonicalConversationRecord::model_visible_hidden_assistant_message(
+                projection.model_summary,
+                content_json.clone(),
+                None,
+            ),
+        )
+        .await;
+        if let Some(marker) = projection.history_marker {
+            persist_visible_runtime_marker(pool, session_id, run_id, bear_id, user_id,
+                "operational_outcome", marker,
+                json!({"reason": reason.as_str(), "kind": content_json["kind"], "retryable": content_json["retryable"], "status": "blocked"}),
+            ).await;
         }
     }
 }

@@ -6,7 +6,7 @@ use den_service::DenState;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::methods::run::{persist_run_failed, RunFailureReason};
+use crate::methods::run::{persist_run_blocked, persist_run_failed, RunFailureReason};
 
 const DEFAULT_EXPIRY_BATCH_LIMIT: i64 = 1_000;
 
@@ -139,17 +139,22 @@ pub async fn expire_client_obligations_once(
                 .collect::<Vec<_>>();
             let detail = match timed_out_permissions.as_slice() {
                 [permission_id] => {
-                    format!("Permission request {permission_id} timed out waiting for a client response.")
+                    format!("Permission request {permission_id} expired without a decision.")
                 }
                 [] => "The connection was interrupted, or the required work-surface response did not arrive before the step timed out.".to_string(),
                 permission_ids => format!(
-                    "Permission requests {} timed out waiting for client responses.",
+                    "Permission requests {} expired without decisions.",
                     permission_ids.join(", ")
                 ),
             };
+            let reason = if timed_out_permissions.is_empty() {
+                RunFailureReason::ClientObligationTimeout
+            } else {
+                RunFailureReason::PermissionDecisionExpired
+            };
             (
-                RunFailureReason::ClientObligationTimeout,
-                format!("{detail} Reconnect the work surface and start a new turn to retry."),
+                reason,
+                format!("{detail} No edit was performed. Reconnect the work surface and send another message to request approval again."),
                 None,
             )
         };
@@ -157,27 +162,47 @@ pub async fn expire_client_obligations_once(
         // blocked on this client response.
         state.turn_cancellations.cancel_session(&run.session_id);
         state.tool_turns.cancel_active_turn(&run.session_id);
-        persist_run_failed(
-            pool,
-            &run.session_id,
-            &run.run_id,
-            run.bear_id,
-            run.user_id,
-            reason,
-            message,
-            Some(json!({
-                "affected_obligations": affected_obligations,
-                "expired_obligations": if interrupted_by_restart { Value::Null } else { json!(affected_obligations) },
-                "source": if interrupted_by_restart {
-                    "bearwire_client_obligation_restart_reconciliation"
-                } else {
-                    "bearwire_client_obligation_expiry_loop"
-                },
-                "current_process_epoch_id": state.process_epoch_id,
-                "recovery": recovery,
-            })),
-        )
-        .await;
+        if reason == RunFailureReason::PermissionDecisionExpired {
+            persist_run_blocked(
+                pool,
+                &run.session_id,
+                &run.run_id,
+                run.bear_id,
+                run.user_id,
+                reason,
+                message,
+                Some(json!({
+                    "affected_obligations": affected_obligations,
+                    "expired_obligations": json!(affected_obligations),
+                    "source": "bearwire_client_obligation_expiry_loop",
+                    "current_process_epoch_id": state.process_epoch_id,
+                    "recovery": recovery,
+                })),
+            )
+            .await;
+        } else {
+            persist_run_failed(
+                pool,
+                &run.session_id,
+                &run.run_id,
+                run.bear_id,
+                run.user_id,
+                reason,
+                message,
+                Some(json!({
+                    "affected_obligations": affected_obligations,
+                    "expired_obligations": if interrupted_by_restart { Value::Null } else { json!(affected_obligations) },
+                    "source": if interrupted_by_restart {
+                        "bearwire_client_obligation_restart_reconciliation"
+                    } else {
+                        "bearwire_client_obligation_expiry_loop"
+                    },
+                    "current_process_epoch_id": state.process_epoch_id,
+                    "recovery": recovery,
+                })),
+            )
+            .await;
+        }
     }
 
     Ok(affected_run_count)

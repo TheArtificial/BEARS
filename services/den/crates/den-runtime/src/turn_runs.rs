@@ -18,6 +18,7 @@ pub enum TurnRunState {
     Running,
     WaitingForClient,
     Continuing,
+    Blocked,
     Completed,
     Failed,
     Cancelled,
@@ -30,6 +31,7 @@ impl TurnRunState {
             Self::Running => "running",
             Self::WaitingForClient => "waiting_for_client",
             Self::Continuing => "continuing",
+            Self::Blocked => "blocked",
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -42,6 +44,7 @@ impl TurnRunState {
             "running" => Ok(Self::Running),
             "waiting_for_client" => Ok(Self::WaitingForClient),
             "continuing" => Ok(Self::Continuing),
+            "blocked" => Ok(Self::Blocked),
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
@@ -52,7 +55,10 @@ impl TurnRunState {
     }
 
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+        matches!(
+            self,
+            Self::Blocked | Self::Completed | Self::Failed | Self::Cancelled
+        )
     }
 
     pub fn allows_open_obligation(self) -> bool {
@@ -62,7 +68,7 @@ impl TurnRunState {
     fn terminal_obligation_state(self) -> Option<TurnObligationState> {
         match self {
             Self::Completed => Some(TurnObligationState::Continued),
-            Self::Failed => Some(TurnObligationState::Failed),
+            Self::Blocked | Self::Failed => Some(TurnObligationState::Failed),
             Self::Cancelled => Some(TurnObligationState::Cancelled),
             _ => None,
         }
@@ -507,7 +513,7 @@ pub async fn finish_run_with_bearwire_event(
             completed_at = COALESCE(completed_at, NOW())
         WHERE run_id = $1
           AND session_id = $4
-          AND state NOT IN ('completed','failed','cancelled')
+          AND state NOT IN ('blocked','completed','failed','cancelled')
         "#,
         run_id,
         state.as_str(),
@@ -915,7 +921,7 @@ pub async fn transition_run(
             updated_at = NOW(),
             completed_at = completed_at
         WHERE run_id = $1
-          AND state NOT IN ('completed','failed','cancelled')
+          AND state NOT IN ('blocked','completed','failed','cancelled')
         RETURNING id, run_id, session_id, bear_id, user_id, state,
                   terminal_reason AS "terminal_reason?", created_at, updated_at,
                   completed_at AS "completed_at?"
@@ -942,6 +948,7 @@ mod tests {
     fn terminal_run_with_open_obligation_is_invalid() {
         for terminal in [
             TurnRunState::Completed,
+            TurnRunState::Blocked,
             TurnRunState::Failed,
             TurnRunState::Cancelled,
         ] {

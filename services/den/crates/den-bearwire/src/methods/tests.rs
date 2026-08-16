@@ -2377,7 +2377,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) {
+async fn permission_decision_expiry_blocks_run(pool: sqlx::PgPool) {
     let state = test_state(pool.clone());
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
@@ -2387,13 +2387,13 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
     turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
-    let obligation = turn_obligations::upsert_tool_result_obligation(
+    let obligation = turn_obligations::upsert_permission_decision_obligation(
         &pool,
         &run_id,
         &session_id,
         "call-timeout",
-        None,
-        json!({ "tool_name": "fs_list_directory" }),
+        Some("permission-timeout"),
+        json!({ "tool_name": "fs_edit_file" }),
     )
     .await
     .expect("insert tool obligation");
@@ -2430,17 +2430,17 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "failed");
+    assert_eq!(run.state, "blocked");
     assert_eq!(
         run.terminal_reason.as_deref(),
-        Some("client_obligation_timeout")
+        Some("permission_decision_expired")
     );
     let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
         .await
         .expect("list events");
     assert!(events.iter().any(|row| {
-        row.event_type == "run.failed"
-            && row.event.data["reason"] == "client_obligation_timeout"
+        row.event_type == "run.blocked"
+            && row.event.data["reason"] == "permission_decision_expired"
             && row.event.data["context"]["source"] == "bearwire_client_obligation_expiry_loop"
     }));
 }
