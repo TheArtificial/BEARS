@@ -686,7 +686,7 @@ pub(crate) async fn handle_prompt(
                     return Err(err);
                 }
                 Err(err) => {
-                    diagnostics.event_errors += 1;
+                    diagnostics.observe_event_error(&event, &err);
                     tracing::warn!(
                         target: "bear_armature::lifecycle",
                         session_id,
@@ -810,43 +810,52 @@ pub(crate) async fn handle_prompt(
     // See docs/architecture/bearwire-run-stream-completion.md. Stream observations
     // are transport diagnostics; a missing terminal event must be reconciled against
     // canonical run state before changing this prompt-end decision.
-    let canonical_run_state_allows_end = if saw_done || run_id == "<unknown>" {
-        false
-    } else {
-        match fetch_run_state(http, config, session_id, run_id).await {
-            Ok(state) => {
-                // Canonical recovery can create a permission projection; route
-                // it through the same session lane even though it has no event
-                // page frame sequence.
-                let recovery_projection = shared_state
-                    .projection_dispatcher
-                    .begin_live_page(session_id, turn_token)
-                    .await;
-                recovery_projection.observe_frame(None);
-                service_run_state_tool_obligations(
-                    config,
-                    shared_state,
-                    session_id,
-                    run_id,
-                    &state,
-                    turn_token,
-                )
-                .await?;
-                drop(recovery_projection);
-                canonical_run_state_allows_prompt_end(&state)
+    let (canonical_run_state_allows_end, canonical_run_state_summary) =
+        if saw_done || run_id == "<unknown>" {
+            (false, None)
+        } else {
+            match fetch_run_state(http, config, session_id, run_id).await {
+                Ok(state) => {
+                    // Canonical recovery can create a permission projection; route
+                    // it through the same session lane even though it has no event
+                    // page frame sequence.
+                    let recovery_projection = shared_state
+                        .projection_dispatcher
+                        .begin_live_page(session_id, turn_token)
+                        .await;
+                    recovery_projection.observe_frame(None);
+                    service_run_state_tool_obligations(
+                        config,
+                        shared_state,
+                        session_id,
+                        run_id,
+                        &state,
+                        turn_token,
+                    )
+                    .await?;
+                    drop(recovery_projection);
+                    let summary = canonical_run_state_summary(&state);
+                    let allows_end = canonical_run_state_allows_prompt_end(&state);
+                    (allows_end, Some(summary))
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        target: "bear_armature::lifecycle",
+                        session_id,
+                        run_id,
+                        error = %err,
+                        "BearWire final run.state reconciliation failed"
+                    );
+                    (
+                        false,
+                        Some(format!(
+                            "fetch_error={}",
+                            truncate_for_log(&err.to_string(), 360)
+                        )),
+                    )
+                }
             }
-            Err(err) => {
-                tracing::warn!(
-                    target: "bear_armature::lifecycle",
-                    session_id,
-                    run_id,
-                    error = %err,
-                    "BearWire final run.state reconciliation failed"
-                );
-                false
-            }
-        }
-    };
+        };
     if !stream_allows_prompt_end_response(
         saw_visible_output,
         saw_error,
@@ -860,7 +869,10 @@ pub(crate) async fn handle_prompt(
             "Den BearWire delivery ended without visible output, tool activity, or a terminal run event"
         };
         return Err(anyhow!(
-            "{reason}. run_id={run_id}. Diagnostics: {}",
+            "{reason}. run_id={run_id}. canonical_run_state={}. Diagnostics: {}",
+            canonical_run_state_summary
+                .as_deref()
+                .unwrap_or("not_fetched"),
             diagnostics.summary()
         ));
     }
@@ -1083,6 +1095,34 @@ fn event_fetch_retry_delay(consecutive_errors: usize) -> Duration {
         .min(BEARWIRE_EVENT_FETCH_MAX_BACKOFF)
 }
 
+fn canonical_run_state_summary(state: &Value) -> String {
+    let run_state = state
+        .pointer("/run/state")
+        .and_then(Value::as_str)
+        .unwrap_or("<missing>");
+    let terminal_reason = state
+        .pointer("/run/terminal_reason")
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let open_obligations = state
+        .get("open_obligations")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let recent_event_types = state
+        .get("recent_events")
+        .and_then(Value::as_array)
+        .map(|events| {
+            events
+                .iter()
+                .filter_map(|entry| entry.get("event").or(Some(entry)))
+                .filter_map(|event| event.get("type").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    format!(
+        "state={run_state}, terminal_reason={terminal_reason}, open_obligations={open_obligations}, recent_event_types={recent_event_types:?}"
+    )
+}
 fn canonical_run_state_allows_prompt_end(state: &Value) -> bool {
     let run_state = state.pointer("/run/state").and_then(Value::as_str);
     let has_open_obligations = state

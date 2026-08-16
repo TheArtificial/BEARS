@@ -1312,6 +1312,7 @@ struct SseStreamDiagnostics {
     events: usize,
     fetch_errors: usize,
     event_errors: usize,
+    event_error_samples: Vec<String>,
     event_types: HashMap<String, usize>,
     unknown_event_samples: Vec<String>,
     saw_turn_complete: bool,
@@ -1338,13 +1339,29 @@ impl SseStreamDiagnostics {
         }
     }
 
+    fn observe_event_error(&mut self, event: &Value, error: &anyhow::Error) {
+        self.event_errors += 1;
+        if self.event_error_samples.len() < 5 {
+            let event_type = event
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("<missing>");
+            self.event_error_samples.push(format!(
+                "type={event_type} error={} event={}",
+                truncate_for_log(&error.to_string(), 240),
+                truncate_for_log(&event.to_string(), 360),
+            ));
+        }
+    }
+
     fn summary(&self) -> String {
         format!(
-            "frames={}, events={}, fetch_errors={}, event_errors={}, event_types={:?}, unknown_samples={:?}, saw_turn_complete={}, saw_visible_output={}, saw_tool_activity={}, saw_error={}",
+            "frames={}, events={}, fetch_errors={}, event_errors={}, event_error_samples={:?}, event_types={:?}, unknown_samples={:?}, saw_turn_complete={}, saw_visible_output={}, saw_tool_activity={}, saw_error={}",
             self.frames,
             self.events,
             self.fetch_errors,
             self.event_errors,
+            self.event_error_samples,
             self.event_types,
             self.unknown_event_samples,
             self.saw_turn_complete,
