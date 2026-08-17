@@ -261,6 +261,11 @@ pub(crate) struct DocketJobUpdateArguments {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobLifecycleArguments {
+    pub(crate) job_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct DocketJobExecuteArguments {
     pub(crate) job_id: Uuid,
 }
@@ -1628,6 +1633,38 @@ pub(crate) async fn update_job(
             work_branch: None,
             status: None,
             visibility: args.visibility,
+        })
+        .await?;
+    let status_report = docket_job_status_report(&job);
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "job": job,
+        "status_report": status_report,
+    }))
+}
+
+pub(crate) async fn set_job_lifecycle(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+    status: DocketJobStatus,
+) -> Result<Value, CustomError> {
+    let args: DocketJobLifecycleArguments = serde_json::from_value(arguments)?;
+    let job = PgDocketService::from_pool(pool)
+        .update_job(DocketJobUpdate {
+            bear_id: context.bear_id,
+            job_id: args.job_id,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+            goal: None,
+            work_surface_id: None,
+            commit_policy: None,
+            work_branch: None,
+            status: Some(status),
+            visibility: None,
         })
         .await?;
     let status_report = docket_job_status_report(&job);

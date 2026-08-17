@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_loop_control_ledger SET created_at = NOW() - INTERVAL '31 days' WHERE run_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cbb365679cd3d3fc983b81f967bf7c373d42c4c1c11c498e647ec732c24b2783"
+}
