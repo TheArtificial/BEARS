@@ -1218,6 +1218,26 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_evaluator_triggers_on_same_signature_near_ko() {
+        let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Standard);
+        let evaluation = evaluate_checkpoint_trigger(
+            &profile,
+            &CheckpointState::default(),
+            &[
+                observation(ToolBudgetClass::Read, "read:a", false),
+                observation(ToolBudgetClass::Read, "read:a", false),
+                observation(ToolBudgetClass::Read, "read:a", false),
+            ],
+            false,
+        );
+
+        assert_eq!(
+            evaluation.trigger.as_ref().map(|trigger| trigger.reason),
+            Some(CheckpointReason::SameSignatureNearKo)
+        );
+    }
+
+    #[test]
     fn tool_budget_multiplier_preserves_profile_safety_limits() {
         let base = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Strict);
         let scaled = base.with_tool_budget_multiplier(1.5);
