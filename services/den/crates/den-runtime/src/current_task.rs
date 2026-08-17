@@ -33,7 +33,7 @@ pub async fn preview_pair_current_task_selection(
                 job_id: None,
                 session_anchor_id: Some(session.id),
                 parent_task_id: None,
-                include_descendants: false,
+                include_descendants: true,
                 limit: 500,
             },
         )
@@ -123,7 +123,7 @@ pub async fn select_pair_current_task(
                 job_id: None,
                 session_anchor_id: Some(session.id),
                 parent_task_id: None,
-                include_descendants: false,
+                include_descendants: true,
                 limit: 500,
             },
         )
