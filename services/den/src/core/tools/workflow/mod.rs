@@ -4,14 +4,14 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::tools::constants::{
-    DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_CREATE,
-    DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET, DEN_JOB_LIST,
-    DEN_JOB_RECONCILE, DEN_JOB_SETTLE_TASK, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND,
-    DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
-    DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_SELECT, DEN_TASK_UPDATE,
-    DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL,
-    DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST, DEN_WORK_RUN_RESOLVE_STALLED,
-    DEN_WORK_SURFACE_CONFIRM,
+    DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_ARCHIVE,
+    DEN_JOB_CANCEL, DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND,
+    DEN_JOB_GET, DEN_JOB_LIST, DEN_JOB_RECONCILE, DEN_JOB_SETTLE_TASK, DEN_JOB_UPDATE,
+    DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
+    DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_SELECT,
+    DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
+    DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+    DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
@@ -134,6 +134,8 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_JOB_GET
             | DEN_JOB_FIND
             | DEN_JOB_UPDATE
+            | DEN_JOB_CANCEL
+            | DEN_JOB_ARCHIVE
             | DEN_JOB_EXECUTE
             | DEN_JOB_RECONCILE
             | DEN_JOB_SETTLE_TASK
@@ -162,10 +164,14 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
 
 #[cfg(test)]
 mod workflow_tool_tests {
-    use den_core::tools::constants::{DEN_JOB_RECONCILE, DEN_JOB_SETTLE_TASK};
+    use den_core::tools::constants::{
+        DEN_JOB_ARCHIVE, DEN_JOB_CANCEL, DEN_JOB_RECONCILE, DEN_JOB_SETTLE_TASK,
+    };
 
     #[test]
-    fn docket_execution_controls_are_workflow_tools() {
+    fn docket_lifecycle_and_execution_controls_are_workflow_tools() {
+        assert!(super::is_workflow_tool(DEN_JOB_CANCEL));
+        assert!(super::is_workflow_tool(DEN_JOB_ARCHIVE));
         assert!(super::is_workflow_tool(DEN_JOB_RECONCILE));
         assert!(super::is_workflow_tool(DEN_JOB_SETTLE_TASK));
     }
