@@ -137,10 +137,24 @@ pub async fn expire_client_obligations_once(
                 })
                 .filter_map(|obligation| obligation.get("permission_id").and_then(Value::as_str))
                 .collect::<Vec<_>>();
+            let timed_out_tool_results = affected_obligations
+                .iter()
+                .filter(|obligation| {
+                    obligation
+                        .get("expected_responder_action")
+                        .and_then(Value::as_str)
+                        == Some("tool_result")
+                })
+                .filter_map(|obligation| obligation.get("tool_name").and_then(Value::as_str))
+                .collect::<Vec<_>>();
             let detail = match timed_out_permissions.as_slice() {
                 [permission_id] => {
                     format!("Permission request {permission_id} expired without a decision.")
                 }
+                [] if !timed_out_tool_results.is_empty() => format!(
+                    "The work surface did not return the requested result for {} before the local-step wait expired.",
+                    timed_out_tool_results.join(", ")
+                ),
                 [] => "The connection was interrupted, or the required work-surface response did not arrive before the step timed out.".to_string(),
                 permission_ids => format!(
                     "Permission requests {} expired without decisions.",
@@ -152,11 +166,12 @@ pub async fn expire_client_obligations_once(
             } else {
                 RunFailureReason::PermissionDecisionExpired
             };
-            (
-                reason,
-                format!("{detail} No edit was performed. Reconnect the work surface and send another message to request approval again."),
-                None,
-            )
+            let message = if timed_out_permissions.is_empty() {
+                format!("{detail} Reconnect the work surface and send another message to retry.")
+            } else {
+                format!("{detail} No edit was performed. Reconnect the work surface and send another message to request approval again.")
+            };
+            (reason, message, None)
         };
         // The durable failure alone does not wake an ACP continuation already
         // blocked on this client response.

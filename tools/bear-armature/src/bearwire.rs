@@ -548,15 +548,48 @@ pub(crate) async fn handle_prompt(
     let mut logged_initial_wait = false;
     let mut consecutive_fetch_errors = 0usize;
     let mut first_fetch_error_at: Option<Instant> = None;
+    let mut logged_active_prompt_timeout = false;
 
     'poll: loop {
+        // A running Den turn may be between continuations: it can have no local
+        // execution and no open obligation just before it publishes its next
+        // tool request. Keep replaying instead of abandoning that handoff window.
+        // ponytail: This has no separate idle deadline; cancellation/Den's run
+        // timeout remains the authority. Add one only with a durable heartbeat.
         if started.elapsed() >= BEARWIRE_PROMPT_TIMEOUT
             && !shared_state
                 .tool_tasks
                 .has_active_execution(session_id)
                 .await
         {
-            break;
+            if run_id == "<unknown>" {
+                break;
+            }
+            match fetch_run_state(http, config, session_id, run_id).await {
+                Ok(state) if canonical_run_state_allows_prompt_end(&state) => break,
+                Ok(state) => {
+                    if !logged_active_prompt_timeout {
+                        logged_active_prompt_timeout = true;
+                        tracing::warn!(
+                            target: "bear_armature::lifecycle",
+                            session_id,
+                            run_id,
+                            state = %canonical_run_state_summary(&state),
+                            "BearWire prompt timeout reached while run remains active; continuing event replay"
+                        );
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        target: "bear_armature::lifecycle",
+                        session_id,
+                        run_id,
+                        error = %err,
+                        "BearWire prompt timeout reached and run state could not be reconciled"
+                    );
+                    break;
+                }
+            }
         }
         // Own this session's ACP projection lane before fetching the page. A
         // detached local tool can keep executing, but cannot emit an ACP update
