@@ -10,7 +10,9 @@ use uuid::Uuid;
 use den_core::{config::Config, DenError};
 
 use den_memory::MemoryStoreManager;
-use den_protocol::{RuntimeContinuation, RuntimeConversationBackend, RuntimeConversationRef};
+use den_protocol::{
+    CheckpointAuditContext, RuntimeContinuation, RuntimeConversationBackend, RuntimeConversationRef,
+};
 use den_service::client_sessions;
 
 use den_core::conversation_ids::is_native_runtime_conversation_id;
@@ -26,6 +28,8 @@ pub struct TurnStartRequest<'a> {
     pub memory_stores: &'a MemoryStoreManager,
     pub request_id: Uuid,
     pub run_id: Option<&'a str>,
+    /// Opaque adapter-resolved Work/Job correlation persisted only with checkpoints.
+    pub checkpoint_audit_context: Option<CheckpointAuditContext>,
     pub user_id: i32,
     pub session_id: &'a str,
     pub bear_id: Uuid,

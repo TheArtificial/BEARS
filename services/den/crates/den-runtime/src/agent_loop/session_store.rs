@@ -96,6 +96,8 @@ pub struct AgentLoopSession {
     /// Concrete dispatched work run bound by `work.checkout`. This is copied
     /// into Den-hosted tool invocations; it is absent for ordinary sessions.
     pub work_run_id: Option<Uuid>,
+    /// Adapter-resolved opaque IDs used exclusively for checkpoint audit persistence.
+    pub checkpoint_audit_context: Option<den_protocol::CheckpointAuditContext>,
     pub workspace_roots: Vec<String>,
     pub session_capabilities: Vec<SessionCapabilityDescriptor>,
     /// Bounded, volatile projection of successful catalog lookups for the next model step.
@@ -469,6 +471,7 @@ mod tests {
             conversation_id: "den-conv-test".to_string(),
             client_session_id: "client-test".to_string(),
             work_run_id: None,
+            checkpoint_audit_context: None,
             workspace_roots: vec!["/workspace".to_string()],
             session_capabilities: vec![],
             recently_discovered_capabilities: vec![],

@@ -2332,6 +2332,23 @@ async fn run_start_with_recovery_source(
         )
         .await;
         let native_start = Instant::now();
+        let checkpoint_audit_context =
+            match den_docket::work_runs::get_live_work_run_by_session(&pool, &session_for_task)
+                .await
+            {
+                Ok(work_run) => work_run.map(|work_run| den_protocol::CheckpointAuditContext {
+                    work_run_id: work_run.id,
+                    docket_job_id: work_run.job_id,
+                }),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        session_id = %session_for_task,
+                        "failed to resolve checkpoint audit context; continuing without it"
+                    );
+                    None
+                }
+            };
         let stream_result = start_native_profile_turn_event_stream(
             TurnStartRequest {
                 sqlx_pool: &pool,
@@ -2339,6 +2356,7 @@ async fn run_start_with_recovery_source(
                 memory_stores: &memory_stores,
                 request_id,
                 run_id: Some(&run_id_for_task),
+                checkpoint_audit_context,
                 user_id,
                 session_id: &session_for_task,
                 bear_id,

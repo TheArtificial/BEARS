@@ -2339,6 +2339,7 @@ mod tests {
             conversation_id: "den-conv-test".to_string(),
             client_session_id: "client-test".to_string(),
             work_run_id: None,
+            checkpoint_audit_context: None,
             workspace_roots: vec!["/workspace".to_string()],
             session_capabilities: vec![],
             recently_discovered_capabilities: vec![],

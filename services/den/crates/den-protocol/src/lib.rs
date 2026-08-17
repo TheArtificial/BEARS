@@ -33,6 +33,14 @@ pub struct RuntimeTurnRef {
     pub id: String,
 }
 
+/// Opaque audit correlation supplied by the adapter that owns Work/Docket lookup.
+/// Runtime persists these stable identifiers but does not inspect their state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointAuditContext {
+    pub work_run_id: uuid::Uuid,
+    pub docket_job_id: uuid::Uuid,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnsureConversationRequest {
     pub bear_id: uuid::Uuid,

@@ -69,6 +69,7 @@ pub struct CheckpointArtifactInput {
     pub run_id: String,
     pub turn_step_id: Option<Uuid>,
     pub orientation_kind: Option<String>,
+    pub audit_context: Option<den_protocol::CheckpointAuditContext>,
     pub request: RuntimeCheckpointRequest,
     pub visibility: CheckpointVisibility,
     pub replay_policy: CheckpointReplayPolicy,
@@ -98,6 +99,8 @@ pub struct CheckpointArtifactRow {
     pub related_task_list_id: Option<String>,
     pub related_task_item_id: Option<String>,
     pub related_docket_task_id: Option<Uuid>,
+    pub related_work_run_id: Option<Uuid>,
+    pub related_docket_job_id: Option<Uuid>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }
@@ -699,9 +702,10 @@ pub async fn record_checkpoint_request(
         INSERT INTO bear_run_checkpoints (
             run_id, turn_step_id, checkpoint_id, reason, control_level, request,
             validation_status, visibility, replay_policy, related_task_list_id,
-            related_task_item_id, related_docket_task_id
+            related_task_item_id, related_docket_task_id, related_work_run_id,
+            related_docket_job_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, 'requested', $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, 'requested', $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (run_id, checkpoint_id) DO UPDATE SET
             request = EXCLUDED.request,
             reason = EXCLUDED.reason,
@@ -712,12 +716,15 @@ pub async fn record_checkpoint_request(
             related_task_list_id = EXCLUDED.related_task_list_id,
             related_task_item_id = EXCLUDED.related_task_item_id,
             related_docket_task_id = EXCLUDED.related_docket_task_id,
+            related_work_run_id = EXCLUDED.related_work_run_id,
+            related_docket_job_id = EXCLUDED.related_docket_job_id,
             response = NULL,
             updated_at = NOW()
         RETURNING
             id, run_id, turn_step_id, checkpoint_id, reason, control_level, request,
             response, validation_status, visibility, replay_policy, related_task_list_id,
-            related_task_item_id, related_docket_task_id, created_at, updated_at
+            related_task_item_id, related_docket_task_id, related_work_run_id,
+            related_docket_job_id, created_at, updated_at
         ",
         input.run_id,
         input.turn_step_id,
@@ -729,7 +736,9 @@ pub async fn record_checkpoint_request(
         input.replay_policy.as_str(),
         task_context.and_then(|context| context.task_list_id.as_deref()),
         task_context.and_then(|context| context.active_item_id.as_deref()),
-        related_docket_task_id
+        related_docket_task_id,
+        input.audit_context.map(|context| context.work_run_id),
+        input.audit_context.map(|context| context.docket_job_id)
     )
     .fetch_one(pool)
     .await?;
@@ -1145,7 +1154,8 @@ pub async fn record_checkpoint_response(
         RETURNING
             id, run_id, turn_step_id, checkpoint_id, reason, control_level, request,
             response, validation_status, visibility, replay_policy, related_task_list_id,
-            related_task_item_id, related_docket_task_id, created_at, updated_at
+            related_task_item_id, related_docket_task_id, related_work_run_id,
+            related_docket_job_id, created_at, updated_at
         ",
         input.run_id,
         input.checkpoint_id,
@@ -1173,7 +1183,8 @@ pub async fn list_checkpoints_for_run(
         SELECT
             id, run_id, turn_step_id, checkpoint_id, reason, control_level, request,
             response, validation_status, visibility, replay_policy, related_task_list_id,
-            related_task_item_id, related_docket_task_id, created_at, updated_at
+            related_task_item_id, related_docket_task_id, related_work_run_id,
+            related_docket_job_id, created_at, updated_at
         FROM bear_run_checkpoints
         WHERE run_id = $1
         ORDER BY created_at ASC, checkpoint_id ASC
@@ -1198,7 +1209,7 @@ pub async fn list_checkpoints_for_session(
             c.id, c.run_id, c.turn_step_id, c.checkpoint_id, c.reason, c.control_level,
             c.request, c.response, c.validation_status, c.visibility, c.replay_policy,
             c.related_task_list_id, c.related_task_item_id, c.related_docket_task_id,
-            c.created_at, c.updated_at
+            c.related_work_run_id, c.related_docket_job_id, c.created_at, c.updated_at
         FROM bear_run_checkpoints c
         INNER JOIN turn_runs r ON r.run_id = c.run_id
         WHERE r.bear_id = $1 AND r.session_id = $2
@@ -1790,12 +1801,38 @@ mod tests {
         .await
         .expect("create task");
 
+        let job_run_id = Uuid::new_v4();
+        sqlx::query!(
+            "INSERT INTO bear_job_runs (id, job_id) VALUES ($1, $2)",
+            job_run_id,
+            job_id
+        )
+        .execute(&pool)
+        .await
+        .expect("create job run");
+        let work_run_id = Uuid::new_v4();
+        sqlx::query!(
+            "INSERT INTO bear_work_runs (id, bear_id, job_id, task_id, job_run_id) VALUES ($1, $2, $3, $4, $5)",
+            work_run_id,
+            bear_id,
+            job_id,
+            task_id,
+            job_run_id
+        )
+        .execute(&pool)
+        .await
+        .expect("create work run");
+
         let recorded = record_checkpoint_request(
             &pool,
             CheckpointArtifactInput {
                 run_id: run_id.clone(),
                 turn_step_id: None,
                 orientation_kind: Some("focused".to_string()),
+                audit_context: Some(den_protocol::CheckpointAuditContext {
+                    work_run_id,
+                    docket_job_id: job_id,
+                }),
                 request: request(&run_id, Some(job_id), Some(task_id)),
                 visibility: CheckpointVisibility::AuditOnly,
                 replay_policy: CheckpointReplayPolicy::None,
@@ -1812,6 +1849,8 @@ mod tests {
         assert_eq!(recorded.related_task_list_id.as_deref(), Some("list-1"));
         assert_eq!(recorded.related_task_item_id.as_deref(), Some("item-1"));
         assert_eq!(recorded.related_docket_task_id, Some(task_id));
+        assert_eq!(recorded.related_work_run_id, Some(work_run_id));
+        assert_eq!(recorded.related_docket_job_id, Some(job_id));
         assert!(recorded.response.is_none());
 
         let updated = record_checkpoint_response(
@@ -1833,6 +1872,8 @@ mod tests {
             .expect("list checkpoints");
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].checkpoint_id, "ckpt-1");
+        assert_eq!(all[0].related_work_run_id, Some(work_run_id));
+        assert_eq!(all[0].related_docket_job_id, Some(job_id));
 
         let ledger = list_loop_control_decisions_for_run(&pool, &run_id)
             .await
@@ -1931,6 +1972,8 @@ mod tests {
                 .expect("list checkpoints by session");
         assert_eq!(by_session.len(), 1);
         assert_eq!(by_session[0].checkpoint_id, "ckpt-1");
+        assert_eq!(by_session[0].related_work_run_id, Some(work_run_id));
+        assert_eq!(by_session[0].related_docket_job_id, Some(job_id));
     }
 
     #[sqlx::test(migrations = "../../migrations")]
