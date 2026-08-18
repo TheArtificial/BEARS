@@ -16,8 +16,14 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use den_docket::{
-    DocketEffortHint, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskKind,
-    DocketTaskScope, PgDocketService, RoutingStrategy,
+    work_runs::{
+        checkout_work_run_for_session, claim_next_work_run, enqueue_work_job,
+        record_work_run_provisioned, WorkExecutionTarget, WorkJobEnqueue, WorkRunProvisioned,
+    },
+    DocketCommitPolicy, DocketCriterionKind, DocketEffortHint, DocketJobCreate,
+    DocketJobCriterionInput, DocketJobOverlapResolution, DocketService, DocketTaskCreate,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService,
+    RoutingStrategy, TaskListVisibility,
 };
 use den_http::armature_tokens;
 use den_protocol::{
@@ -263,6 +269,118 @@ async fn create_session_task(
         .await
         .expect("create session task")
         .id
+}
+
+async fn create_checkoutable_work_run(
+    pool: &sqlx::PgPool,
+    user_id: i32,
+    bear_id: uuid::Uuid,
+) -> uuid::Uuid {
+    let surface_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)
+         VALUES ($1, $2, 'git_workspace', $3, now(), now())",
+    )
+    .bind(surface_id)
+    .bind(format!("bearwire-work-{}", Uuid::new_v4().simple()))
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .expect("create work surface");
+    sqlx::query("INSERT INTO git_work_surface_details (id, upstream_url) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind("https://example.test/bearwire-work.git")
+        .execute(pool)
+        .await
+        .expect("create git surface details");
+    sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind(bear_id)
+        .execute(pool)
+        .await
+        .expect("assign bear to work surface");
+
+    let job = PgDocketService::from_pool(pool)
+        .create_job(DocketJobCreate {
+            bear_id,
+            created_by_user_id: user_id,
+            created_by_role: "pair".to_string(),
+            goal: "Checkout must not replace the Pair task".to_string(),
+            work_surface_id: Some(surface_id),
+            work_surface_assignments: vec![],
+            commit_policy: Some(DocketCommitPolicy::PerTask),
+            work_branch: None,
+            visibility: TaskListVisibility::SameUser,
+            source_conversation_id: None,
+            objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
+            criteria: vec![DocketJobCriterionInput {
+                kind: DocketCriterionKind::Narrative,
+                description: "Work checkout succeeds".to_string(),
+                spec: None,
+                sibling_order: 0,
+            }],
+            tasks: vec![DocketTaskInput {
+                client_key: None,
+                parent_client_key: None,
+                parent_task_id: None,
+                sibling_order: Some(0),
+                kind: DocketTaskKind::Execution,
+                scope: DocketTaskScope::Template,
+                title: "Work task".to_string(),
+                body: "Work task body".to_string(),
+                completion_criteria: vec!["Work completes".to_string()],
+                difficulty: Some(DocketTaskDifficulty::Trivial),
+                effort_hint: Some(DocketEffortHint::Low),
+                routing_strategy: RoutingStrategy::Auto,
+                expected_context_size: None,
+                result_rollup_policy: None,
+            }],
+        })
+        .await
+        .expect("create work job");
+    let runs = enqueue_work_job(
+        pool,
+        WorkJobEnqueue {
+            bear_id,
+            job_id: job.job.id,
+            durable_result: den_docket::DurableResultKind::RepositoryChanges,
+            git_ref: None,
+            image_name: None,
+            requested_by_user_id: Some(user_id),
+            execution_target: WorkExecutionTarget::Sandbox,
+            attachment_warning: None,
+        },
+    )
+    .await
+    .expect("enqueue work job");
+    assert_eq!(runs.len(), 1, "one work run for the test job");
+    let run = runs.into_iter().next().expect("work run exists");
+    let claimed = claim_next_work_run(
+        pool,
+        "bearwire-test-runner",
+        std::time::Duration::from_mins(1),
+    )
+    .await
+    .expect("claim work run")
+    .expect("queued work run claimed");
+    assert_eq!(claimed.id, run.id);
+    record_work_run_provisioned(
+        pool,
+        run.id,
+        &WorkRunProvisioned {
+            sandbox_server_url: "http://sandbox.test".to_string(),
+            sandbox_id: "sandbox-test".to_string(),
+            sandbox_type: "container".to_string(),
+            sandbox_strength: "container: test".to_string(),
+            work_surface: json!({ "is_git": true }),
+            rust_dependency_preparation: None,
+        },
+    )
+    .await
+    .expect("provision work run");
+    run.id
 }
 
 async fn rpc_value(state: DenState, token: &str, method: &str, params: Value) -> Value {
@@ -2785,13 +2903,62 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
         .fetch_one(&pool)
         .await
         .expect("count docket jobs");
-    let work_runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bear_work_runs WHERE bear_id = $1")
-        .bind(bear_id)
-        .fetch_one(&pool)
-        .await
-        .expect("count work runs");
+    let work_runs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM bear_work_runs WHERE bear_id = $1")
+            .bind(bear_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count work runs");
     assert_eq!(docket_jobs, 0, "Pair selection/start must not create a Job");
-    assert_eq!(work_runs, 0, "Pair selection/start must not create a Work run");
+    assert_eq!(
+        work_runs, 0,
+        "Pair selection/start must not create a Work run"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let pair_session_id = format!("pair-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &pair_session_id).await;
+    let pair_task_id =
+        create_session_task(&pool, user_id, bear_id, &pair_session_id, "Pair task").await;
+    let state = test_state(pool.clone());
+    let selected = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.select",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": pair_session_id,
+            "task_id": pair_task_id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        selected["result"]["current_task_id"],
+        pair_task_id.to_string()
+    );
+
+    let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
+    let work_session_id = format!("work-{}", Uuid::new_v4().simple());
+    let checkout = checkout_work_run_for_session(&pool, work_run_id, bear_id, &work_session_id)
+        .await
+        .expect("checkout work run");
+    assert_eq!(checkout.run.id, work_run_id);
+
+    let pair_session =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &pair_session_id)
+            .await
+            .expect("load Pair session")
+            .expect("Pair session exists");
+    assert_eq!(
+        pair_session.current_task_id,
+        Some(pair_task_id),
+        "Work checkout must not replace the selected Pair task"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
