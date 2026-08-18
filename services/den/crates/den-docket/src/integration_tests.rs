@@ -825,6 +825,21 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .await
         .expect("reconcile completed task focus before criteria");
 
+    // A criteria-only block must not retain a claim for a terminal task.
+    let released_execution = service
+        .get_active_execution_session(
+            bear_id,
+            BearProfile::Pair,
+            DocketExecutionLookup {
+                session_id: Some("pair-integration-session".to_string()),
+                source_conversation_id: None,
+                source_client_session_id: None,
+            },
+        )
+        .await
+        .expect("lookup released execution focus");
+    assert!(released_execution.is_none(), "released focus: {released_execution:?}");
+
     let blocked = service
         .execute_job(DocketJobExecuteRequest {
             bear_id,

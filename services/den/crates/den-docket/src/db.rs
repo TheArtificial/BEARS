@@ -1531,7 +1531,9 @@ pub(super) async fn reconcile_execution(
         .collect::<HashMap<_, _>>();
     let selected =
         first_pending_leaf_in_plan_order(&projection, &state_by_task).map(|task| task.id);
-    if session.task_id != selected {
+    if session.task_id != selected
+        || (selected.is_none() && execution_session_state_is_active_like(&session.state))
+    {
         // The session belongs to this run and its old focus is no longer the
         // plan's first unfinished leaf, so replacing it is safe and idempotent.
         // A missing successor releases the execution claim; `blocked` remains
@@ -1781,7 +1783,9 @@ pub(super) async fn execute_job(
             message: "All tasks and criteria are complete; job completed.".to_string(),
         })
     } else {
-        record_execution_session(pool, &request, run.id, None, "blocked").await?;
+        // The job may be blocked on criteria, but it has no actionable task.
+        // Do not retain an active-like session claim with no task to own.
+        record_execution_session(pool, &request, run.id, None, "completed").await?;
         let job = get_job(pool, request.bear_id, request.job_id)
             .await?
             .ok_or_else(|| {
