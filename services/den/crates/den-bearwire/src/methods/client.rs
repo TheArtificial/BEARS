@@ -1475,12 +1475,25 @@ pub(crate) async fn client_permission_result_result(
         &obligation,
         ExpectedResponderAction::PermissionDecision,
     ) {
-        return Err(CustomError::ValidationError(format!(
-            "BearWire permission obligation {} does not accept client.permission.result (expected {}, state {})",
-            obligation.id,
-            obligation.expected_responder_action,
-            obligation.state
-        )));
+        // The client may receive/replay a permission prompt after its decision has
+        // already advanced this obligation to tool-result handling. Treat that
+        // stale acknowledgement as idempotent rather than surfacing an RPC error.
+        tracing::debug!(
+            session_id = %session_id,
+            run_id = %run_id,
+            permission_id = %permission_id,
+            obligation_id = %obligation.id,
+            expected_responder_action = %obligation.expected_responder_action,
+            obligation_state = %obligation.state,
+            "ignoring stale BearWire permission result"
+        );
+        return Ok(json!({
+            "ok": true,
+            "duplicate": true,
+            "status": "late_result_ignored",
+            "run_state": run.state,
+            "obligation_state": obligation.state,
+        }));
     }
     let normalized_decision = decision.normalized();
     let payload = json!({
