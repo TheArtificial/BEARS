@@ -2034,7 +2034,8 @@ pub(super) async fn list_pair_session_tasks(
     bear_id: Uuid,
     session_id: Uuid,
 ) -> Result<Vec<DocketTaskProjection>, DenError> {
-    let tasks = sqlx::query_as::<_, DocketTaskRow>(
+    let tasks = sqlx::query_as!(
+        DocketTaskRow,
         r#"
         SELECT t.id, t.bear_id, t.job_id, t.session_anchor_id, t.parent_task_id, t.sibling_order,
                t.kind, t.scope, t.title, t.body, t.completion_criteria AS "completion_criteria: _",
@@ -2048,9 +2049,9 @@ pub(super) async fn list_pair_session_tasks(
           AND (t.session_anchor_id = $2 OR a.session_id = $2)
         ORDER BY t.sibling_order, t.created_at, t.id
         "#,
+        bear_id,
+        session_id,
     )
-    .bind(bear_id)
-    .bind(session_id)
     .fetch_all(pool)
     .await?;
     let states = current_run_states_for_tasks(pool, None, &tasks).await?;

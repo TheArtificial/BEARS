@@ -45,6 +45,31 @@ async fn test_pool() -> Option<PgPool> {
     Some(pool)
 }
 
+async fn seed_client_session(pool: &PgPool, user_id: i32, bear_id: Uuid) -> Uuid {
+    let id = Uuid::new_v4();
+    let suffix = Uuid::new_v4().simple().to_string();
+    sqlx::query!(
+        r#"
+        INSERT INTO client_sessions (
+            id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
+            conversation_id, client
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'integration-test')
+        "#,
+        id,
+        user_id,
+        bear_id,
+        format!("bear-{suffix}"),
+        format!("client-{suffix}"),
+        format!("runtime-{suffix}"),
+        format!("conversation-{suffix}"),
+    )
+    .execute(pool)
+    .await
+    .expect("seed client session");
+    id
+}
+
 fn test_work_surface_id(bear_id: Uuid) -> Uuid {
     bear_id
 }
@@ -390,6 +415,71 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             .map(|state| state.status.as_str()),
         Some("done")
     );
+}
+
+#[tokio::test]
+async fn pair_task_attachment_is_exclusive_and_released_on_settlement() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket integration test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "pair-attachment").await;
+    let first_session = seed_client_session(&pool, user_id, bear_id).await;
+    let second_session = seed_client_session(&pool, user_id, bear_id).await;
+    let service = PgDocketService::from_pool(&pool);
+    let created = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create durable job");
+    let task_id = created.tasks[0].id;
+
+    service
+        .checkout_task_list(
+            bear_id,
+            BearProfile::Pair,
+            user_id,
+            crate::TaskListCheckoutRequest {
+                source: crate::TaskListCheckoutSource::DocketJob {
+                    job_id: created.job.id,
+                    parent_task_id: None,
+                },
+                pair_session_id: Some(first_session),
+            },
+        )
+        .await
+        .expect("attach durable job to first Pair session");
+    assert!(service
+        .list_pair_session_tasks(bear_id, first_session)
+        .await
+        .expect("project first Pair session")
+        .iter()
+        .any(|task| task.task.id == task_id));
+    assert!(service
+        .attach_task_to_pair_session(bear_id, task_id, second_session)
+        .await
+        .is_err(), "active attachment must not leak across Pair sessions");
+
+    service
+        .settle_session_task(DocketSessionTaskSettlement {
+            bear_id,
+            task_id,
+            session_anchor_id: first_session,
+            status: DocketTaskStatus::Done,
+            outcome_disposition: Some(crate::DocketOutcomeDisposition::Completed),
+            result_summary: Some("Pair task completed.".to_string()),
+            result_refs: None,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await
+        .expect("settle attached task releases Pair attachment");
+    assert!(service
+        .list_pair_session_tasks(bear_id, first_session)
+        .await
+        .expect("project released Pair session")
+        .iter()
+        .all(|task| task.task.id != task_id));
 }
 
 #[tokio::test]
