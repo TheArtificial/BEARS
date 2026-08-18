@@ -702,7 +702,7 @@ Retention rules:
 
 ## Phase 7 — Checkpoint enforcement in the loop
 
-**Status: In progress (updated 2026-08-20).** Production server-tool continuation evaluates exploration, consecutive-failure, same-signature, and low-budget triggers before the next model step and installs the existing runtime-owned checkpoint gate. Typed pre-risk enforcement runs before native client-tool recording, approval, deferral, or execution. A valid or degraded checkpoint report resets only checkpoint-observation counters; it never replenishes authoritative turn budgets, KO/failure hard stops, permissions, or task authority. When a checkpoint reports a required task-state change in an active task context, runtime permits only the matching task-management follow-through action; the report itself does not mutate task/Docket state. Focused runtime tests cover trigger evidence, broad-tool blocking/read-only pass-through, reset behavior, and task-action follow-through. **Still open:** task-gate checkpointing requires a typed Docket-produced `TaskExecutionGate` rejection decision with authoritative reason, occurrence, and retry disposition; runtime must consume that observation rather than invent task authority. The Docket-owned execution-gate contract and token-minimizing boundary policy are specified below.
+**Status: In progress (updated 2026-08-20).** Production server-tool continuation evaluates exploration, consecutive-failure, same-signature, and low-budget triggers before the next model step and installs the existing runtime-owned checkpoint gate. Typed pre-risk enforcement runs before native client-tool recording, approval, deferral, or execution. A valid or degraded checkpoint report resets only checkpoint-observation counters; it never replenishes authoritative turn budgets, KO/failure hard stops, permissions, or task authority. When a checkpoint reports a required task-state change in an active task context, runtime permits only the matching task-management follow-through action; the report itself does not mutate task/Docket state. Focused runtime tests cover trigger evidence, broad-tool blocking/read-only pass-through, reset behavior, and task-action follow-through. **Completed execution-gate foundation:** Docket now returns a typed `DocketExecutionGate` derived from authoritative execution control, with durable Pair/Work bindings and `reconcile`/`stop` rejection dispositions; Work checkout rejects before task binding or workspace-write permission. **Still open:** task-gate checkpointing requires a Docket-owned durable pre-dispatch rejection observation (including occurrence and retry disposition) and an explicit delivery seam to the matching live runtime session. Runtime must consume only that observation, rather than inventing task authority.
 
 **Goal:** make checkpoint triggers affect continuation without making checkpoint advice authoritative.
 
@@ -746,6 +746,22 @@ Implementation sequence:
 2. Wire Pair/Work start, resume, and relevant execution boundaries to consume that decision and prevent dispatch on rejection.
 3. Feed only Docket-produced `TaskGateRejection` observations into the existing runtime checkpoint installer; use Docket's disposition and preserve the rule that checkpoints do not authorize task execution or mutate task state.
 4. Project concise pause status to conversation and structured reason/lease/decision evidence to diagnostics without exposing task-tree internals or checkpoint prose in history.
+
+### Required scheduler-observation bridge
+
+The currently landed execution gate completes steps 1–2 only for `Allowed`, `Reconcile`, and `Stop`: Pair and Work consume Docket's durable binding before dispatch. `RequireCheckpoint` must not be added as an inert enum variant or implemented as a runtime retry counter. It requires this explicit bridge:
+
+```text
+Docket rejects an execution boundary
+  -> persist a normalized pre-dispatch rejection observation
+     keyed by the execution binding and source session/conversation
+  -> assign occurrence and retry disposition in Docket
+  -> BearWire delivers that exact observation to the matching live runtime session
+  -> runtime installs its existing checkpoint only for RequireCheckpoint
+  -> any continuation requests a fresh Docket gate
+```
+
+The observation contains only an opaque binding/run reference, optional task ID, Docket rejection reason, Docket-assigned occurrence, and Docket-assigned disposition. It contains neither a task-tree projection nor checkpoint prose. It must be persisted before delivery so process restart does not reset occurrence. The runtime delivery API resolves the already-recorded source conversation/client session; it does not look up runnable tasks, count rejections, or convert checkpoint acknowledgement into authorization. Work rejection needs the same binding-time correlation because it occurs before `route_turn`/turn-attempt persistence.
 
 Runtime enforcement is dominant. A checkpoint report may choose among actions still allowed by the resolved loop-control profile, but it cannot expand a budget, reset an exhausted stop condition, bypass a trust/task gate, or authorize a risky action that runtime policy disallows. Runtime may always downgrade a checkpoint recommendation to a safer action such as bounded retry, reconciliation, stop, or human/operator review.
 
