@@ -2779,6 +2779,19 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
     assert_eq!(second["result"]["started"], false, "{second}");
     assert_eq!(second["result"]["reused"], true, "{second}");
     assert_eq!(second["result"]["run_id"], first["result"]["run_id"]);
+
+    let docket_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bear_jobs WHERE bear_id = $1")
+        .bind(bear_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count docket jobs");
+    let work_runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bear_work_runs WHERE bear_id = $1")
+        .bind(bear_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count work runs");
+    assert_eq!(docket_jobs, 0, "Pair selection/start must not create a Job");
+    assert_eq!(work_runs, 0, "Pair selection/start must not create a Work run");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
