@@ -1274,13 +1274,23 @@ pub enum DocketExecutionNextAction {
     RecoverBlockedRun,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DocketExecutionReason {
     ActiveTaskIsStale,
     NoActionableTask,
     JobComplete,
     JobBlocked,
+}
+
+/// Authoritative scheduler decision for whether the selected execution session
+/// may work a task. Consumers must use this decision rather than re-evaluating
+/// task-tree eligibility from projections.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum DocketExecutionGate {
+    Allowed { task_id: Uuid },
+    Rejected { reason: DocketExecutionReason },
 }
 
 /// Authoritative execution control returned by scheduler operations.
@@ -1297,6 +1307,28 @@ pub struct DocketExecutionControl {
     pub retryable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<DocketExecutionReason>,
+}
+
+impl DocketExecutionControl {
+    /// Converts the scheduler's authoritative execution result into the compact
+    /// gate consumed by executors. This intentionally derives from the same
+    /// control object that selected or retained the execution-session claim.
+    pub fn gate(&self) -> DocketExecutionGate {
+        match self.next_action {
+            DocketExecutionNextAction::WorkCurrentTask => DocketExecutionGate::Allowed {
+                task_id: self
+                    .task
+                    .claimed_task_id
+                    .expect("working execution control always claims a task"),
+            },
+            _ => DocketExecutionGate::Rejected {
+                reason: self
+                    .reason
+                    .clone()
+                    .expect("non-working execution control always has a reason"),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

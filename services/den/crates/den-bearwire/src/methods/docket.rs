@@ -288,6 +288,7 @@ fn execution_result(outcome: den_docket::DocketJobExecuteOutcome) -> Result<Valu
         .map(|run| run.state.to_string())
         .unwrap_or("not_started".to_owned());
     let status = execution_status(&outcome.control);
+    let gate = outcome.control.gate();
 
     Ok(json!({
         "action": "execution_requested",
@@ -297,6 +298,7 @@ fn execution_result(outcome: den_docket::DocketJobExecuteOutcome) -> Result<Valu
             "run_id": run.map(|run| run.id),
         },
         "status": status,
+        "gate": gate,
         "outcome": outcome,
     }))
 }

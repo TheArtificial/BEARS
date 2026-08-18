@@ -14,6 +14,8 @@ mod db;
 pub mod diagnostics;
 pub mod dispatch_preflight;
 mod dispatcher;
+#[cfg(test)]
+mod execution_control_tests;
 pub mod execution_profiles;
 #[cfg(test)]
 mod integration_tests;
@@ -53,10 +55,10 @@ pub use model::{
     DocketCommitPolicy, DocketCountByStatus, DocketCriteriaCountByStatus, DocketCriterionKind,
     DocketCriterionStateRow, DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint,
     DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
-    DocketEntryRow, DocketEntryScope, DocketExecutionControl, DocketExecutionLookup,
-    DocketExecutionNextAction, DocketExecutionReason, DocketExecutionSessionRow,
-    DocketExecutionSessionUpsert, DocketExecutionTaskSettlement, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobCriterionRow, DocketJobExecuteOutcome,
+    DocketEntryRow, DocketEntryScope, DocketExecutionControl, DocketExecutionGate,
+    DocketExecutionLookup, DocketExecutionNextAction, DocketExecutionReason,
+    DocketExecutionSessionRow, DocketExecutionSessionUpsert, DocketExecutionTaskSettlement,
+    DocketJobCreate, DocketJobCriterionInput, DocketJobCriterionRow, DocketJobExecuteOutcome,
     DocketJobExecuteRequest, DocketJobListFilter, DocketJobOverlapResolution, DocketJobProjection,
     DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobStatusReport,
     DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketOutcomeDisposition, DocketRunState,
