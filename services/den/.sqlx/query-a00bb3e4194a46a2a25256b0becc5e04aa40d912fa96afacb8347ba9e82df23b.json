@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_tasks (id, bear_id, job_id, title, body, created_by_role, created_by_user_id) VALUES ($1, $2, $3, 'Settlement task', 'Prove settlement correlation.', 'pair', $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a00bb3e4194a46a2a25256b0becc5e04aa40d912fa96afacb8347ba9e82df23b"
+}

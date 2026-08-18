@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO turn_steps (run_id, step_index, state)\n            VALUES ($1, 1, 'streaming_model')\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4de14fb9fd30e75f4ae783fdd0f7011dfceaafd122cdbbd2184563a609ae727a"
+}
