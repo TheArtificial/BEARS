@@ -2586,6 +2586,21 @@ async fn run_start_with_recovery_source(
                         "recovery_attempted": false,
                         "recovery_outcome": "retryable_from_persisted_state",
                     });
+                    tracing::warn!(
+                        session_id = %session_for_task,
+                        run_id = %run_id_for_task,
+                        request_id = %request_id,
+                        elapsed_ms = run_started_at.elapsed().as_millis(),
+                        first_event_seen,
+                        provider_activity_seen,
+                        assistant_content_seen,
+                        runtime_event_count,
+                        terminal_event_seen,
+                        wait_event_seen,
+                        last_event_kind = ?last_event_kind,
+                        pending_tool_calls = ?pending_tool_calls,
+                        "BearWire runtime stream ended without a durable boundary; run remains retryable"
+                    );
                     persist_run_progress(
                         &pool,
                         &session_for_task,
