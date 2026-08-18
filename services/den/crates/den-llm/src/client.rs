@@ -729,7 +729,7 @@ impl TimedLlmByteStream {
 
     fn log_summary(&self, status: &str, error: Option<&str>) {
         let telemetry = self.telemetry.as_ref();
-        tracing::info!(
+        tracing::trace!(
             status,
             error,
             model = %self.model,
@@ -763,7 +763,7 @@ impl Stream for TimedLlmByteStream {
                     let now = Instant::now();
                     self.first_byte_received_at = Some(now);
                     let telemetry = self.telemetry.as_ref();
-                    tracing::info!(
+                    tracing::trace!(
                         model = %self.model,
                         api_style = %self.api_style.as_str(),
                         request_id = telemetry.and_then(|t| t.request_id.as_deref()),
@@ -872,7 +872,7 @@ impl LlmClient {
                 "LLM chat/completions request preflight rejected invalid tool-call message chain: {message_chain_diagnostic}"
             )));
         }
-        tracing::info!(
+        tracing::trace!(
             model = %request.model,
             message_count = request.messages.len(),
             tool_count = request.tools.len(),
@@ -953,7 +953,7 @@ impl LlmClient {
                     ))
                 })?;
                 if retry_resp.status().is_success() {
-                    tracing::info!(
+                    tracing::debug!(
                         model = %request.model,
                         http_status = retry_resp.status().as_u16(),
                         request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
@@ -986,7 +986,7 @@ impl LlmClient {
                 "LLM chat/completions HTTP {status}: {text}"
             )));
         }
-        tracing::info!(
+        tracing::trace!(
             model = %request.model,
             http_status,
             duration_ms = started.elapsed().as_millis(),
@@ -1011,7 +1011,7 @@ impl LlmClient {
         require_bifrost_virtual_key(request.telemetry.as_ref())?;
         let url = format!("{}/responses", self.base_url);
         let model_handle = DenModelHandle::normalize(&request.model);
-        tracing::info!(
+        tracing::trace!(
             model_handle = %model_handle,
             api_style = %LlmApiStyle::ResponsesStream.as_str(),
             message_count = request.messages.len(),
@@ -1092,7 +1092,7 @@ impl LlmClient {
                     ))
                 })?;
                 if retry_resp.status().is_success() {
-                    tracing::info!(
+                    tracing::debug!(
                         model_handle = %model_handle,
                         api_style = %LlmApiStyle::ResponsesStream.as_str(),
                         http_status = retry_resp.status().as_u16(),
@@ -1127,7 +1127,7 @@ impl LlmClient {
                 "LLM responses HTTP {status}: {text}"
             )));
         }
-        tracing::info!(
+        tracing::trace!(
             model_handle = %model_handle,
             api_style = %LlmApiStyle::ResponsesStream.as_str(),
             http_status,

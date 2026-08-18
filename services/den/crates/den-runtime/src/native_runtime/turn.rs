@@ -1355,7 +1355,7 @@ pub async fn start_native_profile_turn_event_stream(
         },
     )
     .await?;
-    tracing::warn!(
+    tracing::debug!(
         event = "native_turn_start",
         session_key = %session.session_key,
         conversation_id = %conversation_id,
