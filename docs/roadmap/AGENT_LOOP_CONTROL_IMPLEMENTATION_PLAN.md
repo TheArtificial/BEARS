@@ -761,6 +761,8 @@ Bounded delegation is allowed only through approved symbolic model refs. Capable
 
 ## Phase 9 — Session-task and Docket integration
 
+**Status: In progress (updated 2026-08-20).** Pair now has one attachment-aware eligibility model for session task projection, checkout, selection, and settlement: legacy session-owned tasks are visible by session anchor, while durable Job tasks are explicitly and exclusively attached to a Pair session through `bear_pair_task_attachments`. Pair checkout attaches available Job tasks, the shared Pair-session query projects both ownership forms, and terminal settlement releases the attachment. Postgres-backed integration coverage proves attachment visibility, cross-session exclusion, and release on settlement. This completes the task-attachment lifecycle repair; explicit Work Job binding and checkpoint audit correlation are also implemented. Remaining Phase 9 work is to verify the rest of the stated Pair/Work independence and no-implicit-creation exit coverage, not to reintroduce a separate focus or checkpoint task authority.
+
 **Goal:** keep session current tasks, Work assignments, and Docket task state coherent without turning projections or checkpoints into a second authority.
 
 Pair behavior:
