@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs\n         SET state = 'cancelled', runner_id = NULL, lease_expires_at = NULL,\n             finished_at = now(), updated_at = now()\n         WHERE state = 'queued'\n            OR (state IN ('claimed', 'provisioning', 'running', 'reporting')\n                AND lease_expires_at IS NOT NULL AND lease_expires_at < now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "00d43371deabfb31fd07b1bc779eb056c2aabaa955fa8fe5c949b429bd0d4e23"
+}

@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT goal, commit_policy, work_branch FROM bear_jobs WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "goal",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "commit_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "work_branch",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "ba4dab3ae634c61d29a7fe6cb63d227ef48e1dffa2ce82c4128bd0d176c9702a"
+}

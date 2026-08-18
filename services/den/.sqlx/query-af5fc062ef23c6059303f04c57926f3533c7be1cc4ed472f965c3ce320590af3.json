@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE client_sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE client_session_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "af5fc062ef23c6059303f04c57926f3533c7be1cc4ed472f965c3ce320590af3"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO conversation_compaction_artifacts (\n                conversation_id, artifact_kind, policy_version, trigger,\n                source_message_start_seq, source_message_end_seq, artifact_json\n            )\n            VALUES ($1, 'iterative_summary', 'test', 'test', 1, $2, '{}'::jsonb)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "066f4f4695103ca64dcfd8a7749d73f82f0d3fc71eccca50c25a074d53911d4f"
+}

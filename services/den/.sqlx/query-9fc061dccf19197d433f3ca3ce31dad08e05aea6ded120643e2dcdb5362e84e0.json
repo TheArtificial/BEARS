@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT count(*)\n        FROM bear_task_events\n        WHERE task_id = $1\n          AND run_id = $2\n          AND event_type = 'created'\n          AND payload->'definition'->>'title' = 'First task'\n          AND payload->'definition'->>'body' = 'Do first task'\n          AND payload->'definition'->'completion_criteria'->>0 = 'First task is actually done'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9fc061dccf19197d433f3ca3ce31dad08e05aea6ded120643e2dcdb5362e84e0"
+}

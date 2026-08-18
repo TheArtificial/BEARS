@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_task_run_state SET status = 'in_progress', started_at = NOW() WHERE run_id = $1 AND task_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "147db0a4dfda0f370a82d785826df5d8f1a88d415470a7bba54fdda42886cc2c"
+}

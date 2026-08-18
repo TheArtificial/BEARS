@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT parent_task_id, sibling_order FROM bear_tasks WHERE job_id = $1 AND title = 'First child'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "parent_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "sibling_order",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "33425504a6f531f28382f40941f0debeabd020f91e985636d7d0b2227a75544d"
+}
