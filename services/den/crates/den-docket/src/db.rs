@@ -1534,6 +1534,8 @@ pub(super) async fn reconcile_execution(
     if session.task_id != selected {
         // The session belongs to this run and its old focus is no longer the
         // plan's first unfinished leaf, so replacing it is safe and idempotent.
+        // A missing successor releases the execution claim; `blocked` remains
+        // active-like and would prevent a later checkout from claiming a task.
         // ponytail: session focus is the sole scheduler claim today; add a
         // separate lease table if work dispatch gains a second concurrent owner.
         record_execution_session(
@@ -1544,7 +1546,7 @@ pub(super) async fn reconcile_execution(
             if selected.is_some() {
                 "active"
             } else {
-                "blocked"
+                "completed"
             },
         )
         .await?;
