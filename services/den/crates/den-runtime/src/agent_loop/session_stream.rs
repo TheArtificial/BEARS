@@ -28,8 +28,8 @@ use crate::runtime_error_ux::{
 };
 use crate::{
     agent_loop::{
-        evaluate_turn_budget, record_checkpoint_request, record_checkpoint_response,
-        run_agent_step_stream,
+        evaluate_checkpoint_trigger, evaluate_turn_budget, record_checkpoint_request,
+        record_checkpoint_response, run_agent_step_stream,
         session_store::{
             discovered_capability_entries, retain_recent_capability_entries, AgentLoopSessionStore,
         },
@@ -843,7 +843,7 @@ impl SessionTrackingStream {
                     session.step,
                     session.turn_budget_state.started_at.elapsed().as_millis() as u64,
                     &session.turn_budget_state,
-                    &[observation],
+                    &[observation.clone()],
                 );
                 store.update(&session_key, |session| {
                     session.turn_budget_state = evaluation.next_state.clone();
@@ -984,6 +984,28 @@ impl SessionTrackingStream {
                         ])) as RuntimeEventStream);
                     }
                 }
+                let checkpoint_evaluation = evaluate_checkpoint_trigger(
+                    &session.agent_loop_control.profile,
+                    &session.checkpoint_state,
+                    &[observation.clone()],
+                    false,
+                );
+                let checkpoint_request = Self::checkpoint_request_for_tool_observation(
+                    &session,
+                    &observation,
+                    checkpoint_evaluation.trigger,
+                );
+                store.update(&session_key, |session| {
+                    session.checkpoint_state = checkpoint_evaluation.next_state.clone();
+                });
+                if let Some(request) = checkpoint_request {
+                    SessionTrackingStream::install_pending_checkpoint_request_in_store(
+                        &store,
+                        &session_key,
+                        &pool,
+                        request,
+                    );
+                }
                 session = store.get(&session_key).ok_or_else(|| {
                     DenError::System("native agent loop session not found".to_string())
                 })?;
@@ -1117,6 +1139,51 @@ impl SessionTrackingStream {
         Some(Self::checkpoint_recovery_event(message))
     }
 
+    fn checkpoint_request_for_tool_observation(
+        session: &AgentLoopSession,
+        observation: &crate::agent_loop::ToolContinuationObservation,
+        trigger: Option<crate::agent_loop::CheckpointTrigger>,
+    ) -> Option<RuntimeCheckpointRequest> {
+        trigger.map(|trigger| RuntimeCheckpointRequest {
+            checkpoint_id: format!("checkpoint-{}", Uuid::new_v4()),
+            run_id: session
+                .run_id
+                .clone()
+                .unwrap_or_else(|| session.client_session_id.clone()),
+            reason: trigger.reason,
+            control_level: session.agent_loop_control.level,
+            profile_fingerprint: crate::agent_loop::agent_loop_control_profile_fingerprint(
+                &session.agent_loop_control.profile,
+            )
+            .ok(),
+            active_objective: None,
+            task_context: session
+                .cached_activity_plan_projection
+                .as_ref()
+                .map(|task_list| crate::agent_loop::CheckpointTaskContext {
+                    task_list_id: Some(task_list.id.to_string()),
+                    task_list_version: Some(task_list.version.to_string()),
+                    active_item_id: task_list.current_item.as_ref().map(|item| item.id.clone()),
+                    active_item_title: task_list
+                        .current_item
+                        .as_ref()
+                        .map(|item| item.title.clone()),
+                    docket_job_id: None,
+                    docket_task_id: task_list.current_item.as_ref().map(|item| item.id.clone()),
+                }),
+            evidence_refs: vec![crate::agent_loop::CheckpointEvidenceRef {
+                kind: "tool_call".to_string(),
+                id: observation.signature.clone(),
+                summary: Some(observation.tool_name.clone()),
+            }],
+            required_fields: vec![
+                crate::agent_loop::CheckpointField::ActiveObjective,
+                crate::agent_loop::CheckpointField::MoreExplorationJustified,
+                crate::agent_loop::CheckpointField::NextAction,
+            ],
+        })
+    }
+
     fn checkpoint_request_retention(
         profile: BearProfile,
     ) -> Option<(CheckpointVisibility, CheckpointReplayPolicy)> {
@@ -1133,8 +1200,22 @@ impl SessionTrackingStream {
     /// audit-only artifact. Pair checkpoints deliberately remain in-memory unless
     /// an explicit recovery policy adds durable retention.
     fn install_pending_checkpoint_request(&self, request: RuntimeCheckpointRequest) {
-        let session = self.store.get(&self.session_key);
-        self.store.update(&self.session_key, |session| {
+        Self::install_pending_checkpoint_request_in_store(
+            &self.store,
+            &self.session_key,
+            &self.pool,
+            request,
+        );
+    }
+
+    fn install_pending_checkpoint_request_in_store(
+        store: &AgentLoopSessionStore,
+        session_key: &str,
+        pool: &sqlx::PgPool,
+        request: RuntimeCheckpointRequest,
+    ) {
+        let session = store.get(session_key);
+        store.update(session_key, |session| {
             session.pending_checkpoint_request = Some(request.clone());
             session.pending_checkpoint_recovery_attempts = 0;
         });
@@ -1154,7 +1235,7 @@ impl SessionTrackingStream {
             );
             return;
         };
-        let pool = self.pool.clone();
+        let pool = pool.clone();
         let session_id = session.client_session_id;
         let audit_context = session.checkpoint_audit_context;
         tokio::spawn(async move {
@@ -2796,6 +2877,34 @@ mod tests {
             session.profile,
             NativeToolDispatchMode::DeferToClient,
         )
+    }
+
+    #[test]
+    fn checkpoint_request_for_trigger_carries_tool_evidence() {
+        let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let observation = crate::agent_loop::ToolContinuationObservation {
+            tool_name: "memory_read".to_string(),
+            signature: "memory_read:{path=control.rs}".to_string(),
+            class: crate::agent_loop::ToolBudgetClass::Read,
+            failed: false,
+            grounding_probe_signal: None,
+        };
+        let request = SessionTrackingStream::checkpoint_request_for_tool_observation(
+            &session,
+            &observation,
+            Some(crate::agent_loop::CheckpointTrigger {
+                reason: crate::agent_loop::CheckpointReason::OverExploration,
+                message: "checkpoint".to_string(),
+            }),
+        )
+        .expect("trigger creates request");
+
+        assert_eq!(
+            request.reason,
+            crate::agent_loop::CheckpointReason::OverExploration
+        );
+        assert_eq!(request.evidence_refs[0].id, observation.signature);
+        assert!(request.task_context.is_none());
     }
 
     #[test]
