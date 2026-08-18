@@ -1812,11 +1812,10 @@ mod tests {
         .expect("create job run");
         let work_run_id = Uuid::new_v4();
         sqlx::query!(
-            "INSERT INTO bear_work_runs (id, bear_id, job_id, task_id, job_run_id) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO bear_work_runs (id, bear_id, job_id, job_run_id) VALUES ($1, $2, $3, $4)",
             work_run_id,
             bear_id,
             job_id,
-            task_id,
             job_run_id
         )
         .execute(&pool)
