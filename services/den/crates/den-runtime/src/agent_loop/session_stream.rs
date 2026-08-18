@@ -28,7 +28,8 @@ use crate::runtime_error_ux::{
 };
 use crate::{
     agent_loop::{
-        evaluate_turn_budget, record_checkpoint_response, run_agent_step_stream,
+        evaluate_turn_budget, record_checkpoint_request, record_checkpoint_response,
+        run_agent_step_stream,
         session_store::{
             discovered_capability_entries, retain_recent_capability_entries, AgentLoopSessionStore,
         },
@@ -38,8 +39,9 @@ use crate::{
             maybe_pause_for_tool_approval, provider_tool_requires_approval,
             provider_tool_supports_unilateral_execution,
         },
-        validate_checkpoint_response, AgentStepOverflowContext, CheckpointResponseInput,
-        CheckpointValidationStatus, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
+        validate_checkpoint_response, AgentStepOverflowContext, CheckpointArtifactInput,
+        CheckpointReplayPolicy, CheckpointResponseInput, CheckpointValidationStatus,
+        CheckpointVisibility, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::is_task_definition_or_delegation_tool_provider_name,
@@ -1108,14 +1110,75 @@ impl SessionTrackingStream {
                 crate::agent_loop::CheckpointField::NextAction,
             ],
         };
-        self.store.update(&self.session_key, |session| {
-            session.pending_checkpoint_request = Some(request.clone());
-            session.pending_checkpoint_recovery_attempts = 0;
-        });
+        self.install_pending_checkpoint_request(request.clone());
         let message = Self::checkpoint_recovery_message(&request, &attempted_action);
         self.push_checkpoint_recovery_guidance(&request, &attempted_action);
         self.begin_checkpoint_continuation();
         Some(Self::checkpoint_recovery_event(message))
+    }
+
+    fn checkpoint_request_retention(
+        profile: BearProfile,
+    ) -> Option<(CheckpointVisibility, CheckpointReplayPolicy)> {
+        match profile {
+            BearProfile::Work => Some((
+                CheckpointVisibility::AuditOnly,
+                CheckpointReplayPolicy::None,
+            )),
+            _ => None,
+        }
+    }
+
+    /// Installs the runtime-owned checkpoint gate and, for Work only, records an
+    /// audit-only artifact. Pair checkpoints deliberately remain in-memory unless
+    /// an explicit recovery policy adds durable retention.
+    fn install_pending_checkpoint_request(&self, request: RuntimeCheckpointRequest) {
+        let session = self.store.get(&self.session_key);
+        self.store.update(&self.session_key, |session| {
+            session.pending_checkpoint_request = Some(request.clone());
+            session.pending_checkpoint_recovery_attempts = 0;
+        });
+
+        let Some(session) = session else {
+            return;
+        };
+        let Some((visibility, replay_policy)) = Self::checkpoint_request_retention(session.profile)
+        else {
+            return;
+        };
+        let Some(run_id) = session.run_id else {
+            tracing::warn!(
+                session_id = %session.client_session_id,
+                checkpoint_id = %request.checkpoint_id,
+                "skipped Work checkpoint audit artifact because no turn run is available"
+            );
+            return;
+        };
+        let pool = self.pool.clone();
+        let session_id = session.client_session_id;
+        let audit_context = session.checkpoint_audit_context;
+        tokio::spawn(async move {
+            if let Err(err) = record_checkpoint_request(
+                &pool,
+                CheckpointArtifactInput {
+                    run_id,
+                    turn_step_id: None,
+                    orientation_kind: Some("work".to_string()),
+                    audit_context,
+                    request,
+                    visibility,
+                    replay_policy,
+                },
+            )
+            .await
+            {
+                tracing::warn!(
+                    error = %err,
+                    session_id = %session_id,
+                    "failed to record Work checkpoint request artifact"
+                );
+            }
+        });
     }
 
     fn checkpoint_audit_enabled(&self) -> bool {
@@ -2733,6 +2796,28 @@ mod tests {
             session.profile,
             NativeToolDispatchMode::DeferToClient,
         )
+    }
+
+    #[test]
+    fn checkpoint_request_retention_is_work_audit_only() {
+        assert_eq!(
+            SessionTrackingStream::checkpoint_request_retention(BearProfile::Work),
+            Some((
+                CheckpointVisibility::AuditOnly,
+                CheckpointReplayPolicy::None
+            ))
+        );
+        for profile in [
+            BearProfile::Pair,
+            BearProfile::Chat,
+            BearProfile::Curate,
+            BearProfile::Watch,
+        ] {
+            assert_eq!(
+                SessionTrackingStream::checkpoint_request_retention(profile),
+                None
+            );
+        }
     }
 
     #[tokio::test]
