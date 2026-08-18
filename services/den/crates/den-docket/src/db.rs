@@ -2027,6 +2027,108 @@ pub(super) async fn list_tasks(
         .collect())
 }
 
+/// The one Pair eligibility query. It includes legacy session-owned tasks and
+/// durable job tasks explicitly attached to this Pair session.
+pub(super) async fn list_pair_session_tasks(
+    pool: &PgPool,
+    bear_id: Uuid,
+    session_id: Uuid,
+) -> Result<Vec<DocketTaskProjection>, DenError> {
+    let tasks = sqlx::query_as::<_, DocketTaskRow>(
+        r#"
+        SELECT t.id, t.bear_id, t.job_id, t.session_anchor_id, t.parent_task_id, t.sibling_order,
+               t.kind, t.scope, t.title, t.body, t.completion_criteria AS "completion_criteria: _",
+               t.difficulty, t.effort_hint, t.routing_strategy, t.expected_context_size,
+               t.result_rollup_policy, t.created_by_role, t.created_by_user_id, t.created_by_agent_id,
+               t.created_in_run_id, t.settled_by_entry_id, t.created_at, t.updated_at
+        FROM bear_tasks t
+        LEFT JOIN bear_pair_task_attachments a
+          ON a.task_id = t.id AND a.released_at IS NULL
+        WHERE t.bear_id = $1
+          AND (t.session_anchor_id = $2 OR a.session_id = $2)
+        ORDER BY t.sibling_order, t.created_at, t.id
+        "#,
+    )
+    .bind(bear_id)
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+    let states = current_run_states_for_tasks(pool, None, &tasks).await?;
+    Ok(tasks
+        .into_iter()
+        .map(|task| DocketTaskProjection::new(task.clone(), states.get(&task.id).cloned()))
+        .collect())
+}
+
+pub(super) async fn attach_job_tasks_to_pair_session(
+    pool: &PgPool,
+    bear_id: Uuid,
+    job_id: Uuid,
+    session_id: Uuid,
+) -> Result<(), DenError> {
+    let attached = sqlx::query(
+        r#"
+        INSERT INTO bear_pair_task_attachments (task_id, session_id)
+        SELECT id, $3 FROM bear_tasks
+        WHERE bear_id = $1 AND job_id = $2 AND settled_by_entry_id IS NULL
+        ON CONFLICT (task_id) DO UPDATE
+        SET session_id = EXCLUDED.session_id, attached_at = NOW(), released_at = NULL
+        WHERE bear_pair_task_attachments.released_at IS NOT NULL
+           OR bear_pair_task_attachments.session_id = EXCLUDED.session_id
+        "#,
+    )
+    .bind(bear_id)
+    .bind(job_id)
+    .bind(session_id)
+    .execute(pool)
+    .await?;
+    if attached.rows_affected() == 0 {
+        let exists = sqlx::query_scalar!(
+            "SELECT EXISTS(SELECT 1 FROM bear_tasks WHERE bear_id = $1 AND job_id = $2) AS \"exists!: bool\"",
+            bear_id,
+            job_id,
+        )
+        .fetch_one(pool)
+        .await?;
+        if !exists {
+            return Err(DenError::NotFound(format!(
+                "Docket job `{job_id}` not found"
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub(super) async fn attach_task_to_pair_session(
+    pool: &PgPool,
+    bear_id: Uuid,
+    task_id: Uuid,
+    session_id: Uuid,
+) -> Result<(), DenError> {
+    let attached = sqlx::query(
+        r#"
+        INSERT INTO bear_pair_task_attachments (task_id, session_id)
+        SELECT id, $3 FROM bear_tasks
+        WHERE id = $2 AND bear_id = $1 AND job_id IS NOT NULL AND settled_by_entry_id IS NULL
+        ON CONFLICT (task_id) DO UPDATE
+        SET session_id = EXCLUDED.session_id, attached_at = NOW(), released_at = NULL
+        WHERE bear_pair_task_attachments.released_at IS NOT NULL
+           OR bear_pair_task_attachments.session_id = EXCLUDED.session_id
+        "#,
+    )
+    .bind(bear_id)
+    .bind(task_id)
+    .bind(session_id)
+    .execute(pool)
+    .await?;
+    if attached.rows_affected() == 0 {
+        return Err(DenError::ValidationError(
+            "task is not an unclaimed durable task available to this Pair session".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) async fn append_entry(
     pool: &PgPool,
     create: DocketEntryCreate,
@@ -2455,9 +2557,19 @@ pub(super) async fn settle_session_task(
     }
     let mut tx = pool.begin().await?;
     let task = select_task(&mut tx, settlement.bear_id, settlement.task_id).await?;
-    if task.job_id.is_some() || task.session_anchor_id != Some(settlement.session_anchor_id) {
+    let attached = sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM bear_pair_task_attachments
+            WHERE task_id = $1 AND session_id = $2 AND released_at IS NULL
+        )"#,
+    )
+    .bind(task.id)
+    .bind(settlement.session_anchor_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if task.session_anchor_id != Some(settlement.session_anchor_id) && !attached {
         return Err(DenError::ValidationError(
-            "session task settlement requires a task owned by the current session".to_string(),
+            "session task settlement requires a task attached to the current session".to_string(),
         ));
     }
     if task.settled_by_entry_id.is_some() {
@@ -2487,6 +2599,13 @@ pub(super) async fn settle_session_task(
         entry_id,
     )
     .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE bear_pair_task_attachments SET released_at = NOW() WHERE task_id = $1 AND session_id = $2 AND released_at IS NULL",
+    )
+    .bind(task.id)
+    .bind(settlement.session_anchor_id)
+    .execute(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(DocketTaskProjection::new(task, None))

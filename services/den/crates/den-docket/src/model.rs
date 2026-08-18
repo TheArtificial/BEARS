@@ -493,6 +493,9 @@ pub enum TaskListCheckoutSource {
 #[derive(Debug, Clone)]
 pub struct TaskListCheckoutRequest {
     pub source: TaskListCheckoutSource,
+    /// Pair session that explicitly claims durable tasks from this checkout.
+    /// None preserves read-only projection behavior for non-Pair callers.
+    pub pair_session_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]

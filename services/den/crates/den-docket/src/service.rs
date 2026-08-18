@@ -12,14 +12,15 @@ use den_core::{BearProfile, DenError};
 
 use super::db;
 use super::model::{
-    task_list_projection_from_docket_job, DocketCriterionStateUpdate, DocketEntryCreate,
-    DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketExecutionLookup,
-    DocketExecutionSessionRow, DocketExecutionTaskSettlement, DocketJobCreate,
-    DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection,
-    DocketJobRow, DocketJobUpdate, DocketSessionTaskSettlement, DocketTaskCreate,
-    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
-    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
+    task_list_projection_from_docket_job, task_list_projection_from_session_tasks,
+    DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryListFilter, DocketEntryPromotion,
+    DocketEntryRow, DocketExecutionLookup, DocketExecutionSessionRow,
+    DocketExecutionTaskSettlement, DocketJobCreate, DocketJobExecuteOutcome,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
+    DocketJobUpdate, DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskListFilter,
+    DocketTaskProjection, DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection,
+    TaskListSyncOutcome, TaskListSyncRequest,
 };
 
 /// Orchestration API for task and job state. The only public entry point to the
@@ -83,6 +84,19 @@ pub trait DocketService: Send + Sync {
         bear_id: Uuid,
         lookup: DocketExecutionLookup,
     ) -> Result<u64, DenError>;
+
+    async fn list_pair_session_tasks(
+        &self,
+        bear_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<Vec<DocketTaskProjection>, DenError>;
+
+    async fn attach_task_to_pair_session(
+        &self,
+        bear_id: Uuid,
+        task_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<(), DenError>;
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError>;
 
@@ -220,6 +234,23 @@ impl DocketService for PgDocketService {
         db::clear_active_execution_sessions(&self.pool, bear_id, lookup).await
     }
 
+    async fn list_pair_session_tasks(
+        &self,
+        bear_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<Vec<DocketTaskProjection>, DenError> {
+        db::list_pair_session_tasks(&self.pool, bear_id, session_id).await
+    }
+
+    async fn attach_task_to_pair_session(
+        &self,
+        bear_id: Uuid,
+        task_id: Uuid,
+        session_id: Uuid,
+    ) -> Result<(), DenError> {
+        db::attach_task_to_pair_session(&self.pool, bear_id, task_id, session_id).await
+    }
+
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError> {
         db::create_task(&self.pool, create).await
     }
@@ -276,10 +307,25 @@ impl DocketService for PgDocketService {
             TaskListCheckoutSource::DocketJob {
                 job_id,
                 parent_task_id,
-            } => Ok(self
-                .get_job(bear_id, job_id)
-                .await?
-                .map(|job| task_list_projection_from_docket_job(&job, parent_task_id))),
+            } => {
+                if let Some(session_id) = request.pair_session_id {
+                    db::attach_job_tasks_to_pair_session(&self.pool, bear_id, job_id, session_id)
+                        .await?;
+                    let tasks = self.list_pair_session_tasks(bear_id, session_id).await?;
+                    Ok(task_list_projection_from_session_tasks(
+                        bear_id,
+                        BearProfile::Pair,
+                        "",
+                        session_id,
+                        &tasks,
+                    ))
+                } else {
+                    Ok(self
+                        .get_job(bear_id, job_id)
+                        .await?
+                        .map(|job| task_list_projection_from_docket_job(&job, parent_task_id)))
+                }
+            }
             TaskListCheckoutSource::LocalProjection(task_list) => Ok(Some(*task_list)),
         }
     }

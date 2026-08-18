@@ -838,7 +838,10 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         )
         .await
         .expect("lookup released execution focus");
-    assert!(released_execution.is_none(), "released focus: {released_execution:?}");
+    assert!(
+        released_execution.is_none(),
+        "released focus: {released_execution:?}"
+    );
 
     let blocked = service
         .execute_job(DocketJobExecuteRequest {

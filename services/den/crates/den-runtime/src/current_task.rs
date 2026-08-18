@@ -1,6 +1,6 @@
 use den_docket::{
-    task_list_projection_from_session_tasks_with_current_task, DocketService, DocketTaskListFilter,
-    PgDocketService, TaskListItemStatus, TaskListProjection,
+    task_list_projection_from_session_tasks_with_current_task, DocketService, PgDocketService,
+    TaskListItemStatus, TaskListProjection,
 };
 use den_http::errors::CustomError;
 use den_service::{
@@ -27,16 +27,7 @@ pub async fn preview_pair_current_task_selection(
             .await?
             .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
     let tasks = PgDocketService::from_pool(pool)
-        .list_tasks(
-            bear_id,
-            DocketTaskListFilter {
-                job_id: None,
-                session_anchor_id: Some(session.id),
-                parent_task_id: None,
-                include_descendants: true,
-                limit: 500,
-            },
-        )
+        .list_pair_session_tasks(bear_id, session.id)
         .await?;
     actionable_task_title(
         bear_id,
@@ -117,16 +108,7 @@ pub async fn select_pair_current_task(
             .await?
             .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
     let tasks = PgDocketService::from_pool(pool)
-        .list_tasks(
-            bear_id,
-            DocketTaskListFilter {
-                job_id: None,
-                session_anchor_id: Some(session.id),
-                parent_task_id: None,
-                include_descendants: true,
-                limit: 500,
-            },
-        )
+        .list_pair_session_tasks(bear_id, session.id)
         .await?;
     let selected_title = task_id
         .map(|task_id| {

@@ -120,6 +120,7 @@ async fn load_cached_activity_plan_projection(
                         job_id: execution.job_id,
                         parent_task_id: None,
                     },
+                    pair_session_id: None,
                 },
             )
             .await;

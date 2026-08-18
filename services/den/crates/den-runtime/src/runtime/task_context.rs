@@ -8,8 +8,8 @@
 use den_core::DenError;
 use den_docket::{
     task_list_projection_from_session_tasks_with_current_task, DocketExecutionLookup,
-    DocketService, DocketTaskListFilter, PgDocketService, TaskListCheckoutRequest,
-    TaskListCheckoutSource, TaskListProjection,
+    DocketService, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
+    TaskListProjection,
 };
 use den_service::{bears::BearProfile, client_sessions};
 use sqlx::PgPool;
@@ -130,17 +130,7 @@ pub async fn resolve_runtime_task_context(
         });
     };
     let service = PgDocketService::from_pool(pool);
-    let tasks = service
-        .list_tasks(
-            bear_id,
-            DocketTaskListFilter {
-                session_anchor_id: Some(session.id),
-                include_descendants: true,
-                limit: 100,
-                ..DocketTaskListFilter::default()
-            },
-        )
-        .await?;
+    let tasks = service.list_pair_session_tasks(bear_id, session.id).await?;
     let current_task_id = session.current_task_id.filter(|selected_task_id| {
         tasks
             .iter()
@@ -182,6 +172,7 @@ pub async fn resolve_runtime_task_context(
                         job_id: execution.job_id,
                         parent_task_id: None,
                     },
+                    pair_session_id: Some(session.id),
                 },
             )
             .await?;

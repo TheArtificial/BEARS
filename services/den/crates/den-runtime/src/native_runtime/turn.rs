@@ -328,6 +328,7 @@ async fn refresh_cached_activity_plan_projection_from_docket(
                     job_id: execution.job_id,
                     parent_task_id: None,
                 },
+                pair_session_id: None,
             },
         )
         .await

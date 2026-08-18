@@ -1864,7 +1864,13 @@ pub(crate) async fn create_task(
     // delegated work must first become a Job-owned task.
     let session_anchor_id = resolve_task_session_anchor_id(pool, context, job_id).await?;
     enforce_oriented_task_create_policy(pool, context, &args).await?;
-    let task = PgDocketService::from_pool(pool)
+    let pair_session_attachment_id = if role == BearProfile::Pair && job_id.is_some() {
+        resolve_task_session_anchor_id(pool, context, None).await?
+    } else {
+        None
+    };
+    let service = PgDocketService::from_pool(pool);
+    let task = service
         .create_task(DocketTaskCreate {
             bear_id: context.bear_id,
             job_id,
@@ -1888,6 +1894,11 @@ pub(crate) async fn create_task(
             created_in_run_id: args.created_in_run_id,
         })
         .await?;
+    if let Some(session_id) = pair_session_attachment_id {
+        service
+            .attach_task_to_pair_session(context.bear_id, task.id, session_id)
+            .await?;
+    }
     if job_id.is_none() && session_anchor_id.is_some() {
         let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
             DenError::ValidationError(
@@ -2554,12 +2565,20 @@ pub(crate) async fn checkout_task_list(
         )
         .into());
     };
+    let pair_session_id = if role == BearProfile::Pair && checkout_job_id.is_some() {
+        resolve_task_session_anchor_id(pool, context, None).await?
+    } else {
+        None
+    };
     let task_list = PgDocketService::from_pool(pool)
         .checkout_task_list(
             context.bear_id,
             role,
             context.user_id,
-            TaskListCheckoutRequest { source },
+            TaskListCheckoutRequest {
+                source,
+                pair_session_id,
+            },
         )
         .await?;
     let summary =
