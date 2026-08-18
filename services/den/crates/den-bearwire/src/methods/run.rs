@@ -3264,6 +3264,7 @@ mod tests {
             supports_tools: None,
             supports_responses_api: None,
             supports_vision: None,
+            supports_reasoning_effort: None,
         }
     }
 
@@ -3273,6 +3274,7 @@ mod tests {
             handle: "openai/gpt-5.5".to_string(),
             provider_model_id: "gpt-5.5".to_string(),
             api_style: den_llm::LlmApiStyle::ResponsesStream,
+            supports_reasoning_effort: None,
             source: ResolvedRunModelSource::ConversationExplicit,
         };
 
@@ -3319,6 +3321,7 @@ mod tests {
             supports_tools: None,
             supports_responses_api: None,
             supports_vision: None,
+            supports_reasoning_effort: None,
         };
 
         ensure_pair_model_capabilities(&entry, &entry.gateway_handle)
@@ -3338,6 +3341,7 @@ mod tests {
             supports_tools: Some(false),
             supports_responses_api: None,
             supports_vision: None,
+            supports_reasoning_effort: None,
         };
 
         let err = ensure_pair_model_capabilities(&entry, &entry.gateway_handle)
@@ -3361,6 +3365,7 @@ mod tests {
             supports_tools: Some(true),
             supports_responses_api: None,
             supports_vision: None,
+            supports_reasoning_effort: None,
         };
 
         assert_eq!(

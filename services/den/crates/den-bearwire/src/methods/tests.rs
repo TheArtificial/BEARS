@@ -108,6 +108,7 @@ fn test_state_with_config(pool: sqlx::PgPool, config: den_core::config::Config) 
             supports_tools: Some(true),
             supports_responses_api: Some(false),
             supports_vision: Some(false),
+            supports_reasoning_effort: None,
         },
     ]);
     *state.bifrost_catalog.write().expect("catalog lock") = snapshot;
@@ -3467,6 +3468,7 @@ async fn conversation_diagnostics_includes_bounded_owned_checkpoint_artifacts(po
             run_id: run_id.clone(),
             turn_step_id: None,
             orientation_kind: None,
+            audit_context: None,
             request: den_runtime::agent_loop::RuntimeCheckpointRequest {
                 checkpoint_id: "ckpt-diagnostics".to_string(),
                 run_id: run_id.clone(),
