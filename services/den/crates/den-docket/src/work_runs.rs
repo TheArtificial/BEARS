@@ -16,7 +16,6 @@ use uuid::Uuid;
 
 use den_core::{BearProfile, DenError};
 
-use crate::dispatcher::TaskDispatcher;
 use crate::execution_profiles::resolve_execution_profile;
 use crate::model::{
     select_dispatch_notebook_context, DocketEntryListFilter, DocketEntryRow,
@@ -1450,23 +1449,17 @@ pub async fn checkout_work_run_for_session(
             task.difficulty,
         ),
         None => {
-            let service = PgDocketService::from_pool(pool);
-            let task = service
-                .runnable_work_tasks(run.bear_id, 500)
+            let task = crate::db::select_next_execution_task(pool, run.bear_id, run.job_id)
                 .await?
-                .into_iter()
-                .find(|task| task.task.job_id == Some(run.job_id))
                 .ok_or_else(|| {
                     DenError::ValidationError("job has no runnable work task for checkout".into())
-                })?
-                .task;
+                })?;
             (
                 task.id,
                 task.title,
                 task.body,
                 task.completion_criteria,
-                task.difficulty
-                    .map(|difficulty| difficulty.as_str().to_string()),
+                task.difficulty,
             )
         }
     };

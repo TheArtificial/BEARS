@@ -810,7 +810,9 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     let task_status = task.status;
     let task_summary = task.result_summary;
     let task_refs = task.result_refs;
-    assert_eq!(task_status, "in_progress");
+    // Active Work is represented by the work-run/session binding; task-run
+    // state records durable outcomes only.
+    assert_eq!(task_status, "pending");
     assert!(task_summary.is_none());
     assert!(task_refs.is_none());
     let job_run_state = sqlx::query_scalar!(
@@ -820,7 +822,9 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(job_run_state, "blocked");
+    // Work telemetry cannot block the job; Docket task settlement owns that
+    // scheduler transition.
+    assert_eq!(job_run_state, "dispatched");
     assert!(finalized.runner_id.is_none());
     assert!(finalized.lease_expires_at.is_none());
     assert!(finalized.finished_at.is_some());

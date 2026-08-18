@@ -1816,6 +1816,27 @@ pub(super) async fn execute_job(
     }
 }
 
+/// Selects the next executable task for a job using the same depth-first plan
+/// ordering as Pair execution control. This is selection only; callers still
+/// own their mode-specific durable binding transaction.
+pub(crate) async fn select_next_execution_task(
+    pool: &PgPool,
+    bear_id: Uuid,
+    job_id: Uuid,
+) -> Result<Option<DocketTaskRow>, DenError> {
+    let Some(projection) = get_job(pool, bear_id, job_id).await? else {
+        return Err(DenError::NotFound(format!(
+            "Docket job not found: {job_id}"
+        )));
+    };
+    let state_by_task = projection
+        .task_states
+        .iter()
+        .map(|state| (state.task_id, state.status.as_str()))
+        .collect::<HashMap<_, _>>();
+    Ok(first_pending_leaf_in_plan_order(&projection, &state_by_task).cloned())
+}
+
 /// Returns the first unfinished leaf in depth-first sibling order.
 ///
 /// A task with children is a phase/roll-up, not independently executable. A
