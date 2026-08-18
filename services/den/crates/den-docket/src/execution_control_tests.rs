@@ -1,8 +1,9 @@
 use uuid::Uuid;
 
 use crate::{
-    model::DocketExecutionTaskControl, DocketExecutionControl, DocketExecutionGate,
-    DocketExecutionNextAction, DocketExecutionReason,
+    model::DocketExecutionTaskControl, DocketExecutionBinding, DocketExecutionControl,
+    DocketExecutionDisposition, DocketExecutionGate, DocketExecutionNextAction,
+    DocketExecutionReason,
 };
 
 fn control(
@@ -28,14 +29,19 @@ fn control(
 #[test]
 fn execution_control_gate_allows_the_persisted_task_claim() {
     let task_id = Uuid::new_v4();
+    let control = control(
+        DocketExecutionNextAction::WorkCurrentTask,
+        None,
+        Some(task_id),
+    );
     assert_eq!(
-        control(
-            DocketExecutionNextAction::WorkCurrentTask,
-            None,
-            Some(task_id),
-        )
-        .gate(),
-        DocketExecutionGate::Allowed { task_id }
+        control.gate(),
+        DocketExecutionGate::Allowed {
+            task_id,
+            binding: DocketExecutionBinding::PairSession {
+                job_run_id: control.run_id,
+            },
+        }
     );
 }
 
@@ -50,6 +56,7 @@ fn execution_control_gate_rejects_stale_task_claims() {
         .gate(),
         DocketExecutionGate::Rejected {
             reason: DocketExecutionReason::ActiveTaskIsStale,
+            disposition: DocketExecutionDisposition::Reconcile,
         }
     );
 }

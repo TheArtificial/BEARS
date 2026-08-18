@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bear_work_runs\n                     SET bearwire_session_id = NULL, updated_at = NOW()\n                     WHERE id = $1 AND bearwire_session_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "16b6193c03617ae32206451a978953126ec69cd8095802a2593ff103c60b3e86"
+}

@@ -19,6 +19,7 @@ use den_core::{BearProfile, DenError};
 use crate::execution_profiles::resolve_execution_profile;
 use crate::model::{
     select_dispatch_notebook_context, DocketEntryListFilter, DocketEntryRow,
+    DocketExecutionBinding, DocketExecutionGate, DocketExecutionReason,
     DocketExecutionSessionUpsert, DocketTaskDifficulty,
 };
 use crate::recovery::claim_turn_attempt;
@@ -1386,8 +1387,80 @@ pub async fn recover_attached_work_run(
 #[derive(Clone, Debug)]
 pub struct WorkRunCheckout {
     pub run: WorkRunRow,
-    pub prompt_context: WorkPromptContext,
-    pub task_title: String,
+    pub gate: DocketExecutionGate,
+    pub prompt_context: Option<WorkPromptContext>,
+    pub task_title: Option<String>,
+}
+
+/// Docket's authoritative Work-mode task decision. Checkout must consume this
+/// result instead of turning an absent runnable leaf into an executor-local
+/// error or synthesizing a competing scheduler decision.
+enum WorkExecutionAuthorization {
+    Allowed {
+        task: (
+            Uuid,
+            String,
+            String,
+            sqlx::types::Json<Vec<String>>,
+            Option<String>,
+        ),
+        gate: DocketExecutionGate,
+    },
+    Rejected(DocketExecutionGate),
+}
+
+async fn authorize_work_execution(
+    pool: &PgPool,
+    run: &WorkRunRow,
+) -> Result<WorkExecutionAuthorization, DenError> {
+    let active_task = sqlx::query!(
+        "SELECT t.id AS \"id!\", t.title AS \"title!\", t.body AS \"body!\", t.completion_criteria AS \"completion_criteria!\", t.difficulty AS \"difficulty?\"
+         FROM bear_tasks t
+         WHERE t.id = $1 AND t.job_id = $2",
+        run.executing_task_id,
+        run.job_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    let task = match active_task {
+        Some(task) => (
+            task.id,
+            task.title,
+            task.body,
+            sqlx::types::Json(serde_json::from_value(task.completion_criteria).map_err(
+                |error| {
+                    DenError::ValidationError(format!("invalid task completion criteria: {error}"))
+                },
+            )?),
+            task.difficulty,
+        ),
+        None => match crate::db::select_next_execution_task(pool, run.bear_id, run.job_id).await? {
+            Some(task) => (
+                task.id,
+                task.title,
+                task.body,
+                task.completion_criteria,
+                task.difficulty,
+            ),
+            None => {
+                let reason = DocketExecutionReason::NoActionableTask;
+                return Ok(WorkExecutionAuthorization::Rejected(
+                    DocketExecutionGate::Rejected {
+                        disposition: reason.disposition(),
+                        reason,
+                    },
+                ));
+            }
+        },
+    };
+    let gate = DocketExecutionGate::Allowed {
+        task_id: task.0,
+        binding: DocketExecutionBinding::WorkRun {
+            work_run_id: run.id,
+            job_run_id: run.job_run_id,
+        },
+    };
+    Ok(WorkExecutionAuthorization::Allowed { task, gate })
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -1423,44 +1496,27 @@ pub async fn checkout_work_run_for_session(
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
 
-    // `job_id` is the durable Work-run assignment. `executing_task_id` is
-    // only the current progress checkpoint inside that Job, so an absent
-    // checkpoint selects the Job's next runnable task rather than changing
-    // the run's assignment.
-    let active_task = sqlx::query!(
-        "SELECT t.id AS \"id!\", t.title AS \"title!\", t.body AS \"body!\", t.completion_criteria AS \"completion_criteria!\", t.difficulty AS \"difficulty?\"
-         FROM bear_tasks t
-         WHERE t.id = $1 AND t.job_id = $2",
-        run.executing_task_id,
-        run.job_id
-    )
-    .fetch_optional(pool)
-    .await?;
-    let task = match active_task {
-        Some(task) => (
-            task.id,
-            task.title,
-            task.body,
-            sqlx::types::Json(serde_json::from_value(task.completion_criteria).map_err(
-                |error| {
-                    DenError::ValidationError(format!("invalid task completion criteria: {error}"))
-                },
-            )?),
-            task.difficulty,
-        ),
-        None => {
-            let task = crate::db::select_next_execution_task(pool, run.bear_id, run.job_id)
-                .await?
-                .ok_or_else(|| {
-                    DenError::ValidationError("job has no runnable work task for checkout".into())
-                })?;
-            (
-                task.id,
-                task.title,
-                task.body,
-                task.completion_criteria,
-                task.difficulty,
+    let authorization = authorize_work_execution(pool, &run).await?;
+    let (task, gate) = match authorization {
+        WorkExecutionAuthorization::Allowed { task, gate } => (task, gate),
+        WorkExecutionAuthorization::Rejected(gate) => {
+            // The initial bind makes the live-run check atomic with checkout. A
+            // rejected gate must not leave a session claiming runnable work.
+            sqlx::query!(
+                "UPDATE bear_work_runs
+                 SET bearwire_session_id = NULL, updated_at = NOW()
+                 WHERE id = $1 AND bearwire_session_id = $2",
+                run.id,
+                session_id,
             )
+            .execute(pool)
+            .await?;
+            return Ok(WorkRunCheckout {
+                run,
+                gate,
+                prompt_context: None,
+                task_title: None,
+            });
         }
     };
     // A checkout records the selected task on the work run. Task state is
@@ -1549,7 +1605,8 @@ pub async fn checkout_work_run_for_session(
         .await?;
     let notebook_context = select_dispatch_notebook_context(&notebook_context);
     Ok(WorkRunCheckout {
-        prompt_context: WorkPromptContext {
+        gate,
+        prompt_context: Some(WorkPromptContext {
             job_id: run.job_id,
             run_id: run.job_run_id,
             goal,
@@ -1565,9 +1622,9 @@ pub async fn checkout_work_run_for_session(
                 .collect(),
             commit_policy,
             notebook_entries: notebook_context,
-        },
+        }),
         run,
-        task_title,
+        task_title: Some(task_title),
     })
 }
 

@@ -1283,14 +1283,52 @@ pub enum DocketExecutionReason {
     JobBlocked,
 }
 
+impl DocketExecutionReason {
+    /// The executor action is part of Docket's scheduler decision, not a
+    /// runtime retry heuristic.
+    pub fn disposition(&self) -> DocketExecutionDisposition {
+        match self {
+            Self::ActiveTaskIsStale => DocketExecutionDisposition::Reconcile,
+            Self::NoActionableTask | Self::JobComplete | Self::JobBlocked => {
+                DocketExecutionDisposition::Stop
+            }
+        }
+    }
+}
+
+/// The durable execution binding that authorizes a task dispatch. Consumers
+/// treat this as opaque scheduler authority rather than rebuilding task-tree
+/// eligibility from projections.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DocketExecutionBinding {
+    PairSession { job_run_id: Uuid },
+    WorkRun { work_run_id: Uuid, job_run_id: Uuid },
+}
+
+/// Safe executor action after Docket declines authorization. This is never a
+/// model-retry instruction: task-tree recovery remains Docket-owned.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketExecutionDisposition {
+    Reconcile,
+    Stop,
+}
+
 /// Authoritative scheduler decision for whether the selected execution session
 /// may work a task. Consumers must use this decision rather than re-evaluating
 /// task-tree eligibility from projections.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum DocketExecutionGate {
-    Allowed { task_id: Uuid },
-    Rejected { reason: DocketExecutionReason },
+    Allowed {
+        task_id: Uuid,
+        binding: DocketExecutionBinding,
+    },
+    Rejected {
+        reason: DocketExecutionReason,
+        disposition: DocketExecutionDisposition,
+    },
 }
 
 /// Authoritative execution control returned by scheduler operations.
@@ -1314,19 +1352,30 @@ impl DocketExecutionControl {
     /// gate consumed by executors. This intentionally derives from the same
     /// control object that selected or retained the execution-session claim.
     pub fn gate(&self) -> DocketExecutionGate {
+        let reject = |disposition| DocketExecutionGate::Rejected {
+            reason: self
+                .reason
+                .clone()
+                .expect("non-working execution control always has a reason"),
+            disposition,
+        };
         match self.next_action {
             DocketExecutionNextAction::WorkCurrentTask => DocketExecutionGate::Allowed {
                 task_id: self
                     .task
                     .claimed_task_id
                     .expect("working execution control always claims a task"),
+                binding: DocketExecutionBinding::PairSession {
+                    job_run_id: self.run_id,
+                },
             },
-            _ => DocketExecutionGate::Rejected {
-                reason: self
-                    .reason
-                    .clone()
-                    .expect("non-working execution control always has a reason"),
-            },
+            DocketExecutionNextAction::ReconcileExecution => {
+                reject(DocketExecutionDisposition::Reconcile)
+            }
+            DocketExecutionNextAction::JobCompleted
+            | DocketExecutionNextAction::RecoverBlockedRun => {
+                reject(DocketExecutionDisposition::Stop)
+            }
         }
     }
 }

@@ -2917,6 +2917,48 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn work_checkout_rejection_projects_non_dispatchable_gate(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
+    let (job_id, job_run_id): (Uuid, Uuid) =
+        sqlx::query_as("SELECT job_id, job_run_id FROM bear_work_runs WHERE id = $1")
+            .bind(work_run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load work run job");
+    sqlx::query(
+        "INSERT INTO bear_task_run_state (run_id, task_id, status)
+         SELECT $1, id, 'done' FROM bear_tasks WHERE job_id = $2
+         ON CONFLICT (run_id, task_id) DO UPDATE SET status = 'done'",
+    )
+    .bind(job_run_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("settle work tasks");
+
+    let response = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": format!("work-{}", Uuid::new_v4().simple()),
+            "work_order_id": work_run_id,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    let result = &response["result"];
+    assert_eq!(result["ok"], false, "{response}");
+    assert_eq!(result["permission_mode"], "none", "{response}");
+    assert_eq!(result["gate"]["status"], "rejected", "{response}");
+    assert_eq!(result["prompt"], "", "{response}");
+    assert!(result["task_title"].is_null(), "{response}");
+}
+#[sqlx::test(migrations = "../../migrations")]
 async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

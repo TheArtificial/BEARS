@@ -68,19 +68,28 @@ pub(crate) async fn work_checkout_result(
         "work.checkout bound armature session to work run"
     );
 
-    let prompt_registry = repository_prompt_fragment_registry()?;
-    let prompt_fragment = prompt_registry.require("runtime_work_checkout")?;
-    let prompt_context = json!({ "work": checkout.prompt_context });
-    let prompt = render_turn_fragment(prompt_fragment, &prompt_context)?;
+    let prompt = match checkout.prompt_context.as_ref() {
+        Some(prompt_context) => {
+            let prompt_registry = repository_prompt_fragment_registry()?;
+            let prompt_fragment = prompt_registry.require("runtime_work_checkout")?;
+            render_turn_fragment(prompt_fragment, &json!({ "work": prompt_context }))?
+        }
+        None => String::new(),
+    };
 
+    let authorized = matches!(
+        &checkout.gate,
+        den_docket::DocketExecutionGate::Allowed { .. }
+    );
     Ok(json!({
-        "ok": true,
+        "ok": authorized,
         "work_run_id": checkout.run.id,
         "job_id": checkout.run.job_id,
         "task_title": checkout.task_title,
+        "gate": checkout.gate,
         "attempt": checkout.run.attempt,
         "prompt": prompt,
-        "permission_mode": "workspace_write",
+        "permission_mode": if authorized { "workspace_write" } else { "none" },
         // Deadline is enforced by the sandbox provider + armature env; no
         // per-run override is stored yet.
         "deadline_secs": Value::Null,

@@ -24,7 +24,8 @@ use crate::work_runs::{
     WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned, WorkRunState,
 };
 use crate::{
-    DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
+    DocketCommitPolicy, DocketCriterionKind, DocketExecutionBinding, DocketExecutionDisposition,
+    DocketExecutionGate, DocketExecutionReason, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService, DocketTaskDefinitionPatch,
     DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate,
     DocketTaskScope, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskListVisibility,
@@ -191,6 +192,81 @@ fn enqueue_for(bear_id: Uuid, task_id: Uuid, user_id: i32) -> WorkRunEnqueue {
     }
 }
 
+#[tokio::test]
+async fn checkout_rejects_without_binding_when_no_task_is_actionable() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "checkout-rejected-gate").await;
+    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .expect("enqueue work run");
+    claim_next_work_run(
+        &pool,
+        "runner-rejected-gate",
+        std::time::Duration::from_mins(1),
+    )
+    .await
+    .expect("claim work run")
+    .expect("queued run");
+    record_work_run_provisioned(
+        &pool,
+        run.id,
+        &WorkRunProvisioned {
+            sandbox_server_url: "http://sandbox:3002".into(),
+            sandbox_id: "rejected-gate".into(),
+            sandbox_type: "container".into(),
+            sandbox_strength: "container: test".into(),
+            work_surface: serde_json::json!({}),
+            rust_dependency_preparation: None,
+        },
+    )
+    .await
+    .expect("provision work run");
+    sqlx::query!(
+        "INSERT INTO bear_task_run_state (run_id, task_id, status)
+         SELECT $1, id, 'done' FROM bear_tasks WHERE job_id = $2
+         ON CONFLICT (run_id, task_id) DO UPDATE SET status = 'done'",
+        run.job_run_id,
+        run.job_id,
+    )
+    .execute(&pool)
+    .await
+    .expect("settle all tasks");
+
+    let session_id = format!("headless-{}", Uuid::new_v4().simple());
+    let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
+        .await
+        .expect("rejected checkout is a scheduler result");
+    assert!(matches!(
+        checkout.gate,
+        DocketExecutionGate::Rejected {
+            reason: DocketExecutionReason::NoActionableTask,
+            disposition: DocketExecutionDisposition::Stop,
+        }
+    ));
+    assert!(checkout.prompt_context.is_none());
+    assert!(checkout.task_title.is_none());
+    let persisted = get_work_run(&pool, run.id)
+        .await
+        .expect("load work run")
+        .expect("work run exists");
+    assert!(persisted.executing_task_id.is_none());
+    assert!(persisted.bearwire_session_id.is_none());
+    let active_sessions: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM docket_execution_sessions
+         WHERE owner_profile = 'work' AND session_id = $1 AND state = 'active'",
+    )
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count execution sessions");
+    assert_eq!(active_sessions, 0);
+}
 #[tokio::test]
 async fn sandbox_repository_changes_without_publication_creates_no_run() {
     let _guard = DB_LOCK.lock().await;
@@ -725,11 +801,22 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
         .await
         .unwrap();
-    assert_eq!(checkout.prompt_context.job_id, run.job_id);
-    assert_eq!(checkout.prompt_context.current_task_id, task_ids[0]);
-    assert_eq!(checkout.prompt_context.tasks.len(), 1);
-    assert_eq!(checkout.prompt_context.tasks[0].title, "Alpha work task");
-    assert!(checkout.prompt_context.tasks[0]
+    assert!(matches!(
+        checkout.gate,
+        DocketExecutionGate::Allowed {
+            task_id,
+            binding: DocketExecutionBinding::WorkRun { work_run_id, job_run_id },
+        } if task_id == task_ids[0] && work_run_id == run.id && job_run_id == run.job_run_id
+    ));
+    let prompt_context = checkout
+        .prompt_context
+        .as_ref()
+        .expect("runnable checkout has prompt context");
+    assert_eq!(prompt_context.job_id, run.job_id);
+    assert_eq!(prompt_context.current_task_id, task_ids[0]);
+    assert_eq!(prompt_context.tasks.len(), 1);
+    assert_eq!(prompt_context.tasks[0].title, "Alpha work task");
+    assert!(prompt_context.tasks[0]
         .completion_criteria
         .iter()
         .any(|criterion| criterion.contains("Alpha work task is verifiably complete")));
@@ -1128,13 +1215,14 @@ async fn publish_wiring_image_branch_and_prompt() {
         .await
         .unwrap());
 
-    assert_eq!(checkout.prompt_context.job_id, run.job_id);
-    assert_eq!(checkout.prompt_context.run_id, run.job_run_id);
-    assert_eq!(checkout.prompt_context.tasks.len(), 1);
-    assert_eq!(
-        checkout.prompt_context.commit_policy.as_deref(),
-        Some("per_task")
-    );
+    let prompt_context = checkout
+        .prompt_context
+        .as_ref()
+        .expect("runnable checkout has prompt context");
+    assert_eq!(prompt_context.job_id, run.job_id);
+    assert_eq!(prompt_context.run_id, run.job_run_id);
+    assert_eq!(prompt_context.tasks.len(), 1);
+    assert_eq!(prompt_context.commit_policy.as_deref(), Some("per_task"));
 
     // An explicit branch set at creation is never overwritten.
     let (job2_id, _) =
