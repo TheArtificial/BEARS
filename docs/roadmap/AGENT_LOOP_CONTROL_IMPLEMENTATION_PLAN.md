@@ -702,6 +702,8 @@ Retention rules:
 
 ## Phase 7 — Checkpoint enforcement in the loop
 
+**Status: In progress (updated 2026-08-20).** Production server-tool continuation evaluates exploration, consecutive-failure, same-signature, and low-budget triggers before the next model step and installs the existing runtime-owned checkpoint gate. Typed pre-risk enforcement runs before native client-tool recording, approval, deferral, or execution. A valid or degraded checkpoint report resets only checkpoint-observation counters; it never replenishes authoritative turn budgets, KO/failure hard stops, permissions, or task authority. When a checkpoint reports a required task-state change in an active task context, runtime permits only the matching task-management follow-through action; the report itself does not mutate task/Docket state. Focused runtime tests cover trigger evidence, broad-tool blocking/read-only pass-through, reset behavior, and task-action follow-through. **Still open:** there is no typed production task-gate rejection signal/owner, so the plan's first/repeated task-gate-rejection trigger cannot yet be evaluated or enforced without inventing a second task authority.
+
 **Goal:** make checkpoint triggers affect continuation without making checkpoint advice authoritative.
 
 Runtime enforcement is dominant. A checkpoint report may choose among actions still allowed by the resolved loop-control profile, but it cannot expand a budget, reset an exhausted stop condition, bypass a trust/task gate, or authorize a risky action that runtime policy disallows. Runtime may always downgrade a checkpoint recommendation to a safer action such as bounded retry, reconciliation, stop, or human/operator review.
