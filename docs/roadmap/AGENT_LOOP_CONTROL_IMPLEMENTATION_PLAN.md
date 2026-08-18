@@ -643,7 +643,7 @@ Do not force learned facts and uncertainty into required JSON arrays. Keep model
 
 ## Phase 6 — Checkpoint artifact retention and audit policy
 
-**Status: In progress (2026-08-16).** `bear_run_checkpoints` persists request/response audit payloads by run and keeps them separate from Docket events and replay data. Authenticated `conversation.diagnostics` now has an opt-in, bounded checkpoint projection for an owned Pair run (`include_checkpoints: true`), with SQLx coverage. Artifact-ref migration, Work/Job audit linking, and distinct Pair-vs-Work retention policy remain open.
+**Status: In progress (updated 2026-08-20).** `bear_run_checkpoints` persists request/response audit payloads by run and keeps them separate from Docket events and replay data. Authenticated `conversation.diagnostics` has an opt-in, bounded checkpoint projection for an owned Pair run (`include_checkpoints: true`), with SQLx coverage. **Work/Job audit linking is complete:** BearWire resolves the authoritative live Work binding when constructing the native session and passes opaque `CheckpointAuditContext` (`work_run_id`, `docket_job_id`) to runtime for persistence; runtime does not query Docket. The existing owned-run diagnostics projection returns those persisted references. Artifact-ref migration and distinct Pair-vs-Work retention policy remain open.
 
 **Goal:** make checkpoints useful for `work` run audit without polluting conversation history or Docket task events.
 
@@ -728,7 +728,7 @@ When a trigger fires:
 | Enforce failure checkpoints | Consecutive failures force checkpoint before retry; retry is allowed only if runtime policy still permits it. |
 | Enforce same-signature checkpoint | Near-ko repeated signature forces different action or checkpoint; ko exhaustion still stops even if the checkpoint recommends retry. |
 | Enforce task-gate checkpoint | First/repeated gate rejection can require checkpoint before stronger gate behavior; checkpoint advice cannot satisfy the gate without task/Docket evidence. |
-| Enforce pre-risk checkpoint | `careful`/`strict` can require checkpoint before broad/destructive actions; checkpoint advice cannot bypass trust policy or permission requirements. |
+| Enforce pre-risk checkpoint | **Complete (2026-08-20):** `careful`/`strict` enforcement resolves a typed `PreRiskCheckpointClass` from `den-core::ClientToolName` (not descriptive wire `risk` strings) at native `ToolCallRequested` dispatch, before recording, approval, client deferral, or execution. Broad/destructive calls require the existing runtime-owned checkpoint path; checkpoint advice cannot bypass trust policy or permission requirements. Focused runtime tests cover broad-tool blocking and read-only pass-through. |
 | Reset checkpoint observation window | A valid or degraded checkpoint report clears only checkpoint-trigger counters, giving the model a bounded fresh read/search or recovery window without resetting authoritative budgets/ko/fuses. |
 | Add loop tests | Simulated turns prove checkpoint tool calls are handled internally, invalid checkpoint reports degrade without killing the run, valid reports can require task-tool follow-through, checkpoint reports open a fresh checkpoint-observation window, and checkpoint advice never expands budget/stop authority. |
 
@@ -791,7 +791,7 @@ Checkpoint requests include the relevant current-task or assignment reference wh
 | Keep delegation deferred | Do not expose `delegate_task` until the real shared Pair/Work execution, lifecycle, and workspace-safety requirements in the task delegation lifecycle plan can ship together. Delegation/promotion must create a new Job-owned task after explicit approval, never give a session task a second owner; do not add a read-only or intent-only placeholder. |
 | Validate task-state intent | Checkpoint reports can recommend update/sync/handoff but cannot mutate task state. |
 | Require tool call for state changes | Runtime requires the relevant task-management tool when a state change is needed. |
-| Add audit correlation | Work checkpoint artifacts can be queried by run/job/assignment refs. |
+| Add audit correlation | **Complete (2026-08-20):** checkpoint persistence carries BearWire-resolved opaque Work-run and Docket-Job refs; the bounded, authorized diagnostics projection returns them for the selected owned run. Runtime does not query Docket or treat these refs as task-state authority. |
 | Add tests | Cover no implicit Job/run creation, Pair/Work objective independence, unassigned Work rejection, and checkpoint “done” not completing a task. |
 
 ## Phase 10 — Visibility, BearWire, and operator UX
