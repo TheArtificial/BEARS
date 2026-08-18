@@ -10,6 +10,15 @@ pub enum ToolClass {
     Browser,
 }
 
+/// Whether a client tool must be preceded by a runtime checkpoint under a
+/// control profile that enables pre-risk enforcement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreRiskCheckpointClass {
+    None,
+    Broad,
+    Destructive,
+}
+
 impl ToolClass {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -1795,6 +1804,27 @@ pub fn tool_class(tool: ClientToolName) -> ToolClass {
         | ClientToolName::ChromeNetworkRequests
         | ClientToolName::ChromeScreenshot => ToolClass::Browser,
         ClientToolName::McpCallTool => ToolClass::Execution,
+    }
+}
+
+pub fn pre_risk_checkpoint_class(tool: ClientToolName) -> PreRiskCheckpointClass {
+    match tool {
+        ClientToolName::DeletePath => PreRiskCheckpointClass::Destructive,
+        ClientToolName::EditFile
+        | ClientToolName::CreateTextFile
+        | ClientToolName::CreateDirectory
+        | ClientToolName::MovePath
+        | ClientToolName::CopyPath
+        | ClientToolName::ApplyPatch
+        | ClientToolName::GitAdd
+        | ClientToolName::GitRestore
+        | ClientToolName::GitCommit
+        | ClientToolName::GitStash
+        | ClientToolName::RunCommand
+        | ClientToolName::ProcessRun
+        | ClientToolName::TerminalRunCommand
+        | ClientToolName::McpCallTool => PreRiskCheckpointClass::Broad,
+        _ => PreRiskCheckpointClass::None,
     }
 }
 

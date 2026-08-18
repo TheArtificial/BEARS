@@ -59,7 +59,13 @@ use den_core::tools::{
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
 };
-use den_core::{config::Config, governance::Governance, profile::BearProfile, DenError};
+use den_core::{
+    client_tools::{pre_risk_checkpoint_class, ClientToolName, PreRiskCheckpointClass},
+    config::Config,
+    governance::Governance,
+    profile::BearProfile,
+    DenError,
+};
 use den_docket::TaskListProjection;
 
 use super::transcript::{
@@ -1057,6 +1063,59 @@ impl SessionTrackingStream {
         self.store
             .get(&self.session_key)
             .and_then(|session| session.pending_checkpoint_request)
+    }
+
+    fn begin_pre_risk_checkpoint_if_required(
+        &mut self,
+        tool_name: &str,
+    ) -> Option<RuntimeStreamEvent> {
+        if !self.enforce_checkpoint_responses()
+            || !matches!(
+                ClientToolName::from_provider_alias(tool_name).map(pre_risk_checkpoint_class),
+                Some(PreRiskCheckpointClass::Broad | PreRiskCheckpointClass::Destructive)
+            )
+        {
+            return None;
+        }
+        let session = self.store.get(&self.session_key)?;
+        let trigger =
+            crate::agent_loop::pre_risk_checkpoint_trigger(&session.agent_loop_control.profile)?;
+        let run_id = session
+            .run_id
+            .clone()
+            .unwrap_or_else(|| session.client_session_id.clone());
+        let checkpoint_id = format!("pre-risk-{}", Uuid::new_v4());
+        let attempted_action = format!("tool_call:{tool_name}");
+        let request = RuntimeCheckpointRequest {
+            checkpoint_id,
+            run_id,
+            reason: trigger.reason,
+            control_level: session.agent_loop_control.level,
+            profile_fingerprint: crate::agent_loop::agent_loop_control_profile_fingerprint(
+                &session.agent_loop_control.profile,
+            )
+            .ok(),
+            active_objective: None,
+            task_context: None,
+            evidence_refs: vec![crate::agent_loop::CheckpointEvidenceRef {
+                kind: "tool_name".to_string(),
+                id: tool_name.to_string(),
+                summary: None,
+            }],
+            required_fields: vec![
+                crate::agent_loop::CheckpointField::ActiveObjective,
+                crate::agent_loop::CheckpointField::MoreExplorationJustified,
+                crate::agent_loop::CheckpointField::NextAction,
+            ],
+        };
+        self.store.update(&self.session_key, |session| {
+            session.pending_checkpoint_request = Some(request.clone());
+            session.pending_checkpoint_recovery_attempts = 0;
+        });
+        let message = Self::checkpoint_recovery_message(&request, &attempted_action);
+        self.push_checkpoint_recovery_guidance(&request, &attempted_action);
+        self.begin_checkpoint_continuation();
+        Some(Self::checkpoint_recovery_event(message))
     }
 
     fn checkpoint_audit_enabled(&self) -> bool {
@@ -2081,6 +2140,9 @@ impl Stream for SessionTrackingStream {
                     }
                     return Poll::Ready(Some(Ok(event)));
                 }
+                if let Some(event) = self.begin_pre_risk_checkpoint_if_required(&tool_name) {
+                    return Poll::Ready(Some(Ok(event)));
+                }
                 self.pending_server_tool_continuation = None;
                 self.tool_calls.insert(
                     tool_call_id.clone(),
@@ -2671,6 +2733,105 @@ mod tests {
             session.profile,
             NativeToolDispatchMode::DeferToClient,
         )
+    }
+
+    #[tokio::test]
+    async fn pre_risk_checkpoint_blocks_broad_client_tool_before_dispatch() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.agent_loop_control = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/test"),
+            model_default: None,
+            bear_override: Some(den_core::AgentLoopControlLevel::Careful),
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearProfile::Pair),
+            objective_orientation: None,
+            pre_risk: false,
+        });
+        let mut stream = test_tracking_stream_with_session(&session);
+        stream.inner = Box::pin(futures::stream::iter(vec![Ok(
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-risk".to_string(),
+                tool_name: "fs_apply_patch".to_string(),
+                title: None,
+                kind: Some("function".to_string()),
+                arguments: serde_json::json!({"patch": "--- a/a\\n+++ b/a\\n@@ -1 +1 @@\\n-a\\n+b"}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            }),
+        )]));
+
+        let event = stream
+            .next()
+            .await
+            .expect("checkpoint guidance")
+            .expect("ok event");
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { ref kind, .. })
+                if kind == "recoverable_tool_rejection"
+        ));
+        let stored = stream
+            .store
+            .get(&stream.session_key)
+            .expect("stored session");
+        let request = stored
+            .pending_checkpoint_request
+            .as_ref()
+            .expect("pre-risk checkpoint");
+        assert_eq!(
+            request.reason,
+            crate::agent_loop::CheckpointReason::PreRiskMutation
+        );
+        assert_eq!(request.evidence_refs[0].id, "fs_apply_patch");
+        assert!(stored.find_pending_tool_call("call-risk").is_none());
+    }
+
+    #[tokio::test]
+    async fn pre_risk_checkpoint_does_not_block_read_only_client_tool() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.agent_loop_control = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/test"),
+            model_default: None,
+            bear_override: Some(den_core::AgentLoopControlLevel::Careful),
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearProfile::Pair),
+            objective_orientation: None,
+            pre_risk: false,
+        });
+        let mut stream = test_tracking_stream_with_session(&session);
+        stream.inner = Box::pin(futures::stream::iter(vec![Ok(
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-read".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                title: None,
+                kind: Some("function".to_string()),
+                arguments: serde_json::json!({"path": "README.md"}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            }),
+        )]));
+
+        let event = stream
+            .next()
+            .await
+            .expect("tool request")
+            .expect("ok event");
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. })
+        ));
+        let stored = stream
+            .store
+            .get(&stream.session_key)
+            .expect("stored session");
+        assert!(stored.pending_checkpoint_request.is_none());
+        assert!(stored.find_pending_tool_call("call-read").is_some());
     }
 
     #[tokio::test]

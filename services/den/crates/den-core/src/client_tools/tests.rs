@@ -2,6 +2,22 @@ use super::*;
 use crate::tools::descriptor::builtin_den_tool_descriptors;
 
 #[test]
+fn pre_risk_checkpoint_class_uses_typed_client_tool_identity() {
+    assert_eq!(
+        pre_risk_checkpoint_class(ClientToolName::ReadTextFile),
+        PreRiskCheckpointClass::None
+    );
+    assert_eq!(
+        pre_risk_checkpoint_class(ClientToolName::ApplyPatch),
+        PreRiskCheckpointClass::Broad
+    );
+    assert_eq!(
+        pre_risk_checkpoint_class(ClientToolName::DeletePath),
+        PreRiskCheckpointClass::Destructive
+    );
+}
+
+#[test]
 fn read_only_git_tools_do_not_require_an_approval_gate() {
     for tool in [
         ClientToolName::GitStatus,
