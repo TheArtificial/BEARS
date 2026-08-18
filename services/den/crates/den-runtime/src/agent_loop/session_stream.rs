@@ -9,7 +9,7 @@ use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent}
 use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
-use futures::{stream, Stream};
+use futures::{stream, Stream, StreamExt};
 use uuid::Uuid;
 
 use crate::agent_loop::{
@@ -290,6 +290,7 @@ pub struct SessionTrackingStream {
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
     pending_checkpoint_thinking: Option<RuntimeSemanticEvent>,
     pending_checkpoint_progress: Option<RuntimeSemanticEvent>,
+    pending_checkpoint_recovery: Option<RuntimeSemanticEvent>,
     pending_server_tool: Option<ServerToolFuture>,
     pending_server_tool_stream: Option<ServerToolContinuationFuture>,
     pending_server_tool_continuation: Option<String>,
@@ -346,6 +347,7 @@ impl SessionTrackingStream {
             pending_pause_after_tool: None,
             pending_checkpoint_thinking: None,
             pending_checkpoint_progress: None,
+            pending_checkpoint_recovery: None,
             pending_server_tool: None,
             pending_server_tool_stream: None,
             pending_server_tool_continuation: None,
@@ -998,14 +1000,14 @@ impl SessionTrackingStream {
                 store.update(&session_key, |session| {
                     session.checkpoint_state = checkpoint_evaluation.next_state.clone();
                 });
-                if let Some(request) = checkpoint_request {
+                let checkpoint_progress = checkpoint_request.map(|request| {
                     SessionTrackingStream::install_pending_checkpoint_request_in_store(
                         &store,
                         &session_key,
                         &pool,
                         request,
-                    );
-                }
+                    )
+                });
                 session = store.get(&session_key).ok_or_else(|| {
                     DenError::System("native agent loop session not found".to_string())
                 })?;
@@ -1038,7 +1040,15 @@ impl SessionTrackingStream {
                     profile,
                     session_store: store,
                 };
-                run_agent_step_stream(&llm, &session, Some(overflow)).await
+                let next_stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
+                Ok(Box::pin(
+                    stream::iter(
+                        checkpoint_progress
+                            .map(|event| Ok(RuntimeStreamEvent::Semantic(event)))
+                            .into_iter(),
+                    )
+                    .chain(next_stream),
+                ) as RuntimeEventStream)
             });
             Ok((call, message, continuation as ServerToolContinuationFuture))
         }));
@@ -1132,11 +1142,15 @@ impl SessionTrackingStream {
                 crate::agent_loop::CheckpointField::NextAction,
             ],
         };
-        self.install_pending_checkpoint_request(request.clone());
+        let progress_event = self.install_pending_checkpoint_request(request.clone());
         let message = Self::checkpoint_recovery_message(&request, &attempted_action);
         self.push_checkpoint_recovery_guidance(&request, &attempted_action);
         self.begin_checkpoint_continuation();
-        Some(Self::checkpoint_recovery_event(message))
+        self.pending_checkpoint_recovery = Some(match Self::checkpoint_recovery_event(message) {
+            RuntimeStreamEvent::Semantic(event) => event,
+            _ => unreachable!("checkpoint recovery is semantic"),
+        });
+        Some(RuntimeStreamEvent::Semantic(progress_event))
     }
 
     fn checkpoint_request_for_tool_observation(
@@ -1196,16 +1210,35 @@ impl SessionTrackingStream {
         }
     }
 
+    fn checkpoint_required_progress_event(
+        request: &RuntimeCheckpointRequest,
+    ) -> RuntimeSemanticEvent {
+        RuntimeSemanticEvent::RunProgress {
+            kind: "runtime_checkpoint_required".to_string(),
+            text: Some("Runtime checkpoint required before continuing.".to_string()),
+            phase: Some("runtime_checkpoint".to_string()),
+            detail: Some(serde_json::json!({
+                "checkpoint_id": request.checkpoint_id,
+                "reason": request.reason,
+                "control_level": request.control_level,
+                "required_fields": request.required_fields,
+            })),
+        }
+    }
+
     /// Installs the runtime-owned checkpoint gate and, for Work only, records an
     /// audit-only artifact. Pair checkpoints deliberately remain in-memory unless
     /// an explicit recovery policy adds durable retention.
-    fn install_pending_checkpoint_request(&self, request: RuntimeCheckpointRequest) {
+    fn install_pending_checkpoint_request(
+        &self,
+        request: RuntimeCheckpointRequest,
+    ) -> RuntimeSemanticEvent {
         Self::install_pending_checkpoint_request_in_store(
             &self.store,
             &self.session_key,
             &self.pool,
             request,
-        );
+        )
     }
 
     fn install_pending_checkpoint_request_in_store(
@@ -1213,7 +1246,8 @@ impl SessionTrackingStream {
         session_key: &str,
         pool: &sqlx::PgPool,
         request: RuntimeCheckpointRequest,
-    ) {
+    ) -> RuntimeSemanticEvent {
+        let progress_event = Self::checkpoint_required_progress_event(&request);
         let session = store.get(session_key);
         store.update(session_key, |session| {
             session.pending_checkpoint_request = Some(request.clone());
@@ -1221,11 +1255,11 @@ impl SessionTrackingStream {
         });
 
         let Some(session) = session else {
-            return;
+            return progress_event;
         };
         let Some((visibility, replay_policy)) = Self::checkpoint_request_retention(session.profile)
         else {
-            return;
+            return progress_event;
         };
         let Some(run_id) = session.run_id else {
             tracing::warn!(
@@ -1233,7 +1267,7 @@ impl SessionTrackingStream {
                 checkpoint_id = %request.checkpoint_id,
                 "skipped Work checkpoint audit artifact because no turn run is available"
             );
-            return;
+            return progress_event;
         };
         let pool = pool.clone();
         let session_id = session.client_session_id;
@@ -1260,6 +1294,7 @@ impl SessionTrackingStream {
                 );
             }
         });
+        progress_event
     }
 
     fn checkpoint_audit_enabled(&self) -> bool {
@@ -2053,6 +2088,10 @@ impl Stream for SessionTrackingStream {
         }
 
         if let Some(event) = self.pending_checkpoint_progress.take() {
+            return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(event))));
+        }
+
+        if let Some(event) = self.pending_checkpoint_recovery.take() {
             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(event))));
         }
 
@@ -2880,6 +2919,22 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_required_progress_is_summary_safe() {
+        let event = SessionTrackingStream::checkpoint_required_progress_event(&checkpoint_request(
+            "ckpt-safe",
+        ));
+        assert!(matches!(
+            event,
+            RuntimeSemanticEvent::RunProgress { ref kind, ref text, ref phase, ref detail }
+                if kind == "runtime_checkpoint_required"
+                    && text.as_deref() == Some("Runtime checkpoint required before continuing.")
+                    && phase.as_deref() == Some("runtime_checkpoint")
+                    && detail.as_ref().and_then(|detail| detail.get("checkpoint_id")).and_then(serde_json::Value::as_str) == Some("ckpt-safe")
+                    && detail.as_ref().is_some_and(|detail| detail.get("summary").is_none())
+        ));
+    }
+
+    #[test]
     fn checkpoint_request_for_trigger_carries_tool_evidence() {
         let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         let observation = crate::agent_loop::ToolContinuationObservation {
@@ -2930,6 +2985,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pre_risk_checkpoint_emits_canonical_required_progress_before_rejection() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.agent_loop_control = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/test"),
+            model_default: None,
+            bear_override: Some(den_core::AgentLoopControlLevel::Careful),
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearProfile::Pair),
+            objective_orientation: None,
+            pre_risk: false,
+        });
+        let mut stream = test_tracking_stream_with_session(&session);
+        stream.inner = Box::pin(futures::stream::iter(vec![Ok(
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-risk-progress".to_string(),
+                tool_name: "fs_apply_patch".to_string(),
+                title: None,
+                kind: Some("function".to_string()),
+                arguments: serde_json::json!({"patch": "x"}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            }),
+        )]));
+
+        let first = stream
+            .next()
+            .await
+            .expect("progress event")
+            .expect("ok event");
+        assert!(matches!(
+            first,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { ref kind, ref detail, .. })
+                if kind == "runtime_checkpoint_required"
+                    && detail.as_ref().and_then(|detail| detail.get("reason")) == Some(&serde_json::json!(crate::agent_loop::CheckpointReason::PreRiskMutation))
+        ));
+        let second = stream
+            .next()
+            .await
+            .expect("recovery event")
+            .expect("ok event");
+        assert!(matches!(
+            second,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { ref kind, .. })
+                if kind == "recoverable_tool_rejection"
+        ));
+    }
+
+    #[tokio::test]
     async fn pre_risk_checkpoint_blocks_broad_client_tool_before_dispatch() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         session.agent_loop_control = resolve_agent_loop_control(AgentLoopControlResolutionInput {
@@ -2960,10 +3066,20 @@ mod tests {
         let event = stream
             .next()
             .await
-            .expect("checkpoint guidance")
+            .expect("checkpoint required progress")
             .expect("ok event");
         assert!(matches!(
             event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { ref kind, .. })
+                if kind == "runtime_checkpoint_required"
+        ));
+        let recovery = stream
+            .next()
+            .await
+            .expect("checkpoint recovery guidance")
+            .expect("ok event");
+        assert!(matches!(
+            recovery,
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { ref kind, .. })
                 if kind == "recoverable_tool_rejection"
         ));

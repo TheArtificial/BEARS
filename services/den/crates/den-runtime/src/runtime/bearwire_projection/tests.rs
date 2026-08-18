@@ -15,6 +15,29 @@ use den_protocol::{
 };
 
 #[test]
+fn checkpoint_required_progress_projects_as_ephemeral_run_progress() {
+    let projected = runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::RunProgress {
+            kind: "runtime_checkpoint_required".to_string(),
+            text: Some("Runtime checkpoint required before continuing.".to_string()),
+            phase: Some("runtime_checkpoint".to_string()),
+            detail: Some(serde_json::json!({
+                "checkpoint_id": "ckpt-safe",
+                "reason": "over_exploration",
+                "control_level": "careful",
+                "required_fields": ["active_objective"],
+            })),
+        },
+    ));
+
+    assert!(matches!(projected.as_slice(), [event]
+        if event.event_type == "run.progress"
+            && event.data["kind"] == "runtime_checkpoint_required"
+            && event.data["detail"]["checkpoint_id"] == "ckpt-safe"
+            && event.data["detail"].get("summary").is_none()));
+}
+
+#[test]
 fn provider_activity_is_not_projected_to_bearwire_or_sse() {
     assert!(
         runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::ProviderActivity).is_empty()

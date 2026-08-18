@@ -830,6 +830,8 @@ Visibility defaults:
 
 **Exit gate:** humans can understand why a run checkpointed, but task history and transcript remain clean.
 
+**Status: complete (2026-08-18).** The shared checkpoint installer emits a summary-safe `runtime_checkpoint_required` progress event before continuation or pre-risk recovery guidance. Runtime projection maps it to ephemeral `run.progress`; BearWire keeps that replaceable livestream event out of durable conversation history. Work checkpoint artifacts remain available through the bounded authorized diagnostics read path, while raw checkpoint prose and provider reasoning remain outside normal transcript and replay context. Focused runtime coverage verifies pre-risk ordering and safe ephemeral projection.
+
 ## Phase 11 — Pre-release delivery posture
 
 Den is pre-release, so loop control should be implemented aggressively. Development may still be staged for reviewability and testability, but completed slices are active by default once their tests pass. Do not make feature flags or long observation-only periods the primary safety mechanism. Safety comes from typed profiles, hard invariants, runtime-dominant enforcement, replayable ledgers, and tests.
