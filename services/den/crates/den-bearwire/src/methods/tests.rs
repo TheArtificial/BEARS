@@ -1877,7 +1877,9 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
         .expect("visible runtime marker row");
     let marker_text: String = visible.try_get("content_text").expect("decode marker text");
     let marker_json: Value = visible.try_get("content_json").expect("decode marker json");
-    assert!(marker_text.contains("BearWire Test Bear stopped this turn after it ran too long"));
+    assert!(
+        marker_text.contains("**Den**: BearWire Test Bear stopped this turn after it ran too long")
+    );
     assert_eq!(marker_json["event"], "runtime_marker");
     assert_eq!(marker_json["marker_kind"], "operational_outcome");
     assert_eq!(marker_json["run_id"], run_id);

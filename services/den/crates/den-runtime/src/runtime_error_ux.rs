@@ -111,6 +111,13 @@ pub fn log_sample(value: impl AsRef<str>) -> String {
     out
 }
 
+/// Renders a Den-owned conversation status without impersonating model output.
+///
+/// Call this only for typed runtime/status projections, never arbitrary assistant text.
+pub fn format_den_status(message: impl AsRef<str>) -> String {
+    format!("**Den**: {}", message.as_ref().trim())
+}
+
 pub fn run_failure_projection(
     reason: &str,
     message: &str,
@@ -129,13 +136,15 @@ pub fn run_failure_projection(
             message,
             bear_name,
             diagnostic_context.as_ref(),
-        ),
+        )
+        .map(format_den_status),
         history_marker: run_failed_history_marker(
             reason,
             message,
             bear_name,
             diagnostic_context.as_ref(),
-        ),
+        )
+        .map(format_den_status),
         diagnostic_context,
     }
 }
@@ -525,7 +534,7 @@ mod tests {
             run_failure_projection("runtime_internal", message, "run-1", "Builder Bear", None);
         assert_eq!(
             projection.user_message.as_deref(),
-            Some("Builder Bear stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.")
+            Some("**Den**: Builder Bear stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.")
         );
         assert_eq!(projection.content["source"], "den.runtime");
 
