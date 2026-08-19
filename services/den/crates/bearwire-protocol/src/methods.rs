@@ -70,6 +70,14 @@ pub struct ConversationHistoryRequest {
     pub before: Option<i64>,
     #[serde(default = "default_history_limit")]
     pub limit: i64,
+    /// Surface-only derived records are independent of the message cursor. Callers paging
+    /// backwards should request them once, on the newest page, rather than duplicating them.
+    #[serde(default = "default_surface_history_enrichment")]
+    pub include_surface_enrichment: bool,
+}
+
+fn default_surface_history_enrichment() -> bool {
+    true
 }
 
 /// Bounded, transcript-free controller evidence for one authenticated conversation.
@@ -453,9 +461,19 @@ mod tests {
         .unwrap();
         assert_eq!(history.before, Some(42));
         assert_eq!(history.limit, 50);
+        assert!(history.include_surface_enrichment);
+
+        let older_page: ConversationHistoryRequest = serde_json::from_value(serde_json::json!({
+            "conversation_id": "conv-1",
+            "before": 42,
+            "include_surface_enrichment": false
+        }))
+        .unwrap();
+        assert!(!older_page.include_surface_enrichment);
 
         let diagnostics: ConversationDiagnosticsRequest =
             serde_json::from_value(serde_json::json!({
+                "bear_slug": "bear-1",
                 "conversation_id": "conv-1",
                 "message_id": " message-1 ",
                 "task_id": " task-1 ",
@@ -468,6 +486,7 @@ mod tests {
 
         assert!(
             serde_json::from_value::<ConversationDiagnosticsRequest>(serde_json::json!({
+                "bear_slug": "bear-1",
                 "conversation_id": "conv-1",
                 "unexpected": true
             }))

@@ -4807,6 +4807,9 @@ async fn fetch_conversation_surface_history_chronological(
             "bear_slug": config.bear,
             "conversation_id": conversation_id,
             "limit": 50,
+            // Session metadata, artifacts, and diagnostics are independent of this
+            // message cursor. Request them only on the newest page.
+            "include_surface_enrichment": before.is_none(),
         });
         if let Some(before) = before.as_deref() {
             params["before"] = json!(before);

@@ -554,7 +554,7 @@ async fn conversation_history_like_result(
         })
         .collect::<Vec<_>>();
 
-    if records_key == "surface_events" {
+    if records_key == "surface_events" && request.include_surface_enrichment {
         if let Some(session) = client_sessions::find_latest_for_bear_conversation(
             &state.sqlx_pool,
             bear.id,
