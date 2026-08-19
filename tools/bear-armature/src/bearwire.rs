@@ -1723,6 +1723,20 @@ fn bearwire_plan_update_entries(event: &Value) -> Value {
         .unwrap_or_else(|| json!([]))
 }
 
+fn format_den_status(message: &str) -> String {
+    let message = message.trim();
+    let message = message
+        .strip_prefix("I stopped because ")
+        .map(|rest| format!("This turn stopped because {rest}"))
+        .or_else(|| {
+            message
+                .strip_prefix("I stopped ")
+                .map(|rest| format!("This turn stopped {rest}"))
+        })
+        .unwrap_or_else(|| message.to_owned());
+    format!("**Den**: {message}")
+}
+
 fn bearwire_run_failed_user_message(event: &Value) -> String {
     let data = event.get("data").unwrap_or(&Value::Null);
     let user_message = data
@@ -1756,11 +1770,11 @@ fn bearwire_run_failed_user_message(event: &Value) -> String {
         .and_then(Value::as_str)
         .or_else(|| data.get("run_id").and_then(Value::as_str));
     let mut rendered = if let Some(user_message) = user_message {
-        format!("BEARS prompt stopped: {user_message}")
+        format_den_status(user_message)
     } else if let Some(reason) = reason {
-        format!("BEARS run failed ({reason}): {message}")
+        format_den_status(&format!("Run failed ({reason}): {message}"))
     } else {
-        format!("BEARS run failed: {message}")
+        format_den_status(&format!("Run failed: {message}"))
     };
     if user_message.is_none() {
         if let Some(error_type) = error_type {
@@ -2290,11 +2304,10 @@ async fn handle_bearwire_event(
             outcome.saw_visible_output = true;
             diagnostics.saw_error = true;
             diagnostics.saw_visible_output = true;
-            let message = event
-                .pointer("/data/message")
-                .and_then(Value::as_str)
-                .unwrap_or("Den lost the model connection before the response finished. Send another message to retry.");
-            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, message)
+            let message = format_den_status(
+                "The model connection ended before the response finished. Send another message to retry.",
+            );
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
                 .await?;
         }
         "run.cancelled" => {
@@ -2303,7 +2316,7 @@ async fn handle_bearwire_event(
             outcome.saw_visible_output = true;
             diagnostics.saw_error = true;
             diagnostics.saw_visible_output = true;
-            let message = "Den request was cancelled.";
+            let message = format_den_status("The request was cancelled.");
             eprintln!(
                 "bear-armature: BearWire run cancelled session_id={} run_id={}",
                 session_id,
@@ -2312,7 +2325,7 @@ async fn handle_bearwire_event(
                     .and_then(Value::as_str)
                     .unwrap_or("<unknown>")
             );
-            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, message)
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
                 .await?;
         }
         "tool_call.requested" => {
@@ -3052,6 +3065,18 @@ mod tests {
     }
 
     #[test]
+    fn format_den_status_prefixes_and_normalizes_system_first_person_copy() {
+        assert_eq!(
+            format_den_status("I stopped because this turn reached its budget."),
+            "**Den**: This turn stopped because this turn reached its budget."
+        );
+        assert_eq!(
+            format_den_status("The request was cancelled."),
+            "**Den**: The request was cancelled."
+        );
+    }
+
+    #[test]
     fn bearwire_run_failed_user_message_includes_error_detail() {
         let event = json!({
             "type": "run.failed",
@@ -3102,9 +3127,9 @@ mod tests {
         let message = bearwire_run_failed_user_message(&event);
         let context = bearwire_run_failed_stderr_context(&event).expect("stderr context");
 
-        assert!(message.starts_with("BEARS prompt stopped:"), "{message}");
+        assert!(message.starts_with("**Den**:"), "{message}");
         assert!(message.contains("ran too long"), "{message}");
-        assert!(!message.contains("runtime_internal"), "{message}");
+        assert!(!message.contains("I stopped"), "{message}");
         assert!(!message.contains("elapsed=252985"), "{message}");
         assert!(context.contains("252985"), "{context}");
     }
