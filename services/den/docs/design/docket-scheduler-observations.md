@@ -56,8 +56,12 @@ enum DocketSchedulerObservationDeliveryState {
 ```
 
 `binding` is opaque to runtime and identifies the exact Pair session or Work
-run that Docket previously authorized. `occurrence` is assigned and persisted
-by Docket, scoped to that binding and reason; it is not a runtime retry count.
+run that Docket previously authorized. For Pair, the existing
+`docket_execution_sessions` row already carries `session_id`,
+`source_client_session_id`, and `source_conversation_id`; these are the
+correlation fields delivery must validate rather than re-deriving identity from
+a task projection. `occurrence` is assigned and persisted by Docket, scoped to
+that binding and reason; it is not a runtime retry count.
 
 The initial implementation should expose only `Reconcile` and `Stop` until an
 actual live-binding revocation needs `RequireCheckpoint`. `RequireCheckpoint`
