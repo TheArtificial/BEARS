@@ -4,14 +4,14 @@ use den_docket::{
     work_runs::{self, WorkRunListFilter},
     DocketExecutionControl, DocketExecutionNextAction, DocketExecutionTaskSettlement,
     DocketJobExecuteRequest, DocketJobListFilter, DocketOutcomeDisposition, DocketService,
-    DocketTaskListFilter, DocketTaskStatus, PgDocketService,
+    DocketSessionTaskSettlement, DocketTaskListFilter, DocketTaskStatus, PgDocketService,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use bearwire_protocol::methods::{
     DocketJobDiagnosticsRequest, DocketJobsExecuteRequest, DocketJobsListRequest,
-    DocketJobsSettleTaskRequest,
+    DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest,
 };
 use den_http::errors::CustomError;
 use den_service::{
@@ -229,6 +229,46 @@ pub async fn docket_jobs_settle_task_result(
         })
         .await?;
     execution_result(outcome)
+}
+
+pub async fn docket_session_tasks_settle_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let request: DocketSessionTasksSettleRequest = parse_params(params)?;
+    let task_id = parse_uuid("task_id", &request.task_id)?;
+    let status = parse_docket_task_status(&request.status)?;
+    let outcome_disposition = request
+        .outcome_disposition
+        .as_deref()
+        .map(parse_outcome_disposition)
+        .transpose()?;
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let session = client_sessions::find_for_user_bear_session_id(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        &request.session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound(format!("session {} not found", request.session_id)))?;
+    let service = PgDocketService::from_pool(&state.sqlx_pool);
+    let task = service
+        .settle_session_task(DocketSessionTaskSettlement {
+            bear_id: bear.id,
+            session_anchor_id: session.id,
+            task_id,
+            status,
+            outcome_disposition,
+            result_refs: request.result_refs,
+            result_summary: request.result_summary,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+        })
+        .await?;
+    Ok(json!({ "task": task }))
 }
 
 fn parse_uuid(name: &str, value: &str) -> Result<Uuid, CustomError> {

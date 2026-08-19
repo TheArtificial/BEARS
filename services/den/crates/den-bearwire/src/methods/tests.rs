@@ -3489,6 +3489,43 @@ async fn current_task_rpc_requires_confirmation_and_preserves_clear_title(pool: 
     assert!(rejected.get("error").is_some(), "{rejected}");
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn session_task_settlement_rpc_settles_and_releases_attachment(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let task_id =
+        create_session_task(&pool, user_id, bear_id, &session_id, "Settle through RPC").await;
+
+    let settled = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "docket.session_tasks.settle",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "task_id": task_id,
+            "status": "done",
+            "result_summary": "Verified Pair adapter settlement."
+        }),
+    )
+    .await;
+
+    assert!(settled.get("error").is_none(), "{settled}");
+    assert_eq!(settled["result"]["task"]["task"]["id"], json!(task_id));
+    assert!(settled["result"]["task"]["task"]["settled_by_entry_id"].is_string());
+    let attachment_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM bear_pair_task_attachments WHERE task_id = $1 AND released_at IS NULL",
+    )
+    .bind(task_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count active attachments");
+    assert_eq!(attachment_count, 0);
+}
+
 #[tokio::test]
 async fn initialize_returns_bearwire_capabilities() {
     let response = rpc(

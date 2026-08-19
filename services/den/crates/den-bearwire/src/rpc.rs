@@ -153,6 +153,12 @@ pub(crate) async fn rpc(
                 .await,
             "BearWire docket.jobs.settle_task failed",
         ),
+        "docket.session_tasks.settle" => method_response(
+            request.id,
+            methods::docket::docket_session_tasks_settle_result(&state, &headers, &request.params)
+                .await,
+            "BearWire docket.session_tasks.settle failed",
+        ),
         "run.state" | "run.timeline" => method_response(
             request.id,
             methods::run::run_state_result(&state, &headers, &request.params).await,

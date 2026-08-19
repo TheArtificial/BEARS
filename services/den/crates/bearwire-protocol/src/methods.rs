@@ -252,6 +252,25 @@ pub struct DocketJobsSettleTaskRequest {
     pub source_client_session_id: Option<String>,
 }
 
+/// Settles a Pair session-owned task without fabricating a Docket job run.
+#[derive(Debug, Deserialize)]
+pub struct DocketSessionTasksSettleRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub task_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub status: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub outcome_disposition: Option<String>,
+    #[serde(default)]
+    pub result_refs: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub result_summary: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SessionModelSetRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
@@ -437,6 +456,23 @@ pub struct ClientPermissionResultRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_task_settlement_request_trims_required_fields() {
+        let request: DocketSessionTasksSettleRequest = serde_json::from_value(serde_json::json!({
+            "bear_slug": " bear-1 ",
+            "session_id": " session-1 ",
+            "task_id": " task-1 ",
+            "status": " done ",
+            "result_summary": " finished "
+        }))
+        .unwrap();
+        assert_eq!(request.bear_slug, "bear-1");
+        assert_eq!(request.session_id, "session-1");
+        assert_eq!(request.task_id, "task-1");
+        assert_eq!(request.status, "done");
+        assert_eq!(request.result_summary.as_deref(), Some("finished"));
+    }
 
     #[test]
     fn required_strings_are_trimmed_and_empty_strings_rejected() {
