@@ -1313,6 +1313,7 @@ pub enum DocketExecutionBinding {
 pub enum DocketExecutionDisposition {
     Reconcile,
     Stop,
+    RequireIntervention,
 }
 
 /// Authoritative scheduler decision for whether the selected execution session

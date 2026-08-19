@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS bear_execution_rejection_observations;

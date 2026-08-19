@@ -266,6 +266,43 @@ async fn checkout_rejects_without_binding_when_no_task_is_actionable() {
     .await
     .expect("count execution sessions");
     assert_eq!(active_sessions, 0);
+
+    let second_checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
+        .await
+        .expect("repeated rejected checkout is a scheduler result");
+    assert!(matches!(
+        second_checkout.gate,
+        DocketExecutionGate::Rejected {
+            reason: DocketExecutionReason::NoActionableTask,
+            disposition: DocketExecutionDisposition::RequireIntervention,
+        }
+    ));
+    assert!(second_checkout.prompt_context.is_none());
+    assert!(second_checkout.task_title.is_none());
+
+    sqlx::query!(
+        "UPDATE bear_task_run_state SET status = 'pending' WHERE run_id = $1 AND task_id = $2",
+        run.job_run_id,
+        task_ids[0]
+    )
+    .execute(&pool)
+    .await
+    .expect("make one task actionable again");
+    let allowed_checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
+        .await
+        .expect("fresh authorization clears the rejection streak");
+    assert!(matches!(
+        allowed_checkout.gate,
+        DocketExecutionGate::Allowed { task_id, .. } if task_id == task_ids[0]
+    ));
+    let observations: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM bear_execution_rejection_observations WHERE work_run_id = $1",
+    )
+    .bind(run.id)
+    .fetch_one(&pool)
+    .await
+    .expect("count cleared rejection observations");
+    assert_eq!(observations, 0);
 }
 #[tokio::test]
 async fn sandbox_repository_changes_without_publication_creates_no_run() {

@@ -19,7 +19,7 @@ use den_core::{BearProfile, DenError};
 use crate::execution_profiles::resolve_execution_profile;
 use crate::model::{
     select_dispatch_notebook_context, DocketEntryListFilter, DocketEntryRow,
-    DocketExecutionBinding, DocketExecutionGate, DocketExecutionReason,
+    DocketExecutionBinding, DocketExecutionDisposition, DocketExecutionGate, DocketExecutionReason,
     DocketExecutionSessionUpsert, DocketTaskDifficulty,
 };
 use crate::recovery::claim_turn_attempt;
@@ -1409,6 +1409,48 @@ enum WorkExecutionAuthorization {
     Rejected(DocketExecutionGate),
 }
 
+async fn record_work_execution_rejection(
+    pool: &PgPool,
+    work_run_id: Uuid,
+    reason: &DocketExecutionReason,
+) -> Result<DocketExecutionDisposition, DenError> {
+    // ponytail: two equivalent rejections are enough to surface an operator
+    // intervention. Make this policy-configurable only if production evidence
+    // shows the fixed threshold is inadequate.
+    const INTERVENTION_THRESHOLD: i32 = 2;
+    let occurrences = sqlx::query_scalar::<_, i32>(
+        "INSERT INTO bear_execution_rejection_observations (
+             work_run_id, reason, occurrences, last_observed_at
+         ) VALUES ($1, $2, 1, NOW())
+         ON CONFLICT (work_run_id, reason) DO UPDATE
+         SET occurrences = bear_execution_rejection_observations.occurrences + 1,
+             last_observed_at = NOW()
+         RETURNING occurrences",
+    )
+    .bind(work_run_id)
+    .bind(
+        serde_json::to_value(reason)
+            .expect("execution rejection reason serializes")
+            .as_str()
+            .expect("execution rejection reason is a string"),
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(if occurrences >= INTERVENTION_THRESHOLD {
+        DocketExecutionDisposition::RequireIntervention
+    } else {
+        reason.disposition()
+    })
+}
+
+async fn clear_work_execution_rejections(pool: &PgPool, work_run_id: Uuid) -> Result<(), DenError> {
+    sqlx::query("DELETE FROM bear_execution_rejection_observations WHERE work_run_id = $1")
+        .bind(work_run_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 async fn authorize_work_execution(
     pool: &PgPool,
     run: &WorkRunRow,
@@ -1444,15 +1486,17 @@ async fn authorize_work_execution(
             ),
             None => {
                 let reason = DocketExecutionReason::NoActionableTask;
+                let disposition = record_work_execution_rejection(pool, run.id, &reason).await?;
                 return Ok(WorkExecutionAuthorization::Rejected(
                     DocketExecutionGate::Rejected {
-                        disposition: reason.disposition(),
+                        disposition,
                         reason,
                     },
                 ));
             }
         },
     };
+    clear_work_execution_rejections(pool, run.id).await?;
     let gate = DocketExecutionGate::Allowed {
         task_id: task.0,
         binding: DocketExecutionBinding::WorkRun {

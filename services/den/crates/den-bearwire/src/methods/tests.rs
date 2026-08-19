@@ -2957,8 +2957,31 @@ async fn work_checkout_rejection_projects_non_dispatchable_gate(pool: sqlx::PgPo
     assert_eq!(result["ok"], false, "{response}");
     assert_eq!(result["permission_mode"], "none", "{response}");
     assert_eq!(result["gate"]["status"], "rejected", "{response}");
+    assert_eq!(result["gate"]["disposition"], "stop", "{response}");
     assert_eq!(result["prompt"], "", "{response}");
     assert!(result["task_title"].is_null(), "{response}");
+
+    let repeated = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": format!("work-{}", Uuid::new_v4().simple()),
+            "work_order_id": work_run_id,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    let repeated_result = &repeated["result"];
+    assert_eq!(repeated_result["ok"], false, "{repeated}");
+    assert_eq!(
+        repeated_result["gate"]["disposition"], "require_intervention",
+        "{repeated}"
+    );
+    assert_eq!(repeated_result["permission_mode"], "none", "{repeated}");
+    assert_eq!(repeated_result["prompt"], "", "{repeated}");
+    assert!(repeated_result["task_title"].is_null(), "{repeated}");
 }
 #[sqlx::test(migrations = "../../migrations")]
 async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) {
