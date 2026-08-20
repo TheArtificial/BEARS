@@ -1456,15 +1456,31 @@ async fn authorize_work_execution(
     run: &WorkRunRow,
 ) -> Result<WorkExecutionAuthorization, DenError> {
     let active_task = sqlx::query!(
-        "SELECT t.id AS \"id!\", t.title AS \"title!\", t.body AS \"body!\", t.completion_criteria AS \"completion_criteria!\", t.difficulty AS \"difficulty?\"
+        "SELECT t.id AS \"id!\", t.title AS \"title!\", t.body AS \"body!\", t.completion_criteria AS \"completion_criteria!\", t.difficulty AS \"difficulty?\", rs.status AS \"run_status?\"
          FROM bear_tasks t
+         LEFT JOIN bear_task_run_state rs ON rs.task_id = t.id AND rs.run_id = $3
          WHERE t.id = $1 AND t.job_id = $2",
         run.executing_task_id,
-        run.job_id
+        run.job_id,
+        run.job_run_id,
     )
     .fetch_optional(pool)
     .await?;
     let task = match active_task {
+        Some(task)
+            if matches!(
+                task.run_status.as_deref(),
+                Some("done" | "blocked" | "cancelled")
+            ) =>
+        {
+            let reason = DocketExecutionReason::ActiveTaskIsStale;
+            return Ok(WorkExecutionAuthorization::Rejected(
+                DocketExecutionGate::Rejected {
+                    disposition: reason.disposition(),
+                    reason,
+                },
+            ));
+        }
         Some(task) => (
             task.id,
             task.title,

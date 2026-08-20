@@ -193,6 +193,81 @@ fn enqueue_for(bear_id: Uuid, task_id: Uuid, user_id: i32) -> WorkRunEnqueue {
 }
 
 #[tokio::test]
+async fn checkout_rejects_terminal_selected_work_task() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "checkout-terminal-task").await;
+    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .expect("enqueue work run");
+    claim_next_work_run(
+        &pool,
+        "runner-terminal-task",
+        std::time::Duration::from_mins(1),
+    )
+    .await
+    .expect("claim work run")
+    .expect("queued run");
+    record_work_run_provisioned(
+        &pool,
+        run.id,
+        &WorkRunProvisioned {
+            sandbox_server_url: "http://sandbox:3002".into(),
+            sandbox_id: "terminal-task".into(),
+            sandbox_type: "container".into(),
+            sandbox_strength: "container: test".into(),
+            work_surface: serde_json::json!({}),
+            rust_dependency_preparation: None,
+        },
+    )
+    .await
+    .expect("provision work run");
+    sqlx::query!(
+        "INSERT INTO bear_task_run_state (run_id, task_id, status)
+         VALUES ($1, $2, 'done')
+         ON CONFLICT (run_id, task_id) DO UPDATE SET status = 'done'",
+        run.job_run_id,
+        task_ids[0],
+    )
+    .execute(&pool)
+    .await
+    .expect("settle selected task");
+    sqlx::query!(
+        "UPDATE bear_work_runs SET executing_task_id = $2 WHERE id = $1",
+        run.id,
+        task_ids[0],
+    )
+    .execute(&pool)
+    .await
+    .expect("retain stale Work task selection");
+
+    let session_id = format!("headless-{}", Uuid::new_v4().simple());
+    let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
+        .await
+        .expect("terminal selected task is a scheduler result");
+    assert!(matches!(
+        checkout.gate,
+        DocketExecutionGate::Rejected {
+            reason: DocketExecutionReason::ActiveTaskIsStale,
+            disposition: DocketExecutionDisposition::Reconcile,
+        }
+    ));
+    assert!(checkout.prompt_context.is_none());
+    assert!(checkout.task_title.is_none());
+    let persisted = get_work_run(&pool, run.id)
+        .await
+        .expect("load work run")
+        .expect("work run exists");
+    assert_eq!(persisted.executing_task_id, Some(task_ids[0]));
+    assert!(persisted.bearwire_session_id.is_none());
+}
+
+#[tokio::test]
 async fn checkout_rejects_without_binding_when_no_task_is_actionable() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed work_runs test; database unavailable");
