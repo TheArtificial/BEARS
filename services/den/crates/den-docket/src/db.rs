@@ -1676,6 +1676,30 @@ pub(super) async fn execute_job(
         // Execution is run-owned; task state records only durable outcomes.
         let selected =
             first_pending_leaf_in_plan_order(&projection, &state_by_task).map(|task| task.id);
+        let active_is_terminal = matches!(
+            state_by_task.get(active).copied(),
+            Some("done" | "blocked" | "cancelled")
+        );
+        let lookup = DocketExecutionLookup {
+            session_id: request.session_id.clone(),
+            source_conversation_id: request.source_conversation_id.clone(),
+            source_client_session_id: request.source_client_session_id.clone(),
+        };
+        let owns_terminal_session_claim = active_is_terminal
+            && get_active_execution_session(pool, request.bear_id, request.actor_role, lookup)
+                .await?
+                .is_some_and(|session| {
+                    session.job_id == request.job_id
+                        && session.run_id == run.id
+                        && session.task_id == Some(*active)
+                });
+        if owns_terminal_session_claim {
+            // `update_task` commits the durable outcome before the focus can be
+            // reconciled. Recover that interrupted handoff only for the exact
+            // execution session that owns the terminal claim; a live Work run
+            // remains a separate owner and must use its own lifecycle.
+            return Box::pin(reconcile_execution(pool, request)).await;
+        }
         if selected != Some(*active) {
             let job = get_job(pool, request.bear_id, request.job_id)
                 .await?

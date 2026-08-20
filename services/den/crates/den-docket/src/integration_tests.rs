@@ -1211,6 +1211,68 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
 }
 
 #[tokio::test]
+async fn execute_job_reconciles_its_own_terminal_session_claim() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed stale-claim reconciliation test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "terminal-session-claim").await;
+    let service = PgDocketService::from_pool(&pool);
+    let created = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create job");
+    let first_task_id = created.tasks[0].id;
+    let second_task_id = created.tasks[1].id;
+    let request = DocketJobExecuteRequest {
+        bear_id,
+        job_id: created.job.id,
+        actor_role: BearProfile::Pair,
+        actor_user_id: Some(user_id),
+        actor_agent_id: None,
+        session_id: Some("terminal-session-claim".to_string()),
+        source_conversation_id: None,
+        source_client_session_id: None,
+    };
+    let selected = service
+        .execute_job(request.clone())
+        .await
+        .expect("select task");
+    let run_id = selected.job.current_run.expect("current run").id;
+
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: Some(created.job.id),
+            task_id: first_task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                outcome_disposition: None,
+                result_refs: None,
+                result_summary: Some("outcome persisted before focus handoff".to_string()),
+            }),
+        })
+        .await
+        .expect("persist terminal outcome without reconciliation");
+
+    let recovered = service
+        .execute_job(request)
+        .await
+        .expect("self-heal stale claim");
+    assert_eq!(recovered.selected_task_id, Some(second_task_id));
+    assert_eq!(recovered.control.task.current_task_id, Some(second_task_id));
+    assert!(matches!(
+        recovered.control.next_action,
+        crate::DocketExecutionNextAction::WorkCurrentTask
+    ));
+}
+
+#[tokio::test]
 async fn docket_task_list_sync_rejects_completed_item_without_evidence() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket sync test; database unavailable");
