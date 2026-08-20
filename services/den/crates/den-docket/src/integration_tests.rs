@@ -7,8 +7,10 @@ use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
-    DocketEntryScope, DocketExecutionLookup, DocketExecutionTaskSettlement, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
+    DocketEntryScope, DocketExecutionLookup, DocketExecutionReason, DocketExecutionTaskSettlement,
+    DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobOverlapResolution,
+    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
+    DocketSchedulerObservationEnqueue, DocketService,
     DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
     DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy,
@@ -1796,4 +1798,127 @@ async fn create_job_requires_explicit_resolution_for_exact_active_overlap() {
         .expect("read predecessor")
         .expect("predecessor exists");
     assert_eq!(predecessor.job.status, "cancelled");
+}
+
+#[tokio::test]
+async fn scheduler_observations_are_session_scoped_and_idempotently_acknowledged() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket integration test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "scheduler-observation").await;
+    let service = PgDocketService::from_pool(&pool);
+
+    let first_job = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create first job");
+    service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: first_job.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: Some("scheduler-observation-first".to_string()),
+            source_conversation_id: None,
+            source_client_session_id: Some("scheduler-observation-first".to_string()),
+        })
+        .await
+        .expect("execute first job");
+    let first_session = service
+        .get_active_execution_session(
+            bear_id,
+            BearProfile::Pair,
+            DocketExecutionLookup {
+                session_id: None,
+                source_conversation_id: None,
+                source_client_session_id: Some("scheduler-observation-first".to_string()),
+            },
+        )
+        .await
+        .expect("lookup first execution session")
+        .expect("first execution session is active");
+
+    let second_job = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create second job");
+    service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: second_job.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: Some("scheduler-observation-second".to_string()),
+            source_conversation_id: None,
+            source_client_session_id: Some("scheduler-observation-second".to_string()),
+        })
+        .await
+        .expect("execute second job");
+    let second_session = service
+        .get_active_execution_session(
+            bear_id,
+            BearProfile::Pair,
+            DocketExecutionLookup {
+                session_id: None,
+                source_conversation_id: None,
+                source_client_session_id: Some("scheduler-observation-second".to_string()),
+            },
+        )
+        .await
+        .expect("lookup second execution session")
+        .expect("second execution session is active");
+
+    let enqueue = |disposition| DocketSchedulerObservationEnqueue {
+        execution_session_id: first_session.id,
+        task_id: first_session.task_id,
+        reason: DocketExecutionReason::ActiveTaskIsStale,
+        disposition,
+    };
+    let first = service
+        .enqueue_scheduler_observation(enqueue(DocketSchedulerObservationDisposition::Reconcile))
+        .await
+        .expect("enqueue first observation");
+    let second = service
+        .enqueue_scheduler_observation(enqueue(DocketSchedulerObservationDisposition::Reconcile))
+        .await
+        .expect("enqueue repeated observation");
+    assert_eq!(first.occurrence, 1);
+    assert_eq!(second.occurrence, 2);
+    assert_eq!(
+        first.delivery_state,
+        DocketSchedulerObservationDeliveryState::Pending
+    );
+
+    let first_pending = service
+        .pending_scheduler_observations(first_session.id)
+        .await
+        .expect("list first session pending observations");
+    assert_eq!(first_pending.len(), 2);
+    assert!(service
+        .pending_scheduler_observations(second_session.id)
+        .await
+        .expect("list second session pending observations")
+        .is_empty());
+
+    let delivered = service
+        .acknowledge_scheduler_observation_delivery(first.id, first_session.id)
+        .await
+        .expect("acknowledge observation");
+    let delivered_at = delivered.delivered_at.expect("delivery timestamp");
+    let retried = service
+        .acknowledge_scheduler_observation_delivery(first.id, first_session.id)
+        .await
+        .expect("idempotently acknowledge observation");
+    assert_eq!(
+        retried.delivery_state,
+        DocketSchedulerObservationDeliveryState::Delivered
+    );
+    assert_eq!(retried.delivered_at, Some(delivered_at));
+    assert!(service
+        .acknowledge_scheduler_observation_delivery(second.id, second_session.id)
+        .await
+        .is_err());
 }
