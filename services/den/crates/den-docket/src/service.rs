@@ -14,14 +14,15 @@ use super::db;
 use super::model::{
     task_list_projection_from_docket_job, task_list_projection_from_session_tasks,
     DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryListFilter, DocketEntryPromotion,
-    DocketEntryRow, DocketExecutionLookup, DocketExecutionSessionRow,
+    DocketEntryRow, DocketExecutionAttemptAuthorize, DocketExecutionAttemptRow,
+    DocketExecutionAttemptStart, DocketExecutionLookup, DocketExecutionSessionRow,
     DocketExecutionTaskSettlement, DocketJobCreate, DocketJobExecuteOutcome,
     DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
     DocketJobUpdate, DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow,
-    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskListFilter,
-    DocketTaskProjection, DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest,
-    TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection,
-    TaskListSyncOutcome, TaskListSyncRequest,
+    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection,
+    DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest, TaskListCheckoutSource,
+    TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome,
+    TaskListSyncRequest,
 };
 
 /// Orchestration API for task and job state. The only public entry point to the
@@ -72,6 +73,16 @@ pub trait DocketService: Send + Sync {
         &self,
         settlement: DocketExecutionTaskSettlement,
     ) -> Result<DocketJobExecuteOutcome, DenError>;
+
+    async fn authorize_execution_attempt(
+        &self,
+        authorize: DocketExecutionAttemptAuthorize,
+    ) -> Result<DocketExecutionAttemptRow, DenError>;
+
+    async fn start_execution_attempt(
+        &self,
+        start: DocketExecutionAttemptStart,
+    ) -> Result<DocketExecutionAttemptRow, DenError>;
 
     async fn get_active_execution_session(
         &self,
@@ -232,6 +243,20 @@ impl DocketService for PgDocketService {
         settlement: DocketExecutionTaskSettlement,
     ) -> Result<DocketJobExecuteOutcome, DenError> {
         db::settle_execution_task(&self.pool, settlement).await
+    }
+
+    async fn authorize_execution_attempt(
+        &self,
+        authorize: DocketExecutionAttemptAuthorize,
+    ) -> Result<DocketExecutionAttemptRow, DenError> {
+        db::authorize_execution_attempt(&self.pool, authorize).await
+    }
+
+    async fn start_execution_attempt(
+        &self,
+        start: DocketExecutionAttemptStart,
+    ) -> Result<DocketExecutionAttemptRow, DenError> {
+        db::start_execution_attempt(&self.pool, start).await
     }
 
     async fn get_active_execution_session(

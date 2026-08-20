@@ -10,11 +10,11 @@ use crate::{
     DocketEntryScope, DocketExecutionLookup, DocketExecutionReason, DocketExecutionTaskSettlement,
     DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobOverlapResolution,
     DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
-    DocketSchedulerObservationEnqueue, DocketService,
-    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
-    DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
-    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy,
-    TaskDispatcher, TaskListSyncRequest, TaskListVisibility,
+    DocketSchedulerObservationEnqueue, DocketService, DocketSessionTaskSettlement,
+    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
+    DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
+    DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher,
+    TaskListSyncRequest, TaskListVisibility,
 };
 
 fn primary_output_result_refs() -> Value {
@@ -34,7 +34,7 @@ fn primary_output_result_refs() -> Value {
     })
 }
 
-async fn test_pool() -> Option<PgPool> {
+pub(super) async fn test_pool() -> Option<PgPool> {
     let database_url = std::env::var("TEST_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
@@ -76,7 +76,7 @@ fn test_work_surface_id(bear_id: Uuid) -> Uuid {
     bear_id
 }
 
-async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
+pub(super) async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     let suffix = Uuid::new_v4().simple().to_string();
     let username = format!("u{}", &suffix[..20]);
     let email = format!("{label}-{suffix}@example.test");
@@ -149,7 +149,7 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     (user_id, bear_id)
 }
 
-fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
+pub(super) fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
     DocketJobCreate {
         bear_id,
         created_by_user_id: user_id,
@@ -456,10 +456,13 @@ async fn pair_task_attachment_is_exclusive_and_released_on_settlement() {
         .expect("project first Pair session")
         .iter()
         .any(|task| task.task.id == task_id));
-    assert!(service
-        .attach_task_to_pair_session(bear_id, task_id, second_session)
-        .await
-        .is_err(), "active attachment must not leak across Pair sessions");
+    assert!(
+        service
+            .attach_task_to_pair_session(bear_id, task_id, second_session)
+            .await
+            .is_err(),
+        "active attachment must not leak across Pair sessions"
+    );
 
     service
         .settle_session_task(DocketSessionTaskSettlement {

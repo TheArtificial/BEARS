@@ -1213,6 +1213,152 @@ pub struct DocketExecutionTaskSettlement {
     pub result_summary: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DocketExecutionAttemptOwner {
+    Pair {
+        session_id: String,
+        pair_run_id: Uuid,
+    },
+    Work {
+        work_run_id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketExecutionAttemptState {
+    Authorized,
+    Running,
+    Paused,
+    AwaitingUser,
+    Stopping,
+    Settled,
+    Released,
+}
+
+impl DocketExecutionAttemptState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Authorized => "authorized",
+            Self::Running => "running",
+            Self::Paused => "paused",
+            Self::AwaitingUser => "awaiting_user",
+            Self::Stopping => "stopping",
+            Self::Settled => "settled",
+            Self::Released => "released",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, DenError> {
+        match value {
+            "authorized" => Ok(Self::Authorized),
+            "running" => Ok(Self::Running),
+            "paused" => Ok(Self::Paused),
+            "awaiting_user" => Ok(Self::AwaitingUser),
+            "stopping" => Ok(Self::Stopping),
+            "settled" => Ok(Self::Settled),
+            "released" => Ok(Self::Released),
+            _ => Err(DenError::ValidationError(
+                "invalid execution attempt state".to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DocketExecutionAttemptRow {
+    pub id: Uuid,
+    pub bear_id: Uuid,
+    pub task_id: Uuid,
+    pub owner: DocketExecutionAttemptOwner,
+    pub fence_epoch: i64,
+    pub authorization_key: Uuid,
+    pub state: DocketExecutionAttemptState,
+    pub started_at: Option<OffsetDateTime>,
+    pub paused_at: Option<OffsetDateTime>,
+    pub settled_at: Option<OffsetDateTime>,
+    pub released_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketExecutionAttemptAuthorize {
+    pub bear_id: Uuid,
+    pub task_id: Uuid,
+    pub owner: DocketExecutionAttemptOwner,
+    pub authorization_key: Uuid,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketExecutionAttemptStart {
+    pub attempt_id: Uuid,
+    pub fence_epoch: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(super) struct DocketExecutionAttemptDbRow {
+    id: Uuid,
+    bear_id: Uuid,
+    task_id: Uuid,
+    owner_kind: String,
+    pair_session_id: Option<String>,
+    pair_run_id: Option<Uuid>,
+    work_run_id: Option<Uuid>,
+    fence_epoch: i64,
+    authorization_key: Uuid,
+    state: String,
+    started_at: Option<OffsetDateTime>,
+    paused_at: Option<OffsetDateTime>,
+    settled_at: Option<OffsetDateTime>,
+    released_at: Option<OffsetDateTime>,
+    created_at: OffsetDateTime,
+    updated_at: OffsetDateTime,
+}
+
+impl TryFrom<DocketExecutionAttemptDbRow> for DocketExecutionAttemptRow {
+    type Error = DenError;
+
+    fn try_from(row: DocketExecutionAttemptDbRow) -> Result<Self, Self::Error> {
+        let owner = match row.owner_kind.as_str() {
+            "pair" => DocketExecutionAttemptOwner::Pair {
+                session_id: row.pair_session_id.ok_or_else(|| {
+                    DenError::ValidationError("pair attempt missing session id".to_string())
+                })?,
+                pair_run_id: row.pair_run_id.ok_or_else(|| {
+                    DenError::ValidationError("pair attempt missing run id".to_string())
+                })?,
+            },
+            "work" => DocketExecutionAttemptOwner::Work {
+                work_run_id: row.work_run_id.ok_or_else(|| {
+                    DenError::ValidationError("work attempt missing run id".to_string())
+                })?,
+            },
+            _ => {
+                return Err(DenError::ValidationError(
+                    "invalid execution attempt owner".to_string(),
+                ))
+            }
+        };
+        Ok(Self {
+            id: row.id,
+            bear_id: row.bear_id,
+            task_id: row.task_id,
+            owner,
+            fence_epoch: row.fence_epoch,
+            authorization_key: row.authorization_key,
+            state: DocketExecutionAttemptState::parse(&row.state)?,
+            started_at: row.started_at,
+            paused_at: row.paused_at,
+            settled_at: row.settled_at,
+            released_at: row.released_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct DocketExecutionSessionRow {
     pub id: Uuid,

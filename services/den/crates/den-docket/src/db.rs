@@ -38,18 +38,19 @@ use super::model::{
     task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
     DocketCommitPolicy, DocketCriterionStateRow, DocketCriterionStateUpdate, DocketEntryCreate,
     DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketEntryScope,
-    DocketExecutionControl, DocketExecutionLookup, DocketExecutionNextAction,
-    DocketExecutionReason, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
-    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
-    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow,
-    DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketJobCreate,
-    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
-    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput,
-    DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection, DocketTaskRow,
-    DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, TaskListItemStatus,
-    TaskListProjection, TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest,
-    TaskListSyncState,
+    DocketExecutionAttemptAuthorize, DocketExecutionAttemptDbRow, DocketExecutionAttemptRow,
+    DocketExecutionAttemptStart, DocketExecutionControl, DocketExecutionLookup,
+    DocketExecutionNextAction, DocketExecutionReason, DocketExecutionSessionRow,
+    DocketExecutionSessionUpsert, DocketExecutionTaskControl, DocketExecutionTaskSettlement,
+    DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
+    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
+    DocketJobUpdate, DocketSchedulerObservationDeliveryState,
+    DocketSchedulerObservationDisposition, DocketSchedulerObservationEnqueue,
+    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement,
+    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
+    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1178,6 +1179,85 @@ json!({
         .ok_or_else(|| DenError::NotFound(format!("Docket job not found: {}", update.job_id)))
 }
 
+pub(super) async fn authorize_execution_attempt(
+    pool: &PgPool,
+    authorize: DocketExecutionAttemptAuthorize,
+) -> Result<DocketExecutionAttemptRow, DenError> {
+    let (owner_kind, pair_session_id, pair_run_id, work_run_id) = match authorize.owner {
+        super::model::DocketExecutionAttemptOwner::Pair {
+            session_id,
+            pair_run_id,
+        } => ("pair", Some(session_id), Some(pair_run_id), None),
+        super::model::DocketExecutionAttemptOwner::Work { work_run_id } => {
+            ("work", None, None, Some(work_run_id))
+        }
+    };
+    let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r#"
+        INSERT INTO docket_execution_attempts (
+            bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+            fence_epoch, authorization_key, state
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'authorized')
+        ON CONFLICT (authorization_key) DO UPDATE
+        SET updated_at = docket_execution_attempts.updated_at
+        RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+                  fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
+                  released_at, created_at, updated_at
+        "#,
+    )
+    .bind(authorize.bear_id)
+    .bind(authorize.task_id)
+    .bind(owner_kind)
+    .bind(pair_session_id)
+    .bind(pair_run_id)
+    .bind(work_run_id)
+    .bind(authorize.authorization_key)
+    .fetch_one(pool)
+    .await?;
+    row.try_into()
+}
+
+pub(super) async fn start_execution_attempt(
+    pool: &PgPool,
+    start: DocketExecutionAttemptStart,
+) -> Result<DocketExecutionAttemptRow, DenError> {
+    let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r#"
+        UPDATE docket_execution_attempts
+        SET state = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+        WHERE id = $1 AND fence_epoch = $2 AND state = 'authorized'
+        RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+                  fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
+                  released_at, created_at, updated_at
+        "#,
+    )
+    .bind(start.attempt_id)
+    .bind(start.fence_epoch)
+    .fetch_optional(pool)
+    .await?;
+    let row = match row {
+        Some(row) => row,
+        None => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+            r#"
+            SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
+                   released_at, created_at, updated_at
+            FROM docket_execution_attempts
+            WHERE id = $1 AND fence_epoch = $2 AND state = 'running'
+            "#,
+        )
+        .bind(start.attempt_id)
+        .bind(start.fence_epoch)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| {
+            DenError::NotFound("execution attempt is not startable with this fence".to_string())
+        })?,
+    };
+    row.try_into()
+}
+
 pub(super) async fn get_active_execution_session(
     pool: &PgPool,
     bear_id: Uuid,
@@ -1314,17 +1394,29 @@ impl TryFrom<DocketSchedulerObservationDbRow> for DocketSchedulerObservationRow 
             "no_actionable_task" => DocketExecutionReason::NoActionableTask,
             "job_complete" => DocketExecutionReason::JobComplete,
             "job_blocked" => DocketExecutionReason::JobBlocked,
-            _ => return Err(DenError::ValidationError("invalid scheduler observation reason".to_string())),
+            _ => {
+                return Err(DenError::ValidationError(
+                    "invalid scheduler observation reason".to_string(),
+                ))
+            }
         };
         let disposition = match row.disposition.as_str() {
             "reconcile" => DocketSchedulerObservationDisposition::Reconcile,
             "stop" => DocketSchedulerObservationDisposition::Stop,
-            _ => return Err(DenError::ValidationError("invalid scheduler observation disposition".to_string())),
+            _ => {
+                return Err(DenError::ValidationError(
+                    "invalid scheduler observation disposition".to_string(),
+                ))
+            }
         };
         let delivery_state = match row.delivery_state.as_str() {
             "pending" => DocketSchedulerObservationDeliveryState::Pending,
             "delivered" => DocketSchedulerObservationDeliveryState::Delivered,
-            _ => return Err(DenError::ValidationError("invalid scheduler observation delivery state".to_string())),
+            _ => {
+                return Err(DenError::ValidationError(
+                    "invalid scheduler observation delivery state".to_string(),
+                ))
+            }
         };
         Ok(Self {
             id: row.id,
@@ -1367,8 +1459,12 @@ pub(super) async fn enqueue_scheduler_observation(
         RETURNING id, execution_session_id, job_id, run_id, task_id,
                   reason, occurrence, disposition, delivery_state, delivered_at, created_at
         "#,
-        enqueue.execution_session_id, session.job_id, session.run_id, enqueue.task_id,
-        enqueue.reason.to_string(), enqueue.disposition.to_string(),
+        enqueue.execution_session_id,
+        session.job_id,
+        session.run_id,
+        enqueue.task_id,
+        enqueue.reason.to_string(),
+        enqueue.disposition.to_string(),
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -1417,7 +1513,9 @@ pub(super) async fn acknowledge_scheduler_observation_delivery(
     )
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| DenError::NotFound("Docket scheduler observation not found for session".to_string()))?
+    .ok_or_else(|| {
+        DenError::NotFound("Docket scheduler observation not found for session".to_string())
+    })?
     .try_into()
 }
 
