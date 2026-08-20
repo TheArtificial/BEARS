@@ -1,5 +1,10 @@
-use den_core::DenError;
+use den_core::{BearProfile, DenError};
 use den_protocol::ContextBudgetReport;
+use den_service::artifacts::{
+    attach_artifact, create_json_artifact, ArtifactStorageKind,
+    ArtifactVisibility as RegistryVisibility, AttachArtifactInput, CreateJsonArtifactInput,
+    ReserveArtifactInput,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -66,6 +71,9 @@ impl CheckpointReplayPolicy {
 
 #[derive(Debug, Clone)]
 pub struct CheckpointArtifactInput {
+    pub bear_id: Uuid,
+    pub created_by_user_id: Option<i32>,
+    pub owner_profile: BearProfile,
     pub run_id: String,
     pub turn_step_id: Option<Uuid>,
     pub orientation_kind: Option<String>,
@@ -751,7 +759,112 @@ pub async fn record_checkpoint_request(
         )?,
     )
     .await?;
+    record_checkpoint_json_artifact(pool, &input).await?;
     Ok(checkpoint)
+}
+
+async fn record_checkpoint_json_artifact(
+    pool: &PgPool,
+    input: &CheckpointArtifactInput,
+) -> Result<(), DenError> {
+    let task_context = input.request.task_context.as_ref();
+    let payload = serde_json::json!({
+        "checkpoint_id": input.request.checkpoint_id,
+        "reason": input.request.reason.as_str(),
+        "control_level": input.request.control_level.as_str(),
+        "visibility": input.visibility.as_str(),
+        "replay_policy": input.replay_policy.as_str(),
+        "run_id": input.run_id,
+        "turn_step_id": input.turn_step_id,
+        "orientation_kind": input.orientation_kind,
+        "task_list_id": task_context.and_then(|context| context.task_list_id.as_deref()),
+        "task_item_id": task_context.and_then(|context| context.active_item_id.as_deref()),
+        "docket_task_id": task_context.and_then(|context| context.docket_task_id.as_deref()),
+        "work_run_id": input.audit_context.as_ref().map(|context| context.work_run_id),
+        "docket_job_id": input.audit_context.as_ref().map(|context| context.docket_job_id),
+        "request": input.request,
+    });
+    let artifact = create_json_artifact(
+        pool,
+        CreateJsonArtifactInput {
+            reserve: ReserveArtifactInput {
+                bear_id: input.bear_id,
+                created_by_user_id: input.created_by_user_id,
+                owner_profile: input.owner_profile,
+                kind: "runtime_checkpoint".to_string(),
+                title: Some("Runtime checkpoint".to_string()),
+                summary: Some(input.request.reason.as_str().to_string()),
+                content_type: Some("application/json".to_string()),
+                storage_kind: ArtifactStorageKind::DbText,
+                visibility: RegistryVisibility::PrivateToProfile,
+                provenance: serde_json::json!({"source": "den_runtime"}),
+                metadata: serde_json::json!({
+                    "replay_policy": input.replay_policy.as_str(),
+                    "excluded_from_transcript": true,
+                    "excluded_from_default_replay": true,
+                }),
+                expires_at: None,
+            },
+            payload,
+        },
+    )
+    .await?;
+    if let Some(work_run_id) = input
+        .audit_context
+        .as_ref()
+        .map(|context| context.work_run_id)
+    {
+        attach_artifact(
+            pool,
+            AttachArtifactInput {
+                artifact_ref: artifact.artifact_ref.clone(),
+                bear_id: input.bear_id,
+                target_kind: "work_run".to_string(),
+                target_id: work_run_id.to_string(),
+                role: "runtime_checkpoint".to_string(),
+                metadata: serde_json::json!({}),
+                created_by_user_id: input.created_by_user_id,
+            },
+        )
+        .await?;
+    }
+    if let Some(job_id) = input
+        .audit_context
+        .as_ref()
+        .map(|context| context.docket_job_id)
+    {
+        attach_artifact(
+            pool,
+            AttachArtifactInput {
+                artifact_ref: artifact.artifact_ref.clone(),
+                bear_id: input.bear_id,
+                target_kind: "docket_job".to_string(),
+                target_id: job_id.to_string(),
+                role: "runtime_checkpoint".to_string(),
+                metadata: serde_json::json!({}),
+                created_by_user_id: input.created_by_user_id,
+            },
+        )
+        .await?;
+    }
+    if let Some(task_id) = task_context.and_then(|context| context.docket_task_id.as_deref()) {
+        if Uuid::parse_str(task_id).is_ok() {
+            attach_artifact(
+                pool,
+                AttachArtifactInput {
+                    artifact_ref: artifact.artifact_ref,
+                    bear_id: input.bear_id,
+                    target_kind: "docket_task".to_string(),
+                    target_id: task_id.to_string(),
+                    role: "runtime_checkpoint".to_string(),
+                    metadata: serde_json::json!({}),
+                    created_by_user_id: input.created_by_user_id,
+                },
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn record_context_budget_pressure_decision(
@@ -1825,6 +1938,9 @@ mod tests {
         let recorded = record_checkpoint_request(
             &pool,
             CheckpointArtifactInput {
+                bear_id,
+                created_by_user_id: None,
+                owner_profile: BearProfile::Work,
                 run_id: run_id.clone(),
                 turn_step_id: None,
                 orientation_kind: Some("focused".to_string()),
@@ -1851,6 +1967,47 @@ mod tests {
         assert_eq!(recorded.related_work_run_id, Some(work_run_id));
         assert_eq!(recorded.related_docket_job_id, Some(job_id));
         assert!(recorded.response.is_none());
+
+        use sqlx::Row;
+        let artifact = sqlx::query(
+            "SELECT a.lifecycle, a.visibility, a.metadata, p.payload
+             FROM artifacts a
+             JOIN artifact_json_payloads p ON p.artifact_id = a.id
+             WHERE a.bear_id = $1 AND a.kind = 'runtime_checkpoint'",
+        )
+        .bind(bear_id)
+        .fetch_one(&pool)
+        .await
+        .expect("load checkpoint artifact");
+        assert_eq!(
+            artifact.try_get::<String, _>("lifecycle").unwrap(),
+            "finalized"
+        );
+        assert_eq!(
+            artifact.try_get::<String, _>("visibility").unwrap(),
+            "private_to_profile"
+        );
+        let metadata: Value = artifact.try_get("metadata").unwrap();
+        assert_eq!(metadata["excluded_from_transcript"], true);
+        assert_eq!(metadata["excluded_from_default_replay"], true);
+        let payload: Value = artifact.try_get("payload").unwrap();
+        assert_eq!(payload["checkpoint_id"], "ckpt-1");
+        assert_eq!(payload["run_id"], run_id);
+        assert_eq!(payload["request"]["reason"], "over_exploration");
+
+        let links: i64 = sqlx::query_scalar(
+            "SELECT count(*)
+             FROM artifact_links l
+             JOIN artifacts a ON a.id = l.artifact_id
+             WHERE a.bear_id = $1
+                AND a.kind = 'runtime_checkpoint'
+                AND l.role = 'runtime_checkpoint'",
+        )
+        .bind(bear_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count checkpoint artifact links");
+        assert_eq!(links, 3);
 
         let updated = record_checkpoint_response(
             &pool,

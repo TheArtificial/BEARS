@@ -1276,6 +1276,9 @@ impl SessionTrackingStream {
             if let Err(err) = record_checkpoint_request(
                 &pool,
                 CheckpointArtifactInput {
+                    bear_id: session.bear_id,
+                    created_by_user_id: session.user_id,
+                    owner_profile: session.profile,
                     run_id,
                     turn_step_id: None,
                     orientation_kind: Some("work".to_string()),

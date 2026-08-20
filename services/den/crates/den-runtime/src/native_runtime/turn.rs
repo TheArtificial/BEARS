@@ -1735,6 +1735,9 @@ async fn record_checkpoint_request_if_audited(
     if let Err(err) = record_checkpoint_request(
         pool,
         CheckpointArtifactInput {
+            bear_id: session.bear_id,
+            created_by_user_id: session.user_id,
+            owner_profile: session.profile,
             run_id: request.run_id.clone(),
             turn_step_id: None,
             orientation_kind: Some(session.objective_orientation.kind().to_string()),

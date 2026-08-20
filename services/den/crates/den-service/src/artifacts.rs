@@ -171,6 +171,13 @@ pub struct FinalizeArtifactInput {
     pub metadata: Value,
 }
 
+/// Bounded structured content for a finalized `db_text` artifact.
+#[derive(Debug, Clone)]
+pub struct CreateJsonArtifactInput {
+    pub reserve: ReserveArtifactInput,
+    pub payload: Value,
+}
+
 #[derive(Debug, Clone)]
 pub struct FinalizeGarageArtifactInput {
     pub artifact_ref: String,
@@ -443,6 +450,86 @@ pub async fn reserve_artifact(
     .fetch_one(pool)
     .await?;
 
+    artifact_from_row(row)
+}
+
+pub async fn create_json_artifact(
+    pool: &PgPool,
+    input: CreateJsonArtifactInput,
+) -> Result<ArtifactMetadata, DenError> {
+    if !input.payload.is_object() && !input.payload.is_array() {
+        return Err(DenError::ValidationError(
+            "artifact JSON payload must be an object or array".to_string(),
+        ));
+    }
+    let payload_bytes = serde_json::to_vec(&input.payload)
+        .map_err(|err| DenError::System(format!("serialize artifact JSON payload: {err}")))?;
+    if payload_bytes.len() > 262_144 {
+        return Err(DenError::ValidationError(
+            "artifact JSON payload exceeds 262144 bytes".to_string(),
+        ));
+    }
+    if input.reserve.storage_kind != ArtifactStorageKind::DbText {
+        return Err(DenError::ValidationError(
+            "JSON artifact payloads require db_text storage".to_string(),
+        ));
+    }
+
+    validate_non_empty("artifact kind", &input.reserve.kind)?;
+    validate_json_object("provenance", &input.reserve.provenance)?;
+    validate_json_object("metadata", &input.reserve.metadata)?;
+    let artifact_ref = new_artifact_ref();
+    let mut tx = pool.begin().await?;
+    let artifact = sqlx::query_as!(
+        ArtifactRow,
+        "INSERT INTO artifacts (
+            artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, visibility, provenance,
+            metadata, expires_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'db_text', $9, $10, $11, $12)
+         RETURNING
+            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, storage_key, content_bytes,
+            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,
+            finalized_at, deleted_at, created_at, updated_at",
+        artifact_ref,
+        input.reserve.bear_id,
+        input.reserve.created_by_user_id,
+        input.reserve.owner_profile.as_str(),
+        input.reserve.kind,
+        input.reserve.title,
+        input.reserve.summary,
+        input.reserve.content_type,
+        input.reserve.visibility.as_str(),
+        input.reserve.provenance,
+        input.reserve.metadata,
+        input.reserve.expires_at,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    let row = sqlx::query_as!(
+        ArtifactRow,
+        "UPDATE artifacts
+         SET lifecycle = 'finalized', content_bytes = $3, metadata = metadata,
+             finalized_at = NOW(), updated_at = NOW()
+         WHERE id = $1 AND bear_id = $2 AND lifecycle = 'pending'
+         RETURNING
+            id, artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, storage_key, content_bytes,
+            content_sha256, lifecycle, visibility, provenance, metadata, expires_at,
+            finalized_at, deleted_at, created_at, updated_at",
+        artifact.id,
+        artifact.bear_id,
+        i64::try_from(payload_bytes.len()).expect("payload size is bounded"),
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query("INSERT INTO artifact_json_payloads (artifact_id, payload) VALUES ($1, $2)")
+        .bind(artifact.id)
+        .bind(input.payload)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     artifact_from_row(row)
 }
 
