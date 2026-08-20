@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::{BearProfile, DenError};
@@ -39,6 +40,8 @@ use super::model::{
     DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketEntryScope,
     DocketExecutionControl, DocketExecutionLookup, DocketExecutionNextAction,
     DocketExecutionReason, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
+    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
+    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow,
     DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketJobCreate,
     DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
@@ -1285,6 +1288,137 @@ pub(super) async fn clear_active_execution_sessions(
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct DocketSchedulerObservationDbRow {
+    id: Uuid,
+    execution_session_id: Uuid,
+    job_id: Uuid,
+    run_id: Uuid,
+    task_id: Option<Uuid>,
+    reason: String,
+    occurrence: i32,
+    disposition: String,
+    delivery_state: String,
+    delivered_at: Option<OffsetDateTime>,
+    created_at: OffsetDateTime,
+}
+
+impl TryFrom<DocketSchedulerObservationDbRow> for DocketSchedulerObservationRow {
+    type Error = DenError;
+
+    fn try_from(row: DocketSchedulerObservationDbRow) -> Result<Self, Self::Error> {
+        let reason = match row.reason.as_str() {
+            "active_task_is_stale" => DocketExecutionReason::ActiveTaskIsStale,
+            "no_actionable_task" => DocketExecutionReason::NoActionableTask,
+            "job_complete" => DocketExecutionReason::JobComplete,
+            "job_blocked" => DocketExecutionReason::JobBlocked,
+            _ => return Err(DenError::ValidationError("invalid scheduler observation reason".to_string())),
+        };
+        let disposition = match row.disposition.as_str() {
+            "reconcile" => DocketSchedulerObservationDisposition::Reconcile,
+            "stop" => DocketSchedulerObservationDisposition::Stop,
+            _ => return Err(DenError::ValidationError("invalid scheduler observation disposition".to_string())),
+        };
+        let delivery_state = match row.delivery_state.as_str() {
+            "pending" => DocketSchedulerObservationDeliveryState::Pending,
+            "delivered" => DocketSchedulerObservationDeliveryState::Delivered,
+            _ => return Err(DenError::ValidationError("invalid scheduler observation delivery state".to_string())),
+        };
+        Ok(Self {
+            id: row.id,
+            execution_session_id: row.execution_session_id,
+            job_id: row.job_id,
+            run_id: row.run_id,
+            task_id: row.task_id,
+            reason,
+            occurrence: row.occurrence,
+            disposition,
+            delivery_state,
+            delivered_at: row.delivered_at,
+            created_at: row.created_at,
+        })
+    }
+}
+
+pub(super) async fn enqueue_scheduler_observation(
+    pool: &PgPool,
+    enqueue: DocketSchedulerObservationEnqueue,
+) -> Result<DocketSchedulerObservationRow, DenError> {
+    let mut tx = pool.begin().await?;
+    let session = sqlx::query!(
+        "SELECT job_id, run_id FROM docket_execution_sessions WHERE id = $1 FOR UPDATE",
+        enqueue.execution_session_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| DenError::NotFound("Docket execution session not found".to_string()))?;
+
+    let row = sqlx::query_as!(
+        DocketSchedulerObservationDbRow,
+        r#"
+        INSERT INTO docket_scheduler_observations (
+            execution_session_id, job_id, run_id, task_id, reason, occurrence, disposition
+        )
+        VALUES ($1, $2, $3, $4, $5,
+            COALESCE((SELECT MAX(occurrence) + 1 FROM docket_scheduler_observations
+                      WHERE execution_session_id = $1 AND reason = $5), 1)::integer, $6)
+        RETURNING id, execution_session_id, job_id, run_id, task_id,
+                  reason, occurrence, disposition, delivery_state, delivered_at, created_at
+        "#,
+        enqueue.execution_session_id, session.job_id, session.run_id, enqueue.task_id,
+        enqueue.reason.to_string(), enqueue.disposition.to_string(),
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    row.try_into()
+}
+
+pub(super) async fn pending_scheduler_observations(
+    pool: &PgPool,
+    execution_session_id: Uuid,
+) -> Result<Vec<DocketSchedulerObservationRow>, DenError> {
+    sqlx::query_as!(
+        DocketSchedulerObservationDbRow,
+        r#"
+        SELECT id, execution_session_id, job_id, run_id, task_id,
+               reason, occurrence, disposition, delivery_state, delivered_at, created_at
+        FROM docket_scheduler_observations
+        WHERE execution_session_id = $1 AND delivery_state = 'pending'
+        ORDER BY created_at, id
+        "#,
+        execution_session_id
+    )
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(TryInto::try_into)
+    .collect()
+}
+
+pub(super) async fn acknowledge_scheduler_observation_delivery(
+    pool: &PgPool,
+    observation_id: Uuid,
+    execution_session_id: Uuid,
+) -> Result<DocketSchedulerObservationRow, DenError> {
+    sqlx::query_as!(
+        DocketSchedulerObservationDbRow,
+        r#"
+        UPDATE docket_scheduler_observations
+        SET delivery_state = 'delivered', delivered_at = COALESCE(delivered_at, NOW())
+        WHERE id = $1 AND execution_session_id = $2
+        RETURNING id, execution_session_id, job_id, run_id, task_id,
+                  reason, occurrence, disposition, delivery_state, delivered_at, created_at
+        "#,
+        observation_id,
+        execution_session_id
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DenError::NotFound("Docket scheduler observation not found for session".to_string()))?
+    .try_into()
 }
 
 pub(super) async fn upsert_execution_session(

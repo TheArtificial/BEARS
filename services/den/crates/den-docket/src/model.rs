@@ -1283,6 +1283,17 @@ pub enum DocketExecutionReason {
     JobBlocked,
 }
 
+impl std::fmt::Display for DocketExecutionReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ActiveTaskIsStale => "active_task_is_stale",
+            Self::NoActionableTask => "no_actionable_task",
+            Self::JobComplete => "job_complete",
+            Self::JobBlocked => "job_blocked",
+        })
+    }
+}
+
 impl DocketExecutionReason {
     /// The executor action is part of Docket's scheduler decision, not a
     /// runtime retry heuristic.
@@ -1314,6 +1325,55 @@ pub enum DocketExecutionDisposition {
     Reconcile,
     Stop,
     RequireIntervention,
+}
+
+/// Docket-owned disposition for a live, already-authorized binding. This is
+/// deliberately narrower than pre-dispatch gate dispositions: runtime delivery
+/// is added separately and cannot create scheduler authority.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketSchedulerObservationDisposition {
+    Reconcile,
+    Stop,
+}
+
+impl std::fmt::Display for DocketSchedulerObservationDisposition {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Reconcile => "reconcile",
+            Self::Stop => "stop",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketSchedulerObservationDeliveryState {
+    Pending,
+    Delivered,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct DocketSchedulerObservationRow {
+    pub id: Uuid,
+    pub execution_session_id: Uuid,
+    pub job_id: Uuid,
+    pub run_id: Uuid,
+    pub task_id: Option<Uuid>,
+    pub reason: DocketExecutionReason,
+    pub occurrence: i32,
+    pub disposition: DocketSchedulerObservationDisposition,
+    pub delivery_state: DocketSchedulerObservationDeliveryState,
+    pub delivered_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketSchedulerObservationEnqueue {
+    pub execution_session_id: Uuid,
+    pub task_id: Option<Uuid>,
+    pub reason: DocketExecutionReason,
+    pub disposition: DocketSchedulerObservationDisposition,
 }
 
 /// Authoritative scheduler decision for whether the selected execution session

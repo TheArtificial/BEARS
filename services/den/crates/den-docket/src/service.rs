@@ -17,7 +17,8 @@ use super::model::{
     DocketEntryRow, DocketExecutionLookup, DocketExecutionSessionRow,
     DocketExecutionTaskSettlement, DocketJobCreate, DocketJobExecuteOutcome,
     DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
-    DocketJobUpdate, DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskListFilter,
+    DocketJobUpdate, DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow,
+    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskListFilter,
     DocketTaskProjection, DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest,
     TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection,
     TaskListSyncOutcome, TaskListSyncRequest,
@@ -84,6 +85,22 @@ pub trait DocketService: Send + Sync {
         bear_id: Uuid,
         lookup: DocketExecutionLookup,
     ) -> Result<u64, DenError>;
+
+    async fn enqueue_scheduler_observation(
+        &self,
+        enqueue: DocketSchedulerObservationEnqueue,
+    ) -> Result<DocketSchedulerObservationRow, DenError>;
+
+    async fn pending_scheduler_observations(
+        &self,
+        execution_session_id: Uuid,
+    ) -> Result<Vec<DocketSchedulerObservationRow>, DenError>;
+
+    async fn acknowledge_scheduler_observation_delivery(
+        &self,
+        observation_id: Uuid,
+        execution_session_id: Uuid,
+    ) -> Result<DocketSchedulerObservationRow, DenError>;
 
     async fn list_pair_session_tasks(
         &self,
@@ -232,6 +249,33 @@ impl DocketService for PgDocketService {
         lookup: DocketExecutionLookup,
     ) -> Result<u64, DenError> {
         db::clear_active_execution_sessions(&self.pool, bear_id, lookup).await
+    }
+
+    async fn enqueue_scheduler_observation(
+        &self,
+        enqueue: DocketSchedulerObservationEnqueue,
+    ) -> Result<DocketSchedulerObservationRow, DenError> {
+        db::enqueue_scheduler_observation(&self.pool, enqueue).await
+    }
+
+    async fn pending_scheduler_observations(
+        &self,
+        execution_session_id: Uuid,
+    ) -> Result<Vec<DocketSchedulerObservationRow>, DenError> {
+        db::pending_scheduler_observations(&self.pool, execution_session_id).await
+    }
+
+    async fn acknowledge_scheduler_observation_delivery(
+        &self,
+        observation_id: Uuid,
+        execution_session_id: Uuid,
+    ) -> Result<DocketSchedulerObservationRow, DenError> {
+        db::acknowledge_scheduler_observation_delivery(
+            &self.pool,
+            observation_id,
+            execution_session_id,
+        )
+        .await
     }
 
     async fn list_pair_session_tasks(
