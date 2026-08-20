@@ -10,6 +10,35 @@ In progress. Implements [ADR-0050 — Agent Loop Control, Adaptive Budgets, and 
 
 > **This revision supersedes the plan's prior product model of conversation-scoped “focused Jobs,” `/focus`, and `ResolvedFocus`.** Those sections describe implementation already present or underway, not the target architecture. Do not extend that model; migrate it deliberately.
 
+### Continuation-authority revision — 2026-08-20
+
+> **This revision supersedes conflicting wording below that describes a Pair run as non-authorizing, makes a selected current task sufficient for execution, or treats Docket execution persistence as compatibility-only for continuation.** Do not extend the current partial execution-session or scheduler-observation-delivery design until it is reconciled with the canonical attempt model below.
+
+A selected session current task is an objective, **not** an execution claim. Tasked Pair and Work runs may continue autonomously only through a Docket-owned, durable execution attempt. Docket owns the outer task-tree/attempt loop for both owners; Pair and Work own their local model/tool loops.
+
+```text
+Docket: select eligible task -> authorize/continue attempt -> receive durable fact
+      -> continue | advance | retry | pause | stop | await user
+
+Pair/Work runtime: run the authorized bounded attempt; choose prompts and tools;
+                   enforce control at safe boundaries; report facts/outcomes
+```
+
+The owner policy is deliberately asymmetric only at the user-interaction boundary:
+
+- **Pair:** may report `awaiting_user` with a precise unresolved question. Its attempt is paused without being settled; Docket does not resume it until an authenticated user response or explicit resume makes it eligible again.
+- **Work:** has no user-input path. Its terminal, retry, timeout, and escalation outcomes are governed by Docket Job/task policy.
+
+Docket does not compose prompts, select individual tools, or control model-token turns. It controls authorization epochs and durable continuation at meaningful boundaries: attempt start/resume, task settlement, task-relevant lifecycle changes, and before broad/destructive work when an epoch may have changed.
+
+A canonical execution attempt must have one task, one owner (`PairSession` or `WorkRun`), a monotonic fencing epoch, and one durable lifecycle:
+
+```text
+authorized -> running -> paused | awaiting_user | stopping -> settled | released
+```
+
+An active selected task without a matching authorized/running/paused attempt is not execution and must not be represented as active implementation work. A runtime may not silently select another task; after every bounded attempt outcome, Docket decides the next eligible continuation or releases the owner.
+
 The loop-control object is a **session current task**, not a focus mode:
 
 ```text
@@ -17,6 +46,63 @@ Session ── current task? ──► task-oriented loop behavior
 Worker run ── explicit Docket Job assignment ──► work-execution behavior
 Docket Job ── optional durable outcome/task-tree container
 ```
+
+### Canonical-attempt foundation — required before further scheduler delivery
+
+The next implementation milestone is a design-and-foundation slice, not delivery
+of the existing scheduler-observation outbox. It must establish the one durable
+object Docket uses to control outer continuation for both Pair and Work.
+
+```rust
+enum ExecutionAttemptOwner {
+    PairSession { session_id: SessionId, pair_run_id: PairRunId },
+    WorkRun { work_run_id: WorkRunId },
+}
+
+enum ExecutionAttemptState {
+    Authorized,
+    Running,
+    Paused,
+    AwaitingUser,
+    Stopping,
+    Settled,
+    Released,
+}
+```
+
+The precise Rust names/schema may differ, but the following contract is
+non-negotiable:
+
+1. Docket atomically authorizes one attempt for one eligible task, owner, and
+   monotonic fencing epoch. Current-task selection alone cannot do this.
+2. The owner can start or resume local inner-loop work only with that attempt.
+   It reports bounded facts/outcomes; it cannot pick the next task.
+3. Docket atomically accepts settlement, pause, `awaiting_user`, stop, or
+   release, then determines the next eligible continuation. A Pair
+   `awaiting_user` attempt is ineligible until authenticated user input or
+   explicit resume is recorded.
+4. Recovery reconciles every partial transition: no ownerless running attempt,
+   no selected task presented as executing without an attempt, and no two
+   live attempts for the same exclusive owner/task scope.
+5. Existing `docket_execution_sessions`, Pair runs, Work runs, and the
+   scheduler-observation outbox are migration inputs/projections until mapped
+   to this attempt identity. Do not add runtime delivery to the outbox first.
+
+| Task | Done when |
+| --- | --- |
+| Specify canonical attempt transitions | Transition table defines actor, transaction boundary, idempotency key, fencing behavior, valid outcomes, and recovery for Pair and Work. |
+| Persist attempts | Docket migration/repository enforces owner/task identity, active-attempt uniqueness, immutable fencing epochs, and auditable timestamps. |
+| Gate Pair and Work | Start/resume/dispatch requires an authorized attempt; task selection remains an objective-only operation. |
+| Report outcomes | Pair and Work report typed bounded outcomes; Pair alone supports precise `awaiting_user`. Docket, not the runtime, advances/retries/settles task-tree work. |
+| Reconcile legacy state | Stale current-task/run/execution-session combinations become explicit non-dispatchable/reconcilable states. |
+| Rebase observations | Observation records reference a canonical attempt and exact owner correlation; delivery is designed only after this mapping exists. |
+| Validate failures | Database-backed tests cover double start, stale epoch, lost acknowledgement, process abandonment, duplicate report, user wait/resume, and Work retry/advance. |
+
+**Exit gate:** Docket can prove, from durable state, why each autonomous Pair or
+Work continuation is allowed, who owns it, and what outcome makes the next
+continuation eligible. Pair can autonomously proceed through an active task
+tree, but pauses only for a durable safety/authority condition or a precise
+user question.
 
 ### Pair planning and execution gate
 
@@ -30,8 +116,8 @@ session-connected root is draft
     => no current execution task and no Pair execution run
 
 root is non-draft + an executable task is explicitly selected current
-    => Pair task-oriented execution focus
-    => create or resume a Pair execution run
+    => Pair task-oriented objective
+    => eligible for Docket to authorize or resume a Pair execution attempt
 ```
 
 Children may be fully specified and non-draft while their session-connected
@@ -42,20 +128,22 @@ operation.
 
 `ready` means eligible to execute, not an implicit start command. A deliberate
 **start** operation may atomically move the root out of `draft`, select the
-first executable task, and create the Pair run, but a generic status edit must
-not do so incidentally. Once selected, the current task—not the presence of a
-run—drives Pair execution focus. A Pair run records a bounded execution attempt
-and its checkpoint/resume history; it does not authorize execution. A non-draft,
-session-connected current task must have a persisted Pair run before entering
-execution. `RunPaused` is valid only when it identifies that persisted run; a
-missing run is execution-initialization failure, not a runless pause. A run that
-hits a budget boundary is paused while the selected task remains current, so
-the controller can resume a successor slice without asking the user to say
-"continue."
+first executable task, and ask Docket to authorize its first Pair execution
+attempt, but a generic status edit must not do so incidentally. The current
+task remains the session objective; the Docket-owned attempt, not the presence
+of a Pair run, authorizes autonomous implementation. A Pair run records local
+bounded execution/checkpoint history for one attempt. A non-draft,
+session-connected current task must have an authorized attempt and persisted
+Pair run before entering implementation execution. `RunPaused` is valid only
+when it identifies both that run and a Docket attempt in `paused` or
+`awaiting_user`; a missing attempt/run is execution-initialization failure,
+not a runless pause. A run that hits a budget boundary reports a bounded
+outcome to Docket; Docket may continue the same attempt or authorize a
+successor slice without asking the user to say "continue."
 
-- A Pair session has zero or one current task. It is session-owned. Having a current task gives the session its objective; it neither creates a worker nor changes trust/permissions.
-- A Work loop has one bounded, explicit Docket Job assignment. Its authority to execute and settle applies within that Job's approved task tree, not to whichever task Pair happens to have current.
-- **Pair terminal settlement is independent of delivery.** A user or model with normal Pair task authority may declare a task done, blocked, or cancelled; settlement atomically records the canonical task-journal outcome and link. A Job `commit_policy` directs runtime-owned post-settlement commit delivery, not acceptance of the declaration. Commit delivery is attempted only for relevant managed-surface changes; its success/failure is separate, retryable evidence and cannot reopen or invalidate the Pair task outcome. Stronger artifact/publication gates belong to an explicit Work or release delivery contract.
+- A Pair session has zero or one current task. It is session-owned. Having a current task gives the session its objective; it neither creates a worker nor changes trust/permissions. It also does not itself authorize autonomous implementation: Docket must create or resume the matching Pair execution attempt.
+- A Work loop has one bounded, explicit Docket Job assignment. Docket authorizes its execution attempts and decides outer continuation within that Job's approved task tree; Work owns only the inner model/tool loop for its assigned attempt.
+- **Pair terminal settlement is Docket-attempt mediated and independent of delivery.** Pair reports a proposed completed, no-change, blocked, cancelled, or `awaiting_user` outcome against its authorized attempt. Docket atomically records/accepts the canonical task-journal outcome or pauses the attempt awaiting a precise user question. Commit delivery is runtime-owned post-settlement evidence, separate and retryable; it cannot reopen or invalidate an accepted outcome. Stronger artifact/publication gates belong to an explicit Work or release delivery contract.
 - A Docket Job is for explicitly requested durable planning/tracking, journals, recovery, delivery contracts, or isolated background execution. Do not create one merely to give Pair ordinary work.
 - **Pair works its current task directly by default.** Task delegation is deferred; do not expose `delegate_task` until its real end-to-end lifecycle, shared Pair/Work execution path, and workspace-safety requirements can ship together. See [Task delegation lifecycle plan](TASK_DELEGATION_LIFECYCLE_PLAN.md).
 - Docket `dispatch_work` is isolated-sandbox execution only. Remove its public `local` target and all defaults/UX that treat local execution as Docket dispatch.
@@ -77,7 +165,7 @@ Recent slices have moved the plan through the governance/focus/orientation found
 - **Pair current-task authority is implemented:** `client_sessions.current_task_id` persists Pair's optional selected session task. Runtime resolution gives a valid session-anchored selection precedence over legacy Docket execution compatibility state. Pair exposes explicit `select_current_task` / `den.task.select` controls to select an actionable session task or clear the selection; invalid, foreign, blocked, cancelled, and terminal task selections are rejected. Apparent conversational redirection is confirmation-first: Pair must propose and ask rather than silently select, clear, replace, complete, or create a task.
 - **Current-task client projection is implemented for BearWire and ACP:** both project an optional `current_task` only for an explicit valid Pair selection; neither infers one from the next pending task, legacy execution, or Work state. ACP's agent-plan projection is scoped to the selected task: it lists that task's in-order siblings when it is a child, or just that task when it is root-level.
 - **Work Job binding is implemented:** every Work run is durably scoped to one Docket Job, and its optional `executing_task_id` is an in-run progress checkpoint constrained to that Job's task tree. Work task choice never replaces the Job assignment and Pair task selection never affects an active Work run.
-- **Legacy Docket-execution persistence remains compatibility-only:** the conversation-linked `docket_execution_sessions` record may supply context only when Pair has no valid selected current task. It is not a canonical continuation authority.
+- **Legacy Docket-execution persistence is migration-only:** the conversation-linked `docket_execution_sessions` record and scheduler-observation outbox are neither Pair nor Work continuation authority. Map, replace, or retire them beneath the canonical Docket execution-attempt identity before extending their delivery behavior.
 - **Legacy `/focus` UX is migration-only:** armature's exact-UUID `/focus <job_id>` path and focus-shaped diagnostics remain only until current-task projection and explicit assignment/clear actions replace them. Do not add matching, elicitation, or new product affordances to `/focus`.
 - **Orientation/control migration is implemented for the canonical runtime paths:** Pair derives task orientation only from its resolved explicit current task; a Docket-backed Pair task remains task-oriented rather than acquiring Work execution authority. Work derives `DocketExecution` only from its explicit active Job assignment. Closed freeform continues to suppress task-definition/delegation tools when `may_define_task = false`; existing child-count/depth and immutable-execution decomposition limits remain in force.
 - **Diagnostics/history need terminology and authority cleanup:** existing Docket events and conversation history may continue to explain legacy execution/focus transitions during migration, but new projections must report current task, Work assigned Job, and any Work in-run progress task separately. Do not introduce a new heavy diagnostics table merely to preserve focus history.
@@ -376,15 +464,15 @@ A Pair session's current task is session-scoped and may be local or Docket-backe
 | --- | --- |
 | Persist current session task | **Complete.** `client_sessions.current_task_id` persists Pair's optional selected session task across turns/reconnects; a valid session-anchored selection is canonical. |
 | Project current task | **Complete.** BearWire and ACP project an optional explicit selected task; ACP's agent plan is the selected task's sibling scope (or one root task). |
-| Snapshot task into Pair runs | **Complete.** Pair runtime resolves the persisted selected task before legacy compatibility state. Before a non-draft session-connected current task enters Pair execution, runtime creates or reuses a persisted Pair execution run; `RunPaused` is invalid without that run identity. Technical Pair slice limits atomically claim that same run, persist a continuation ledger record, and resume it in-process without clearing the selected task. A pre-terminal initial-stream interruption ends client delivery through durable retryable `run.interrupted` evidence without falsely settling the run. A process-abandoned `continuing` claim recovers idempotently to the same durable `running` Pair run by authenticated `run.recover` or normal `session.current_task.start`; it consumes the persisted technical-budget snapshot and preserves the selected task, without creating a second active run. |
-| Enter current-task Pair execution | **Complete.** `session.current_task.start` is the authenticated normal Pair-client entry point for an already selected actionable session task. Den validates session ownership and task state, returns an existing active Pair run for retries, or delegates to the native `run.start` lifecycle with the persisted session context. It does not create a Job, dispatch Work, or expand authority. |
+| Snapshot task into Pair runs | **Superseded as a completion claim.** The selected task remains the Pair objective, but a persisted Pair run alone is not execution authority. Replace this with a canonical Docket-owned Pair execution attempt that atomically binds one eligible task, one Pair session/run owner, and a fencing epoch before autonomous implementation begins; migrate/reconcile existing active Pair runs into a non-authorizing compatibility state. |
+| Enter current-task Pair execution | **Superseded as a completion claim.** `session.current_task.start` must become the authenticated request for Docket to authorize/create or resume the canonical Pair attempt, then start/reuse its local Pair run. It must return a non-dispatchable outcome if no attempt is authorized. |
 | Bind Work Job | **Complete.** Each WorkRun persists one explicit durable Docket Job assignment. |
 | Enforce Work Job binding | **Complete.** A Work run without an assigned Job is rejected before model-driving continuation begins. |
 | Derive task behavior | **Complete.** Pair resolves only from its explicit current task and Work only from its explicit Job assignment; orientation and authority remain separate. |
 | Add diagnostics | **Complete.** Runtime/session projections carry the typed objective orientation; current-task and Work-assignment paths are distinct. |
 | Add tests | **Complete.** Coverage includes Pair task selection, no implicit orientation from planned activity, closed freeform, Pair/Work separation, Work assignment precedence, and immutable Work task-definition rejection. |
 
-**Exit gate: Met.** Loop control consumes explicit governance and one session-task/worker-assignment input without a client-facing focus mode. A normal Pair client starts a selected actionable session task through an authenticated, idempotent path that creates or reuses its persisted Pair run; that run can be observed, paused, continued, recovered, and settled.
+**Exit gate: Superseded.** Replace it with the canonical-attempt exit gate defined in the 2026-08-20 continuation-authority revision: a selected task is only an objective; every autonomous Pair or Work continuation has exactly one Docket-owned attempt, owner, fencing epoch, and reconcilable lifecycle.
 
 ### Phase 2d — Pair runtime interrogation and transcript correlation
 
@@ -702,7 +790,7 @@ Retention rules:
 
 ## Phase 7 — Checkpoint enforcement in the loop
 
-**Status: In progress (updated 2026-08-20).** Production server-tool continuation evaluates exploration, consecutive-failure, same-signature, and low-budget triggers before the next model step and installs the existing runtime-owned checkpoint gate. Typed pre-risk enforcement runs before native client-tool recording, approval, deferral, or execution. A valid or degraded checkpoint report resets only checkpoint-observation counters; it never replenishes authoritative turn budgets, KO/failure hard stops, permissions, or task authority. When a checkpoint reports a required task-state change in an active task context, runtime permits only the matching task-management follow-through action; the report itself does not mutate task/Docket state. Focused runtime tests cover trigger evidence, broad-tool blocking/read-only pass-through, reset behavior, and task-action follow-through. **Completed execution-gate foundation:** Docket now returns a typed `DocketExecutionGate` derived from authoritative execution control, with durable Pair/Work bindings and `reconcile`/`stop` rejection dispositions; Work checkout rejects before task binding or workspace-write permission. **Still open:** task-gate checkpointing requires a Docket-owned durable pre-dispatch rejection observation (including occurrence and retry disposition) and an explicit delivery seam to the matching live runtime session. Runtime must consume only that observation, rather than inventing task authority.
+**Status: Superseded in part (2026-08-20).** Runtime-owned checkpoint enforcement remains valid as an inner-loop safety mechanism. The prior execution-gate and scheduler-observation foundation is not the canonical outer-loop authority: reconcile it with the Docket-owned execution-attempt model before extending delivery or adding dispositions. A checkpoint never authorizes execution, advances a task, or resumes an attempt; it only informs the owner runtime's bounded outcome report.
 
 **Goal:** make checkpoint triggers affect continuation without making checkpoint advice authoritative.
 
