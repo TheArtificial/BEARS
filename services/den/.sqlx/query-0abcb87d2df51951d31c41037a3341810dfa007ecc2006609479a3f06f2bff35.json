@@ -1,0 +1,87 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO docket_scheduler_observations (\n            execution_session_id, job_id, run_id, task_id, reason, occurrence, disposition\n        )\n        VALUES ($1, $2, $3, $4, $5,\n            COALESCE((SELECT MAX(occurrence) + 1 FROM docket_scheduler_observations\n                      WHERE execution_session_id = $1 AND reason = $5), 1)::integer, $6)\n        RETURNING id, execution_session_id, job_id, run_id, task_id,\n                  reason, occurrence, disposition, delivery_state, delivered_at, created_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "execution_session_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "occurrence",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "disposition",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "delivery_state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "delivered_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "0abcb87d2df51951d31c41037a3341810dfa007ecc2006609479a3f06f2bff35"
+}

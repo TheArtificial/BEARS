@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, execution_session_id, job_id, run_id, task_id,\n               reason, occurrence, disposition, delivery_state, delivered_at, created_at\n        FROM docket_scheduler_observations\n        WHERE execution_session_id = $1 AND delivery_state = 'pending'\n        ORDER BY created_at, id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "execution_session_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "occurrence",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "disposition",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "delivery_state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "delivered_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "0cda4a3afe044bc1984ad598ecb9cfe60fce30811846d50c79c1a747a33fea61"
+}

@@ -1,0 +1,83 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE docket_scheduler_observations\n        SET delivery_state = 'delivered', delivered_at = COALESCE(delivered_at, NOW())\n        WHERE id = $1 AND execution_session_id = $2\n        RETURNING id, execution_session_id, job_id, run_id, task_id,\n                  reason, occurrence, disposition, delivery_state, delivered_at, created_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "execution_session_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "occurrence",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "disposition",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "delivery_state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "delivered_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "207c6a680a51720e6aae05c294c39a9382ed9f79fbf03b62391830698d796477"
+}

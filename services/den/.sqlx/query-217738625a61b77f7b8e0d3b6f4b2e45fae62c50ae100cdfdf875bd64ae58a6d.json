@@ -1,22 +1,22 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, created_by_user_id FROM work_surfaces WHERE name = $1",
+  "query": "SELECT job_id, run_id FROM docket_execution_sessions WHERE id = $1 FOR UPDATE",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "id",
+        "name": "job_id",
         "type_info": "Uuid"
       },
       {
         "ordinal": 1,
-        "name": "created_by_user_id",
-        "type_info": "Int4"
+        "name": "run_id",
+        "type_info": "Uuid"
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -24,5 +24,5 @@
       false
     ]
   },
-  "hash": "314042a428c360379321e6d79126341bc11c3dddadf111e58e0f6100d5a598cb"
+  "hash": "217738625a61b77f7b8e0d3b6f4b2e45fae62c50ae100cdfdf875bd64ae58a6d"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT t.id AS \"id!\", t.title AS \"title!\", t.body AS \"body!\", t.completion_criteria AS \"completion_criteria!\", t.difficulty AS \"difficulty?\"\n         FROM bear_tasks t\n         WHERE t.id = $1 AND t.job_id = $2",
+  "query": "SELECT t.id AS \"id!\", t.title AS \"title!\", t.body AS \"body!\", t.completion_criteria AS \"completion_criteria!\", t.difficulty AS \"difficulty?\", rs.status AS \"run_status?\"\n         FROM bear_tasks t\n         LEFT JOIN bear_task_run_state rs ON rs.task_id = t.id AND rs.run_id = $3\n         WHERE t.id = $1 AND t.job_id = $2",
   "describe": {
     "columns": [
       {
@@ -27,10 +27,16 @@
         "ordinal": 4,
         "name": "difficulty?",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "run_status?",
+        "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
+        "Uuid",
         "Uuid",
         "Uuid"
       ]
@@ -40,8 +46,9 @@
       false,
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "34db1d43d742334b0d98c0dc40f4fe743c482d14d0f450a654ad472cc1103cf7"
+  "hash": "dd3e527919a671675ccab4f96a1e346a552dced1cb9fc0679537556eaa1473c5"
 }
