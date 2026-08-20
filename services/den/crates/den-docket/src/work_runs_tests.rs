@@ -265,6 +265,24 @@ async fn checkout_rejects_terminal_selected_work_task() {
         .expect("work run exists");
     assert_eq!(persisted.executing_task_id, Some(task_ids[0]));
     assert!(persisted.bearwire_session_id.is_none());
+
+    let repeated_session_id = format!("headless-{}", Uuid::new_v4().simple());
+    let repeated = checkout_work_run_for_session(&pool, run.id, bear_id, &repeated_session_id)
+        .await
+        .expect("repeated stale checkout is a scheduler result");
+    assert!(matches!(
+        repeated.gate,
+        DocketExecutionGate::Rejected {
+            reason: DocketExecutionReason::ActiveTaskIsStale,
+            disposition: DocketExecutionDisposition::RequireIntervention,
+        }
+    ));
+    let repeated_persisted = get_work_run(&pool, run.id)
+        .await
+        .expect("load work run")
+        .expect("work run exists");
+    assert_eq!(repeated_persisted.executing_task_id, Some(task_ids[0]));
+    assert!(repeated_persisted.bearwire_session_id.is_none());
 }
 
 #[tokio::test]

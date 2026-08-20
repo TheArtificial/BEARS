@@ -1474,9 +1474,10 @@ async fn authorize_work_execution(
             ) =>
         {
             let reason = DocketExecutionReason::ActiveTaskIsStale;
+            let disposition = record_work_execution_rejection(pool, run.id, &reason).await?;
             return Ok(WorkExecutionAuthorization::Rejected(
                 DocketExecutionGate::Rejected {
-                    disposition: reason.disposition(),
+                    disposition,
                     reason,
                 },
             ));
