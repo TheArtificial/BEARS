@@ -73,6 +73,9 @@ enum ExecutionAttemptState {
 The precise Rust names/schema may differ, but the following contract is
 non-negotiable:
 
+The implementation-facing transition, fencing, recovery, and legacy-mapping
+contract is [Canonical Docket execution attempts](../design/docket-execution-attempts.md).
+
 1. Docket atomically authorizes one attempt for one eligible task, owner, and
    monotonic fencing epoch. Current-task selection alone cannot do this.
 2. The owner can start or resume local inner-loop work only with that attempt.
