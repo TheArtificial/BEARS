@@ -1351,8 +1351,8 @@ pub(super) async fn acknowledge_checkpoint_directive(
     let row = match row {
         Some(row) => row,
         None => sqlx::query_as::<_, DocketCheckpointDirectiveDbRow>(
-            "SELECT id, execution_attempt_id, fence_epoch, state, acknowledged_artifact_ref,
-                    created_at, acknowledged_at, superseded_at
+            "SELECT directive.id, directive.execution_attempt_id, directive.fence_epoch, directive.state, directive.acknowledged_artifact_ref,
+                    directive.created_at, directive.acknowledged_at, directive.superseded_at
              FROM docket_checkpoint_directives directive
              JOIN docket_execution_attempts attempt ON attempt.id = directive.execution_attempt_id
              WHERE directive.id = $1 AND directive.execution_attempt_id = $2

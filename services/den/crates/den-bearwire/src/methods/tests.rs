@@ -3116,6 +3116,21 @@ async fn work_checkpoint_acknowledgement_unblocks_a_fresh_checkout(pool: sqlx::P
         acknowledge["result"]["state"], "acknowledged",
         "{acknowledge}"
     );
+    let replay = rpc_value(
+        state.clone(), &token, "work.acknowledge_checkpoint",
+        json!({ "bear_slug": bear_slug, "directive_id": directive_id, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "checkpoint_artifact_ref": artifact_ref }),
+    ).await;
+    assert_eq!(
+        replay["result"]["directive_id"],
+        directive_id.to_string(),
+        "{replay}"
+    );
+    assert_eq!(replay["result"]["state"], "acknowledged", "{replay}");
+    let stale_fence = rpc_value(
+        state.clone(), &token, "work.acknowledge_checkpoint",
+        json!({ "bear_slug": bear_slug, "directive_id": directive_id, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch + 1, "checkpoint_artifact_ref": artifact_ref }),
+    ).await;
+    assert!(stale_fence.get("error").is_some(), "{stale_fence}");
 
     let resumed = rpc_value(
         state, &token, "work.checkout",
