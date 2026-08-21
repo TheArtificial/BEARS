@@ -1297,6 +1297,35 @@ pub struct DocketExecutionAttemptStart {
     pub fence_epoch: i64,
 }
 
+/// A bounded outcome reported by the Pair-local loop. Docket owns the
+/// resulting continuation decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocketPairBoundedOutcome {
+    Progress,
+    AwaitingUser,
+    Settled,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketPairBoundedOutcomeReport {
+    pub attempt_id: Uuid,
+    pub fence_epoch: i64,
+    pub outcome: DocketPairBoundedOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocketPairContinuationDecision {
+    Continue,
+    AwaitUser,
+    Stop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocketPairBoundedOutcomeDecision {
+    pub attempt: DocketExecutionAttemptRow,
+    pub decision: DocketPairContinuationDecision,
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub(super) struct DocketExecutionAttemptDbRow {
     id: Uuid,

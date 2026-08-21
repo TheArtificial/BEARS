@@ -18,7 +18,8 @@ use super::model::{
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptRow, DocketExecutionAttemptStart,
     DocketExecutionLookup, DocketExecutionSessionRow, DocketExecutionTaskSettlement,
     DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketSchedulerObservationEnqueue,
+    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketPairBoundedOutcomeDecision,
+    DocketPairBoundedOutcomeReport, DocketSchedulerObservationEnqueue,
     DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
     DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
     TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
@@ -83,6 +84,12 @@ pub trait DocketService: Send + Sync {
         &self,
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError>;
+
+    /// Records a fenced Pair slice outcome and returns Docket's canonical next action.
+    async fn report_pair_bounded_outcome(
+        &self,
+        report: DocketPairBoundedOutcomeReport,
+    ) -> Result<DocketPairBoundedOutcomeDecision, DenError>;
 
     async fn acknowledge_checkpoint_directive(
         &self,
@@ -262,6 +269,13 @@ impl DocketService for PgDocketService {
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError> {
         db::start_execution_attempt(&self.pool, start).await
+    }
+
+    async fn report_pair_bounded_outcome(
+        &self,
+        report: DocketPairBoundedOutcomeReport,
+    ) -> Result<DocketPairBoundedOutcomeDecision, DenError> {
+        db::report_pair_bounded_outcome(&self.pool, report).await
     }
 
     async fn acknowledge_checkpoint_directive(

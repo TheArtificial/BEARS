@@ -46,12 +46,14 @@ use super::model::{
     DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketJobCreate,
     DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
-    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
-    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow, DocketSessionTaskSettlement,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
-    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
-    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
-    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketPairBoundedOutcome, DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport,
+    DocketPairContinuationDecision, DocketSchedulerObservationDeliveryState,
+    DocketSchedulerObservationDisposition, DocketSchedulerObservationEnqueue,
+    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement,
+    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
+    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1257,6 +1259,49 @@ pub(super) async fn start_execution_attempt(
         })?,
     };
     row.try_into()
+}
+
+pub(super) async fn report_pair_bounded_outcome(
+    pool: &PgPool,
+    report: DocketPairBoundedOutcomeReport,
+) -> Result<DocketPairBoundedOutcomeDecision, DenError> {
+    let (state, decision) = match report.outcome {
+        DocketPairBoundedOutcome::Progress => ("running", DocketPairContinuationDecision::Continue),
+        DocketPairBoundedOutcome::AwaitingUser => {
+            ("awaiting_user", DocketPairContinuationDecision::AwaitUser)
+        }
+        DocketPairBoundedOutcome::Settled => ("settled", DocketPairContinuationDecision::Stop),
+    };
+    let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r#"
+        UPDATE docket_execution_attempts
+        SET state = $3,
+            paused_at = CASE WHEN $3 = 'awaiting_user' THEN COALESCE(paused_at, NOW()) ELSE paused_at END,
+            settled_at = CASE WHEN $3 = 'settled' THEN COALESCE(settled_at, NOW()) ELSE settled_at END,
+            updated_at = NOW()
+        WHERE id = $1 AND fence_epoch = $2 AND owner_kind = 'pair'
+          AND (
+              ($3 = 'running' AND state = 'running')
+              OR ($3 = 'awaiting_user' AND state IN ('running', 'awaiting_user'))
+              OR ($3 = 'settled' AND state IN ('running', 'settled'))
+          )
+        RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+                  fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
+                  released_at, created_at, updated_at
+        "#,
+    )
+    .bind(report.attempt_id)
+    .bind(report.fence_epoch)
+    .bind(state)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| {
+        DenError::NotFound("pair execution attempt is not current with this fence".to_string())
+    })?;
+    Ok(DocketPairBoundedOutcomeDecision {
+        attempt: row.try_into()?,
+        decision,
+    })
 }
 
 pub(super) async fn require_checkpoint_directive(
