@@ -14,6 +14,7 @@ use bearwire_protocol::methods::{
     DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest,
 };
 use den_http::errors::CustomError;
+use den_runtime::current_task::select_pair_current_task;
 use den_service::{
     artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
     client_sessions, DenState,
@@ -169,7 +170,14 @@ pub async fn docket_jobs_execute_result(
         .execute_job(execution_request(bear.id, user_id, job_id, &request))
         .await?;
 
-    execution_result(outcome)
+    execution_result(
+        state,
+        user_id,
+        bear.id,
+        request.session_id.as_deref(),
+        outcome,
+    )
+    .await
 }
 
 /// Repairs an explicitly reported stale Docket execution focus. This is separate
@@ -188,7 +196,14 @@ pub async fn docket_jobs_reconcile_result(
         .reconcile_execution(execution_request(bear.id, user_id, job_id, &request))
         .await?;
 
-    execution_result(outcome)
+    execution_result(
+        state,
+        user_id,
+        bear.id,
+        request.session_id.as_deref(),
+        outcome,
+    )
+    .await
 }
 
 /// Settles Docket-owned work and returns its successor control result. Generic
@@ -228,7 +243,7 @@ pub async fn docket_jobs_settle_task_result(
             result_summary: request.result_summary,
         })
         .await?;
-    execution_result(outcome)
+    execution_result_payload(outcome)
 }
 
 pub async fn docket_session_tasks_settle_result(
@@ -322,7 +337,47 @@ fn execution_request(
     }
 }
 
-fn execution_result(outcome: den_docket::DocketJobExecuteOutcome) -> Result<Value, CustomError> {
+async fn execution_result(
+    state: &DenState,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: Option<&str>,
+    outcome: den_docket::DocketJobExecuteOutcome,
+) -> Result<Value, CustomError> {
+    if matches!(
+        outcome.control.next_action,
+        DocketExecutionNextAction::WorkCurrentTask
+    ) {
+        if let (Some(client_session_id), Some(task_id)) =
+            (client_session_id, outcome.control.task.selected_task_id)
+        {
+            let session = client_sessions::find_for_user_bear_session_id(
+                &state.sqlx_pool,
+                user_id,
+                bear_id,
+                client_session_id,
+            )
+            .await?
+            .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+            PgDocketService::from_pool(&state.sqlx_pool)
+                .attach_task_to_pair_session(bear_id, task_id, session.id)
+                .await?;
+            select_pair_current_task(
+                &state.sqlx_pool,
+                user_id,
+                bear_id,
+                client_session_id,
+                Some(task_id),
+            )
+            .await?;
+        }
+    }
+    execution_result_payload(outcome)
+}
+
+fn execution_result_payload(
+    outcome: den_docket::DocketJobExecuteOutcome,
+) -> Result<Value, CustomError> {
     let run = outcome.job.current_run.as_ref();
     let execution_state = run
         .map(|run| run.state.to_string())
