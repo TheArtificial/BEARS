@@ -1293,6 +1293,38 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
         recovered.control.next_action,
         crate::DocketExecutionNextAction::WorkCurrentTask
     ));
+
+    let terminal_claims = sqlx::query_scalar!(
+        r#"
+        SELECT count(*)
+        FROM docket_execution_sessions
+        WHERE bear_id = $1
+          AND session_id = 'terminal-session-claim'
+          AND task_id = $2
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+        "#,
+        bear_id,
+        first_task_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count repaired terminal claims");
+    assert_eq!(terminal_claims, Some(0));
+
+    let retried = service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: created.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: Some("terminal-session-claim".to_string()),
+            source_conversation_id: None,
+            source_client_session_id: None,
+        })
+        .await
+        .expect("retry after stale-claim reconciliation");
+    assert_eq!(retried.selected_task_id, Some(second_task_id));
 }
 
 #[tokio::test]
