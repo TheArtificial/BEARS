@@ -75,6 +75,8 @@ non-negotiable:
 
 The implementation-facing transition, fencing, recovery, and legacy-mapping
 contract is [Canonical Docket execution attempts](../design/docket-execution-attempts.md).
+Work rejection checkpoint correlation and acknowledgement are specified in
+[Docket Work checkpoint control](../design/docket-work-checkpoint-control.md).
 
 1. Docket atomically authorizes one attempt for one eligible task, owner, and
    monotonic fencing epoch. Current-task selection alone cannot do this.

@@ -117,6 +117,7 @@ expiry means no new work and cannot roll back an already-issued external call.
 - Scheduler observations reference attempt ID, owner correlation, and fence.
   Existing observation records remain readable compatibility history; do not
   build live delivery until this rebase exists.
+- Work checkpoint escalation is defined in [Docket Work checkpoint control](docket-work-checkpoint-control.md). A checkpoint artifact is evidence tied to the canonical Work attempt/fence through the existing checkout session-to-runtime-run boundary; checkpoint acknowledgement never authorizes dispatch.
 
 ## Required persistence tests
 

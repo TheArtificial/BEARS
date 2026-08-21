@@ -305,8 +305,9 @@ Continuation inputs should be treated as:
 
 | Source | May affect continuation? | Notes |
 | --- | --- | --- |
-| Pair resolved current task | yes, for Pair task-oriented behavior | Must originate in a valid persisted explicit selection of a non-draft executable task. Planning mode is derived from the sole session-connected root task being `draft`; it is not a separate continuation authority. Before execution, runtime creates or reuses a persisted Pair execution run; a pause without that run identity is invalid. |
-| Work assigned Job | yes, for Work execution behavior | The WorkRun assignment bounds the task tree; in-run task progress stays within it. |
+| Pair resolved current task | yes, for Pair task-oriented behavior | Must originate in a valid persisted explicit selection of a non-draft executable task. It is an objective, not authority: Docket must also authorize a matching fenced Pair execution attempt. Planning mode is derived from the sole session-connected root task being `draft`; it is not a separate continuation authority. |
+| Work assigned Job | yes, for Work execution behavior | The WorkRun assignment bounds the task tree; each autonomous turn also requires a matching Docket-authorized Work execution attempt. |
+| Docket execution attempt | yes, for autonomous Pair/Work continuation | The sole durable authorization for a concrete owner/task/fence. A checkpoint acknowledgement is evidence only and cannot itself authorize a further turn. |
 | Legacy execution record | compatibility context only | May be rendered only when Pair has no valid current task; never selects continuation. |
 | Runtime/session cached task list or client/prompt projection | no | Display/context only; cannot manufacture selection, assignment, or continuation. |
 | None | no | Completion is allowed when no obligations/budgets block. |
