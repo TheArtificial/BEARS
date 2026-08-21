@@ -832,10 +832,15 @@ fn runtime_event_has_assistant_content(event: &den_protocol::RuntimeStreamEvent)
     )
 }
 
-fn initial_stream_eof_is_recoverable(terminal_or_wait_seen: bool, cancellation_seen: bool) -> bool {
-    // EOF is transport loss, not a run outcome. A terminal event or an answerable
-    // client wait already supplies the durable boundary the client needs instead.
-    !terminal_or_wait_seen && !cancellation_seen
+fn initial_stream_eof_is_recoverable(
+    terminal_or_wait_seen: bool,
+    cancellation_seen: bool,
+    docket_continuation_requested: bool,
+) -> bool {
+    // EOF is transport loss, not a run outcome. A terminal event, answerable client
+    // wait, cancellation, or Docket-authorized successor already supplies the next
+    // durable control boundary.
+    !terminal_or_wait_seen && !cancellation_seen && !docket_continuation_requested
 }
 
 fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent) -> bool {
@@ -2508,6 +2513,7 @@ async fn run_start_with_recovery_source(
                 let mut first_event_seen = false;
                 let mut provider_activity_seen = false;
                 let mut terminal_or_wait_seen = false;
+                let mut docket_continuation_requested = false;
                 let mut cancellation_seen = false;
                 let mut runtime_event_count = 0usize;
                 let mut assistant_content_seen = false;
@@ -2611,6 +2617,7 @@ async fn run_start_with_recovery_source(
                                                     conversation_for_task.clone(),
                                                     RuntimeContinuation::DocketBoundedSlice,
                                                 );
+                                                docket_continuation_requested = true;
                                                 break;
                                             }
                                         }
@@ -2678,7 +2685,13 @@ async fn run_start_with_recovery_source(
                         }
                     }
                 }
-                if initial_stream_eof_is_recoverable(terminal_or_wait_seen, cancellation_seen) {
+                if !docket_continuation_requested
+                    && initial_stream_eof_is_recoverable(
+                        terminal_or_wait_seen,
+                        cancellation_seen,
+                        docket_continuation_requested,
+                    )
+                {
                     if let Some(tx) = eager_prefix_tx.take() {
                         let _ = tx.send(());
                     }
@@ -3348,14 +3361,17 @@ mod tests {
     fn initial_stream_eof_policy_preserves_waiting_runs_and_retries_unbounded_runs() {
         // run.started → tool activity → client.waiting/run.paused → EOF is already a
         // durable client boundary, so the session remains available without failing it.
-        assert!(!initial_stream_eof_is_recoverable(true, false));
+        assert!(!initial_stream_eof_is_recoverable(true, false, false));
         // Terminal completion remains a durable boundary too.
-        assert!(!initial_stream_eof_is_recoverable(true, false));
+        assert!(!initial_stream_eof_is_recoverable(true, false, false));
         // EOF without either boundary is the recoverable path: persisted state is used
         // for later reconciliation rather than rerunning tools.
-        assert!(initial_stream_eof_is_recoverable(false, false));
+        assert!(initial_stream_eof_is_recoverable(false, false, false));
         // Explicit cancellation is never resumed.
-        assert!(!initial_stream_eof_is_recoverable(false, true));
+        assert!(!initial_stream_eof_is_recoverable(false, true, false));
+        // A Docket-authorized successor owns the next slice, so the ended delivery
+        // stream is not reported as a retryable interruption.
+        assert!(!initial_stream_eof_is_recoverable(false, false, true));
     }
 
     #[test]
@@ -3400,9 +3416,10 @@ mod tests {
 
     #[test]
     fn initial_stream_eof_is_recoverable_only_without_durable_boundary() {
-        assert!(initial_stream_eof_is_recoverable(false, false));
-        assert!(!initial_stream_eof_is_recoverable(true, false));
-        assert!(!initial_stream_eof_is_recoverable(false, true));
+        assert!(initial_stream_eof_is_recoverable(false, false, false));
+        assert!(!initial_stream_eof_is_recoverable(true, false, false));
+        assert!(!initial_stream_eof_is_recoverable(false, true, false));
+        assert!(!initial_stream_eof_is_recoverable(false, false, true));
     }
 
     #[test]
