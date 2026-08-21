@@ -1471,6 +1471,68 @@ pub enum DocketExecutionDisposition {
     Reconcile,
     Stop,
     RequireIntervention,
+    RequireCheckpoint,
+}
+
+/// A durable instruction requiring evidence before Docket considers another
+/// dispatch for an execution-attempt fence.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketCheckpointDirectiveState {
+    Pending,
+    Acknowledged,
+    Superseded,
+}
+
+impl DocketCheckpointDirectiveState {
+    fn parse(value: &str) -> Result<Self, DenError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "acknowledged" => Ok(Self::Acknowledged),
+            "superseded" => Ok(Self::Superseded),
+            _ => Err(DenError::ValidationError(
+                "invalid checkpoint directive state".to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocketCheckpointDirectiveRow {
+    pub id: Uuid,
+    pub execution_attempt_id: Uuid,
+    pub fence_epoch: i64,
+    pub state: DocketCheckpointDirectiveState,
+    pub created_at: OffsetDateTime,
+    pub acknowledged_at: Option<OffsetDateTime>,
+    pub superseded_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(super) struct DocketCheckpointDirectiveDbRow {
+    pub id: Uuid,
+    pub execution_attempt_id: Uuid,
+    pub fence_epoch: i64,
+    pub state: String,
+    pub created_at: OffsetDateTime,
+    pub acknowledged_at: Option<OffsetDateTime>,
+    pub superseded_at: Option<OffsetDateTime>,
+}
+
+impl TryFrom<DocketCheckpointDirectiveDbRow> for DocketCheckpointDirectiveRow {
+    type Error = DenError;
+
+    fn try_from(row: DocketCheckpointDirectiveDbRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: row.id,
+            execution_attempt_id: row.execution_attempt_id,
+            fence_epoch: row.fence_epoch,
+            state: DocketCheckpointDirectiveState::parse(&row.state)?,
+            created_at: row.created_at,
+            acknowledged_at: row.acknowledged_at,
+            superseded_at: row.superseded_at,
+        })
+    }
 }
 
 /// Docket-owned disposition for a live, already-authorized binding. This is

@@ -36,8 +36,9 @@ use super::model::{
     derived_docket_job_status, docket_job_surface_assignments, docket_parent_task_ref,
     docket_task_status_from_task_list_item_status, normalize_completion_criteria,
     task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
-    DocketCommitPolicy, DocketCriterionStateRow, DocketCriterionStateUpdate, DocketEntryCreate,
-    DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketEntryScope,
+    DocketCheckpointDirectiveDbRow, DocketCheckpointDirectiveRow, DocketCommitPolicy,
+    DocketCriterionStateRow, DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryKind,
+    DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketEntryScope,
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptDbRow, DocketExecutionAttemptRow,
     DocketExecutionAttemptStart, DocketExecutionControl, DocketExecutionLookup,
     DocketExecutionNextAction, DocketExecutionReason, DocketExecutionSessionRow,
@@ -1256,6 +1257,56 @@ pub(super) async fn start_execution_attempt(
         })?,
     };
     row.try_into()
+}
+
+pub(super) async fn require_checkpoint_directive(
+    pool: &PgPool,
+    attempt_id: Uuid,
+    fence_epoch: i64,
+) -> Result<DocketCheckpointDirectiveRow, DenError> {
+    let row = sqlx::query_as::<_, DocketCheckpointDirectiveDbRow>(
+        r#"
+        INSERT INTO docket_checkpoint_directives (execution_attempt_id, fence_epoch, state)
+        SELECT id, fence_epoch, 'pending'
+        FROM docket_execution_attempts
+        WHERE id = $1 AND fence_epoch = $2 AND owner_kind = 'work'
+        ON CONFLICT (execution_attempt_id, fence_epoch) DO UPDATE
+        SET state = docket_checkpoint_directives.state
+        RETURNING id, execution_attempt_id, fence_epoch, state, created_at,
+                  acknowledged_at, superseded_at
+        "#,
+    )
+    .bind(attempt_id)
+    .bind(fence_epoch)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| {
+        DenError::NotFound("work execution attempt is not current with this fence".to_string())
+    })?;
+    row.try_into()
+}
+
+pub(super) async fn require_checkpoint_directive_for_work_run(
+    pool: &PgPool,
+    work_run_id: Uuid,
+) -> Result<Option<DocketCheckpointDirectiveRow>, DenError> {
+    let attempt = sqlx::query_as::<_, (Uuid, i64)>(
+        "SELECT id, fence_epoch FROM docket_execution_attempts
+         WHERE work_run_id = $1 AND owner_kind = 'work'
+           AND state IN ('authorized', 'running', 'paused', 'stopping')
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(work_run_id)
+    .fetch_optional(pool)
+    .await?;
+    match attempt {
+        Some((attempt_id, fence_epoch)) => {
+            require_checkpoint_directive(pool, attempt_id, fence_epoch)
+                .await
+                .map(Some)
+        }
+        None => Ok(None),
+    }
 }
 
 pub(super) async fn get_active_execution_session(

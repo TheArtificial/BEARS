@@ -320,6 +320,15 @@ async fn checkout_rejects_without_binding_when_no_task_is_actionable() {
     )
     .await
     .expect("provision work run");
+    let session_id = format!("headless-{}", Uuid::new_v4().simple());
+    let allowed_checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
+        .await
+        .expect("initial checkout creates the canonical Work attempt");
+    assert!(matches!(
+        allowed_checkout.gate,
+        DocketExecutionGate::Allowed { .. }
+    ));
+
     sqlx::query!(
         "INSERT INTO bear_task_run_state (run_id, task_id, status)
          SELECT $1, id, 'done' FROM bear_tasks WHERE job_id = $2
@@ -331,7 +340,6 @@ async fn checkout_rejects_without_binding_when_no_task_is_actionable() {
     .await
     .expect("settle all tasks");
 
-    let session_id = format!("headless-{}", Uuid::new_v4().simple());
     let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
         .await
         .expect("rejected checkout is a scheduler result");
@@ -367,9 +375,19 @@ async fn checkout_rejects_without_binding_when_no_task_is_actionable() {
         second_checkout.gate,
         DocketExecutionGate::Rejected {
             reason: DocketExecutionReason::NoActionableTask,
-            disposition: DocketExecutionDisposition::RequireIntervention,
+            disposition: DocketExecutionDisposition::RequireCheckpoint,
         }
     ));
+    let directives: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM docket_checkpoint_directives d
+         JOIN docket_execution_attempts a ON a.id = d.execution_attempt_id
+         WHERE a.work_run_id = $1 AND d.state = 'pending'",
+    )
+    .bind(run.id)
+    .fetch_one(&pool)
+    .await
+    .expect("count replayed checkpoint directives");
+    assert_eq!(directives, 1, "repeated rejection replays one directive");
     assert!(second_checkout.prompt_context.is_none());
     assert!(second_checkout.task_title.is_none());
 

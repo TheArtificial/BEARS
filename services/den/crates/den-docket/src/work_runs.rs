@@ -1439,7 +1439,14 @@ async fn record_work_execution_rejection(
     .fetch_one(pool)
     .await?;
     Ok(if occurrences >= INTERVENTION_THRESHOLD {
-        DocketExecutionDisposition::RequireIntervention
+        if crate::db::require_checkpoint_directive_for_work_run(pool, work_run_id)
+            .await?
+            .is_some()
+        {
+            DocketExecutionDisposition::RequireCheckpoint
+        } else {
+            DocketExecutionDisposition::RequireIntervention
+        }
     } else {
         reason.disposition()
     })
