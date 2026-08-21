@@ -21,7 +21,7 @@ use den_docket::{
     DocketService, PgDocketService,
 };
 use den_http::errors::CustomError;
-use den_protocol::RoleRuntimeBinding;
+use den_protocol::{RoleRuntimeBinding, RuntimeContinuation};
 use den_runtime::{
     agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
     bearwire_events,
@@ -1721,6 +1721,10 @@ fn runtime_event_is_terminal(event: &den_protocol::RuntimeStreamEvent) -> bool {
     )
 }
 
+fn docket_bounded_slice_continues(decision: DocketPairContinuationDecision) -> bool {
+    decision == DocketPairContinuationDecision::Continue
+}
+
 async fn report_pair_bounded_outcome(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -2355,6 +2359,7 @@ async fn run_start_with_recovery_source(
     let api_style_for_task = resolved_model.api_style;
     let supports_reasoning_effort_for_task = resolved_model.supports_reasoning_effort;
     let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<()>();
+    let run_for_task = run.clone();
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
         let mut eager_prefix_tx = Some(eager_prefix_tx);
@@ -2590,13 +2595,23 @@ async fn run_start_with_recovery_source(
                                                 DocketPairBoundedOutcome::Progress,
                                             )
                                             .await
-                                            .is_some_and(|decision| decision != DocketPairContinuationDecision::Continue)
+                                            .is_some_and(docket_bounded_slice_continues)
                                             {
-                                                tracing::warn!(
-                                                    session_id = %session_for_task,
-                                                    run_id = %run_id_for_task,
-                                                    "unexpected Docket decision for Pair bounded slice"
+                                                let _ = turn_runs::transition_run(
+                                                    &pool,
+                                                    &run_id_for_task,
+                                                    turn_runs::TurnRunState::Continuing,
+                                                    Some("docket_bounded_slice"),
+                                                )
+                                                .await;
+                                                crate::methods::client::spawn_continuation_task(
+                                                    &livestream_state,
+                                                    run_for_task.clone(),
+                                                    binding.binding_id.clone(),
+                                                    conversation_for_task.clone(),
+                                                    RuntimeContinuation::DocketBoundedSlice,
                                                 );
+                                                break;
                                             }
                                         }
                                         RuntimeStreamBoundary::Continue => {}
@@ -3136,6 +3151,19 @@ mod tests {
             .iter()
             .filter_map(|item| item.get("name").and_then(Value::as_str))
             .collect()
+    }
+
+    #[test]
+    fn docket_bounded_slice_continues_only_on_continue() {
+        assert!(docket_bounded_slice_continues(
+            DocketPairContinuationDecision::Continue
+        ));
+        assert!(!docket_bounded_slice_continues(
+            DocketPairContinuationDecision::AwaitUser
+        ));
+        assert!(!docket_bounded_slice_continues(
+            DocketPairContinuationDecision::Stop
+        ));
     }
 
     #[test]

@@ -518,7 +518,7 @@ fn continuation_unavailable_response(
     })
 }
 
-fn spawn_continuation_task(
+pub(crate) fn spawn_continuation_task(
     state: &DenState,
     run: turn_runs::TurnRunRow,
     binding_id: String,
