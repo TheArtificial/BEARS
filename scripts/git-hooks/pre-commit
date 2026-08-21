@@ -28,6 +28,8 @@ EOF
   exit 1
 fi
 
+./scripts/check-sqlx-migration-prefixes.sh --staged
+
 case "${AUTO_BUMP_DEN_PATCH}" in
   true|1|yes|on)
     den_manifest="services/den/Cargo.toml"

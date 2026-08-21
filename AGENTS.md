@@ -55,6 +55,14 @@ Run SQLx commands through `scripts/sqlx.sh`. It starts and verifies bundled Post
 ./scripts/sqlx.sh prepare --workspace -- --all-targets
 ```
 
+Create Den migrations with SQLx; never hand-write a numeric migration prefix. SQLx generates a unique timestamped version:
+
+```bash
+./scripts/sqlx.sh migrate add <description>
+```
+
+Use a lowercase underscore description (for example, `add_widget_status`). The pre-commit hook rejects a staged migration version reused for a different description.
+
 ## Dependency Hygiene
 
 - Before adding a dependency, check whether an existing crate in the workspace already solves the problem. Prefer reusing existing dependencies over adding parallel libraries for the same concern.
