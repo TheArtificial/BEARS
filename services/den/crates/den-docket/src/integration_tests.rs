@@ -1325,6 +1325,40 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
         .await
         .expect("retry after stale-claim reconciliation");
     assert_eq!(retried.selected_task_id, Some(second_task_id));
+
+    // Historical interrupted handoffs could retain a pending row after the
+    // authoritative settlement entry. Re-execution repairs that skew without
+    // reopening the settled task.
+    sqlx::query!(
+        "UPDATE bear_task_run_state SET status = 'pending', finished_at = NULL WHERE run_id = $1 AND task_id = $2",
+        run_id,
+        first_task_id,
+    )
+    .execute(&pool)
+    .await
+    .expect("create historical settled-state skew");
+    service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: created.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: Some("terminal-session-claim".to_string()),
+            source_conversation_id: None,
+            source_client_session_id: None,
+        })
+        .await
+        .expect("reconcile historical settled-state skew");
+    let repaired = sqlx::query_scalar!(
+        "SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
+        run_id,
+        first_task_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read repaired state");
+    assert_eq!(repaired, "done");
 }
 
 #[tokio::test]

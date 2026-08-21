@@ -73,6 +73,12 @@ pub fn runtime_semantic_to_bear_channel_events(
                 vec![serde_json::json!({ "type": "reasoning_delta", "text": kind })]
             }
         }
+        RuntimeSemanticEvent::BoundedSlice { reason } => {
+            vec![serde_json::json!({
+                "type": "status_progress",
+                "text": format!("Continuing: {reason}"),
+            })]
+        }
         RuntimeSemanticEvent::ConversationResolved { conversation } => {
             vec![serde_json::json!({
                 "type": "conversation_resolved",

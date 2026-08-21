@@ -996,6 +996,7 @@ async fn reconcile_job_status(
     job_id: Uuid,
     run_id: Uuid,
 ) -> Result<(), DenError> {
+    reconcile_settled_task_run_state(tx, job_id, run_id).await?;
     let locked_job = sqlx::query_as!(
         LockedJobRow,
         r#"SELECT lifecycle_intent AS _lifecycle_intent, current_run_id FROM bear_jobs WHERE id = $1 FOR UPDATE"#,
@@ -1075,6 +1076,51 @@ async fn reconcile_job_status(
         .execute(&mut **tx)
         .await?;
     }
+    Ok(())
+}
+
+/// Settlement evidence is authoritative. Older interrupted handoffs could leave
+/// a settled task's run row pending after its outcome entry was committed.
+/// Normalize only rows that have no live execution or work claim; a live claim
+/// remains visible for explicit recovery instead of being silently hidden.
+async fn reconcile_settled_task_run_state(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    job_id: Uuid,
+    run_id: Uuid,
+) -> Result<(), DenError> {
+    sqlx::query!(
+        r#"
+        UPDATE bear_task_run_state state
+        SET status = 'done',
+            finished_at = COALESCE(state.finished_at, NOW()),
+            updated_at = NOW()
+        FROM bear_tasks task
+        WHERE state.task_id = task.id
+          AND state.run_id = $2
+          AND task.job_id = $1
+          AND task.settled_by_entry_id IS NOT NULL
+          AND state.status IN ('pending', 'in_progress')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM docket_execution_sessions session
+              WHERE session.job_id = $1
+                AND session.run_id = $2
+                AND session.task_id = task.id
+                AND session.state IN ('active', 'blocked', 'completing', 'paused')
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM bear_work_runs work_run
+              WHERE work_run.job_run_id = $2
+                AND work_run.executing_task_id = task.id
+                AND work_run.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')
+          )
+        "#,
+        job_id,
+        run_id,
+    )
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -2126,6 +2172,20 @@ pub(super) async fn execute_job(
     pool: &PgPool,
     request: DocketJobExecuteRequest,
 ) -> Result<DocketJobExecuteOutcome, DenError> {
+    // Repair pre-existing terminal evidence/run-state skew before deriving the
+    // scheduler projection used to claim the next task.
+    let mut reconciliation = pool.begin().await?;
+    let run_id = sqlx::query_scalar!(
+        "SELECT current_run_id FROM bear_jobs WHERE id = $1",
+        request.job_id
+    )
+    .fetch_one(&mut *reconciliation)
+    .await?
+    .ok_or_else(|| {
+        DenError::ValidationError(format!("Docket job has no current run: {}", request.job_id))
+    })?;
+    reconcile_job_status(&mut reconciliation, request.job_id, run_id).await?;
+    reconciliation.commit().await?;
     let Some(projection) = get_job(pool, request.bear_id, request.job_id).await? else {
         return Err(DenError::NotFound(format!(
             "Docket job not found: {}",
