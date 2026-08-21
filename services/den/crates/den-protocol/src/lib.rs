@@ -246,6 +246,11 @@ pub enum RuntimeSemanticEvent {
         resume_token: Option<String>,
         expires_at: Option<String>,
     },
+    /// A durable Pair slice boundary. Unlike ordinary progress or a model turn
+    /// completion, this explicitly says Docket must decide whether to continue.
+    BoundedSlice {
+        reason: String,
+    },
     ToolCallRequested {
         tool_call_id: String,
         tool_name: String,

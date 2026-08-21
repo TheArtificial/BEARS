@@ -798,6 +798,11 @@ fn spawn_continuation_task(
                                     ContinuationStreamBoundary::ClientWait => {
                                         wait_event_seen = true;
                                     }
+                                    // A bounded slice is only actionable through the
+                                    // Docket-owned Pair scheduler, never the client tool loop.
+                                    ContinuationStreamBoundary::BoundedSlice => {
+                                        wait_event_seen = true;
+                                    }
                                     ContinuationStreamBoundary::Continue => {}
                                 }
                                 if !first_event_seen {
@@ -2000,6 +2005,11 @@ mod tests {
                 text: "still streaming".to_string(),
             },
         );
+        let bounded_slice = den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::BoundedSlice {
+                reason: "task remains actionable".to_string(),
+            },
+        );
 
         assert_eq!(
             continuation_stream_boundary(&completed),
@@ -2024,6 +2034,10 @@ mod tests {
         assert_eq!(
             continuation_stream_boundary(&den_approval_wait),
             ContinuationStreamBoundary::ClientWait
+        );
+        assert_eq!(
+            continuation_stream_boundary(&bounded_slice),
+            ContinuationStreamBoundary::BoundedSlice
         );
         assert_eq!(
             continuation_stream_boundary(&delta),

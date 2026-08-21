@@ -856,6 +856,7 @@ fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeStreamBoundary {
     Continue,
+    BoundedSlice,
     ClientWait,
     Terminal,
 }
@@ -873,6 +874,9 @@ pub(crate) fn runtime_stream_boundary(
         ) => RuntimeStreamBoundary::Terminal,
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { .. }) => {
             RuntimeStreamBoundary::ClientWait
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::BoundedSlice { .. }) => {
+            RuntimeStreamBoundary::BoundedSlice
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
             tool_name,
@@ -911,6 +915,7 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { .. }) => "status_text",
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { .. }) => "run_progress",
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { .. }) => "run_paused",
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::BoundedSlice { .. }) => "bounded_slice",
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. }) => {
             "tool_call_requested"
         }
@@ -1715,7 +1720,12 @@ fn runtime_event_is_terminal(event: &den_protocol::RuntimeStreamEvent) -> bool {
     )
 }
 
-async fn report_pair_terminal_outcome(pool: &sqlx::PgPool, session_id: &str, run_id: &str) {
+async fn report_pair_bounded_outcome(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    outcome: DocketPairBoundedOutcome,
+) -> Option<DocketPairContinuationDecision> {
     let row = sqlx::query_as::<_, (Uuid, i64)>(
         "SELECT id, fence_epoch FROM docket_execution_attempts
          WHERE owner_kind = 'pair' AND pair_session_id = $1 AND pair_run_id = $2::uuid
@@ -1726,22 +1736,20 @@ async fn report_pair_terminal_outcome(pool: &sqlx::PgPool, session_id: &str, run
     .fetch_optional(pool)
     .await;
     let Ok(Some((attempt_id, fence_epoch))) = row else {
-        return;
+        return None;
     };
     match PgDocketService::from_pool(pool)
         .report_pair_bounded_outcome(DocketPairBoundedOutcomeReport {
             attempt_id,
             fence_epoch,
-            outcome: DocketPairBoundedOutcome::Settled,
+            outcome,
         })
         .await
     {
-        Ok(decision) if decision.decision == DocketPairContinuationDecision::Stop => {}
-        Ok(decision) => {
-            tracing::warn!(?decision.decision, %attempt_id, "unexpected Docket decision for terminal Pair outcome")
-        }
+        Ok(decision) => Some(decision.decision),
         Err(error) => {
-            tracing::warn!(%error, %attempt_id, "failed to report terminal Pair outcome to Docket")
+            tracing::warn!(%error, %attempt_id, ?outcome, "failed to report Pair bounded outcome to Docket");
+            None
         }
     }
 }
@@ -1813,7 +1821,16 @@ async fn finish_runtime_terminal_event(
     terminal_event.human_id = Some(user_id.to_string());
     terminal_event.session_id = Some(session_id.to_string());
     terminal_event.run_id = Some(run_id.to_string());
-    report_pair_terminal_outcome(pool, session_id, run_id).await;
+    if report_pair_bounded_outcome(pool, session_id, run_id, DocketPairBoundedOutcome::Settled)
+        .await
+        .is_some_and(|decision| decision != DocketPairContinuationDecision::Stop)
+    {
+        tracing::warn!(
+            session_id,
+            run_id,
+            "unexpected Docket decision for terminal Pair outcome"
+        );
+    }
     match turn_runs::finish_run_with_bearwire_event(
         pool,
         session_id,
@@ -2529,6 +2546,23 @@ async fn run_start_with_recovery_source(
                                     match runtime_stream_boundary(&runtime_event) {
                                         RuntimeStreamBoundary::Terminal => terminal_event_seen = true,
                                         RuntimeStreamBoundary::ClientWait => wait_event_seen = true,
+                                        RuntimeStreamBoundary::BoundedSlice => {
+                                            if report_pair_bounded_outcome(
+                                                &pool,
+                                                &session_for_task,
+                                                &run_id_for_task,
+                                                DocketPairBoundedOutcome::Progress,
+                                            )
+                                            .await
+                                            .is_some_and(|decision| decision != DocketPairContinuationDecision::Continue)
+                                            {
+                                                tracing::warn!(
+                                                    session_id = %session_for_task,
+                                                    run_id = %run_id_for_task,
+                                                    "unexpected Docket decision for Pair bounded slice"
+                                                );
+                                            }
+                                        }
                                         RuntimeStreamBoundary::Continue => {}
                                     }
                                     if runtime_event_is_terminal_or_wait(&runtime_event) {

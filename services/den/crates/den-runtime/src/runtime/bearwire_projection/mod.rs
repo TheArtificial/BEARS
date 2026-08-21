@@ -70,6 +70,9 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
                 format!("Paused: {reason}")
             },
         }],
+        RuntimeSemanticEvent::BoundedSlice { reason } => vec![GatewayEvent::StatusText {
+            text: format!("Slice complete: {reason}"),
+        }],
         RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
             tool_name,

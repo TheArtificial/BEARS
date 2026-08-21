@@ -227,6 +227,7 @@ fn runtime_event_kind(event: &RuntimeStreamEvent) -> &'static str {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { .. }) => "status_text",
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { .. }) => "run_progress",
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { .. }) => "run_paused",
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::BoundedSlice { .. }) => "bounded_slice",
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested { .. }) => {
             "tool_call_requested"
         }

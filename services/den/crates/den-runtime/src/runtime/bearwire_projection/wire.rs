@@ -178,6 +178,10 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 "expires_at": expires_at,
             }),
         )],
+        RuntimeSemanticEvent::BoundedSlice { reason } => vec![BearWireEvent::ephemeral(
+            "run.bounded_slice",
+            json!({ "reason": reason }),
+        )],
         RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
             tool_name,
