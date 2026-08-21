@@ -1219,6 +1219,22 @@ mod derived_job_status_tests {
     }
 
     #[test]
+    fn settled_phase_with_terminal_descendants_is_complete() {
+        let phase_id = Uuid::new_v4();
+        let child = task(Uuid::new_v4(), Some(phase_id));
+        let phase = task(phase_id, None);
+        let mut children = HashMap::new();
+        children.insert(None, vec![&phase]);
+        children.insert(Some(phase_id), vec![&child]);
+        let states = HashMap::from([(phase_id, "done"), (child.id, "done")]);
+
+        assert!(matches!(
+            first_pending_leaf_in_children(None, &children, &states, &mut HashSet::new()),
+            Ok(None)
+        ));
+    }
+
+    #[test]
     fn stale_task_progress_without_a_work_run_is_ready() {
         // The query supplying `in_progress` counts only task rows backed by an
         // active work run; a stale task state therefore reaches this branch.
@@ -2473,14 +2489,14 @@ fn first_pending_leaf_in_children<'a>(
             continue;
         }
         if children.contains_key(&Some(task.id)) {
-            match state_by_task.get(&task.id).copied().unwrap_or("pending") {
-                // A phase cannot be terminal while descendants remain runnable.
-                // Historical conflicts must block selection rather than let work
-                // proceed beneath an already-settled parent.
-                "done" | "blocked" | "cancelled" => return Err(()),
-                _ => {}
-            }
+            let phase_is_terminal = matches!(
+                state_by_task.get(&task.id).copied().unwrap_or("pending"),
+                "done" | "blocked" | "cancelled"
+            );
             match first_pending_leaf_in_children(Some(task.id), children, state_by_task, visited) {
+                // A terminal phase is valid when its descendants are terminal,
+                // but remains an integrity conflict if any descendant is runnable.
+                Ok(Some(_)) if phase_is_terminal => return Err(()),
                 Ok(Some(next)) => return Ok(Some(next)),
                 Err(()) => return Err(()),
                 Ok(None) => continue,
