@@ -1464,6 +1464,18 @@ async fn authorize_work_execution(
     pool: &PgPool,
     run: &WorkRunRow,
 ) -> Result<WorkExecutionAuthorization, DenError> {
+    if crate::db::pending_checkpoint_directive_for_work_run(pool, run.id)
+        .await?
+        .is_some()
+    {
+        let reason = DocketExecutionReason::CheckpointRequired;
+        return Ok(WorkExecutionAuthorization::Rejected(
+            DocketExecutionGate::Rejected {
+                disposition: DocketExecutionDisposition::RequireCheckpoint,
+                reason,
+            },
+        ));
+    }
     let active_task = sqlx::query!(
         "SELECT t.id AS \"id!\", t.title AS \"title!\", t.body AS \"body!\", t.completion_criteria AS \"completion_criteria!\", t.difficulty AS \"difficulty?\", rs.status AS \"run_status?\"
          FROM bear_tasks t
@@ -1565,6 +1577,34 @@ pub async fn checkout_work_run_for_session(
     session_id: &str,
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
+
+    // A pending directive blocks a new authorization epoch. It is checked at
+    // checkout—not per workspace mutation—so a fresh Allowed decision remains
+    // the only way to resume after checkpoint acknowledgement.
+    if crate::db::pending_checkpoint_directive_for_work_run(pool, run.id)
+        .await?
+        .is_some()
+    {
+        sqlx::query!(
+            "UPDATE bear_work_runs
+             SET bearwire_session_id = NULL, updated_at = NOW()
+             WHERE id = $1 AND bearwire_session_id = $2",
+            run.id,
+            session_id,
+        )
+        .execute(pool)
+        .await?;
+        return Ok(WorkRunCheckout {
+            run,
+            gate: DocketExecutionGate::Rejected {
+                reason: DocketExecutionReason::CheckpointRequired,
+                disposition: DocketExecutionDisposition::RequireCheckpoint,
+            },
+            execution_attempt: None,
+            prompt_context: None,
+            task_title: None,
+        });
+    }
 
     let authorization = authorize_work_execution(pool, &run).await?;
     let (task, gate) = match authorization {

@@ -210,6 +210,12 @@ pub(crate) async fn rpc(
             methods::work::work_checkout_result(&state, &headers, &request.params).await,
             "BearWire work.checkout failed",
         ),
+        "work.acknowledge_checkpoint" => method_response(
+            request.id,
+            methods::work::work_acknowledge_checkpoint_result(&state, &headers, &request.params)
+                .await,
+            "BearWire work.acknowledge_checkpoint failed",
+        ),
         "work.report" => method_response(
             request.id,
             methods::work::work_report_result(&state, &headers, &request.params).await,

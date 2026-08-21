@@ -13,16 +13,16 @@ use den_core::{BearProfile, DenError};
 use super::db;
 use super::model::{
     task_list_projection_from_docket_job, task_list_projection_from_session_tasks,
-    DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryListFilter, DocketEntryPromotion,
-    DocketEntryRow, DocketExecutionAttemptAuthorize, DocketExecutionAttemptRow,
-    DocketExecutionAttemptStart, DocketExecutionLookup, DocketExecutionSessionRow,
-    DocketExecutionTaskSettlement, DocketJobCreate, DocketJobExecuteOutcome,
-    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
-    DocketJobUpdate, DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow,
-    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection,
-    DocketTaskRow, DocketTaskUpdate, TaskListCheckoutRequest, TaskListCheckoutSource,
-    TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome,
-    TaskListSyncRequest,
+    DocketCheckpointDirectiveAcknowledge, DocketCheckpointDirectiveRow, DocketCriterionStateUpdate,
+    DocketEntryCreate, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow,
+    DocketExecutionAttemptAuthorize, DocketExecutionAttemptRow, DocketExecutionAttemptStart,
+    DocketExecutionLookup, DocketExecutionSessionRow, DocketExecutionTaskSettlement,
+    DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketSchedulerObservationEnqueue,
+    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
+    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
 };
 
 /// Orchestration API for task and job state. The only public entry point to the
@@ -83,6 +83,11 @@ pub trait DocketService: Send + Sync {
         &self,
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError>;
+
+    async fn acknowledge_checkpoint_directive(
+        &self,
+        acknowledge: DocketCheckpointDirectiveAcknowledge,
+    ) -> Result<DocketCheckpointDirectiveRow, DenError>;
 
     async fn get_active_execution_session(
         &self,
@@ -257,6 +262,13 @@ impl DocketService for PgDocketService {
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError> {
         db::start_execution_attempt(&self.pool, start).await
+    }
+
+    async fn acknowledge_checkpoint_directive(
+        &self,
+        acknowledge: DocketCheckpointDirectiveAcknowledge,
+    ) -> Result<DocketCheckpointDirectiveRow, DenError> {
+        db::acknowledge_checkpoint_directive(&self.pool, acknowledge).await
     }
 
     async fn get_active_execution_session(

@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_docket::work_runs;
+use den_docket::{work_runs, DocketCheckpointDirectiveAcknowledge, DocketService, PgDocketService};
 use den_http::errors::CustomError;
 use den_service::{
     bears::{render_turn_fragment, repository_prompt_fragment_registry},
@@ -98,6 +98,38 @@ pub(crate) async fn work_checkout_result(
     }))
 }
 
+#[derive(Deserialize)]
+struct WorkAcknowledgeCheckpointRequest {
+    directive_id: Uuid,
+    execution_attempt_id: Uuid,
+    fence_epoch: i64,
+    checkpoint_artifact_ref: String,
+}
+
+pub(crate) async fn work_acknowledge_checkpoint_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (_user_id, _bear) = authenticated_bear(state, headers, params).await?;
+    let request: WorkAcknowledgeCheckpointRequest = parse_params(params)?;
+    let directive = PgDocketService::from_pool(&state.sqlx_pool)
+        .acknowledge_checkpoint_directive(DocketCheckpointDirectiveAcknowledge {
+            bear_id: _bear.id,
+            directive_id: request.directive_id,
+            execution_attempt_id: request.execution_attempt_id,
+            fence_epoch: request.fence_epoch,
+            artifact_ref: request.checkpoint_artifact_ref,
+        })
+        .await?;
+
+    Ok(json!({
+        "ok": true,
+        "directive_id": directive.id,
+        "state": directive.state,
+        "acknowledged_artifact_ref": directive.acknowledged_artifact_ref,
+    }))
+}
 #[derive(Deserialize)]
 struct WorkReportRequest {
     #[allow(dead_code)]

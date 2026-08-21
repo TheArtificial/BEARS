@@ -36,22 +36,22 @@ use super::model::{
     derived_docket_job_status, docket_job_surface_assignments, docket_parent_task_ref,
     docket_task_status_from_task_list_item_status, normalize_completion_criteria,
     task_list_projection_from_docket_job, validate_docket_job_create, validate_docket_task_create,
-    DocketCheckpointDirectiveDbRow, DocketCheckpointDirectiveRow, DocketCommitPolicy,
-    DocketCriterionStateRow, DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryKind,
-    DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow, DocketEntryScope,
-    DocketExecutionAttemptAuthorize, DocketExecutionAttemptDbRow, DocketExecutionAttemptRow,
-    DocketExecutionAttemptStart, DocketExecutionControl, DocketExecutionLookup,
-    DocketExecutionNextAction, DocketExecutionReason, DocketExecutionSessionRow,
-    DocketExecutionSessionUpsert, DocketExecutionTaskControl, DocketExecutionTaskSettlement,
-    DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
-    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
-    DocketJobUpdate, DocketSchedulerObservationDeliveryState,
-    DocketSchedulerObservationDisposition, DocketSchedulerObservationEnqueue,
-    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
-    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement,
-    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
-    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
-    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketCheckpointDirectiveAcknowledge, DocketCheckpointDirectiveDbRow,
+    DocketCheckpointDirectiveRow, DocketCommitPolicy, DocketCriterionStateRow,
+    DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryKind, DocketEntryListFilter,
+    DocketEntryPromotion, DocketEntryRow, DocketEntryScope, DocketExecutionAttemptAuthorize,
+    DocketExecutionAttemptDbRow, DocketExecutionAttemptRow, DocketExecutionAttemptStart,
+    DocketExecutionControl, DocketExecutionLookup, DocketExecutionNextAction,
+    DocketExecutionReason, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
+    DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketJobCreate,
+    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
+    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
+    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow, DocketSessionTaskSettlement,
+    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
+    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
+    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
+    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1272,8 +1272,8 @@ pub(super) async fn require_checkpoint_directive(
         WHERE id = $1 AND fence_epoch = $2 AND owner_kind = 'work'
         ON CONFLICT (execution_attempt_id, fence_epoch) DO UPDATE
         SET state = docket_checkpoint_directives.state
-        RETURNING id, execution_attempt_id, fence_epoch, state, created_at,
-                  acknowledged_at, superseded_at
+        RETURNING id, execution_attempt_id, fence_epoch, state, acknowledged_artifact_ref,
+                  created_at, acknowledged_at, superseded_at
         "#,
     )
     .bind(attempt_id)
@@ -1307,6 +1307,93 @@ pub(super) async fn require_checkpoint_directive_for_work_run(
         }
         None => Ok(None),
     }
+}
+
+pub(super) async fn acknowledge_checkpoint_directive(
+    pool: &PgPool,
+    acknowledge: DocketCheckpointDirectiveAcknowledge,
+) -> Result<DocketCheckpointDirectiveRow, DenError> {
+    let row = sqlx::query_as::<_, DocketCheckpointDirectiveDbRow>(
+        r#"
+        UPDATE docket_checkpoint_directives directive
+        SET state = 'acknowledged', acknowledged_artifact_ref = $4,
+            acknowledged_at = COALESCE(acknowledged_at, NOW())
+        FROM docket_execution_attempts attempt
+        WHERE directive.id = $1
+          AND directive.execution_attempt_id = $2
+          AND directive.fence_epoch = $3
+          AND directive.state = 'pending'
+          AND attempt.id = directive.execution_attempt_id
+          AND attempt.fence_epoch = directive.fence_epoch
+          AND attempt.owner_kind = 'work'
+          AND attempt.bear_id = $5
+          AND EXISTS (
+              SELECT 1 FROM artifact_links link
+              JOIN artifacts artifact ON artifact.id = link.artifact_id
+              WHERE artifact.artifact_ref = $4
+                AND artifact.bear_id = $5
+                AND link.target_kind = 'work_run'
+                AND link.target_id = attempt.work_run_id::text
+                AND link.role = 'runtime_checkpoint'
+          )
+        RETURNING directive.id, directive.execution_attempt_id, directive.fence_epoch,
+                  directive.state, directive.acknowledged_artifact_ref,
+                  directive.created_at, directive.acknowledged_at, directive.superseded_at
+        "#,
+    )
+    .bind(acknowledge.directive_id)
+    .bind(acknowledge.execution_attempt_id)
+    .bind(acknowledge.fence_epoch)
+    .bind(&acknowledge.artifact_ref)
+    .bind(acknowledge.bear_id)
+    .fetch_optional(pool)
+    .await?;
+    let row = match row {
+        Some(row) => row,
+        None => sqlx::query_as::<_, DocketCheckpointDirectiveDbRow>(
+            "SELECT id, execution_attempt_id, fence_epoch, state, acknowledged_artifact_ref,
+                    created_at, acknowledged_at, superseded_at
+             FROM docket_checkpoint_directives directive
+             JOIN docket_execution_attempts attempt ON attempt.id = directive.execution_attempt_id
+             WHERE directive.id = $1 AND directive.execution_attempt_id = $2
+               AND directive.fence_epoch = $3 AND directive.state = 'acknowledged'
+               AND directive.acknowledged_artifact_ref = $4 AND attempt.bear_id = $5",
+        )
+        .bind(acknowledge.directive_id)
+        .bind(acknowledge.execution_attempt_id)
+        .bind(acknowledge.fence_epoch)
+        .bind(&acknowledge.artifact_ref)
+        .bind(acknowledge.bear_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| {
+            DenError::NotFound(
+                "checkpoint directive is not pending for this exact attempt, fence, and artifact"
+                    .to_string(),
+            )
+        })?,
+    };
+    row.try_into()
+}
+
+pub(super) async fn pending_checkpoint_directive_for_work_run(
+    pool: &PgPool,
+    work_run_id: Uuid,
+) -> Result<Option<DocketCheckpointDirectiveRow>, DenError> {
+    let row = sqlx::query_as::<_, DocketCheckpointDirectiveDbRow>(
+        "SELECT directive.id, directive.execution_attempt_id, directive.fence_epoch,
+                directive.state, directive.acknowledged_artifact_ref, directive.created_at,
+                directive.acknowledged_at, directive.superseded_at
+         FROM docket_checkpoint_directives directive
+         JOIN docket_execution_attempts attempt ON attempt.id = directive.execution_attempt_id
+         WHERE attempt.work_run_id = $1 AND attempt.owner_kind = 'work'
+           AND attempt.fence_epoch = directive.fence_epoch AND directive.state = 'pending'
+         ORDER BY directive.created_at DESC LIMIT 1",
+    )
+    .bind(work_run_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(TryInto::try_into).transpose()
 }
 
 pub(super) async fn get_active_execution_session(

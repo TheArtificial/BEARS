@@ -3068,6 +3068,68 @@ async fn work_checkout_returns_a_stable_canonical_attempt(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn work_checkpoint_acknowledgement_unblocks_a_fresh_checkout(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
+    let state = test_state(pool.clone());
+    let first = rpc_value(
+        state.clone(),
+        &token,
+        "work.checkout",
+        json!({ "bear_slug": bear_slug, "session_id": format!("work-{}", Uuid::new_v4().simple()), "work_order_id": work_run_id, "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] } }),
+    ).await;
+    let attempt_id: Uuid = first["result"]["execution_attempt_id"]
+        .as_str()
+        .expect("checkout returns attempt id")
+        .parse()
+        .expect("attempt id is UUID");
+    let fence_epoch = first["result"]["execution_attempt_fence_epoch"]
+        .as_i64()
+        .expect("checkout returns fence epoch");
+    let directive_id: Uuid = sqlx::query_scalar("INSERT INTO docket_checkpoint_directives (execution_attempt_id, fence_epoch, state) VALUES ($1, $2, 'pending') RETURNING id")
+        .bind(attempt_id).bind(fence_epoch).fetch_one(&pool).await.expect("create pending checkpoint directive");
+
+    let denied = rpc_value(
+        state.clone(), &token, "work.checkout",
+        json!({ "bear_slug": bear_slug, "session_id": format!("work-{}", Uuid::new_v4().simple()), "work_order_id": work_run_id, "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] } }),
+    ).await;
+    assert_eq!(denied["result"]["ok"], false, "{denied}");
+    assert_eq!(denied["result"]["permission_mode"], "none", "{denied}");
+    assert_eq!(
+        denied["result"]["gate"]["disposition"], "require_checkpoint",
+        "{denied}"
+    );
+
+    let artifact_ref = format!("artifact_{}", Uuid::new_v4().simple());
+    let artifact_id: Uuid = sqlx::query_scalar("INSERT INTO artifacts (artifact_ref, bear_id, owner_profile, kind, storage_kind) VALUES ($1, $2, 'work', 'runtime_checkpoint', 'db_text') RETURNING id")
+        .bind(&artifact_ref).bind(bear_id).fetch_one(&pool).await.expect("create checkpoint artifact");
+    sqlx::query("INSERT INTO artifact_links (artifact_id, target_kind, target_id, role) VALUES ($1, 'work_run', $2, 'runtime_checkpoint')")
+        .bind(artifact_id).bind(work_run_id.to_string()).execute(&pool).await.expect("link checkpoint artifact to work run");
+
+    let acknowledge = rpc_value(
+        state.clone(), &token, "work.acknowledge_checkpoint",
+        json!({ "bear_slug": bear_slug, "directive_id": directive_id, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "checkpoint_artifact_ref": artifact_ref }),
+    ).await;
+    assert_eq!(
+        acknowledge["result"]["state"], "acknowledged",
+        "{acknowledge}"
+    );
+
+    let resumed = rpc_value(
+        state, &token, "work.checkout",
+        json!({ "bear_slug": bear_slug, "session_id": format!("work-{}", Uuid::new_v4().simple()), "work_order_id": work_run_id, "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] } }),
+    ).await;
+    assert_eq!(resumed["result"]["ok"], true, "{resumed}");
+    assert_eq!(
+        resumed["result"]["execution_attempt_id"],
+        attempt_id.to_string(),
+        "{resumed}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

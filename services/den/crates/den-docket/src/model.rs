@@ -1424,6 +1424,7 @@ pub enum DocketExecutionNextAction {
 #[serde(rename_all = "snake_case")]
 pub enum DocketExecutionReason {
     ActiveTaskIsStale,
+    CheckpointRequired,
     NoActionableTask,
     JobComplete,
     JobBlocked,
@@ -1433,6 +1434,7 @@ impl std::fmt::Display for DocketExecutionReason {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::ActiveTaskIsStale => "active_task_is_stale",
+            Self::CheckpointRequired => "checkpoint_required",
             Self::NoActionableTask => "no_actionable_task",
             Self::JobComplete => "job_complete",
             Self::JobBlocked => "job_blocked",
@@ -1446,6 +1448,7 @@ impl DocketExecutionReason {
     pub fn disposition(&self) -> DocketExecutionDisposition {
         match self {
             Self::ActiveTaskIsStale => DocketExecutionDisposition::Reconcile,
+            Self::CheckpointRequired => DocketExecutionDisposition::RequireCheckpoint,
             Self::NoActionableTask | Self::JobComplete | Self::JobBlocked => {
                 DocketExecutionDisposition::Stop
             }
@@ -1503,9 +1506,20 @@ pub struct DocketCheckpointDirectiveRow {
     pub execution_attempt_id: Uuid,
     pub fence_epoch: i64,
     pub state: DocketCheckpointDirectiveState,
+    pub acknowledged_artifact_ref: Option<String>,
     pub created_at: OffsetDateTime,
     pub acknowledged_at: Option<OffsetDateTime>,
     pub superseded_at: Option<OffsetDateTime>,
+}
+
+/// Exact fenced evidence acknowledgement for one pending Work directive.
+#[derive(Debug, Clone)]
+pub struct DocketCheckpointDirectiveAcknowledge {
+    pub bear_id: Uuid,
+    pub directive_id: Uuid,
+    pub execution_attempt_id: Uuid,
+    pub fence_epoch: i64,
+    pub artifact_ref: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -1514,6 +1528,7 @@ pub(super) struct DocketCheckpointDirectiveDbRow {
     pub execution_attempt_id: Uuid,
     pub fence_epoch: i64,
     pub state: String,
+    pub acknowledged_artifact_ref: Option<String>,
     pub created_at: OffsetDateTime,
     pub acknowledged_at: Option<OffsetDateTime>,
     pub superseded_at: Option<OffsetDateTime>,
@@ -1528,6 +1543,7 @@ impl TryFrom<DocketCheckpointDirectiveDbRow> for DocketCheckpointDirectiveRow {
             execution_attempt_id: row.execution_attempt_id,
             fence_epoch: row.fence_epoch,
             state: DocketCheckpointDirectiveState::parse(&row.state)?,
+            acknowledged_artifact_ref: row.acknowledged_artifact_ref,
             created_at: row.created_at,
             acknowledged_at: row.acknowledged_at,
             superseded_at: row.superseded_at,
