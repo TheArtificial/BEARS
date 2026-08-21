@@ -1097,7 +1097,42 @@ fn derived_job_status(
 
 #[cfg(test)]
 mod derived_job_status_tests {
-    use super::derived_job_status;
+    use super::{derived_job_status, first_pending_leaf_in_children};
+    use std::collections::{HashMap, HashSet};
+
+    use sqlx::types::Json;
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    use crate::model::DocketTaskRow;
+
+    fn task(id: Uuid, parent_task_id: Option<Uuid>) -> DocketTaskRow {
+        DocketTaskRow {
+            id,
+            bear_id: Uuid::nil(),
+            job_id: Some(Uuid::nil()),
+            session_anchor_id: None,
+            parent_task_id,
+            sibling_order: 0,
+            kind: "execution".to_string(),
+            scope: "run".to_string(),
+            title: "task".to_string(),
+            body: "task".to_string(),
+            completion_criteria: Json(vec!["done".to_string()]),
+            difficulty: None,
+            effort_hint: None,
+            routing_strategy: "auto".to_string(),
+            expected_context_size: None,
+            result_rollup_policy: None,
+            created_by_role: "pair".to_string(),
+            created_by_user_id: None,
+            created_by_agent_id: None,
+            created_in_run_id: None,
+            settled_by_entry_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
 
     #[test]
     fn derives_status_from_current_work_only() {
@@ -1106,6 +1141,21 @@ mod derived_job_status_tests {
         assert_eq!(derived_job_status(0, 0, 1, 0), "ready");
         assert_eq!(derived_job_status(0, 0, 0, 1), "ready");
         assert_eq!(derived_job_status(0, 0, 0, 0), "completed");
+    }
+
+    #[test]
+    fn settled_phase_with_pending_descendant_is_not_selectable() {
+        let phase_id = Uuid::new_v4();
+        let child = task(Uuid::new_v4(), Some(phase_id));
+        let phase = task(phase_id, None);
+        let mut children = HashMap::new();
+        children.insert(None, vec![&phase]);
+        children.insert(Some(phase_id), vec![&child]);
+        let states = HashMap::from([(phase_id, "done"), (child.id, "pending")]);
+
+        assert!(
+            first_pending_leaf_in_children(None, &children, &states, &mut HashSet::new()).is_err()
+        );
     }
 
     #[test]
@@ -2349,6 +2399,13 @@ fn first_pending_leaf_in_children<'a>(
             continue;
         }
         if children.contains_key(&Some(task.id)) {
+            match state_by_task.get(&task.id).copied().unwrap_or("pending") {
+                // A phase cannot be terminal while descendants remain runnable.
+                // Historical conflicts must block selection rather than let work
+                // proceed beneath an already-settled parent.
+                "done" | "blocked" | "cancelled" => return Err(()),
+                _ => {}
+            }
             match first_pending_leaf_in_children(Some(task.id), children, state_by_task, visited) {
                 Ok(Some(next)) => return Ok(Some(next)),
                 Err(()) => return Err(()),
@@ -2992,9 +3049,11 @@ async fn update_task_in_transaction(
     if let Some(run_state) = update
         .run_state
         .as_ref()
-        .filter(|state| state.status.as_str() == "done")
+        .filter(|state| task_run_state_is_terminal(state.status.as_str()))
     {
-        if has_primary_output_evidence(run_state.result_refs.as_ref()) {
+        if run_state.status.as_str() == "done"
+            && has_primary_output_evidence(run_state.result_refs.as_ref())
+        {
             validate_primary_output_registry(&mut tx, &current, run_state).await?;
             record_completion_receipt(&mut tx, &current, run_state).await?;
         }
@@ -3233,6 +3292,10 @@ async fn record_completion_receipt(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+fn task_run_state_is_terminal(status: &str) -> bool {
+    matches!(status, "done" | "blocked" | "cancelled")
 }
 
 async fn validate_parent_completion(
