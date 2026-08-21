@@ -126,6 +126,8 @@ pub enum RuntimeContinuation {
         decision: RuntimeApprovalDecision,
         reason: Option<String>,
     },
+    /// Docket, not the runtime, authorized another Pair slice for the same run.
+    DocketBoundedSlice,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

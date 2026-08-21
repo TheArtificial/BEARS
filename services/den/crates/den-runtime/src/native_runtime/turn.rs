@@ -2063,6 +2063,7 @@ pub async fn continue_native_client_turn_event_stream(
                 tool_calls: None,
             });
         }
+        RuntimeContinuation::DocketBoundedSlice => {}
         RuntimeContinuation::ApprovalDecision {
             approval_request_id,
             tool_call_id,
@@ -2343,6 +2344,14 @@ mod tests {
         crate::agent_loop::ObjectiveOrientation::Freeform {
             policy: FreeformPolicy::closed(),
         }
+    }
+
+    #[test]
+    fn docket_bounded_slice_continuation_is_typed_and_carries_no_scheduler_input() {
+        let continuation = RuntimeContinuation::DocketBoundedSlice;
+        let value = serde_json::to_value(&continuation).expect("serialize continuation");
+
+        assert_eq!(value, serde_json::json!("DocketBoundedSlice"));
     }
 
     #[test]
