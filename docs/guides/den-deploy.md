@@ -34,7 +34,7 @@ Trestle expects a **working PostgreSQL service** you operate separately. The app
 
 ## SQLx offline builds
 
-Set **`SQLX_OFFLINE=true`** for CI or air-gapped builds after committing the query cache under [`.sqlx/`](../.sqlx/) (regenerate with `cargo sqlx prepare` against a database that has applied the current migrations at least once — for example after one local `cargo run`; see [sqlx-patterns.md](sqlx-patterns.md)).
+Set **`SQLX_OFFLINE=true`** for CI or air-gapped builds after committing the query cache under [`.sqlx/`](../.sqlx/) (regenerate with `cargo sqlx prepare --workspace` against a database that has applied the current migrations at least once — for example after one local `cargo run`; see [sqlx-patterns.md](sqlx-patterns.md)).
 
 ## Docker image build
 

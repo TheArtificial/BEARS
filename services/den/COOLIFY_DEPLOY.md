@@ -49,7 +49,7 @@ Open **Build Arguments** / **Docker Build Args** (wording varies by Coolify vers
 | Name | Purpose |
 | ---- | ------- |
 | `DATABASE_URL` | Used at **image build** for SQLx when **`SQLX_OFFLINE` is unset or `false`**. Must reach PostgreSQL from the build environment (disposable compile-only DB is fine). The Dockerfile defaults to a dummy URL when you use offline mode instead. |
-| `SQLX_OFFLINE` | Set to **`true`** to compile against committed [`.sqlx/`](.sqlx/) query metadata (no live Postgres during `cargo build`). The image build copies `.sqlx/` from the Git checkout into the build context. Regenerate metadata with `cargo sqlx prepare` when queries change. |
+| `SQLX_OFFLINE` | Set to **`true`** to compile against committed [`.sqlx/`](.sqlx/) query metadata (no live Postgres during `cargo build`). The image build copies `.sqlx/` from the Git checkout into the build context. Regenerate metadata with `cargo sqlx prepare --workspace` when queries change. |
 | `SOURCE_DATE_EPOCH` (optional) | Unix timestamp (seconds) used as **`GET /version`** → `built_at_utc` when set at image build time; otherwise the build uses the real clock when `build.rs` runs. Useful for reproducible builds. |
 
 If you want `/version` and `/status.json` to report deploy metadata **without** changing Docker build args on every push, prefer **runtime** environment variables instead of build args. Den checks `DEN_GIT_SHA_OVERRIDE` first, then `GIT_SHA`, then `SOURCE_COMMIT`, and falls back to the compile-time `GIT_SHA` baked by `build.rs`. It also checks `DEN_BUILT_AT_OVERRIDE` first and otherwise falls back to the compile-time `DEN_BUILT_AT_UTC` from `build.rs`.
@@ -182,7 +182,7 @@ The PAT needs the `read:packages` scope. This must be run as root (Coolify's Doc
 
 ### Keeping `.sqlx/` up to date
 
-When you add or change SQLx queries, run `cargo sqlx prepare` locally against a database with current migrations applied, then commit the updated `.sqlx/` directory. The CI build will fail if the metadata is stale.
+When you add or change SQLx queries, run `cargo sqlx prepare --workspace` locally against a database with current migrations applied, then commit the updated `.sqlx/` directory. The CI build will fail if the metadata is stale.
 
 When these images are used in the compose stack, `bears-den-migrate` still applies migrations first and `bears-den` then starts in `serve` mode.
 

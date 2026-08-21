@@ -82,7 +82,7 @@ If you enable **`RUN_API=true`**, set **`JWT_SECRET`** to a long random value (O
 
 ## Fresh database and SQLx offline
 
-The schema is applied automatically on startup from `migrations/`. For **`SQLX_OFFLINE`** / CI builds, run `cargo sqlx prepare` against a database that has run those migrations at least once and commit [`.sqlx/`](../.sqlx/). See [sqlx-patterns.md](sqlx-patterns.md).
+The schema is applied automatically on startup from `migrations/`. For **`SQLX_OFFLINE`** / CI builds, run `cargo sqlx prepare --workspace` against a database that has run those migrations at least once and commit [`.sqlx/`](../.sqlx/). See [sqlx-patterns.md](sqlx-patterns.md).
 
 **Strict migrations:** By default, SQLx does not ignore migration files missing from the repo. If integration tests or a disposable database fail with a migration history mismatch, fix the database or set **`SQLX_MIGRATE_IGNORE_MISSING=true`** only as a documented recovery step—not for routine production deploys.
 

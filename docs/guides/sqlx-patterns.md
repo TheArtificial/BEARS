@@ -136,7 +136,7 @@ let total_count: i64 = query_builder.build_query_scalar().fetch_one(pool).await?
 
 ## SQLx Preparation Workflow
 
-### Critical: Always Run `cargo sqlx prepare`
+### Critical: Always Run `cargo sqlx prepare --workspace`
 
 **When to run**:
 1. After creating or modifying database migrations
@@ -146,8 +146,8 @@ let total_count: i64 = query_builder.build_query_scalar().fetch_one(pool).await?
 
 **Command**:
 ```bash
-# From project root
-cargo sqlx prepare
+# From services/den
+cargo sqlx prepare --workspace
 ```
 
 **What it does**:
@@ -157,7 +157,7 @@ cargo sqlx prepare
 4. Enables offline compilation (no database needed at build time)
 
 **Important**:
-- Must be run from project root
+- Run from `services/den` with `--workspace`; do not add `--all-targets` unless test-only metadata is intentionally committed
 - Requires `DATABASE_URL` environment variable
 - Database must be migrated to latest schema
 - Validates both SQL syntax AND Rust compilation
@@ -171,7 +171,7 @@ cargo sqlx prepare
 sqlx migrate run
 
 # 3. Prepare SQLx queries
-cargo sqlx prepare
+cargo sqlx prepare --workspace
 
 # 4. Continue development
 cargo run
@@ -187,7 +187,7 @@ sqlx migrate add description_of_change
 sqlx migrate run
 
 # 4. CRITICAL: Prepare SQLx queries
-cargo sqlx prepare
+cargo sqlx prepare --workspace
 
 # 5. Test your changes
 cargo check
@@ -200,13 +200,13 @@ cargo run
 ```bash
 # 1. Ensure all migrations are applied
 # 2. Run SQLx preparation
-cargo sqlx prepare
+cargo sqlx prepare --workspace
 
 # 3. Build with production features
 cargo build --release --features production
 ```
 
-**Why**: Production builds use the `.sqlx/` metadata directory for offline compilation. Without running `cargo sqlx prepare`, the metadata will be stale or missing, causing build failures.
+**Why**: Production builds use the `.sqlx/` metadata directory for offline compilation. Without running `cargo sqlx prepare --workspace`, the metadata will be stale or missing, causing build failures.
 
 ## Database migration safety
 
@@ -218,7 +218,7 @@ Schema changes can cause data loss or downtime. Treat migrations as production-c
 2. **Follow existing conventions** — Use the same layout and naming as files under [`migrations/`](../migrations/); read [`migrations/README.md`](../migrations/README.md) if present.
 3. **Review before apply** — Check SQL, types, constraints, indexes, and interaction with existing SQLx queries.
 4. **Naming** — Timestamp-prefixed files, e.g. `YYYYMMDDHHMMSS_description.up.sql`; add matching `.down.sql` only when you need a reversible migration.
-5. **SQLx** — Migrations are tracked (e.g. `_sqlx_migrations`). After schema changes, apply migrations, then run `cargo sqlx prepare` so `.sqlx/` matches the schema (see above).
+5. **SQLx** — Migrations are tracked (e.g. `_sqlx_migrations`). After schema changes, apply migrations, then run `cargo sqlx prepare --workspace` so `.sqlx/` matches the schema (see above).
 6. **Dependencies** — New columns/tables must not break existing queries until code and `.sqlx/` are updated.
 7. **Production** — Prefer additive, backward-compatible steps; plan backups before major changes.
 
@@ -335,7 +335,7 @@ Error: column "field_name" does not exist
 ```
 Error: query metadata is stale
 ```
-**Fix**: Run `cargo sqlx prepare` after schema changes.
+**Fix**: Run `cargo sqlx prepare --workspace` after schema changes.
 
 **4. Parameter count mismatch**:
 ```
@@ -393,7 +393,7 @@ sqlx::query_as!(
 
 **Workflow**:
 1. Write your query
-2. Run `cargo sqlx prepare` to validate
+2. Run `cargo sqlx prepare --workspace` to validate
 3. Fix any errors
 4. Test with `cargo check`
 5. Commit your changes
@@ -416,7 +416,7 @@ async fn get_user_by_id(pool: &PgPool, user_id: i32) -> Result<User, CustomError
 
 ## Troubleshooting
 
-### Issue: `cargo sqlx prepare` fails
+### Issue: `cargo sqlx prepare --workspace` fails
 
 **Possible causes**:
 1. Database not running
@@ -433,7 +433,7 @@ psql $DATABASE_URL
 sqlx migrate run
 
 # Try prepare again
-cargo sqlx prepare
+cargo sqlx prepare --workspace
 ```
 
 ### Issue: Build fails with "query metadata is stale"
@@ -441,7 +441,7 @@ cargo sqlx prepare
 **Solution**:
 ```bash
 # Regenerate metadata
-cargo sqlx prepare
+cargo sqlx prepare --workspace
 
 # Clean and rebuild
 cargo clean
@@ -454,11 +454,11 @@ cargo build
 1. Check database column types: `\d table_name` in psql
 2. Verify struct field types match
 3. Use `as "field_name!"` syntax for NOT NULL fields
-4. Run `cargo sqlx prepare` to validate
+4. Run `cargo sqlx prepare --workspace` to validate
 
 ## Related Documentation
 
-- [`den-quickstart.md`](den-quickstart.md) — local `DATABASE_URL`, migrations, and running the app before `cargo sqlx prepare`
+- [`den-quickstart.md`](den-quickstart.md) — local `DATABASE_URL`, migrations, and running the app before `cargo sqlx prepare --workspace`
 - [infrastructure-and-ops.md](infrastructure-and-ops.md) — processes, `DATABASE_URL`, deployments
 - Migration safety — this document (section above)
 

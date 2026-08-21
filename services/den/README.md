@@ -38,7 +38,7 @@ Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `
 
 **Templates:** in **development**, MiniJinja loads files from `TEMPLATES_DIR` (default `src/web/templates`). In **`--features production`** / release Docker builds, templates are **embedded** at compile time—plan on **rebuilding** the binary when HTML changes in production.
 
-**Fresh database:** an empty database is enough — the first `cargo run` or container start applies everything under `migrations/` (see [`migrations/README.md`](migrations/README.md), including default operator **`admin`**). For `SQLX_OFFLINE` / CI builds, run `cargo sqlx prepare` against a database that has seen those migrations at least once and commit `.sqlx/`.
+**Fresh database:** an empty database is enough — the first `cargo run` or container start applies everything under `migrations/` (see [`migrations/README.md`](migrations/README.md), including default operator **`admin`**). For `SQLX_OFFLINE` / CI builds, run `cargo sqlx prepare --workspace` against a database that has seen those migrations at least once and commit `.sqlx/`.
 
 **Mail:** `MAILGUN_API_KEY` and `MAILGUN_DOMAIN` default to empty; set them (or swap the mail implementation) before relying on outbound email.
 

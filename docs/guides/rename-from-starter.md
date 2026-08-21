@@ -31,7 +31,7 @@ After cloning, treat this as a checklist so URLs, cookies, and the crate line up
 
 ## SQLx offline metadata
 
-- [ ] Regenerate and commit [`.sqlx/`](../.sqlx/) after schema/query changes: `sqlx migrate run` then `cargo sqlx prepare` against a migrated database (see [`sqlx-patterns.md`](sqlx-patterns.md)).
+- [ ] Regenerate and commit [`.sqlx/`](../.sqlx/) after schema/query changes: `sqlx migrate run` then `cargo sqlx prepare --workspace` against a migrated database (see [`sqlx-patterns.md`](sqlx-patterns.md)).
 
 ## Grepping
 
