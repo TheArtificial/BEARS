@@ -27,6 +27,7 @@ Human-oriented documentation, operational notes, contributor guides, troubleshoo
 - [minijinja context patterns](minijinja-context-patterns.md)
 - [minijinja template limitations](minijinja-template-limitations.md)
 - [deep chat styling](deep-chat-styling.md)
+- [chat UX guidelines](chat-ux-guidelines.md)
 - [bear memory](bear-memory.md)
 - [bear package format](bear-package.md)
 - [work surfaces and conversations](work-surfaces-and-conversations.md)

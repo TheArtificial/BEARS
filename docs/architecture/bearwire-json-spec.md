@@ -117,9 +117,14 @@ For every model-relevant tool call, Den must be able to persist and later recons
 
 A `tool_call.completed` event that only carries `{ "status": "OK" }`, or UI content such as `Tool completed`, is not sufficient as the sole durable/projection source. If a later event is intentionally sparse, the referenced tool-call record must already be persisted and queryable by `tool_call_id`; otherwise the completion event must repeat enough detail for replay.
 
+### Model-context visibility invariant
+
+Every non-secret item delivered to a model must be durably represented so a user-visible surface can render it without guessing from edge-local state. The compact projection may be a structured runtime card, but expansion must expose the exact delivered content or a stable reference, source and triggering reason, canonical order, invocation/run identity, and redaction status.
+
+The record must distinguish whether content was shown to the user, persisted in the transcript, sent to the model, or used to derive another context artifact. These are independent facts. A protected value may be withheld only through explicit, visible redaction metadata; it must not disappear silently.
+
 ### Non-blocking structured update invariant
 
-Some model/runtime outputs update surface or control-plane state but do not provide information the model needs before continuing. These are non-blocking structured updates, not tool exchanges or client obligations.
 
 Examples include conversation-title updates, advisory in-flight task status, and durable work-progress metadata. They may be persisted and projected immediately, but they must not by themselves create open client obligations, require `client.tool.result`, or trigger model continuation. If an update changes state the model must observe before safely continuing, represent it as a blocking tool exchange or client obligation instead.
 

@@ -10,6 +10,7 @@ Conversations are canonical Den records. They are not edge-local caches and not 
 - transcript artifacts are append-only and replayable
 - compaction and archive state are derived, linked records rather than replacements for transcript truth
 - tool calls and approvals must remain connected to the transcript and runtime record model
+- every non-secret item delivered to a model must have a durable, user-visible transcript projection
 
 ## Core goals
 
@@ -52,7 +53,7 @@ The same stored transcript must support:
 - user-visible conversation history
 - operator/debug inspection
 
-Those projections may differ, but the underlying source of truth is shared.
+Those projections may differ in presentation, but the underlying source of truth is shared. Every non-secret item delivered to a model must have a durable user-visible projection; clients may collapse runtime artifacts, but must retain the exact delivered representation or a stable reference, delivery boundary, source, and redaction state for inspection.
 
 ## Conversation
 
@@ -76,6 +77,7 @@ Transcript artifacts are immutable ordered records such as:
 - tool call artifacts
 - tool result artifacts
 - system/developer/runtime-visible markers when needed for replay
+- model-context delivery artifacts, including source, delivery boundary, exact delivered payload or stable reference, and explicit redaction state
 
 They must be rich enough to support future model context reconstruction.
 

@@ -54,6 +54,7 @@ Deep Chat styles are applied partly through JavaScript objects and partly inside
 - For streaming errors, send Deep Chat a `{ text, role: 'error' }` style event rather than `{ error: string }`; the latter can trigger a Deep Chat stream finalization path with no valid prior stream event.
 - Assistant message chunks are accumulated across the whole response. Do not reset the assistant buffer merely because upstream stream IDs change.
 - `stripSystemReminderBlocksLive` should only strip closed `<system-reminder>` blocks while streaming; a final pass can strip incomplete trailing blocks at EOF.
+- Runtime cards, including model-context delivery and work-log projections, must use distinct custom roles and typed `custom` data rather than assistant-message styling. Preserve event kind, source, model-visibility state, invocation/run and ordering references, redaction state, and expandability; see [chat UX guidelines](chat-ux-guidelines.md).
 
 ## Design fixture sync
 

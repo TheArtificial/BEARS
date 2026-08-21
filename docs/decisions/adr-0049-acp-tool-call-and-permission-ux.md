@@ -10,6 +10,7 @@
 - [ADR-0048: Core turn/client-obligation coordinator](adr-0048-core-turn-client-obligation-coordinator.md)
 - [ADR-0025: Tool naming and execution strategy](adr-0025-tool-naming-and-execution-strategy.md)
 - [ACP Runtime Contract](../architecture/acp-runtime-contract.md)
+- [Chat UX guidelines](../guides/chat-ux-guidelines.md)
 - [Agent Client Protocol: Tool calls](https://agentclientprotocol.com/protocol/v1/tool-calls)
 
 ## Context
