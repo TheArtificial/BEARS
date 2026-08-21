@@ -1995,28 +1995,33 @@ pub(super) async fn settle_execution_task(
             "Docket job has no current run to settle".to_string(),
         ));
     };
-    let lookup = DocketExecutionLookup {
-        session_id: execution.session_id.clone(),
-        source_conversation_id: execution.source_conversation_id.clone(),
-        source_client_session_id: execution.source_client_session_id.clone(),
-    };
-    let session =
-        get_active_execution_session(pool, execution.bear_id, execution.actor_role, lookup)
-            .await?
-            .ok_or_else(|| {
-                DenError::ValidationError("Docket execution has no active task claim".to_string())
-            })?;
-    if session.job_id != execution.job_id
-        || session.run_id != run.id
-        || session.task_id != Some(settlement.task_id)
-    {
-        return Err(DenError::ValidationError(
-            "Docket execution settlement task is not owned by the active session claim".to_string(),
-        ));
-    }
-
     let session_id = execution_session_id(&execution).ok_or_else(|| {
         DenError::ValidationError("Docket execution has no session identity".to_string())
+    })?;
+    let session = sqlx::query_as!(
+        DocketExecutionSessionRow,
+        r#"
+        SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
+               job_id, run_id, task_id, state, created_at, updated_at
+        FROM docket_execution_sessions
+        WHERE bear_id = $1 AND owner_profile = $2 AND session_id = $3
+          AND job_id = $4 AND run_id = $5 AND task_id = $6
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+        ORDER BY updated_at DESC LIMIT 1
+        "#,
+        execution.bear_id,
+        execution.actor_role.as_str(),
+        session_id,
+        execution.job_id,
+        run.id,
+        settlement.task_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| {
+        DenError::ValidationError(
+            "Docket execution settlement task is not owned by the active session claim".to_string(),
+        )
     })?;
     let mut tx = pool.begin().await?;
     update_task_in_transaction(
