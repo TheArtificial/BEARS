@@ -139,6 +139,28 @@ Required focused regressions at this boundary prove that the scheduler—not
 model wording—continues an eligible Pair attempt/task after an ordinary bounded
 outcome, and prove that each listed yield condition prevents rescheduling.
 
+#### In-scope dependency expansion and real blocking
+
+An active Docket task must not be reported as blocked merely because execution
+uncovers a concrete, implementable dependency omitted from its original task
+breakdown. When the missing capability is within the approved roadmap scope,
+requires no external action, and has a safe inferable design, Docket creates a
+bounded child task with explicit completion criteria, completes that dependency,
+and resumes its parent continuation automatically. The child task preserves the
+causal record; it is not a new source of scheduler authority.
+
+A task may yield as **blocked** only when the next safe action depends on an
+external approval/action, a material product or architecture decision that the
+roadmap does not already resolve, or information that cannot safely be inferred.
+This distinction applies to Pair, Work, and any model: a progress report that
+identifies an in-scope control-plane prerequisite is a decomposition event, not
+a terminal conversational yield.
+
+Focused regressions for the Docket continuation manager must prove that an
+in-scope prerequisite creates and executes a child task before the parent is
+resumed, while a genuine approval/decision/external-action dependency yields
+without speculative work.
+
 ### Pair planning and execution gate
 
 A Pair session has at most one session-connected root task. Its ordinary task
