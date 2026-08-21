@@ -47,7 +47,6 @@ use crate::{
     native_runtime::is_task_definition_or_delegation_tool_provider_name,
     runtime_compaction::enqueue_compaction_after_turn,
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
-    turn_runs,
     turn_state::TaskFocusLoopDetection,
 };
 use den_core::tools::{
@@ -850,115 +849,20 @@ impl SessionTrackingStream {
                 store.update(&session_key, |session| {
                     session.turn_budget_state = evaluation.next_state.clone();
                 });
-                let mut claimed_budget_continuation = false;
                 if let Some(reason) = evaluation.stop_reason {
                     if profile == BearProfile::Pair && reason.resumes_pair_execution_automatically()
                     {
-                        let run_id = session.run_id.clone().ok_or_else(|| {
-                            DenError::TechnicalBudgetContinuation(
-                                "active Pair execution cannot resume without a persisted run ID"
-                                    .to_string(),
-                            )
-                        })?;
-                        let task_list = session.cached_activity_plan_projection.clone();
                         let reason_code = reason.persistence_reason();
-                        let active_item = task_list
-                            .as_ref()
-                            .and_then(|list| list.current_item.as_ref());
-                        let selected_task_id =
-                            active_item.and_then(|item| Uuid::parse_str(&item.id).ok());
-                        let start_request = session
-                            .technical_budget_recovery_start_payload
-                            .clone()
-                            .ok_or_else(|| DenError::TechnicalBudgetContinuation(
-                                "Pair technical-budget continuation lacks its recovery start payload"
-                                    .to_string(),
-                            ))?;
-                        let snapshot = turn_runs::TechnicalBudgetRecoverySnapshot::new(
-                            session.client_session_id.clone(),
-                            session.bear_id,
-                            session.user_id.ok_or_else(|| {
-                                DenError::TechnicalBudgetContinuation(
-                                "Pair technical-budget continuation lacks an authenticated user"
-                                    .to_string(),
-                            )
-                            })?,
-                            selected_task_id,
-                            start_request,
-                        );
-                        let snapshot = serde_json::to_value(snapshot).map_err(|error| {
-                            DenError::TechnicalBudgetContinuation(format!(
-                                "serialize Pair technical-budget recovery snapshot failed: {error}"
-                            ))
-                        })?;
-                        let transitioned = match turn_runs::claim_technical_budget_continuation(
-                            &pool,
-                            &run_id,
-                            reason_code,
-                            &snapshot,
-                        )
-                        .await?
-                        {
-                            turn_runs::TechnicalBudgetContinuationClaim::Claimed(run) => run,
-                            turn_runs::TechnicalBudgetContinuationClaim::AlreadyClaimed => {
-                                return Err(DenError::TechnicalBudgetContinuationAlreadyClaimed {
-                                    run_id,
-                                });
-                            }
-                            turn_runs::TechnicalBudgetContinuationClaim::RunStateConflict {
-                                actual_state,
-                            } => {
-                                return Err(DenError::RunStateConflict {
-                                    operation: "technical budget continuation claim",
-                                    run_id,
-                                    expected_state: "running",
-                                    actual_state,
-                                });
-                            }
-                        };
-                        if let Err(error) = record_loop_control_decision(
-                            &pool,
-                            LoopControlLedgerInput {
-                                run_id: run_id.clone(),
-                                turn_step_id: None,
-                                conversation_message_id: None,
-                                decision_id: format!(
-                                    "budget-slice-continuation-{}",
-                                    Uuid::new_v4()
-                                ),
-                                decision_kind: LoopControlDecisionKind::BudgetSliceContinuation,
-                                control_level: "standard".to_string(),
-                                reason: Some(reason_code.to_string()),
-                                orientation_kind: Some(profile.as_str().to_string()),
-                                checkpoint_id: None,
-                                related_task_list_id: task_list
-                                    .as_ref()
-                                    .map(|list| list.id.to_string()),
-                                related_task_item_id: active_item.map(|item| item.id.clone()),
-                                related_docket_job_id: None,
-                                related_docket_task_id: active_item
-                                    .and_then(|item| Uuid::parse_str(&item.id).ok()),
-                                evidence_refs: vec![LedgerEvidenceRef {
-                                    kind: "turn_run_state".to_string(),
-                                    id: transitioned.state,
-                                }],
-                                decision: serde_json::json!({
-                                    "action": "continue",
-                                    "reason": reason_code,
-                                    "same_run": true,
-                                }),
-                            },
-                        )
-                        .await
-                        {
-                            let _ =
-                                turn_runs::release_claimed_run_continuation(&pool, &run_id).await;
-                            return Err(DenError::LoopControlLedgerPersistence(error.to_string()));
-                        }
                         store.update(&session_key, |session| {
                             session.turn_budget_state = Default::default();
                         });
-                        claimed_budget_continuation = true;
+                        // The native runtime observes the budget boundary; Docket decides
+                        // whether a successor Pair attempt is authorized.
+                        return Ok(Box::pin(stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::BoundedSlice {
+                                reason: reason_code.to_string(),
+                            },
+                        ))])) as RuntimeEventStream);
                     } else {
                         tracing::warn!(
                             event = "native_turn_budget_fuse",
@@ -1011,18 +915,6 @@ impl SessionTrackingStream {
                 session = store.get(&session_key).ok_or_else(|| {
                     DenError::System("native agent loop session not found".to_string())
                 })?;
-                if claimed_budget_continuation {
-                    let run_id = session.run_id.as_deref().expect(
-                        "budget continuation claim requires the persisted run ID checked above",
-                    );
-                    turn_runs::begin_claimed_run_continuation(&pool, run_id)
-                        .await?
-                        .ok_or_else(|| {
-                            DenError::TechnicalBudgetContinuation(format!(
-                                "Pair run {run_id} was not continuing when its successor slice began"
-                            ))
-                        })?;
-                }
                 tracing::warn!(
                     event = "native_server_tool_continuation",
                     session_key = %session_key,
