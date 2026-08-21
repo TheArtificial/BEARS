@@ -15,6 +15,10 @@ use bearwire_protocol::{
     methods::{RunCancelRequest, RunStartRequest},
     wire::BearWireEvent,
 };
+use den_docket::{
+    DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
+    DocketService, PgDocketService,
+};
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
@@ -1711,6 +1715,37 @@ fn runtime_event_is_terminal(event: &den_protocol::RuntimeStreamEvent) -> bool {
     )
 }
 
+async fn report_pair_terminal_outcome(pool: &sqlx::PgPool, session_id: &str, run_id: &str) {
+    let row = sqlx::query_as::<_, (Uuid, i64)>(
+        "SELECT id, fence_epoch FROM docket_execution_attempts
+         WHERE owner_kind = 'pair' AND pair_session_id = $1 AND pair_run_id = $2::uuid
+           AND state = 'running'",
+    )
+    .bind(session_id)
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await;
+    let Ok(Some((attempt_id, fence_epoch))) = row else {
+        return;
+    };
+    match PgDocketService::from_pool(pool)
+        .report_pair_bounded_outcome(DocketPairBoundedOutcomeReport {
+            attempt_id,
+            fence_epoch,
+            outcome: DocketPairBoundedOutcome::Settled,
+        })
+        .await
+    {
+        Ok(decision) if decision.decision == DocketPairContinuationDecision::Stop => {}
+        Ok(decision) => {
+            tracing::warn!(?decision.decision, %attempt_id, "unexpected Docket decision for terminal Pair outcome")
+        }
+        Err(error) => {
+            tracing::warn!(%error, %attempt_id, "failed to report terminal Pair outcome to Docket")
+        }
+    }
+}
+
 async fn finish_runtime_terminal_event(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -1778,6 +1813,7 @@ async fn finish_runtime_terminal_event(
     terminal_event.human_id = Some(user_id.to_string());
     terminal_event.session_id = Some(session_id.to_string());
     terminal_event.run_id = Some(run_id.to_string());
+    report_pair_terminal_outcome(pool, session_id, run_id).await;
     match turn_runs::finish_run_with_bearwire_event(
         pool,
         session_id,
