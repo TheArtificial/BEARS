@@ -1081,8 +1081,9 @@ async fn reconcile_job_status(
 
 /// Settlement evidence is authoritative. Older interrupted handoffs could leave
 /// a settled task's run row pending after its outcome entry was committed.
-/// Normalize only rows that have no live execution or work claim; a live claim
-/// remains visible for explicit recovery instead of being silently hidden.
+/// A session claim for that already-settled task is stale by definition, so close
+/// it before normalizing the task row. Work-run claims remain protected because
+/// they may still represent independently executing external work.
 async fn reconcile_settled_task_run_state(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     job_id: Uuid,
