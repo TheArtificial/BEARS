@@ -19,8 +19,9 @@ use den_core::{BearProfile, DenError};
 use crate::execution_profiles::resolve_execution_profile;
 use crate::model::{
     select_dispatch_notebook_context, DocketEntryListFilter, DocketEntryRow,
-    DocketExecutionBinding, DocketExecutionDisposition, DocketExecutionGate, DocketExecutionReason,
-    DocketExecutionSessionUpsert, DocketTaskDifficulty,
+    DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptRow,
+    DocketExecutionAttemptStart, DocketExecutionBinding, DocketExecutionDisposition,
+    DocketExecutionGate, DocketExecutionReason, DocketExecutionSessionUpsert, DocketTaskDifficulty,
 };
 use crate::recovery::claim_turn_attempt;
 use crate::routing::{route_turn, ExecutionSurface, TurnIntent, TurnSource};
@@ -1388,6 +1389,7 @@ pub async fn recover_attached_work_run(
 pub struct WorkRunCheckout {
     pub run: WorkRunRow,
     pub gate: DocketExecutionGate,
+    pub execution_attempt: Option<DocketExecutionAttemptRow>,
     pub prompt_context: Option<WorkPromptContext>,
     pub task_title: Option<String>,
 }
@@ -1575,6 +1577,7 @@ pub async fn checkout_work_run_for_session(
             return Ok(WorkRunCheckout {
                 run,
                 gate,
+                execution_attempt: None,
                 prompt_context: None,
                 task_title: None,
             });
@@ -1589,6 +1592,26 @@ pub async fn checkout_work_run_for_session(
     )
     .execute(pool)
     .await?;
+
+    let service = PgDocketService::from_pool(pool);
+    let attempt = service
+        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+            bear_id,
+            task_id: task.0,
+            owner: DocketExecutionAttemptOwner::Work {
+                work_run_id: run.id,
+            },
+            // A work run is one durable dispatch attempt. Re-checkout must
+            // replay authorization rather than create a competing authority.
+            authorization_key: run.id,
+        })
+        .await?;
+    service
+        .start_execution_attempt(DocketExecutionAttemptStart {
+            attempt_id: attempt.id,
+            fence_epoch: attempt.fence_epoch,
+        })
+        .await?;
 
     let difficulty = task.4.as_deref().and_then(parse_task_difficulty);
     let resolved_profile = resolve_execution_profile(difficulty);
@@ -1667,6 +1690,7 @@ pub async fn checkout_work_run_for_session(
     let notebook_context = select_dispatch_notebook_context(&notebook_context);
     Ok(WorkRunCheckout {
         gate,
+        execution_attempt: Some(attempt),
         prompt_context: Some(WorkPromptContext {
             job_id: run.job_id,
             run_id: run.job_run_id,

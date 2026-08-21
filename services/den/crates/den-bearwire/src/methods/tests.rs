@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
+use den_core::BearProfile;
 use den_docket::{
     work_runs::{
         checkout_work_run_for_session, claim_next_work_run, enqueue_work_job,
@@ -2888,6 +2889,25 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
     .await;
     assert_eq!(first["result"]["started"], true, "{first}");
     assert_eq!(first["result"]["reused"], false, "{first}");
+    let execution_attempt_id = first["result"]["execution_attempt_id"]
+        .as_str()
+        .expect("Pair start returns canonical execution attempt id");
+    assert!(
+        first["result"]["fence_epoch"].as_i64().is_some(),
+        "Pair start returns canonical attempt fence: {first}"
+    );
+
+    let attempt: (String, String, String, String) = sqlx::query_as(
+        "SELECT id::TEXT, owner_kind, pair_session_id, pair_run_id
+         FROM docket_execution_attempts WHERE id = $1::uuid",
+    )
+    .bind(execution_attempt_id)
+    .fetch_one(&pool)
+    .await
+    .expect("Pair start persists canonical execution attempt");
+    assert_eq!(attempt.1, "pair");
+    assert_eq!(attempt.2, session_id);
+    assert_eq!(attempt.3, first["result"]["run_id"].as_str().unwrap());
 
     let second = rpc_value(
         state,
@@ -2899,6 +2919,10 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
     assert_eq!(second["result"]["started"], false, "{second}");
     assert_eq!(second["result"]["reused"], true, "{second}");
     assert_eq!(second["result"]["run_id"], first["result"]["run_id"]);
+    assert_eq!(
+        second["result"]["execution_attempt_id"], first["result"]["execution_attempt_id"],
+        "active Pair run must retain its attempt capability"
+    );
 
     let docket_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bear_jobs WHERE bear_id = $1")
         .bind(bear_id)
@@ -2983,6 +3007,66 @@ async fn work_checkout_rejection_projects_non_dispatchable_gate(pool: sqlx::PgPo
     assert_eq!(repeated_result["prompt"], "", "{repeated}");
     assert!(repeated_result["task_title"].is_null(), "{repeated}");
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn work_checkout_returns_a_stable_canonical_attempt(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
+    let state = test_state(pool);
+    let session_id = format!("work-{}", Uuid::new_v4().simple());
+
+    let checkout = rpc_value(
+        state.clone(),
+        &token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "work_order_id": work_run_id,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    assert_eq!(checkout["result"]["ok"], true, "{checkout}");
+    assert!(
+        checkout["result"]["execution_attempt_id"]
+            .as_str()
+            .is_some(),
+        "work checkout returns an attempt identity: {checkout}"
+    );
+    assert!(
+        checkout["result"]["execution_attempt_fence_epoch"]
+            .as_i64()
+            .is_some(),
+        "work checkout returns an attempt fence: {checkout}"
+    );
+
+    let replay = rpc_value(
+        state,
+        &token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "work_order_id": work_run_id,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    assert_eq!(replay["result"]["ok"], true, "{replay}");
+    assert_eq!(
+        replay["result"]["execution_attempt_id"], checkout["result"]["execution_attempt_id"],
+        "re-checkout must replay the same Work attempt"
+    );
+    assert_eq!(
+        replay["result"]["execution_attempt_fence_epoch"],
+        checkout["result"]["execution_attempt_fence_epoch"],
+        "re-checkout must retain the Work attempt fence"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
@@ -3749,6 +3833,9 @@ async fn conversation_diagnostics_includes_bounded_owned_checkpoint_artifacts(po
     den_runtime::agent_loop::record_checkpoint_request(
         &pool,
         den_runtime::agent_loop::CheckpointArtifactInput {
+            bear_id,
+            created_by_user_id: Some(user_id),
+            owner_profile: BearProfile::Pair,
             run_id: run_id.clone(),
             turn_step_id: None,
             orientation_kind: None,

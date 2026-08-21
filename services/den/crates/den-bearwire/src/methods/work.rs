@@ -88,6 +88,8 @@ pub(crate) async fn work_checkout_result(
         "task_title": checkout.task_title,
         "gate": checkout.gate,
         "attempt": checkout.run.attempt,
+        "execution_attempt_id": checkout.execution_attempt.as_ref().map(|attempt| attempt.id),
+        "execution_attempt_fence_epoch": checkout.execution_attempt.as_ref().map(|attempt| attempt.fence_epoch),
         "prompt": prompt,
         "permission_mode": if authorized { "workspace_write" } else { "none" },
         // Deadline is enforced by the sandbox provider + armature env; no

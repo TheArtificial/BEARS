@@ -1218,7 +1218,7 @@ pub struct DocketExecutionTaskSettlement {
 pub enum DocketExecutionAttemptOwner {
     Pair {
         session_id: String,
-        pair_run_id: Uuid,
+        pair_run_id: String,
     },
     Work {
         work_run_id: Uuid,
@@ -1304,7 +1304,7 @@ pub(super) struct DocketExecutionAttemptDbRow {
     task_id: Uuid,
     owner_kind: String,
     pair_session_id: Option<String>,
-    pair_run_id: Option<Uuid>,
+    pair_run_id: Option<String>,
     work_run_id: Option<Uuid>,
     fence_epoch: i64,
     authorization_key: Uuid,

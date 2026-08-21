@@ -1,6 +1,9 @@
 use axum::http::HeaderMap;
 use den_core::DenError;
-use den_docket::{DocketService, PgDocketService, TaskListItem, TaskListItemStatus};
+use den_docket::{
+    DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptStart,
+    DocketService, PgDocketService, TaskListItem, TaskListItemStatus,
+};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -935,6 +938,14 @@ pub(crate) async fn session_current_task_start_result(
                 },
             )
             .await?;
+            let attempt = start_pair_execution_attempt(
+                &state.sqlx_pool,
+                bear.id,
+                task_id,
+                &request.session_id,
+                &recovered.run_id,
+            )
+            .await?;
             return Ok(json!({
                 "ok": true,
                 "started": false,
@@ -945,8 +956,18 @@ pub(crate) async fn session_current_task_start_result(
                 "session_id": request.session_id,
                 "task_id": task_id,
                 "state": recovered.state,
+                "execution_attempt_id": attempt.id,
+                "fence_epoch": attempt.fence_epoch,
             }));
         }
+        let attempt = start_pair_execution_attempt(
+            &state.sqlx_pool,
+            bear.id,
+            task_id,
+            &request.session_id,
+            &run.run_id,
+        )
+        .await?;
         return Ok(json!({
             "ok": true,
             "started": false,
@@ -955,6 +976,8 @@ pub(crate) async fn session_current_task_start_result(
             "session_id": request.session_id,
             "task_id": task_id,
             "state": run.state,
+            "execution_attempt_id": attempt.id,
+            "fence_epoch": attempt.fence_epoch,
         }));
     }
 
@@ -981,16 +1004,57 @@ pub(crate) async fn session_current_task_start_result(
         start_params.insert("client_context".to_string(), client_context);
     }
     let result = super::run::run_start_result(state, headers, &Value::Object(start_params)).await?;
+    let run_id = result["run_id"].as_str().ok_or_else(|| {
+        CustomError::ValidationError("run.start returned a non-string run_id".to_string())
+    })?;
+    let attempt = start_pair_execution_attempt(
+        &state.sqlx_pool,
+        bear.id,
+        task_id,
+        &request.session_id,
+        run_id,
+    )
+    .await?;
     Ok(json!({
         "ok": true,
         "started": true,
         "reused": false,
-        "run_id": result["run_id"].clone(),
+        "run_id": run_id,
         "session_id": request.session_id,
         "task_id": task_id,
         "state": result["state"].clone(),
         "event_sequence": result["event_sequence"].clone(),
+        "execution_attempt_id": attempt.id,
+        "fence_epoch": attempt.fence_epoch,
     }))
+}
+
+async fn start_pair_execution_attempt(
+    pool: &PgPool,
+    bear_id: uuid::Uuid,
+    task_id: uuid::Uuid,
+    session_id: &str,
+    run_id: &str,
+) -> Result<den_docket::DocketExecutionAttemptRow, CustomError> {
+    let authorization_key = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, run_id.as_bytes());
+    let service = PgDocketService::from_pool(pool);
+    let attempt = service
+        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+            bear_id,
+            task_id,
+            owner: DocketExecutionAttemptOwner::Pair {
+                session_id: session_id.to_string(),
+                pair_run_id: run_id.to_string(),
+            },
+            authorization_key,
+        })
+        .await?;
+    Ok(service
+        .start_execution_attempt(DocketExecutionAttemptStart {
+            attempt_id: attempt.id,
+            fence_epoch: attempt.fence_epoch,
+        })
+        .await?)
 }
 
 pub(crate) async fn session_current_task_clear_result(
