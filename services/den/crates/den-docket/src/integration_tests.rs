@@ -1337,6 +1337,21 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
     .execute(&pool)
     .await
     .expect("create historical settled-state skew");
+    sqlx::query!(
+        r#"
+        UPDATE docket_execution_sessions
+        SET state = 'active', updated_at = NOW()
+        WHERE bear_id = $1
+          AND session_id = 'terminal-session-claim'
+          AND task_id = $2
+          AND state = 'completed'
+        "#,
+        bear_id,
+        first_task_id,
+    )
+    .execute(&pool)
+    .await
+    .expect("create stale settled-task claim");
     service
         .execute_job(DocketJobExecuteRequest {
             bear_id,
@@ -1359,6 +1374,22 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
     .await
     .expect("read repaired state");
     assert_eq!(repaired, "done");
+    let repaired_claims = sqlx::query_scalar!(
+        r#"
+        SELECT count(*)
+        FROM docket_execution_sessions
+        WHERE bear_id = $1
+          AND session_id = 'terminal-session-claim'
+          AND task_id = $2
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+        "#,
+        bear_id,
+        first_task_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count reconciled stale settled-task claims");
+    assert_eq!(repaired_claims, Some(0));
 }
 
 #[tokio::test]

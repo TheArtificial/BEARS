@@ -1089,6 +1089,27 @@ async fn reconcile_settled_task_run_state(
     job_id: Uuid,
     run_id: Uuid,
 ) -> Result<(), DenError> {
+    // A Docket execution-session claim cannot outlive authoritative settlement
+    // evidence for its task. Retire that historical claim before normalizing the
+    // task row; independently executing work runs still prevent normalization.
+    sqlx::query!(
+        r#"
+        UPDATE docket_execution_sessions session
+        SET state = 'cancelled', updated_at = NOW()
+        FROM bear_tasks task
+        WHERE session.job_id = $1
+          AND session.run_id = $2
+          AND session.task_id = task.id
+          AND task.job_id = $1
+          AND task.settled_by_entry_id IS NOT NULL
+          AND session.state IN ('active', 'blocked', 'completing', 'paused')
+        "#,
+        job_id,
+        run_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+
     sqlx::query!(
         r#"
         UPDATE bear_task_run_state state
@@ -1101,14 +1122,6 @@ async fn reconcile_settled_task_run_state(
           AND task.job_id = $1
           AND task.settled_by_entry_id IS NOT NULL
           AND state.status IN ('pending', 'in_progress')
-          AND NOT EXISTS (
-              SELECT 1
-              FROM docket_execution_sessions session
-              WHERE session.job_id = $1
-                AND session.run_id = $2
-                AND session.task_id = task.id
-                AND session.state IN ('active', 'blocked', 'completing', 'paused')
-          )
           AND NOT EXISTS (
               SELECT 1
               FROM bear_work_runs work_run
