@@ -109,35 +109,37 @@ continuation eligible. Pair can autonomously proceed through an active task
 tree, but pauses only for a durable safety/authority condition or a precise
 user question.
 
-#### Pair outer-loop implementation status — 2026-08-21
+#### Pair outer-loop implementation status — 2026-08-21 (reconciled 2026-08-22)
 
-The canonical-attempt start boundary is now partially landed: BearWire
-`session.current_task.start` creates and starts a Docket attempt owned by the
-exact `{session_id, pair_run_id}`. This establishes that a selected current
-task is objective-only and that the first Pair run has durable Docket
-authority.
+**Implemented Pair bounded-slice path.** The canonical-attempt start boundary
+is now in BearWire: `session.current_task.start` allocates the Pair `run_id`
+and creates/starts the exact Docket Pair attempt before the native stream is
+spawned (`405e9348`). A selected current task remains an objective only; the
+attempt and its fence epoch authorize the run.
 
-The outer continuation bridge is **not** landed yet. BearWire's
-`methods/run.rs` starts one Pair stream for a user/start request and settles
-that local stream; its existing automatic continuation path in
-`methods/client.rs` is limited to delivering a client tool result back into an
-already-live native runtime session. Neither path reports a completed bounded
-Pair attempt outcome to Docket, obtains Docket's next eligible decision, nor
-re-enters Pair without a new user message. That missing bridge is the concrete
-implementation delta for the continuation-authority revision.
+The authoritative bounded-progress source is the native Pair session-stream
+technical-budget boundary (`den-runtime`, `session_stream.rs`), not model text,
+`TurnCompleted`, the ACP adapter, or a client projection (`5554af0f`). It emits
+typed `RuntimeSemanticEvent::BoundedSlice` only for classified technical budget
+limits. Terminal events, client/approval waits, interruptions, and
+`awaiting_user` retain distinct paths.
 
-Implement it at the BearWire/Den-runtime Pair turn boundary, not in a model
-prompt or the Armature adapter: after a bounded local Pair outcome, persist the
-typed outcome against the exact attempt/fence, ask Docket for the next eligible
-continuation, and schedule the next Pair turn only when that durable decision
-permits it. The bridge must explicitly yield on terminal settlement, a
-user-interrupt, approval-required state, genuine block, or Pair
-`awaiting_user`; ordinary progress, recoverable bounded-slice outcomes, and
-Docket-authorized next tasks continue without a user "continue" message.
+BearWire reports that bounded slice as fenced Docket `Progress` for the exact
+attempt. It re-enters the **same Pair run** only when Docket returns `Continue`
+(`4407878c`); `AwaitUser` and `Stop` do not schedule a successor. The native
+continuation is typed `RuntimeContinuation::DocketBoundedSlice`, carries no
+local task-selection or scheduler input, and does not call generic `run.start`
+or create another attempt. Terminal outcomes are separately reported and cannot
+be confused with bounded progress.
 
-Required focused regressions at this boundary prove that the scheduler—not
-model wording—continues an eligible Pair attempt/task after an ordinary bounded
-outcome, and prove that each listed yield condition prevents rescheduling.
+Focused coverage exists for the terminal/bounded distinction, native bounded
+slice classification, typed continuation input, and the Continue-only
+rescheduling decision. The remaining Pair work is broader canonical-attempt
+migration/recovery validation—not implementation of this bounded-slice bridge.
+In particular, retain open work for all required durable attempt transitions,
+user-interrupt/approval/block yield coverage, legacy-state reconciliation, and
+Work's corresponding attempt/continuation path. Do not claim those complete
+from the Pair slice.
 
 #### In-scope dependency expansion and real blocking
 
@@ -222,7 +224,7 @@ Recent slices have moved the plan through the governance/focus/orientation found
 - **Pair current-task authority is implemented:** `client_sessions.current_task_id` persists Pair's optional selected session task. Runtime resolution gives a valid session-anchored selection precedence over legacy Docket execution compatibility state. Pair exposes explicit `select_current_task` / `den.task.select` controls to select an actionable session task or clear the selection; invalid, foreign, blocked, cancelled, and terminal task selections are rejected. Apparent conversational redirection is confirmation-first: Pair must propose and ask rather than silently select, clear, replace, complete, or create a task.
 - **Current-task client projection is implemented for BearWire and ACP:** both project an optional `current_task` only for an explicit valid Pair selection; neither infers one from the next pending task, legacy execution, or Work state. ACP's agent-plan projection is scoped to the selected task: it lists that task's in-order siblings when it is a child, or just that task when it is root-level.
 - **Work Job binding is implemented:** every Work run is durably scoped to one Docket Job, and its optional `executing_task_id` is an in-run progress checkpoint constrained to that Job's task tree. Work task choice never replaces the Job assignment and Pair task selection never affects an active Work run.
-- **Legacy Docket-execution persistence is migration-only:** the conversation-linked `docket_execution_sessions` record and scheduler-observation outbox are neither Pair nor Work continuation authority. Map, replace, or retire them beneath the canonical Docket execution-attempt identity before extending their delivery behavior.
+- **Legacy Docket-execution persistence is partially superseded for Pair:** canonical Pair attempt/fence state now authorizes bounded-slice continuation. `docket_execution_sessions` and the scheduler-observation outbox remain migration/diagnostic inputs; do not extend them into a second continuation authority. Complete the corresponding Work mapping and retirement/reconciliation work before calling the migration complete.
 - **Legacy `/focus` UX is migration-only:** armature's exact-UUID `/focus <job_id>` path and focus-shaped diagnostics remain only until current-task projection and explicit assignment/clear actions replace them. Do not add matching, elicitation, or new product affordances to `/focus`.
 - **Orientation/control migration is implemented for the canonical runtime paths:** Pair derives task orientation only from its resolved explicit current task; a Docket-backed Pair task remains task-oriented rather than acquiring Work execution authority. Work derives `DocketExecution` only from its explicit active Job assignment. Closed freeform continues to suppress task-definition/delegation tools when `may_define_task = false`; existing child-count/depth and immutable-execution decomposition limits remain in force.
 - **Diagnostics/history need terminology and authority cleanup:** existing Docket events and conversation history may continue to explain legacy execution/focus transitions during migration, but new projections must report current task, Work assigned Job, and any Work in-run progress task separately. Do not introduce a new heavy diagnostics table merely to preserve focus history.
