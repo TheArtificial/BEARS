@@ -768,11 +768,13 @@ async fn list_active_task_ids(pool: &PgPool, job_id: Uuid) -> Result<Vec<Uuid>, 
               AND executing_task_id IS NOT NULL
               AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
             UNION
-            SELECT task_id AS active_task_id
-            FROM docket_execution_sessions
-            WHERE job_id = $1
-              AND task_id IS NOT NULL
-              AND state = 'active'
+            SELECT session.task_id AS active_task_id
+            FROM docket_execution_sessions session
+            JOIN bear_tasks task ON task.id = session.task_id
+            WHERE session.job_id = $1
+              AND session.task_id IS NOT NULL
+              AND session.state = 'active'
+              AND task.settled_by_entry_id IS NULL
         ) AS active_tasks
         "#,
         job_id
@@ -1113,22 +1115,21 @@ async fn reconcile_settled_task_run_state(
     sqlx::query!(
         r#"
         UPDATE bear_task_run_state state
-        SET status = 'done',
+        SET status = CASE outcome.disposition
+                WHEN 'blocked' THEN 'blocked'
+                WHEN 'failed' THEN 'blocked'
+                WHEN 'cancelled' THEN 'cancelled'
+                ELSE 'done'
+            END,
             finished_at = COALESCE(state.finished_at, NOW()),
             updated_at = NOW()
         FROM bear_tasks task
+        JOIN bear_docket_entries outcome ON outcome.id = task.settled_by_entry_id
         WHERE state.task_id = task.id
           AND state.run_id = $2
           AND task.job_id = $1
           AND task.settled_by_entry_id IS NOT NULL
           AND state.status IN ('pending', 'in_progress')
-          AND NOT EXISTS (
-              SELECT 1
-              FROM bear_work_runs work_run
-              WHERE work_run.job_run_id = $2
-                AND work_run.executing_task_id = task.id
-                AND work_run.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')
-          )
         "#,
         job_id,
         run_id,
@@ -1837,6 +1838,20 @@ pub(super) async fn upsert_execution_session(
             "Docket execution session_id must not be empty".to_string(),
         ));
     }
+    if let Some(task_id) = upsert.task_id {
+        let settled = sqlx::query_scalar!(
+            "SELECT settled_by_entry_id IS NOT NULL AS \"settled!\" FROM bear_tasks WHERE id = $1",
+            task_id
+        )
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or(false);
+        if settled && execution_session_state_is_active_like(&upsert.state) {
+            return Err(DenError::ValidationError(format!(
+                "Docket cannot claim a settled task: task_id={task_id}"
+            )));
+        }
+    }
     sqlx::query_as!(
         DocketExecutionSessionRow,
         r#"
@@ -2504,7 +2519,8 @@ fn first_pending_leaf_in_children<'a>(
         }
         match state_by_task.get(&task.id).copied().unwrap_or("pending") {
             "done" | "cancelled" => {}
-            "pending" => return Ok(Some(task)),
+            "pending" if task.settled_by_entry_id.is_none() => return Ok(Some(task)),
+            "pending" => {}
             // An earlier in-progress or blocked leaf owns its place in the
             // plan. Do not skip it to offer a later sibling.
             _ => return Err(()),
@@ -3160,6 +3176,9 @@ async fn update_task_in_transaction(
     if append_outcome {
         append_terminal_outcome(&mut tx, &patched, &update).await?;
         patched = select_task(&mut tx, update.bear_id, update.task_id).await?;
+        if let (Some(job_id), Some(run_state)) = (patched.job_id, update.run_state.as_ref()) {
+            retire_task_execution_claims(&mut tx, job_id, run_state.run_id, patched.id).await?;
+        }
     }
     if let (Some(job_id), Some(run_state)) = (current.job_id, update.run_state.as_ref()) {
         reconcile_job_status(&mut tx, job_id, run_state.run_id).await?;
@@ -3765,6 +3784,25 @@ json!({
         .execute(&mut **tx)
         .await?;
     }
+    Ok(())
+}
+
+async fn retire_task_execution_claims(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    job_id: Uuid,
+    run_id: Uuid,
+    task_id: Uuid,
+) -> Result<(), DenError> {
+    sqlx::query!(
+        "UPDATE docket_execution_sessions SET state = 'cancelled', updated_at = NOW()
+         WHERE job_id = $1 AND run_id = $2 AND task_id = $3
+           AND state IN ('active', 'blocked', 'completing', 'paused')",
+        job_id,
+        run_id,
+        task_id,
+    )
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 

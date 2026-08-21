@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE bear_task_run_state state\n        SET status = CASE outcome.disposition\n                WHEN 'blocked' THEN 'blocked'\n                WHEN 'failed' THEN 'blocked'\n                WHEN 'cancelled' THEN 'cancelled'\n                ELSE 'done'\n            END,\n            finished_at = COALESCE(state.finished_at, NOW()),\n            updated_at = NOW()\n        FROM bear_tasks task\n        JOIN bear_docket_entries outcome ON outcome.id = task.settled_by_entry_id\n        WHERE state.task_id = task.id\n          AND state.run_id = $2\n          AND task.job_id = $1\n          AND task.settled_by_entry_id IS NOT NULL\n          AND state.status IN ('pending', 'in_progress')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "88a8eb245e597bd87ab9333c9d24c2314a6c6c9c8c442f696052dd6b9e83b19b"
+}

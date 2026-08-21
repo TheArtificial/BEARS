@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE docket_execution_sessions session\n        SET state = 'cancelled', updated_at = NOW()\n        FROM bear_tasks task\n        WHERE session.job_id = $1\n          AND session.run_id = $2\n          AND session.task_id = task.id\n          AND task.job_id = $1\n          AND task.settled_by_entry_id IS NOT NULL\n          AND session.state IN ('active', 'blocked', 'completing', 'paused')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "601d4405506d15847a3c29301b871a2b4447cd7be04d4ff19e5d32cfca28b56c"
+}
