@@ -24,7 +24,7 @@ async fn execution_attempt_authorization_and_start_are_idempotent_and_fenced() {
         task_id,
         owner: DocketExecutionAttemptOwner::Pair {
             session_id: format!("pair-{}", Uuid::new_v4()),
-            pair_run_id: Uuid::new_v4(),
+            pair_run_id: Uuid::new_v4().to_string(),
         },
         authorization_key,
     };
@@ -72,7 +72,7 @@ async fn execution_attempt_authorization_and_start_are_idempotent_and_fenced() {
             task_id,
             owner: DocketExecutionAttemptOwner::Pair {
                 session_id: format!("other-pair-{}", Uuid::new_v4()),
-                pair_run_id: Uuid::new_v4(),
+                pair_run_id: Uuid::new_v4().to_string(),
             },
             authorization_key: Uuid::new_v4(),
         })

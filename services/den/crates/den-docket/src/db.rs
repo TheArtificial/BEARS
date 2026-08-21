@@ -1832,9 +1832,13 @@ pub(super) async fn settle_execution_task(
         ));
     }
 
-    update_task(
-        pool,
-        DocketTaskUpdate {
+    let session_id = execution_session_id(&execution).ok_or_else(|| {
+        DenError::ValidationError("Docket execution has no session identity".to_string())
+    })?;
+    let mut tx = pool.begin().await?;
+    update_task_in_transaction(
+        &mut tx,
+        &DocketTaskUpdate {
             bear_id: execution.bear_id,
             job_id: Some(execution.job_id),
             task_id: settlement.task_id,
@@ -1852,8 +1856,32 @@ pub(super) async fn settle_execution_task(
         },
     )
     .await?;
+    sqlx::query!(
+        r#"
+        UPDATE docket_execution_sessions
+        SET state = 'completed', updated_at = NOW()
+        WHERE id = $1
+          AND bear_id = $2
+          AND owner_profile = $3
+          AND session_id = $4
+          AND job_id = $5
+          AND run_id = $6
+          AND task_id = $7
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+        "#,
+        session.id,
+        execution.bear_id,
+        execution.actor_role.as_str(),
+        session_id,
+        execution.job_id,
+        run.id,
+        settlement.task_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
 
-    reconcile_execution(pool, execution).await
+    execute_job(pool, execution).await
 }
 
 pub(super) async fn execute_job(
@@ -2758,10 +2786,19 @@ pub(super) async fn update_task(
     pool: &PgPool,
     update: DocketTaskUpdate,
 ) -> Result<DocketTaskProjection, DenError> {
+    let mut tx = pool.begin().await?;
+    let projection = update_task_in_transaction(&mut tx, &update).await?;
+    tx.commit().await?;
+    Ok(projection)
+}
+
+async fn update_task_in_transaction(
+    mut tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    update: &DocketTaskUpdate,
+) -> Result<DocketTaskProjection, DenError> {
     validate_docket_task_patch(&update.definition)?;
     validate_docket_task_run_state_update(update.run_state.as_ref())?;
-    let mut tx = pool.begin().await?;
-    let current = select_task(&mut tx, update.bear_id, update.task_id).await?;
+    let current = select_task(&mut *tx, update.bear_id, update.task_id).await?;
     validate_task_update_scope(&mut tx, &current, &update).await?;
     validate_in_progress_task_edit_is_paused(&mut tx, &current, &update).await?;
     if let Some(run_state) = update
@@ -2790,7 +2827,6 @@ pub(super) async fn update_task(
     if let (Some(job_id), Some(run_state)) = (current.job_id, update.run_state.as_ref()) {
         reconcile_job_status(&mut tx, job_id, run_state.run_id).await?;
     }
-    tx.commit().await?;
     Ok(DocketTaskProjection::new(patched, run_state))
 }
 

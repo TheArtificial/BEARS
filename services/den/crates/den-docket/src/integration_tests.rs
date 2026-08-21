@@ -1198,6 +1198,24 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
     ));
     assert_eq!(advanced.control.task.current_task_id, Some(second_task_id));
 
+    let terminal_claims = sqlx::query_scalar!(
+        r#"
+        SELECT count(*)
+        FROM docket_execution_sessions
+        WHERE bear_id = $1
+          AND owner_profile = 'pair'
+          AND source_conversation_id = 'conversation-1'
+          AND task_id = $2
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+        "#,
+        bear_id,
+        first_task_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count terminal active claims");
+    assert_eq!(terminal_claims, Some(0));
+
     let active_rows = sqlx::query_scalar!(
         r"
         SELECT count(*)
