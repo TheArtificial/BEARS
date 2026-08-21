@@ -109,6 +109,36 @@ continuation eligible. Pair can autonomously proceed through an active task
 tree, but pauses only for a durable safety/authority condition or a precise
 user question.
 
+#### Pair outer-loop implementation status — 2026-08-21
+
+The canonical-attempt start boundary is now partially landed: BearWire
+`session.current_task.start` creates and starts a Docket attempt owned by the
+exact `{session_id, pair_run_id}`. This establishes that a selected current
+task is objective-only and that the first Pair run has durable Docket
+authority.
+
+The outer continuation bridge is **not** landed yet. BearWire's
+`methods/run.rs` starts one Pair stream for a user/start request and settles
+that local stream; its existing automatic continuation path in
+`methods/client.rs` is limited to delivering a client tool result back into an
+already-live native runtime session. Neither path reports a completed bounded
+Pair attempt outcome to Docket, obtains Docket's next eligible decision, nor
+re-enters Pair without a new user message. That missing bridge is the concrete
+implementation delta for the continuation-authority revision.
+
+Implement it at the BearWire/Den-runtime Pair turn boundary, not in a model
+prompt or the Armature adapter: after a bounded local Pair outcome, persist the
+typed outcome against the exact attempt/fence, ask Docket for the next eligible
+continuation, and schedule the next Pair turn only when that durable decision
+permits it. The bridge must explicitly yield on terminal settlement, a
+user-interrupt, approval-required state, genuine block, or Pair
+`awaiting_user`; ordinary progress, recoverable bounded-slice outcomes, and
+Docket-authorized next tasks continue without a user "continue" message.
+
+Required focused regressions at this boundary prove that the scheduler—not
+model wording—continues an eligible Pair attempt/task after an ordinary bounded
+outcome, and prove that each listed yield condition prevents rescheduling.
+
 ### Pair planning and execution gate
 
 A Pair session has at most one session-connected root task. Its ordinary task
