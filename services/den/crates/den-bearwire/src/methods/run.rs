@@ -1754,7 +1754,7 @@ async fn report_pair_bounded_outcome(
     }
 }
 
-async fn finish_runtime_terminal_event(
+pub(crate) async fn finish_runtime_terminal_event(
     pool: &sqlx::PgPool,
     session_id: &str,
     run_id: &str,
@@ -3098,6 +3098,28 @@ mod tests {
             .iter()
             .filter_map(|item| item.get("name").and_then(Value::as_str))
             .collect()
+    }
+
+    #[test]
+    fn terminal_runtime_events_are_distinct_from_bounded_slices() {
+        use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+
+        let completed =
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { turn: None });
+        let bounded_slice = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::BoundedSlice {
+            reason: "task remains actionable".to_string(),
+        });
+
+        assert!(runtime_event_is_terminal(&completed));
+        assert!(!runtime_event_is_terminal(&bounded_slice));
+        assert_eq!(
+            runtime_stream_boundary(&completed),
+            RuntimeStreamBoundary::Terminal
+        );
+        assert_eq!(
+            runtime_stream_boundary(&bounded_slice),
+            RuntimeStreamBoundary::BoundedSlice
+        );
     }
 
     #[test]
