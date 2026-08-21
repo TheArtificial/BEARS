@@ -9,7 +9,7 @@ use sqlx::PgPool;
 
 use bearwire_protocol::{
     methods::{
-        SessionCurrentTaskClearRequest, SessionCurrentTaskSelectionRequest,
+        RunStartRequest, SessionCurrentTaskClearRequest, SessionCurrentTaskSelectionRequest,
         SessionCurrentTaskStartRequest, SessionIdRequest, SessionModelSetRequest,
         SessionOpenRequest, SessionStateRequest,
     },
@@ -1003,29 +1003,27 @@ pub(crate) async fn session_current_task_start_result(
     if let Some(client_context) = session.adapter_environment {
         start_params.insert("client_context".to_string(), client_context);
     }
-    let result = super::run::run_start_result(state, headers, &Value::Object(start_params)).await?;
+    let request: RunStartRequest = serde_json::from_value(Value::Object(start_params))
+        .map_err(|err| CustomError::ValidationError(format!("invalid task start params: {err}")))?;
+    let task_session_id = request.session_id.clone();
+    let result =
+        super::run::run_start_for_pair_task(state, request, user_id, bear.clone(), task_id).await?;
     let run_id = result["run_id"].as_str().ok_or_else(|| {
         CustomError::ValidationError("run.start returned a non-string run_id".to_string())
     })?;
-    let attempt = start_pair_execution_attempt(
-        &state.sqlx_pool,
-        bear.id,
-        task_id,
-        &request.session_id,
-        run_id,
-    )
-    .await?;
+    let execution_attempt_id = result["execution_attempt_id"].clone();
+    let fence_epoch = result["fence_epoch"].clone();
     Ok(json!({
         "ok": true,
         "started": true,
         "reused": false,
         "run_id": run_id,
-        "session_id": request.session_id,
+        "session_id": task_session_id,
         "task_id": task_id,
         "state": result["state"].clone(),
         "event_sequence": result["event_sequence"].clone(),
-        "execution_attempt_id": attempt.id,
-        "fence_epoch": attempt.fence_epoch,
+        "execution_attempt_id": execution_attempt_id,
+        "fence_epoch": fence_epoch,
     }))
 }
 

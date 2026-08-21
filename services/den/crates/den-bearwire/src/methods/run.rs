@@ -16,6 +16,7 @@ use bearwire_protocol::{
     wire::BearWireEvent,
 };
 use den_docket::{
+    DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptStart,
     DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
     DocketService, PgDocketService,
 };
@@ -2102,7 +2103,17 @@ pub(crate) async fn run_start_result(
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: RunStartRequest = parse_params(params)?;
-    run_start_with_recovery_source(state, request, user_id, bear, None).await
+    run_start_with_recovery_source(state, request, user_id, bear, None, None).await
+}
+
+pub(crate) async fn run_start_for_pair_task(
+    state: &DenState,
+    request: RunStartRequest,
+    user_id: i32,
+    bear: den_service::bears::Bear,
+    task_id: Uuid,
+) -> Result<Value, CustomError> {
+    run_start_with_recovery_source(state, request, user_id, bear, None, Some(task_id)).await
 }
 
 async fn run_start_with_recovery_source(
@@ -2111,6 +2122,7 @@ async fn run_start_with_recovery_source(
     user_id: i32,
     bear: den_service::bears::Bear,
     recovery_source_run_id: Option<&str>,
+    pair_task_id: Option<Uuid>,
 ) -> Result<Value, CustomError> {
     let session_id = request.session_id;
     let prompt = request.prompt;
@@ -2247,6 +2259,30 @@ async fn run_start_with_recovery_source(
 
     let run_id = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple()))?;
     let session_run_id = run_id.to_string();
+    let attempt = if let Some(task_id) = pair_task_id {
+        let service = PgDocketService::from_pool(&state.sqlx_pool);
+        let attempt = service
+            .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+                bear_id: bear.id,
+                task_id,
+                owner: DocketExecutionAttemptOwner::Pair {
+                    session_id: session_id.clone(),
+                    pair_run_id: session_run_id.clone(),
+                },
+                authorization_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_run_id.as_bytes()),
+            })
+            .await?;
+        Some(
+            service
+                .start_execution_attempt(DocketExecutionAttemptStart {
+                    attempt_id: attempt.id,
+                    fence_epoch: attempt.fence_epoch,
+                })
+                .await?,
+        )
+    } else {
+        None
+    };
     let session_id = ClientSessionId::new(session_id.clone())?;
     let session_id_string = session_id.to_string();
     let superseded = settle_active_run_for_session(
@@ -2792,6 +2828,8 @@ async fn run_start_with_recovery_source(
         "session_id": session_id,
         "event_sequence": accepted.sequence_no,
         "state": run.state,
+        "execution_attempt_id": attempt.as_ref().map(|attempt| attempt.id),
+        "fence_epoch": attempt.as_ref().map(|attempt| attempt.fence_epoch),
     }))
 }
 
