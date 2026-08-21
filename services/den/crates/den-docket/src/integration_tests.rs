@@ -1283,6 +1283,23 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
         .await
         .expect("persist terminal outcome without reconciliation");
 
+    let claims_after_settlement = sqlx::query_scalar!(
+        r#"
+        SELECT count(*)
+        FROM docket_execution_sessions
+        WHERE bear_id = $1
+          AND session_id = 'terminal-session-claim'
+          AND task_id = $2
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+        "#,
+        bear_id,
+        first_task_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count claims retired by terminal settlement");
+    assert_eq!(claims_after_settlement, Some(0));
+
     let recovered = service
         .execute_job(request)
         .await
@@ -1293,6 +1310,23 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
         recovered.control.next_action,
         crate::DocketExecutionNextAction::WorkCurrentTask
     ));
+
+    let unsettled_claims = sqlx::query_scalar!(
+        r#"
+        SELECT count(*)
+        FROM docket_execution_sessions
+        WHERE bear_id = $1
+          AND session_id = 'terminal-session-claim'
+          AND task_id = $2
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+        "#,
+        bear_id,
+        second_task_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count active unsettled-task claims");
+    assert_eq!(unsettled_claims, Some(1));
 
     let terminal_claims = sqlx::query_scalar!(
         r#"
