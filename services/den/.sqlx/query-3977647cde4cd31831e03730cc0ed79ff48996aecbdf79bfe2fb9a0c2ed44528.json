@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE docket_execution_sessions\n        SET state = 'active', updated_at = NOW()\n        WHERE bear_id = $1\n          AND session_id = 'terminal-session-claim'\n          AND task_id = $2\n          AND state = 'completed'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3977647cde4cd31831e03730cc0ed79ff48996aecbdf79bfe2fb9a0c2ed44528"
+}

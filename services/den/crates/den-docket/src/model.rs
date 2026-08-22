@@ -983,7 +983,6 @@ pub struct DocketTaskRow {
     pub id: Uuid,
     pub bear_id: Uuid,
     pub job_id: Option<Uuid>,
-    pub session_anchor_id: Option<Uuid>,
     pub parent_task_id: Option<Uuid>,
     pub sibling_order: i32,
     pub kind: String,
@@ -1718,7 +1717,8 @@ pub enum DocketTaskPlacement {
 pub struct DocketTaskCreate {
     pub bear_id: Uuid,
     pub job_id: Option<Uuid>,
-    pub session_anchor_id: Option<Uuid>,
+    /// Required for standalone tasks; stored only in bear_pair_task_attachments.
+    pub pair_session_id: Option<Uuid>,
     pub parent_task_id: Option<Uuid>,
     pub sibling_order: i32,
     pub placement: Option<DocketTaskPlacement>,
@@ -1741,7 +1741,8 @@ pub struct DocketTaskCreate {
 #[derive(Debug, Clone, Default)]
 pub struct DocketTaskListFilter {
     pub job_id: Option<Uuid>,
-    pub session_anchor_id: Option<Uuid>,
+    /// Filter standalone tasks by an active Pair attachment.
+    pub pair_session_id: Option<Uuid>,
     pub parent_task_id: Option<Uuid>,
     pub include_descendants: bool,
     pub limit: i64,
@@ -1973,7 +1974,7 @@ impl DocketTaskProjection {
 #[derive(Debug, Clone)]
 pub struct DocketSessionTaskSettlement {
     pub bear_id: Uuid,
-    pub session_anchor_id: Uuid,
+    pub pair_session_id: Uuid,
     pub task_id: Uuid,
     pub status: DocketTaskStatus,
     pub outcome_disposition: Option<DocketOutcomeDisposition>,
@@ -2296,14 +2297,14 @@ pub fn task_list_projection_from_session_tasks(
     bear_id: Uuid,
     owner_profile: BearProfile,
     conversation_id: &str,
-    session_anchor_id: Uuid,
+    pair_session_id: Uuid,
     tasks: &[DocketTaskProjection],
 ) -> Option<TaskListProjection> {
     task_list_projection_from_session_tasks_with_current_task(
         bear_id,
         owner_profile,
         conversation_id,
-        session_anchor_id,
+        pair_session_id,
         tasks,
         None,
     )
@@ -2315,7 +2316,7 @@ pub fn task_list_projection_from_session_tasks_with_current_task(
     bear_id: Uuid,
     owner_profile: BearProfile,
     conversation_id: &str,
-    session_anchor_id: Uuid,
+    pair_session_id: Uuid,
     tasks: &[DocketTaskProjection],
     selected_task_id: Option<Uuid>,
 ) -> Option<TaskListProjection> {
@@ -2384,7 +2385,7 @@ pub fn task_list_projection_from_session_tasks_with_current_task(
         "planned"
     };
     Some(TaskListProjection {
-        id: session_anchor_id,
+        id: pair_session_id,
         bear_id,
         title: "Session tasks".to_string(),
         summary: "Tasks anchored to the current client session".to_string(),
@@ -2392,11 +2393,11 @@ pub fn task_list_projection_from_session_tasks_with_current_task(
         visibility: "private_to_profile".to_string(),
         status: status.to_string(),
         version: 1,
-        source_ref: TaskListSourceRef::local(vec![format!("session_anchor:{session_anchor_id}")]),
+        source_ref: TaskListSourceRef::local(vec![format!("session_anchor:{pair_session_id}")]),
         items,
         current_item,
         source_conversation_id: Some(conversation_id.to_string()),
-        source_client_session_id: Some(session_anchor_id.to_string()),
+        source_client_session_id: Some(pair_session_id.to_string()),
         handoff_intent_path: None,
         handoff_task_id: None,
         created_at: first_task.task.created_at,
@@ -2622,10 +2623,10 @@ pub fn validate_completion_criteria(criteria: &[String]) -> Result<(), DocketVal
 }
 
 pub fn validate_docket_task_create(create: &DocketTaskCreate) -> Result<(), DocketValidationError> {
-    if create.job_id.is_none() && create.session_anchor_id.is_none() {
+    if create.job_id.is_none() && create.pair_session_id.is_none() {
         return Err(DocketValidationError::TaskMissingAnchor);
     }
-    if create.job_id.is_some() && create.session_anchor_id.is_some() {
+    if create.job_id.is_some() && create.pair_session_id.is_some() {
         return Err(DocketValidationError::TaskAmbiguousAnchor);
     }
     if create.title.trim().is_empty() {
@@ -3084,14 +3085,13 @@ mod tests {
     #[test]
     fn session_task_projection_is_planned_until_work_starts() {
         let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
-        let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
+        let pair_session_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
         let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
         let run_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
         let mut task = DocketTaskRow {
             id: task_id,
             bear_id,
             job_id: None,
-            session_anchor_id: Some(session_anchor_id),
             parent_task_id: None,
             sibling_order: 0,
             kind: "execution".to_string(),
@@ -3116,7 +3116,7 @@ mod tests {
             bear_id,
             BearProfile::Pair,
             "conversation-1",
-            session_anchor_id,
+            pair_session_id,
             &[DocketTaskProjection {
                 task: task.clone(),
                 run_state: None,
@@ -3136,7 +3136,7 @@ mod tests {
             bear_id,
             BearProfile::Pair,
             "conversation-1",
-            session_anchor_id,
+            pair_session_id,
             &[DocketTaskProjection {
                 task: task.clone(),
                 run_state: Some(DocketTaskRunStateRow {
@@ -3161,7 +3161,7 @@ mod tests {
             bear_id,
             BearProfile::Pair,
             "conversation-1",
-            session_anchor_id,
+            pair_session_id,
             &[DocketTaskProjection {
                 task: task.clone(),
                 run_state: Some(DocketTaskRunStateRow {
@@ -3188,7 +3188,7 @@ mod tests {
             bear_id,
             BearProfile::Pair,
             "conversation-1",
-            session_anchor_id,
+            pair_session_id,
             &[DocketTaskProjection {
                 task: task.clone(),
                 run_state: None,
@@ -3205,7 +3205,7 @@ mod tests {
             bear_id,
             BearProfile::Pair,
             "conversation-1",
-            session_anchor_id,
+            pair_session_id,
             &[DocketTaskProjection {
                 task,
                 run_state: Some(DocketTaskRunStateRow {
@@ -3235,7 +3235,7 @@ mod tests {
     #[test]
     fn session_task_projection_prefers_an_explicit_actionable_task() {
         let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
-        let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
+        let pair_session_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
         let first_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
         let selected_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
         let task = |id, order, title: &str| DocketTaskProjection {
@@ -3243,7 +3243,6 @@ mod tests {
                 id,
                 bear_id,
                 job_id: None,
-                session_anchor_id: Some(session_anchor_id),
                 parent_task_id: None,
                 sibling_order: order,
                 kind: "execution".to_string(),
@@ -3273,7 +3272,7 @@ mod tests {
             bear_id,
             BearProfile::Pair,
             "conversation-1",
-            session_anchor_id,
+            pair_session_id,
             &[task(first_id, 0, "first"), task(selected_id, 1, "selected")],
             Some(selected_id),
         )
@@ -3288,7 +3287,7 @@ mod tests {
     #[test]
     fn selected_session_child_projects_its_siblings_in_order() {
         let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
-        let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
+        let pair_session_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
         let parent_id = Uuid::parse_str("00000000-0000-0000-0000-000000000010").unwrap();
         let first_id = Uuid::parse_str("00000000-0000-0000-0000-000000000011").unwrap();
         let selected_id = Uuid::parse_str("00000000-0000-0000-0000-000000000012").unwrap();
@@ -3297,7 +3296,6 @@ mod tests {
                 id,
                 bear_id,
                 job_id: None,
-                session_anchor_id: Some(session_anchor_id),
                 parent_task_id,
                 sibling_order: order,
                 kind: "execution".to_string(),
@@ -3327,7 +3325,7 @@ mod tests {
             bear_id,
             BearProfile::Pair,
             "conversation-1",
-            session_anchor_id,
+            pair_session_id,
             &[
                 task(parent_id, None, 0, "parent"),
                 task(selected_id, Some(parent_id), 1, "selected"),
@@ -3449,7 +3447,7 @@ mod tests {
         let create = DocketTaskCreate {
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
             job_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap()),
-            session_anchor_id: None,
+            pair_session_id: None,
             parent_task_id: None,
             sibling_order: 0,
             placement: None,
@@ -3480,9 +3478,7 @@ mod tests {
         let create = DocketTaskCreate {
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
             job_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap()),
-            session_anchor_id: Some(
-                Uuid::parse_str("00000000-0000-0000-0000-000000000888").unwrap(),
-            ),
+            pair_session_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000888").unwrap()),
             parent_task_id: None,
             sibling_order: 0,
             placement: None,
@@ -3513,7 +3509,7 @@ mod tests {
         let create = DocketTaskCreate {
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
             job_id: None,
-            session_anchor_id: None,
+            pair_session_id: None,
             parent_task_id: None,
             sibling_order: 0,
             placement: None,
@@ -3590,7 +3586,6 @@ mod tests {
                 id: root_task_id,
                 bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
                 job_id: Some(job_id),
-                session_anchor_id: None,
                 parent_task_id: None,
                 sibling_order: 0,
                 kind: "execution".to_string(),
@@ -3689,7 +3684,6 @@ mod tests {
                     id: root_task_id,
                     bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
                     job_id: Some(job_id),
-                    session_anchor_id: None,
                     parent_task_id: None,
                     sibling_order: 0,
                     kind: "execution".to_string(),
@@ -3714,7 +3708,6 @@ mod tests {
                     id: root_peer_task_id,
                     bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
                     job_id: Some(job_id),
-                    session_anchor_id: None,
                     parent_task_id: None,
                     sibling_order: -1,
                     kind: "execution".to_string(),
@@ -3739,7 +3732,6 @@ mod tests {
                     id: child_task_id,
                     bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
                     job_id: Some(job_id),
-                    session_anchor_id: None,
                     parent_task_id: Some(root_task_id),
                     sibling_order: 0,
                     kind: "execution".to_string(),

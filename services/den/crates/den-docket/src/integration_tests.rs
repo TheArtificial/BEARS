@@ -215,7 +215,7 @@ async fn creates_session_anchored_task_without_job() {
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task").await;
     let service = PgDocketService::from_pool(&pool);
-    let session_anchor_id = sqlx::query_scalar!(
+    let pair_session_id = sqlx::query_scalar!(
         r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
@@ -239,7 +239,7 @@ async fn creates_session_anchored_task_without_job() {
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: None,
-            session_anchor_id: Some(session_anchor_id),
+            pair_session_id: Some(pair_session_id),
             parent_task_id: None,
             sibling_order: 0,
             placement: None,
@@ -262,14 +262,19 @@ async fn creates_session_anchored_task_without_job() {
         .expect("create session-anchored task");
 
     assert_eq!(task.job_id, None);
-    assert_eq!(task.session_anchor_id, Some(session_anchor_id));
+    assert!(service
+        .list_pair_session_tasks(bear_id, pair_session_id)
+        .await
+        .expect("list attached tasks")
+        .iter()
+        .any(|projection| projection.task.id == task.id));
     assert_eq!(task.body, "Confirm jobless task creation works");
     assert_eq!(task.completion_criteria.0, vec!["Task row is inserted"]);
 
     let settled = service
         .settle_session_task(DocketSessionTaskSettlement {
             bear_id,
-            session_anchor_id,
+            pair_session_id,
             task_id: task.id,
             status: DocketTaskStatus::Done,
             outcome_disposition: None,
@@ -301,7 +306,7 @@ async fn creates_session_anchored_task_without_job() {
     let error = service
         .settle_session_task(DocketSessionTaskSettlement {
             bear_id,
-            session_anchor_id: other_session_id,
+            pair_session_id: other_session_id,
             task_id: task.id,
             status: DocketTaskStatus::Cancelled,
             outcome_disposition: None,
@@ -324,7 +329,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
     };
     let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task-state").await;
     let service = PgDocketService::from_pool(&pool);
-    let session_anchor_id = sqlx::query_scalar!(
+    let pair_session_id = sqlx::query_scalar!(
         r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
@@ -355,7 +360,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: None,
-            session_anchor_id: Some(session_anchor_id),
+            pair_session_id: Some(pair_session_id),
             parent_task_id: None,
             sibling_order: 0,
             placement: None,
@@ -400,7 +405,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
         .list_tasks(
             bear_id,
             DocketTaskListFilter {
-                session_anchor_id: Some(session_anchor_id),
+                pair_session_id: Some(pair_session_id),
                 include_descendants: true,
                 ..DocketTaskListFilter::default()
             },
@@ -468,7 +473,7 @@ async fn pair_task_attachment_is_exclusive_and_released_on_settlement() {
         .settle_session_task(DocketSessionTaskSettlement {
             bear_id,
             task_id,
-            session_anchor_id: first_session,
+            pair_session_id: first_session,
             status: DocketTaskStatus::Done,
             outcome_disposition: Some(crate::DocketOutcomeDisposition::Completed),
             result_summary: Some("Pair task completed.".to_string()),
@@ -1611,7 +1616,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: Some(created.job.id),
-            session_anchor_id: None,
+            pair_session_id: None,
             parent_task_id: Some(phase_one_id),
             sibling_order: 0,
             placement: None,
@@ -1636,7 +1641,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: Some(created.job.id),
-            session_anchor_id: None,
+            pair_session_id: None,
             parent_task_id: Some(phase_one_id),
             sibling_order: 1,
             placement: None,

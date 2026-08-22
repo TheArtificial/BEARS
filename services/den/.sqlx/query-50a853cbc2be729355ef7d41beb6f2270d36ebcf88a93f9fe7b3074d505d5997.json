@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT count(*)\n        FROM docket_execution_sessions\n        WHERE bear_id = $1\n          AND session_id = 'terminal-session-claim'\n          AND task_id = $2\n          AND state IN ('active', 'blocked', 'completing', 'paused')\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "50a853cbc2be729355ef7d41beb6f2270d36ebcf88a93f9fe7b3074d505d5997"
+}

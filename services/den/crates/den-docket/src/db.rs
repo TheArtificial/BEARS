@@ -357,7 +357,7 @@ async fn insert_task_for_job(
                   result_rollup_policy, created_by_role, created_by_user_id
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16)
-        RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+        RETURNING id, bear_id, job_id, parent_task_id, sibling_order,
                   kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   settled_by_entry_id, created_at, updated_at
@@ -440,6 +440,18 @@ pub(super) async fn create_task(
     let mut create = create;
     create.sibling_order = sibling_order;
     let row = insert_task(&mut tx, &create).await?;
+    if let Some(session_id) = create.pair_session_id {
+        sqlx::query!(
+            r#"
+            INSERT INTO bear_pair_task_attachments (task_id, session_id)
+            VALUES ($1, $2)
+            "#,
+            row.id,
+            session_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
     if let Some(run_id) = create.created_in_run_id {
         sqlx::query!(
             r"
@@ -468,10 +480,10 @@ async fn place_task(
             .fetch_optional(&mut **tx)
             .await?
             .ok_or_else(|| DenError::ValidationError("Docket job not found".to_string()))?;
-    } else if let Some(session_anchor_id) = create.session_anchor_id {
+    } else if let Some(pair_session_id) = create.pair_session_id {
         sqlx::query!(
             "SELECT id FROM client_sessions WHERE id = $1 FOR UPDATE",
-            session_anchor_id
+            pair_session_id
         )
         .fetch_optional(&mut **tx)
         .await?
@@ -485,15 +497,21 @@ async fn place_task(
             sqlx::query_scalar!(
                 r#"
             SELECT COALESCE(MAX(sibling_order), -1) + 1 AS "sibling_order!: i32"
-            FROM bear_tasks
-            WHERE bear_id = $1
-              AND job_id IS NOT DISTINCT FROM $2
-              AND session_anchor_id IS NOT DISTINCT FROM $3
-              AND parent_task_id IS NOT DISTINCT FROM $4
+            FROM bear_tasks t
+            WHERE t.bear_id = $1
+              AND t.job_id IS NOT DISTINCT FROM $2
+              AND (
+                    $3::uuid IS NULL
+                 OR EXISTS (
+                    SELECT 1 FROM bear_pair_task_attachments a
+                    WHERE a.task_id = t.id AND a.session_id = $3 AND a.released_at IS NULL
+                 )
+              )
+              AND t.parent_task_id IS NOT DISTINCT FROM $4
             "#,
                 create.bear_id,
                 create.job_id,
-                create.session_anchor_id,
+                create.pair_session_id,
                 create.parent_task_id
             )
             .fetch_one(&mut **tx)
@@ -503,7 +521,7 @@ async fn place_task(
             let anchor: DocketTaskRow = sqlx::query_as!(
                 DocketTaskRow,
                 r#"
-                SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+                SELECT id, bear_id, job_id, parent_task_id, sibling_order,
                        kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint,
                        routing_strategy, expected_context_size, result_rollup_policy,
                        created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
@@ -519,10 +537,7 @@ async fn place_task(
             .ok_or_else(|| {
                 DenError::ValidationError("placement anchor task not found".to_string())
             })?;
-            if anchor.job_id != create.job_id
-                || anchor.session_anchor_id != create.session_anchor_id
-                || anchor.parent_task_id != create.parent_task_id
-            {
+            if anchor.job_id != create.job_id || anchor.parent_task_id != create.parent_task_id {
                 return Err(DenError::ValidationError(
                     "placement anchor must be a sibling in the same task tree".to_string(),
                 ));
@@ -533,17 +548,23 @@ async fn place_task(
 
     sqlx::query!(
         r"
-        UPDATE bear_tasks
-        SET sibling_order = sibling_order + 1, updated_at = NOW()
-        WHERE bear_id = $1
-          AND job_id IS NOT DISTINCT FROM $2
-          AND session_anchor_id IS NOT DISTINCT FROM $3
-          AND parent_task_id IS NOT DISTINCT FROM $4
+        UPDATE bear_tasks t
+        SET sibling_order = t.sibling_order + 1, updated_at = NOW()
+        WHERE t.bear_id = $1
+          AND t.job_id IS NOT DISTINCT FROM $2
+          AND (
+                $3::uuid IS NULL
+             OR EXISTS (
+                SELECT 1 FROM bear_pair_task_attachments a
+                WHERE a.task_id = t.id AND a.session_id = $3 AND a.released_at IS NULL
+             )
+          )
+          AND t.parent_task_id IS NOT DISTINCT FROM $4
           AND sibling_order >= $5
         ",
         create.bear_id,
         create.job_id,
-        create.session_anchor_id,
+        create.pair_session_id,
         create.parent_task_id,
         target_order
     )
@@ -561,20 +582,19 @@ async fn insert_task(
         DocketTaskRow,
         r#"
         INSERT INTO bear_tasks (
-            bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope,
+            bear_id, job_id, parent_task_id, sibling_order, kind, scope,
             title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role,
             created_by_user_id, created_by_agent_id, created_in_run_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-        RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        RETURNING id, bear_id, job_id, parent_task_id, sibling_order,
                   kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   settled_by_entry_id, created_at, updated_at
         "#,
         create.bear_id,
         create.job_id,
-        create.session_anchor_id,
         create.parent_task_id,
         create.sibling_order,
         create.kind.as_str(),
@@ -719,7 +739,7 @@ pub(super) async fn get_job(
     let tasks = sqlx::query_as!(
         DocketTaskRow,
         r#"
-        SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+        SELECT id, bear_id, job_id, parent_task_id, sibling_order,
                kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                settled_by_entry_id, created_at, updated_at
@@ -1172,7 +1192,6 @@ mod derived_job_status_tests {
             id,
             bear_id: Uuid::nil(),
             job_id: Some(Uuid::nil()),
-            session_anchor_id: None,
             parent_task_id,
             sibling_order: 0,
             kind: "execution".to_string(),
@@ -2652,14 +2671,16 @@ pub(super) async fn list_tasks(
         sqlx::query_as!(
             DocketTaskRow,
             r#"
-            SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+            SELECT id, bear_id, job_id, parent_task_id, sibling_order,
                    kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                    result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id,
                    created_at, updated_at
-            FROM bear_tasks
-            WHERE bear_id = $1
-              AND ($2::uuid IS NULL OR job_id = $2)
-              AND ($3::uuid IS NULL OR session_anchor_id = $3)
+            FROM bear_tasks t
+            LEFT JOIN bear_pair_task_attachments a
+              ON a.task_id = t.id AND a.released_at IS NULL
+            WHERE t.bear_id = $1
+              AND ($2::uuid IS NULL OR t.job_id = $2)
+              AND ($3::uuid IS NULL OR a.session_id = $3)
               AND (
                     ($4::uuid IS NULL AND parent_task_id IS NULL)
                  OR ($4::uuid IS NOT NULL AND parent_task_id = $4)
@@ -2669,7 +2690,7 @@ pub(super) async fn list_tasks(
             "#,
             bear_id,
             filter.job_id,
-            filter.session_anchor_id,
+            filter.pair_session_id,
             filter.parent_task_id,
             limit,
         )
@@ -2693,7 +2714,7 @@ pub(super) async fn list_pair_session_tasks(
     let tasks = sqlx::query_as!(
         DocketTaskRow,
         r#"
-        SELECT t.id, t.bear_id, t.job_id, t.session_anchor_id, t.parent_task_id, t.sibling_order,
+        SELECT t.id, t.bear_id, t.job_id, t.parent_task_id, t.sibling_order,
                t.kind, t.scope, t.title, t.body, t.completion_criteria AS "completion_criteria: _",
                t.difficulty, t.effort_hint, t.routing_strategy, t.expected_context_size,
                t.result_rollup_policy, t.created_by_role, t.created_by_user_id, t.created_by_agent_id,
@@ -2702,7 +2723,7 @@ pub(super) async fn list_pair_session_tasks(
         LEFT JOIN bear_pair_task_attachments a
           ON a.task_id = t.id AND a.released_at IS NULL
         WHERE t.bear_id = $1
-          AND (t.session_anchor_id = $2 OR a.session_id = $2)
+          AND a.session_id = $2
         ORDER BY t.sibling_order, t.created_at, t.id
         "#,
         bear_id,
@@ -3020,20 +3041,22 @@ async fn list_tasks_with_descendants(
         DocketTaskRow,
         r#"
         WITH RECURSIVE task_tree AS (
-            SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+            SELECT id, bear_id, job_id, parent_task_id, sibling_order,
                    kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
                    result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id,
                    created_at, updated_at
-            FROM bear_tasks
-            WHERE bear_id = $1
-              AND ($2::uuid IS NULL OR job_id = $2)
-              AND ($3::uuid IS NULL OR session_anchor_id = $3)
+            FROM bear_tasks t
+            LEFT JOIN bear_pair_task_attachments a
+              ON a.task_id = t.id AND a.released_at IS NULL
+            WHERE t.bear_id = $1
+              AND ($2::uuid IS NULL OR t.job_id = $2)
+              AND ($3::uuid IS NULL OR a.session_id = $3)
               AND (
                     ($4::uuid IS NULL AND parent_task_id IS NULL)
                  OR ($4::uuid IS NOT NULL AND parent_task_id = $4)
               )
             UNION ALL
-            SELECT child.id, child.bear_id, child.job_id, child.session_anchor_id,
+            SELECT child.id, child.bear_id, child.job_id,
                    child.parent_task_id, child.sibling_order, child.kind, child.scope,
                    child.title, child.body, child.completion_criteria, child.difficulty, child.effort_hint,
                    child.routing_strategy, child.expected_context_size, child.result_rollup_policy, child.created_by_role, child.created_by_user_id,
@@ -3045,7 +3068,6 @@ async fn list_tasks_with_descendants(
         SELECT id AS "id!: _",
                bear_id AS "bear_id!: _",
                job_id,
-               session_anchor_id,
                parent_task_id,
                sibling_order AS "sibling_order!: _",
                kind AS "kind!: _",
@@ -3071,7 +3093,7 @@ async fn list_tasks_with_descendants(
         "#,
         bear_id,
         filter.job_id,
-        filter.session_anchor_id,
+        filter.pair_session_id,
         filter.parent_task_id,
         limit,
     )
@@ -3234,10 +3256,10 @@ pub(super) async fn settle_session_task(
         )"#,
     )
     .bind(task.id)
-    .bind(settlement.session_anchor_id)
+    .bind(settlement.pair_session_id)
     .fetch_one(&mut *tx)
     .await?;
-    if task.session_anchor_id != Some(settlement.session_anchor_id) && !attached {
+    if !attached {
         return Err(DenError::ValidationError(
             "session task settlement requires a task attached to the current session".to_string(),
         ));
@@ -3264,7 +3286,7 @@ pub(super) async fn settle_session_task(
     .await?;
     let task = sqlx::query_as!(
         DocketTaskRow,
-        r#"UPDATE bear_tasks SET settled_by_entry_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size, result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id, created_at, updated_at"#,
+        r#"UPDATE bear_tasks SET settled_by_entry_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, bear_id, job_id, parent_task_id, sibling_order, kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size, result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id, settled_by_entry_id, created_at, updated_at"#,
         task.id,
         entry_id,
     )
@@ -3274,7 +3296,7 @@ pub(super) async fn settle_session_task(
         "UPDATE bear_pair_task_attachments SET released_at = NOW() WHERE task_id = $1 AND session_id = $2 AND released_at IS NULL",
     )
     .bind(task.id)
-    .bind(settlement.session_anchor_id)
+    .bind(settlement.pair_session_id)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -3565,7 +3587,7 @@ async fn select_task(
     sqlx::query_as!(
         DocketTaskRow,
         r#"
-        SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+        SELECT id, bear_id, job_id, parent_task_id, sibling_order,
                kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                settled_by_entry_id, created_at, updated_at
@@ -3698,7 +3720,7 @@ async fn update_task_definition(
             result_rollup_policy = $14,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
-        RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+        RETURNING id, bear_id, job_id, parent_task_id, sibling_order,
                   kind, scope, title, body, completion_criteria AS "completion_criteria: _", difficulty, effort_hint, routing_strategy, expected_context_size,
                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   settled_by_entry_id, created_at, updated_at
@@ -4132,7 +4154,7 @@ pub(super) async fn sync_task_list(
                 DocketTaskCreate {
                     bear_id: request.task_list.bear_id,
                     job_id: Some(job_id),
-                    session_anchor_id: None,
+                    pair_session_id: None,
                     parent_task_id,
                     sibling_order: i32::MAX / 2,
                     placement: Some(DocketTaskPlacement::Last),

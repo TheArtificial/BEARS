@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO git_work_surface_details (id, upstream_url)\n         VALUES ($1, 'https://example.test/work-run.git')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "65f5b648fa112cdfd9e598ac89a926071a223f817d1f9d53baedd92785b6dfa9"
+}

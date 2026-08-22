@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT status, result_summary, result_refs FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "result_summary",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "result_refs",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "aaf2518334d5875bcee351cccf93a25c68ce67ecf3bd22d7f1384ede2abe6546"
+}

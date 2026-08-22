@@ -243,7 +243,13 @@ pub async fn docket_jobs_settle_task_result(
             result_summary: request.result_summary,
         })
         .await?;
-    execution_result_payload(outcome)
+    execution_result_payload(
+        outcome,
+        json!({
+            "status": "not_applicable",
+            "reason": "Task settlement does not change Pair binding.",
+        }),
+    )
 }
 
 pub async fn docket_session_tasks_settle_result(
@@ -272,7 +278,7 @@ pub async fn docket_session_tasks_settle_result(
     let task = service
         .settle_session_task(DocketSessionTaskSettlement {
             bear_id: bear.id,
-            session_anchor_id: session.id,
+            pair_session_id: session.id,
             task_id,
             status,
             outcome_disposition,
@@ -344,6 +350,10 @@ async fn execution_result(
     client_session_id: Option<&str>,
     outcome: den_docket::DocketJobExecuteOutcome,
 ) -> Result<Value, CustomError> {
+    let mut pair_binding = json!({
+        "status": "not_applicable",
+        "reason": "Docket did not select a Pair task.",
+    });
     if matches!(
         outcome.control.next_action,
         DocketExecutionNextAction::WorkCurrentTask
@@ -370,13 +380,27 @@ async fn execution_result(
                 Some(task_id),
             )
             .await?;
+            pair_binding = json!({
+                "status": "attached",
+                "task_id": task_id,
+                "client_session_id": client_session_id,
+                "current_task_selected": true,
+            });
+        } else {
+            pair_binding = json!({
+                "status": "not_attempted",
+                "reason": "no_authenticated_pair_session",
+                "task_id": outcome.control.task.selected_task_id,
+                "current_task_selected": false,
+            });
         }
     }
-    execution_result_payload(outcome)
+    execution_result_payload(outcome, pair_binding)
 }
 
 fn execution_result_payload(
     outcome: den_docket::DocketJobExecuteOutcome,
+    pair_binding: Value,
 ) -> Result<Value, CustomError> {
     let run = outcome.job.current_run.as_ref();
     let execution_state = run
@@ -394,6 +418,7 @@ fn execution_result_payload(
         },
         "status": status,
         "gate": gate,
+        "pair_binding": pair_binding,
         "outcome": outcome,
     }))
 }

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT count(*)\n        FROM docket_execution_sessions\n        WHERE bear_id = $1\n          AND owner_profile = 'pair'\n          AND source_conversation_id = 'conversation-1'\n          AND task_id = $2\n          AND state IN ('active', 'blocked', 'completing', 'paused')\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "005bc839382087171aca0545c7062df2978561ae5c14690f9d0442b7dc8e9763"
+}

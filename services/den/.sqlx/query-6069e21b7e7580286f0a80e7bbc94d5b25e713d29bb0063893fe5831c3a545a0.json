@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT count(*)\n        FROM bear_job_events\n        WHERE job_id = $1\n          AND run_id = $2\n          AND task_id = $3\n          AND event_type = 'focus_selected'\n          AND payload->>'session_id' = 'pair-integration-session'\n          AND payload->>'source_client_session_id' = 'pair-integration-session'\n          AND payload->>'state' = 'active'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6069e21b7e7580286f0a80e7bbc94d5b25e713d29bb0063893fe5831c3a545a0"
+}

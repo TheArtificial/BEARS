@@ -248,7 +248,7 @@ async fn create_session_task(
         .create_task(DocketTaskCreate {
             bear_id,
             job_id: None,
-            session_anchor_id: Some(session_anchor_id),
+            pair_session_id: Some(session_anchor_id),
             parent_task_id: None,
             sibling_order: 0,
             placement: None,

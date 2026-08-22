@@ -1,0 +1,165 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO bear_tasks (\n            bear_id, job_id, parent_task_id, sibling_order, kind, scope,\n            title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,\n                  result_rollup_policy, created_by_role,\n            created_by_user_id, created_by_agent_id, created_in_run_id\n        )\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18)\n        RETURNING id, bear_id, job_id, parent_task_id, sibling_order,\n                  kind, scope, title, body, completion_criteria AS \"completion_criteria: _\", difficulty, effort_hint, routing_strategy, expected_context_size,\n                  result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,\n                  settled_by_entry_id, created_at, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "parent_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "sibling_order",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "scope",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "body",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "completion_criteria: _",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "difficulty",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "effort_hint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "routing_strategy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "expected_context_size",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "result_rollup_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_by_role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 17,
+        "name": "created_by_agent_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "created_in_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 19,
+        "name": "settled_by_entry_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "805e8a83a9bdda31fd31970a5a12244fca73f3886f4e445dfc71b152cb8c3794"
+}
