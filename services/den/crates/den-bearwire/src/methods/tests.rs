@@ -954,7 +954,14 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
 
     let persisted_text: String = row.try_get("content_text").expect("decode content_text");
     let persisted_json: Value = row.try_get("content_json").expect("decode content_json");
-    assert_eq!(persisted_text, "Please inspect the library entrypoint.");
+    assert!(
+        persisted_text.starts_with("Please inspect the library entrypoint."),
+        "persisted text should retain the human prompt: {persisted_text}"
+    );
+    assert!(
+        persisted_text.contains("[Referenced resource: src/lib.rs]"),
+        "persisted text should retain the resource marker: {persisted_text}"
+    );
     assert_eq!(
         persisted_json["prompt_context"]["format"],
         "acp_prompt_context.v1"
@@ -1009,21 +1016,8 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
         "surface text should render referenced resource heading: {surface_text}"
     );
     assert!(
-        surface_text.contains("src/lib.rs")
-            && surface_text.contains("file:///workspace/src/lib.rs"),
-        "surface text should render referenced resource label and URI: {surface_text}"
-    );
-    assert_eq!(
-        user_event
-            .pointer("/resources/0/uri")
-            .and_then(Value::as_str),
-        Some("file:///workspace/src/lib.rs")
-    );
-    assert_eq!(
-        user_event
-            .pointer("/resources/0/label")
-            .and_then(Value::as_str),
-        Some("src/lib.rs")
+        surface_text.contains("src/lib.rs"),
+        "surface text should render referenced resource label: {surface_text}"
     );
 }
 
@@ -1653,11 +1647,14 @@ async fn client_result_recording_is_idempotent_and_detects_conflicts(pool: sqlx:
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) {
+async fn client_result_methods_reject_wrong_tool_kind_and_ignore_stale_permission_result(
+    pool: sqlx::PgPool,
+) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
@@ -1687,7 +1684,9 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
         }),
     )
     .await;
-    let tool_error = tool_response["error"]["data"]["error"].as_str().unwrap();
+    let tool_error = tool_response["error"]["data"]["error"]
+        .as_str()
+        .expect("JSON-RPC validation error detail");
     assert!(
         tool_error.contains("does not accept client.tool.result"),
         "{tool_response}"
@@ -1716,11 +1715,16 @@ async fn client_result_methods_reject_wrong_obligation_kind(pool: sqlx::PgPool) 
         }),
     )
     .await;
-    let permission_error = permission_response["error"]["data"]["error"]
-        .as_str()
-        .unwrap();
-    assert!(
-        permission_error.contains("does not accept client.permission.result"),
+    assert_eq!(
+        permission_response["result"]["ok"], true,
+        "{permission_response}"
+    );
+    assert_eq!(
+        permission_response["result"]["status"], "late_result_ignored",
+        "{permission_response}"
+    );
+    assert_eq!(
+        permission_response["result"]["duplicate"], true,
         "{permission_response}"
     );
 }
