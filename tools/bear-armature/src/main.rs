@@ -5737,7 +5737,22 @@ async fn handle_local_slash_command(
 enum FocusPromptTarget {
     ConversationAssociated,
     JobId(String),
+    JobIdPrefix(String),
     Invalid,
+}
+
+fn is_job_id_prefix(candidate: &str) -> bool {
+    const UUID_HYPHEN_INDICES: [usize; 4] = [8, 13, 18, 23];
+
+    candidate.len() >= 8
+        && candidate.len() < Uuid::nil().hyphenated().to_string().len()
+        && candidate.bytes().enumerate().all(|(index, byte)| {
+            if UUID_HYPHEN_INDICES.contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
 }
 
 fn focus_prompt_target(prompt: &str) -> FocusPromptTarget {
@@ -5746,8 +5761,13 @@ fn focus_prompt_target(prompt: &str) -> FocusPromptTarget {
     let Some(candidate) = parts.next() else {
         return FocusPromptTarget::ConversationAssociated;
     };
-    if Uuid::parse_str(candidate).is_ok() && parts.next().is_none() {
+    if parts.next().is_some() {
+        return FocusPromptTarget::Invalid;
+    }
+    if Uuid::parse_str(candidate).is_ok() {
         FocusPromptTarget::JobId(candidate.to_string())
+    } else if is_job_id_prefix(candidate) {
+        FocusPromptTarget::JobIdPrefix(candidate.to_ascii_lowercase())
     } else {
         FocusPromptTarget::Invalid
     }
@@ -5757,7 +5777,9 @@ fn focus_prompt_target(prompt: &str) -> FocusPromptTarget {
 fn focus_job_id_from_prompt(prompt: &str) -> Option<String> {
     match focus_prompt_target(prompt) {
         FocusPromptTarget::JobId(job_id) => Some(job_id),
-        FocusPromptTarget::ConversationAssociated | FocusPromptTarget::Invalid => None,
+        FocusPromptTarget::JobIdPrefix(_)
+        | FocusPromptTarget::ConversationAssociated
+        | FocusPromptTarget::Invalid => None,
     }
 }
 
@@ -6043,8 +6065,40 @@ async fn focus_report(
             )
             .await
         }
+        FocusPromptTarget::JobIdPrefix(prefix) => {
+            let (Some(http), Some(config)) = (http, config) else {
+                return den_required_slash_command_unavailable(LocalSlashCommand::Focus);
+            };
+            match den_list_docket_jobs_for_session(http, config, session_id).await {
+                Ok(jobs) => match jobs
+                    .iter()
+                    .filter(|job| job.id.starts_with(&prefix))
+                    .collect::<Vec<_>>()
+                    .as_slice()
+                {
+                    [job] => focus_job_report(
+                        http,
+                        config,
+                        adapter_state,
+                        shared_state,
+                        session_id,
+                        job.id.clone(),
+                    )
+                    .await,
+                    [] => format!(
+                        "Den ACP /focus found no Docket Job matching prefix {prefix}. Use /focus <job_id> to provide a full job UUID."
+                    ),
+                    _ => format!(
+                        "Den ACP /focus found multiple Docket Jobs matching prefix {prefix}. Use a longer prefix."
+                    ),
+                },
+                Err(err) => format!(
+                    "Den ACP /focus could not list this conversation's Docket Jobs to resolve prefix {prefix}: {err:#}\n\nUse a full job UUID, or reconnect this ACP session and retry."
+                ),
+            }
+        }
         FocusPromptTarget::Invalid => {
-            "Den ACP /focus needs zero arguments or exactly one Docket job UUID: /focus [job_id]"
+            "Den ACP /focus needs zero arguments or exactly one Docket job UUID (or an 8+ character UUID prefix): /focus [job_id]"
                 .to_string()
         }
         FocusPromptTarget::ConversationAssociated => {
@@ -13310,6 +13364,22 @@ mod tests {
         assert_eq!(
             focus_job_id_from_prompt(&format!("/focus {job_id}")),
             Some(job_id.to_string())
+        );
+        assert_eq!(
+            focus_prompt_target("/focus 11111111"),
+            FocusPromptTarget::JobIdPrefix("11111111".to_string())
+        );
+        assert_eq!(
+            focus_prompt_target("/focus 11111111-1111"),
+            FocusPromptTarget::JobIdPrefix("11111111-1111".to_string())
+        );
+        assert_eq!(
+            focus_prompt_target("/focus 1111111"),
+            FocusPromptTarget::Invalid
+        );
+        assert_eq!(
+            focus_prompt_target("/focus 11111111z"),
+            FocusPromptTarget::Invalid
         );
         assert_eq!(
             focus_prompt_target("/focus"),
