@@ -271,7 +271,8 @@ impl Stream for NativeWebChatUpstreamStream {
                         | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
                     };
                     for value in &mut values {
-                        if value.get("type").and_then(|kind| kind.as_str()) == Some("runtime_card") {
+                        if value.get("type").and_then(|kind| kind.as_str()) == Some("runtime_card")
+                        {
                             this.runtime_event_sequence += 1;
                             value["invocation_id"] = serde_json::json!(request_id);
                             value["ordering"] = serde_json::json!({
