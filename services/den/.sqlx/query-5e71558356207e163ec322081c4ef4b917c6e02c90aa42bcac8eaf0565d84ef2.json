@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT scope_value FROM bear_web_sources WHERE bear_id = $1 AND scope_kind = 'host'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "scope_value",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5e71558356207e163ec322081c4ef4b917c6e02c90aa42bcac8eaf0565d84ef2"
+}
