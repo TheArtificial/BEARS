@@ -238,7 +238,7 @@ Recent slices have moved the plan through the governance/focus/orientation found
 ### Implementation review and adjustments
 
 - Prefer **events over new state tables** for diagnostics. Focus and task-definition history fit well as existing Docket events; orientation transitions should use an existing conversation/BearWire event stream or similarly lightweight log rather than a new heavy table.
-- Keep **legacy Docket-execution persistence** and diagnostic history separate. The current Docket execution-session record is migration input only; the eventual current-task record is the Pair continuation authority, while events explain how current-task/orientation/assignment changed over time.
+- Keep **legacy Docket-execution persistence** and diagnostic history separate. `docket_execution_sessions` is migration input only; a selected current task remains Pair's objective, while the matching canonical Docket execution attempt is the sole Pair continuation authority. Events explain how objective, attempt, orientation, and assignment changed over time.
 - Treat `/focus` strictly as a compatibility UX layer while it exists. Do not improve matching or add new callers; replace it with current-task projection plus explicit set/clear/assignment actions.
 - Do not build a generic `FocusTarget`. The target architecture needs a typed session current-task reference (session-local or Docket task) and a separate typed Work Job assignment; they are not interchangeable.
 - Keep broad budget enforcement behind the replay/tuning spine. The ledger/replay slices are now in place; next budget/checkpoint changes should either be replayable through the existing summary/comparison helpers or recorded as typed loop-control decisions.
