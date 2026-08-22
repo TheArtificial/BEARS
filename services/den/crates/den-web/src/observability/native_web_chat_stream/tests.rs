@@ -85,8 +85,11 @@ fn maps_tool_call_finished_to_status_and_single_error() {
         Some("req-1"),
     );
     assert_eq!(events.len(), 2);
-    assert_eq!(events[0]["type"], "server_tool_finished");
-    assert_eq!(events[0]["tool"], "memory_read");
+    assert_eq!(events[0]["type"], "runtime_card");
+    assert_eq!(events[0]["card_kind"], "tool_activity");
+    assert_eq!(events[0]["tool"]["name"], "memory_read");
+    assert_eq!(events[0]["tool"]["id"], "call_1");
+    assert_eq!(events[0]["delivery"]["persisted"], true);
     assert_eq!(events[1]["type"], "error");
     assert_eq!(events[1]["error_type"], "tool_execution_error");
 }
@@ -108,8 +111,11 @@ fn maps_tool_call_requested_to_server_tool_started() {
         None,
     );
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["type"], "server_tool_started");
-    assert_eq!(events[0]["tool"], "den_capabilities_list_self");
+    assert_eq!(events[0]["type"], "runtime_card");
+    assert_eq!(events[0]["card_kind"], "tool_activity");
+    assert_eq!(events[0]["tool"]["name"], "den_capabilities_list_self");
+    assert_eq!(events[0]["tool"]["id"], "call_1");
+    assert_eq!(events[0]["tool"]["arguments"], serde_json::json!({}));
 }
 
 #[test]

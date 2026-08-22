@@ -28,19 +28,34 @@ pub fn runtime_semantic_to_bear_channel_events(
             vec![serde_json::json!({ "type": "reasoning_delta", "text": text })]
         }
         RuntimeSemanticEvent::ToolCallFinished {
+            tool_call_id,
             tool_name,
             status,
             summary,
             error_message,
-            ..
         } => {
             let display_summary = summary
                 .or_else(|| error_message.clone())
                 .unwrap_or_else(|| format!("Finished {tool_name}"));
             let mut events = vec![serde_json::json!({
-                "type": "server_tool_finished",
-                "tool": tool_name,
-                "summary": display_summary,
+                "type": "runtime_card",
+                "card_kind": "tool_activity",
+                "label": display_summary,
+                "source": "den_runtime",
+                "tool": {
+                    "id": tool_call_id,
+                    "name": tool_name,
+                    "status": status.as_str(),
+                    "summary": display_summary,
+                    "error_message": error_message,
+                },
+                "delivery": {
+                    "persisted": true,
+                    "visible_to_user": true,
+                    "sent_to_model": false,
+                    "derived_context": false,
+                },
+                "redaction": { "state": "none" },
             })];
             if status == ToolCallFinishStatus::Error {
                 if let Some(message) = error_message {
@@ -89,12 +104,40 @@ pub fn runtime_semantic_to_bear_channel_events(
             vec![serde_json::json!({ "type": "done", "outcome": "ok" })]
         }
         RuntimeSemanticEvent::ToolCallRequested {
-            tool_name, title, ..
+            tool_call_id,
+            tool_name,
+            title,
+            kind,
+            arguments,
+            approval_request_id,
+            approval_required,
+            approval_reason,
+            run_id,
         } => {
-            let summary = title.unwrap_or_else(|| tool_name.clone());
+            let label = title.unwrap_or_else(|| format!("Run {tool_name}"));
             vec![serde_json::json!({
-                "type": "server_tool_started",
-                "tool": summary,
+                "type": "runtime_card",
+                "card_kind": "tool_activity",
+                "label": label,
+                "source": "den_runtime",
+                "tool": {
+                    "id": tool_call_id,
+                    "name": tool_name,
+                    "kind": kind,
+                    "arguments": arguments,
+                    "status": "requested",
+                    "approval_required": approval_required,
+                    "approval_request_id": approval_request_id,
+                    "approval_reason": approval_reason,
+                },
+                "run_id": run_id,
+                "delivery": {
+                    "persisted": true,
+                    "visible_to_user": true,
+                    "sent_to_model": false,
+                    "derived_context": false,
+                },
+                "redaction": { "state": "none" },
             })]
         }
         RuntimeSemanticEvent::Error {
@@ -146,6 +189,7 @@ pub fn runtime_semantic_to_bear_channel_events(
     }
 }
 
+#[cfg(test)]
 fn runtime_stream_event_to_bear_channel_bytes(
     event: RuntimeStreamEvent,
     request_id: Option<&str>,
@@ -168,6 +212,7 @@ pub struct NativeWebChatUpstreamStream {
         Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send>>,
     request_id: Uuid,
     pending: VecDeque<Bytes>,
+    runtime_event_sequence: u64,
     finished: bool,
 }
 
@@ -182,6 +227,7 @@ impl NativeWebChatUpstreamStream {
             inner: Box::pin(inner),
             request_id,
             pending: VecDeque::new(),
+            runtime_event_sequence: 0,
             finished: false,
         }
     }
@@ -217,8 +263,26 @@ impl Stream for NativeWebChatUpstreamStream {
         loop {
             match ready!(this.inner.as_mut().poll_next(cx)) {
                 Some(Ok(event)) => {
-                    let mut bytes =
-                        runtime_stream_event_to_bear_channel_bytes(event, Some(&request_id));
+                    let mut values = match event {
+                        RuntimeStreamEvent::Semantic(semantic) => {
+                            runtime_semantic_to_bear_channel_events(semantic, Some(&request_id))
+                        }
+                        RuntimeStreamEvent::ProviderActivity
+                        | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
+                    };
+                    for value in &mut values {
+                        if value.get("type").and_then(|kind| kind.as_str()) == Some("runtime_card") {
+                            this.runtime_event_sequence += 1;
+                            value["invocation_id"] = serde_json::json!(request_id);
+                            value["ordering"] = serde_json::json!({
+                                "stream_sequence": this.runtime_event_sequence,
+                            });
+                        }
+                    }
+                    let mut bytes = values
+                        .into_iter()
+                        .map(|value| bear_channel_sse_bytes(&value))
+                        .collect::<Vec<_>>();
                     if bytes.is_empty() {
                         continue;
                     }

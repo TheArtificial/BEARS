@@ -178,6 +178,9 @@ pub struct ChatHistoryMessage {
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    /// Typed runtime-card detail for replay; compact labels remain renderer-owned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<Value>,
 }
 
 fn chat_history_message_kind() -> String {
@@ -851,7 +854,9 @@ fn map_persisted_history_page(
     for (row, message) in visible_rows {
         let storage_role = message.role.clone();
         if let Some((_, last)) = coalesced_desc.last_mut() {
-            if last.role == client_chat_history_role(&storage_role)
+            if message.kind == "message"
+                && last.kind == "message"
+                && last.role == client_chat_history_role(&storage_role)
                 && storage_role == "assistant"
                 && matches!(
                     row.storage_message_type(),
@@ -869,19 +874,49 @@ fn map_persisted_history_page(
         let text = crate::observability::chat_proxy_stream::strip_ephemeral_status_suffixes(
             &message.content,
         );
-        if text.is_empty() {
+        if text.is_empty() && message.kind == "message" {
             continue;
         }
+        let event = match message.kind.as_str() {
+            "tool_call" => Some(json!({
+                "card_kind": "tool_activity",
+                "label": format!("Run {}", message.tool_name.as_deref().unwrap_or("tool")),
+                "source": "den_runtime",
+                "tool": {
+                    "id": message.tool_call_id.clone(),
+                    "name": message.tool_name.clone(),
+                    "status": message.status.clone(),
+                    "arguments": message.arguments.clone(),
+                },
+                "delivery": { "persisted": true, "visible_to_user": true, "sent_to_model": false, "derived_context": false },
+                "redaction": { "state": "none" },
+            })),
+            "tool_result" => Some(json!({
+                "card_kind": "tool_activity",
+                "label": text,
+                "source": "den_runtime",
+                "tool": {
+                    "id": message.tool_call_id.clone(),
+                    "name": message.tool_name.clone(),
+                    "status": message.status.clone(),
+                    "result": message.raw_output.clone(),
+                },
+                "delivery": { "persisted": true, "visible_to_user": true, "sent_to_model": false, "derived_context": false },
+                "redaction": { "state": "none" },
+            })),
+            _ => None,
+        };
         coalesced_desc.push((
             message.sequence_no,
             ChatHistoryMessage {
-                kind: chat_history_message_kind(),
+                kind: message.kind,
                 role: client_chat_history_role(&storage_role),
                 text,
-                tool_call_id: None,
-                tool_name: None,
-                status: None,
+                tool_call_id: message.tool_call_id,
+                tool_name: message.tool_name,
+                status: message.status,
                 created_at: Some(message.created_at.to_string()),
+                event,
             },
         ));
     }
@@ -920,6 +955,7 @@ fn chat_history_work_activity(
             tool_name: None,
             status: None,
             created_at,
+            event: None,
         },
         WorkActivityKind::ReasoningSummary => ChatHistoryMessage {
             kind: "reasoning_delta".to_string(),
@@ -929,6 +965,7 @@ fn chat_history_work_activity(
             tool_name: None,
             status: None,
             created_at,
+            event: None,
         },
         WorkActivityKind::ToolCall | WorkActivityKind::ToolResult => ChatHistoryMessage {
             kind: if entry.kind == WorkActivityKind::ToolCall {
@@ -950,6 +987,7 @@ fn chat_history_work_activity(
                 .to_string(),
             ),
             created_at,
+            event: None,
         },
         WorkActivityKind::Approval | WorkActivityKind::Lifecycle => ChatHistoryMessage {
             kind: chat_history_message_kind(),
@@ -959,6 +997,7 @@ fn chat_history_work_activity(
             tool_name: None,
             status: None,
             created_at,
+            event: None,
         },
     };
     Some(message)

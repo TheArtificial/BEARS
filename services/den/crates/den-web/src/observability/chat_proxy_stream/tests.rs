@@ -174,6 +174,17 @@ fn maps_rich_events_to_status_messages() {
 }
 
 #[test]
+fn maps_typed_runtime_card_without_losing_tool_metadata() {
+    let out = mapped_text(
+        "data: {\"type\":\"runtime_card\",\"card_kind\":\"tool_activity\",\"label\":\"Read src/main.rs\",\"source\":\"den_runtime\",\"tool\":{\"id\":\"call-1\",\"name\":\"fs_read_file\",\"arguments\":{\"path\":\"src/main.rs\"}},\"run_id\":\"run-1\",\"delivery\":{\"persisted\":true,\"visible_to_user\":true,\"sent_to_model\":false,\"derived_context\":false},\"redaction\":{\"state\":\"none\"}}\n\n",
+    );
+    assert!(out.contains("\"message_type\":\"runtime_card\""));
+    assert!(out.contains("\"card_kind\":\"tool_activity\""));
+    assert!(out.contains("\"call-1\""));
+    assert!(out.contains("src/main.rs"));
+}
+
+#[test]
 fn drops_done_control_event() {
     let out = mapped_text("data: {\"type\":\"done\",\"outcome\":\"ok\"}\n\n");
     assert!(out.is_empty());

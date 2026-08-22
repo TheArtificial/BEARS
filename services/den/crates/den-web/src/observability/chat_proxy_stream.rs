@@ -555,6 +555,19 @@ fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Byte
         }),
         // `done` / `stop_reason` are terminal control metadata, not user-visible status.
         "done" | "stop_reason" => return None,
+        "runtime_card" => serde_json::json!({
+            "message_type": "runtime_card",
+            "card_kind": inner.get("card_kind").and_then(|v| v.as_str()).unwrap_or("runtime_lifecycle"),
+            "label": inner.get("label").and_then(|v| v.as_str()).unwrap_or("Den runtime activity"),
+            "source": inner.get("source").and_then(|v| v.as_str()).unwrap_or("den_runtime"),
+            "tool": inner.get("tool").cloned(),
+            "run_id": inner.get("run_id").cloned(),
+            "invocation_id": inner.get("invocation_id").cloned(),
+            "ordering": inner.get("ordering").cloned(),
+            "delivery": inner.get("delivery").cloned(),
+            "redaction": inner.get("redaction").cloned(),
+            "payload": inner.get("payload").cloned(),
+        }),
         "server_tool_started"
         | "server_tool_finished"
         | "subagent_started"
