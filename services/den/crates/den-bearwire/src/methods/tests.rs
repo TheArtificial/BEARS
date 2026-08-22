@@ -405,6 +405,114 @@ async fn rpc_value(state: DenState, token: &str, method: &str, params: Value) ->
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn docket_execute_reports_no_session_then_attached_pair_binding(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let state = test_state(pool.clone());
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let surface_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)\n         VALUES ($1, $2, 'git_workspace', $3, now(), now())",
+    )
+    .bind(surface_id)
+    .bind(format!("bearwire-binding-{}", Uuid::new_v4().simple()))
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .expect("create work surface");
+    sqlx::query("INSERT INTO git_work_surface_details (id, upstream_url) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind("https://example.test/bearwire-binding.git")
+        .execute(&pool)
+        .await
+        .expect("create git surface details");
+    sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind(bear_id)
+        .execute(&pool)
+        .await
+        .expect("assign bear to work surface");
+
+    let job = PgDocketService::from_pool(&pool)
+        .create_job(DocketJobCreate {
+            bear_id,
+            created_by_user_id: user_id,
+            created_by_role: "pair".to_string(),
+            goal: "Pair binding diagnostics regression".to_string(),
+            work_surface_id: Some(surface_id),
+            work_surface_assignments: vec![],
+            commit_policy: None,
+            work_branch: None,
+            visibility: TaskListVisibility::SameUser,
+            source_conversation_id: None,
+            objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
+            criteria: vec![],
+            tasks: vec![DocketTaskInput {
+                client_key: None,
+                parent_client_key: None,
+                parent_task_id: None,
+                sibling_order: Some(0),
+                kind: DocketTaskKind::Execution,
+                scope: DocketTaskScope::Template,
+                title: "Verify binding".to_string(),
+                body: "Verify Pair binding response".to_string(),
+                completion_criteria: vec!["Binding is reported".to_string()],
+                difficulty: Some(DocketTaskDifficulty::Trivial),
+                effort_hint: Some(DocketEffortHint::Low),
+                routing_strategy: RoutingStrategy::Auto,
+                expected_context_size: None,
+                result_rollup_policy: None,
+            }],
+        })
+        .await
+        .expect("create Docket job");
+
+    let without_session = rpc_value(
+        state.clone(),
+        &token,
+        "docket.jobs.execute",
+        json!({ "bear_slug": bear_slug, "job_id": job.job.id }),
+    )
+    .await;
+    assert_eq!(
+        without_session["result"]["pair_binding"]["status"],
+        "not_attempted"
+    );
+    assert_eq!(
+        without_session["result"]["pair_binding"]["reason"],
+        "no_authenticated_pair_session"
+    );
+
+    let attached = rpc_value(
+        state,
+        &token,
+        "docket.jobs.execute",
+        json!({ "bear_slug": bear_slug, "job_id": job.job.id, "session_id": session_id }),
+    )
+    .await;
+    let task_id = attached["result"]["pair_binding"]["task_id"]
+        .as_str()
+        .expect("attached task id");
+    assert_eq!(attached["result"]["pair_binding"]["status"], "attached");
+    assert_eq!(
+        attached["result"]["pair_binding"]["current_task_selected"],
+        true
+    );
+    let attached_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM bear_pair_task_attachments WHERE task_id = $1 AND released_at IS NULL",
+    )
+    .bind(Uuid::parse_str(task_id).expect("parse attached task id"))
+    .fetch_one(&pool)
+    .await
+    .expect("load Pair attachment");
+    assert_eq!(attached_count, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
