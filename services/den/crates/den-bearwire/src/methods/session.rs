@@ -434,7 +434,9 @@ fn active_activity_plan_projection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use den_docket::{TaskListProjection, TaskListSourceRef, TaskListSyncState};
+    use den_docket::{
+        TaskListItem, TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncState,
+    };
     use den_runtime::runtime::task_context::{RuntimeTaskContext, RuntimeTaskSource};
     use sqlx::types::time::OffsetDateTime;
     use uuid::Uuid;
