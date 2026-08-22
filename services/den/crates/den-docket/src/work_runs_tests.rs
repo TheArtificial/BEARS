@@ -24,7 +24,8 @@ use crate::work_runs::{
     WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned, WorkRunState,
 };
 use crate::{
-    DocketCommitPolicy, DocketCriterionKind, DocketExecutionBinding, DocketExecutionDisposition,
+    DocketCommitPolicy, DocketCriterionKind, DocketExecutionAttemptOwner,
+    DocketExecutionAttemptState, DocketExecutionBinding, DocketExecutionDisposition,
     DocketExecutionGate, DocketExecutionReason, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService, DocketTaskDefinitionPatch,
     DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate,
@@ -968,6 +969,19 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
         .completion_criteria
         .iter()
         .any(|criterion| criterion.contains("Alpha work task is verifiably complete")));
+    let execution_attempt = checkout
+        .execution_attempt
+        .as_ref()
+        .expect("allowed Work checkout starts a canonical attempt");
+    assert_eq!(execution_attempt.task_id, task_ids[0]);
+    assert_eq!(
+        execution_attempt.state,
+        DocketExecutionAttemptState::Running
+    );
+    assert!(matches!(
+        execution_attempt.owner,
+        DocketExecutionAttemptOwner::Work { work_run_id } if work_run_id == run.id
+    ));
     let execution_count = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM docket_execution_sessions
          WHERE bear_id = $1 AND owner_profile = 'work' AND session_id = $2 AND state = 'active'",

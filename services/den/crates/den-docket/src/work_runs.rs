@@ -1653,7 +1653,7 @@ pub async fn checkout_work_run_for_session(
             authorization_key: run.id,
         })
         .await?;
-    service
+    let attempt = service
         .start_execution_attempt(DocketExecutionAttemptStart {
             attempt_id: attempt.id,
             fence_epoch: attempt.fence_epoch,
