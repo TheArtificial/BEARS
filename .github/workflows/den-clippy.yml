@@ -39,8 +39,10 @@ jobs:
               with:
                   workspaces: services/den
 
-            - name: Enforce checked SQLx query ratchet
-              run: sh scripts/check-sqlx-queries.sh
+            - name: Verify checked SQLx metadata is current
+              run: |
+                  ../../scripts/sqlx.sh migrate run
+                  ../../scripts/sqlx.sh prepare --check --workspace -- --all-targets
 
             # v2 gate (DEN_CRATE_SPLIT_PLAN.md): the default lint set plus clippy
             # pedantic/nursery (set to `deny` in `[workspace.lints.clippy]` with a

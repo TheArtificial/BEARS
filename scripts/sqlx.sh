@@ -13,7 +13,8 @@ with a database URL reachable from this workspace container.
 
 Examples:
   ./scripts/sqlx.sh migrate run
-  ./scripts/sqlx.sh prepare --workspace
+  ./scripts/sqlx.sh prepare --workspace -- --all-targets
+  ./scripts/sqlx.sh prepare --check --workspace -- --all-targets
 EOF
 }
 

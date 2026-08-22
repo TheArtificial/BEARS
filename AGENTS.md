@@ -53,7 +53,11 @@ Run SQLx commands through `scripts/sqlx.sh`. It starts and verifies bundled Post
 ```bash
 ./scripts/sqlx.sh migrate run
 ./scripts/sqlx.sh prepare --workspace -- --all-targets
+./scripts/sqlx.sh migrate run
+./scripts/sqlx.sh prepare --check --workspace -- --all-targets
 ```
+
+The prepare command and verification script include all Cargo targets, so test-only SQLx macros are represented in the committed `services/den/.sqlx/` cache. Commit cache changes with the query or migration that requires them.
 
 Create Den migrations with SQLx; never hand-write a numeric migration prefix. SQLx generates a unique timestamped version:
 
