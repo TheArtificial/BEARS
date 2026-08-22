@@ -46,14 +46,14 @@ use super::model::{
     DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketJobCreate,
     DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
-    DocketPairBoundedOutcome, DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport,
-    DocketPairContinuationDecision, DocketSchedulerObservationDeliveryState,
-    DocketSchedulerObservationDisposition, DocketSchedulerObservationEnqueue,
-    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
-    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement,
-    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
-    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
-    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketPairAwaitingUserResume, DocketPairBoundedOutcome, DocketPairBoundedOutcomeDecision,
+    DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
+    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
+    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow, DocketSessionTaskSettlement,
+    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
+    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
+    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
+    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1418,6 +1418,25 @@ pub(super) async fn report_pair_bounded_outcome(
         }
         DocketPairBoundedOutcome::Settled => ("settled", DocketPairContinuationDecision::Stop),
     };
+    let question = match (report.outcome, report.awaiting_user_question) {
+        (DocketPairBoundedOutcome::AwaitingUser, Some(question))
+            if !question.question_reference.trim().is_empty() =>
+        {
+            Some(question)
+        }
+        (DocketPairBoundedOutcome::AwaitingUser, _) => {
+            return Err(DenError::ValidationError(
+                "awaiting-user outcome requires a precise question reference".to_string(),
+            ));
+        }
+        (_, None) => None,
+        _ => {
+            return Err(DenError::ValidationError(
+                "question reference is only valid for an awaiting-user outcome".to_string(),
+            ));
+        }
+    };
+    let mut tx = pool.begin().await?;
     let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r#"
         UPDATE docket_execution_attempts
@@ -1439,15 +1458,123 @@ pub(super) async fn report_pair_bounded_outcome(
     .bind(report.attempt_id)
     .bind(report.fence_epoch)
     .bind(state)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| {
         DenError::NotFound("pair execution attempt is not current with this fence".to_string())
     })?;
+    if let Some(question) = question {
+        sqlx::query(
+            "INSERT INTO docket_pair_awaiting_user_questions \
+             (execution_attempt_id, question_key, question_reference) VALUES ($1, $2, $3) \
+             ON CONFLICT (execution_attempt_id, question_key) DO UPDATE \
+             SET question_reference = docket_pair_awaiting_user_questions.question_reference",
+        )
+        .bind(report.attempt_id)
+        .bind(question.question_key)
+        .bind(question.question_reference)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
     Ok(DocketPairBoundedOutcomeDecision {
         attempt: row.try_into()?,
         decision,
     })
+}
+
+pub(super) async fn resume_pair_awaiting_user(
+    pool: &PgPool,
+    resume: DocketPairAwaitingUserResume,
+) -> Result<DocketExecutionAttemptRow, DenError> {
+    if resume.response_reference.trim().is_empty() {
+        return Err(DenError::ValidationError(
+            "awaiting-user resume requires a response reference".to_string(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    let response_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM docket_pair_awaiting_user_responses WHERE response_key = $1)",
+    )
+    .bind(resume.response_key)
+    .fetch_one(&mut *tx)
+    .await?;
+    let matching_response_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM docket_pair_awaiting_user_responses \
+         WHERE response_key = $1 AND execution_attempt_id = $2 AND question_key = $3 \
+           AND response_reference = $4)",
+    )
+    .bind(resume.response_key)
+    .bind(resume.attempt_id)
+    .bind(resume.question_key)
+    .bind(&resume.response_reference)
+    .fetch_one(&mut *tx)
+    .await?;
+    if response_exists && !matching_response_exists {
+        return Err(DenError::ValidationError(
+            "awaiting-user response key is already bound to another response".to_string(),
+        ));
+    }
+    let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r#"
+        UPDATE docket_execution_attempts attempt
+        SET state = 'authorized', updated_at = NOW()
+        WHERE attempt.id = $1 AND attempt.fence_epoch = $2
+          AND attempt.owner_kind = 'pair' AND attempt.state = 'awaiting_user'
+          AND EXISTS (
+              SELECT 1 FROM docket_pair_awaiting_user_questions question
+              WHERE question.execution_attempt_id = attempt.id AND question.question_key = $3
+          )
+        RETURNING attempt.id, attempt.bear_id, attempt.task_id, attempt.owner_kind,
+                  attempt.pair_session_id, attempt.pair_run_id, attempt.work_run_id,
+                  attempt.fence_epoch, attempt.authorization_key, attempt.state,
+                  attempt.started_at, attempt.paused_at, attempt.settled_at, attempt.released_at,
+                  attempt.created_at, attempt.updated_at
+        "#,
+    )
+    .bind(resume.attempt_id)
+    .bind(resume.fence_epoch)
+    .bind(resume.question_key)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let row = match row {
+        Some(row) => {
+            sqlx::query(
+                "INSERT INTO docket_pair_awaiting_user_responses \
+                 (execution_attempt_id, question_key, response_key, response_reference) \
+                 VALUES ($1, $2, $3, $4) ON CONFLICT (response_key) DO NOTHING",
+            )
+            .bind(resume.attempt_id)
+            .bind(resume.question_key)
+            .bind(resume.response_key)
+            .bind(resume.response_reference)
+            .execute(&mut *tx)
+            .await?;
+            row
+        }
+        None if response_exists => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+            "SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id, \
+                    fence_epoch, authorization_key, state, started_at, paused_at, settled_at, \
+                    released_at, created_at, updated_at FROM docket_execution_attempts \
+             WHERE id = $1 AND fence_epoch = $2 AND state = 'authorized'",
+        )
+        .bind(resume.attempt_id)
+        .bind(resume.fence_epoch)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| {
+            DenError::NotFound(
+                "awaiting-user attempt is not resumable with this response".to_string(),
+            )
+        })?,
+        None => {
+            return Err(DenError::NotFound(
+                "awaiting-user attempt is not resumable with this question and fence".to_string(),
+            ))
+        }
+    };
+    tx.commit().await?;
+    row.try_into()
 }
 
 pub(super) async fn require_checkpoint_directive(

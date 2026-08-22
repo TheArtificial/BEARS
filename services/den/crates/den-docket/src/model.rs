@@ -1310,6 +1310,26 @@ pub struct DocketPairBoundedOutcomeReport {
     pub attempt_id: Uuid,
     pub fence_epoch: i64,
     pub outcome: DocketPairBoundedOutcome,
+    /// Required when `outcome` is `AwaitingUser`; records the exact question
+    /// that blocks continuation instead of treating reconnect as a resume.
+    pub awaiting_user_question: Option<DocketPairAwaitingUserQuestion>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketPairAwaitingUserQuestion {
+    pub question_key: Uuid,
+    pub question_reference: String,
+}
+
+/// A trusted authenticated boundary records this explicit response before Pair
+/// may start the same paused attempt again.
+#[derive(Debug, Clone)]
+pub struct DocketPairAwaitingUserResume {
+    pub attempt_id: Uuid,
+    pub fence_epoch: i64,
+    pub question_key: Uuid,
+    pub response_key: Uuid,
+    pub response_reference: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

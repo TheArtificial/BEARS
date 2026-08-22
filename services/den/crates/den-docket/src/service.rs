@@ -18,10 +18,10 @@ use super::model::{
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptRow, DocketExecutionAttemptStart,
     DocketExecutionLookup, DocketExecutionSessionRow, DocketExecutionTaskSettlement,
     DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketPairBoundedOutcomeDecision,
-    DocketPairBoundedOutcomeReport, DocketSchedulerObservationEnqueue,
-    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
-    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
+    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketPairAwaitingUserResume,
+    DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport,
+    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow, DocketSessionTaskSettlement,
+    DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
     TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
     TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
 };
@@ -90,6 +90,14 @@ pub trait DocketService: Send + Sync {
         &self,
         report: DocketPairBoundedOutcomeReport,
     ) -> Result<DocketPairBoundedOutcomeDecision, DenError>;
+
+    /// Records an authenticated response to the exact pending Pair question
+    /// and makes the attempt startable again. Callers must authenticate the
+    /// user/session before invoking this Docket transition.
+    async fn resume_pair_awaiting_user(
+        &self,
+        resume: DocketPairAwaitingUserResume,
+    ) -> Result<DocketExecutionAttemptRow, DenError>;
 
     async fn acknowledge_checkpoint_directive(
         &self,
@@ -276,6 +284,13 @@ impl DocketService for PgDocketService {
         report: DocketPairBoundedOutcomeReport,
     ) -> Result<DocketPairBoundedOutcomeDecision, DenError> {
         db::report_pair_bounded_outcome(&self.pool, report).await
+    }
+
+    async fn resume_pair_awaiting_user(
+        &self,
+        resume: DocketPairAwaitingUserResume,
+    ) -> Result<DocketExecutionAttemptRow, DenError> {
+        db::resume_pair_awaiting_user(&self.pool, resume).await
     }
 
     async fn acknowledge_checkpoint_directive(

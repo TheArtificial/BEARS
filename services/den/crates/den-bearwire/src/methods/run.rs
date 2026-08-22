@@ -1753,6 +1753,7 @@ async fn report_pair_bounded_outcome(
             attempt_id,
             fence_epoch,
             outcome,
+            awaiting_user_question: None,
         })
         .await
     {
