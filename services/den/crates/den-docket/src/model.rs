@@ -1304,6 +1304,17 @@ pub struct DocketWorkBoundaryCheck {
     pub attempt_id: Uuid,
     pub fence_epoch: i64,
     pub boundary_key: Uuid,
+    /// Trusted runtime evidence observed at this boundary. Docket converts it
+    /// into a durable checkpoint; executors do not decide whether to continue.
+    pub signal: Option<DocketWorkBoundarySignal>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketWorkBoundarySignal {
+    ExcessiveExploration,
+    RepeatedFailure,
+    NearKo,
 }
 
 /// Releases an abandoned or superseded canonical attempt. The reconciler must

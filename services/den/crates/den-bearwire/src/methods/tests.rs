@@ -3238,13 +3238,12 @@ async fn work_checkpoint_acknowledgement_unblocks_a_fresh_checkout(pool: sqlx::P
     let fence_epoch = first["result"]["execution_attempt_fence_epoch"]
         .as_i64()
         .expect("checkout returns fence epoch");
-    let directive_id: Uuid = sqlx::query_scalar("INSERT INTO docket_checkpoint_directives (execution_attempt_id, fence_epoch, state) VALUES ($1, $2, 'pending') RETURNING id")
-        .bind(attempt_id).bind(fence_epoch).fetch_one(&pool).await.expect("create pending checkpoint directive");
-
     let boundary = rpc_value(
         state.clone(), &token, "work.boundary",
-        json!({ "bear_slug": bear_slug, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "boundary_key": Uuid::new_v4() }),
+        json!({ "bear_slug": bear_slug, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "boundary_key": Uuid::new_v4(), "signal": "excessive_exploration" }),
     ).await;
+    let directive_id: Uuid = sqlx::query_scalar("SELECT id FROM docket_checkpoint_directives WHERE execution_attempt_id = $1 AND fence_epoch = $2")
+        .bind(attempt_id).bind(fence_epoch).fetch_one(&pool).await.expect("boundary signal creates checkpoint directive");
     assert_eq!(boundary["result"]["ok"], false, "{boundary}");
     assert_eq!(
         boundary["result"]["gate"]["disposition"], "require_checkpoint",
@@ -3300,6 +3299,13 @@ async fn work_checkpoint_acknowledgement_unblocks_a_fresh_checkout(pool: sqlx::P
     assert_eq!(
         resumed["result"]["execution_attempt_id"],
         attempt_id.to_string(),
+        "{resumed}"
+    );
+    assert!(
+        resumed["result"]["execution_attempt_fence_epoch"]
+            .as_i64()
+            .expect("resumed checkout returns fence epoch")
+            > fence_epoch,
         "{resumed}"
     );
 }

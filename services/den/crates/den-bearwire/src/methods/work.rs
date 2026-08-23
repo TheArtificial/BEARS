@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use den_docket::{
     work_runs, DocketCheckpointDirectiveAcknowledge, DocketService, DocketWorkBoundaryCheck,
-    PgDocketService,
+    DocketWorkBoundarySignal, PgDocketService,
 };
 use den_http::errors::CustomError;
 use den_service::{
@@ -114,6 +114,7 @@ pub(crate) async fn work_boundary_result(
             attempt_id: request.execution_attempt_id,
             fence_epoch: request.fence_epoch,
             boundary_key: request.boundary_key,
+            signal: request.signal,
         })
         .await?;
     Ok(
@@ -126,6 +127,8 @@ struct WorkBoundaryRequest {
     execution_attempt_id: Uuid,
     fence_epoch: i64,
     boundary_key: Uuid,
+    #[serde(default)]
+    signal: Option<DocketWorkBoundarySignal>,
 }
 
 #[derive(Deserialize)]

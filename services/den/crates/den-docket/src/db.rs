@@ -1363,7 +1363,20 @@ pub(super) async fn authorize_execution_attempt(
         )
         VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'authorized')
         ON CONFLICT (authorization_key) DO UPDATE
-        SET updated_at = docket_execution_attempts.updated_at
+        SET fence_epoch = CASE
+                WHEN docket_execution_attempts.state = 'released'
+                THEN docket_execution_attempts.fence_epoch + 1
+                ELSE docket_execution_attempts.fence_epoch
+            END,
+            state = CASE
+                WHEN docket_execution_attempts.state = 'released' THEN 'authorized'
+                ELSE docket_execution_attempts.state
+            END,
+            released_at = CASE
+                WHEN docket_execution_attempts.state = 'released' THEN NULL
+                ELSE docket_execution_attempts.released_at
+            END,
+            updated_at = NOW()
         RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
@@ -1686,6 +1699,15 @@ pub(super) async fn check_work_boundary(
     .await?
     .ok_or_else(|| DenError::NotFound("work attempt is not running with this fence".to_string()))?;
     let attempt: DocketExecutionAttemptRow = attempt.try_into()?;
+    // A trusted runtime signal is converted into the existing durable directive
+    // before deciding. Replays remain safe: one directive is unique per fence.
+    if check.signal.is_some() {
+        require_checkpoint_directive(pool, check.attempt_id, check.fence_epoch).await?;
+        return Ok(DocketExecutionGate::Rejected {
+            reason: DocketExecutionReason::CheckpointRequired,
+            disposition: DocketExecutionDisposition::RequireCheckpoint,
+        });
+    }
     let pending = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM docket_checkpoint_directives \
          WHERE execution_attempt_id = $1 AND fence_epoch = $2 AND state = 'pending')",
@@ -1774,6 +1796,7 @@ pub(super) async fn acknowledge_checkpoint_directive(
     pool: &PgPool,
     acknowledge: DocketCheckpointDirectiveAcknowledge,
 ) -> Result<DocketCheckpointDirectiveRow, DenError> {
+    let mut tx = pool.begin().await?;
     let row = sqlx::query_as::<_, DocketCheckpointDirectiveDbRow>(
         r#"
         UPDATE docket_checkpoint_directives directive
@@ -1807,7 +1830,7 @@ pub(super) async fn acknowledge_checkpoint_directive(
     .bind(acknowledge.fence_epoch)
     .bind(&acknowledge.artifact_ref)
     .bind(acknowledge.bear_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
     let row = match row {
         Some(row) => row,
@@ -1825,7 +1848,7 @@ pub(super) async fn acknowledge_checkpoint_directive(
         .bind(acknowledge.fence_epoch)
         .bind(&acknowledge.artifact_ref)
         .bind(acknowledge.bear_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| {
             DenError::NotFound(
@@ -1834,6 +1857,18 @@ pub(super) async fn acknowledge_checkpoint_directive(
             )
         })?,
     };
+    // Acknowledgement is a durable handoff, not permission to keep using this
+    // fence. A later checkout reauthorizes it with a fresh epoch.
+    sqlx::query(
+        "UPDATE docket_execution_attempts \
+         SET state = 'released', released_at = NOW(), updated_at = NOW() \
+         WHERE id = $1 AND fence_epoch = $2 AND state = 'running'",
+    )
+    .bind(acknowledge.execution_attempt_id)
+    .bind(acknowledge.fence_epoch)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     row.try_into()
 }
 
