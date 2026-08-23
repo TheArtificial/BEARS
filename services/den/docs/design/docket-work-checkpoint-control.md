@@ -89,6 +89,32 @@ checkpoint ID. If the Work session/runtime run disappears, the attempt recovery
 path stops or releases the attempt according to normal lease rules. It never
 fabricates acknowledgement.
 
+## Direct boundary decision contract
+
+At each meaningful Work safe boundary—checkout, before a new runtime turn, and
+before resuming after a checkpoint—Work sends its immutable attempt ID and
+exact fence to Docket. Docket owns the response and returns exactly one typed
+decision:
+
+```text
+Allow | RequireCheckpoint(directive) | Pause | Release | Stop
+```
+
+`Allow` is an authorization for only the next bounded runtime window. It does
+not select another task, renew a lease, or reset a hard budget/failure fuse.
+`RequireCheckpoint` is the durable directive defined above; `Pause`, `Release`,
+and `Stop` prevent a new turn. The runtime treats an absent, stale, or
+mismatched response as non-allowing.
+
+The request and response are correlated by `(attempt_id, fence_epoch,
+boundary_key)`. Docket persists the policy-changing result atomically with the
+attempt/directive state. Repeating an exact request returns the same decision;
+a stale fence is rejected; a successor fence never inherits an old `Allow`.
+Transient transport retry may reissue the exact boundary request, but needs no
+scheduler-observation/outbox record. After restart, Docket reloads the live
+attempt and any pending directive, returns the deterministic current decision,
+and Work must revalidate before continuing.
+
 ## Implementation boundaries
 
 - `den-docket/model.rs`: add typed `RequireCheckpoint` gate/disposition and
@@ -113,3 +139,6 @@ fabricates acknowledgement.
    required.
 6. Restart/retry preserves a pending directive; a successor fence cannot
    acknowledge its predecessor's directive.
+7. Boundary decisions are idempotent for an exact attempt/fence/boundary key;
+   stale or restarted Work must revalidate and never treats an absent decision
+   as `Allow`.

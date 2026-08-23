@@ -2,9 +2,9 @@
 
 ## Status
 
-Implementation contract for the continuation-authority revision in
-`docs/roadmap/AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md`. This is the required
-foundation before runtime delivery is added to scheduler observations.
+Implementation contract for the continuation-authority revision. This is the
+required foundation for direct, fence-validated control decisions at Pair and
+Work safe boundaries; it does not require a scheduler-observation outbox.
 
 ## Boundary
 
@@ -114,9 +114,9 @@ expiry means no new work and cannot roll back an already-issued external call.
 - Docket routing reservations and turn-attempt telemetry remain inner-loop
   dispatch evidence and must reference the canonical attempt where task work is
   autonomous.
-- Scheduler observations reference attempt ID, owner correlation, and fence.
-  Existing observation records remain readable compatibility history; do not
-  build live delivery until this rebase exists.
+- Scheduler-observation tables were removed pre-release with legacy execution
+  sessions. Direct Docket boundary decisions must instead carry attempt ID,
+  owner correlation, and fence; do not reintroduce an observation outbox.
 - Work checkpoint escalation is defined in [Docket Work checkpoint control](docket-work-checkpoint-control.md). A checkpoint artifact is evidence tied to the canonical Work attempt/fence through the existing checkout session-to-runtime-run boundary; checkpoint acknowledgement never authorizes dispatch.
 
 ## Required persistence tests
