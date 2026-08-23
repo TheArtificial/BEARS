@@ -167,24 +167,4 @@ mod tests {
         assert!(context.active_activity_plan().is_none());
         assert_eq!(context.source.as_str(), "session_current_task");
     }
-
-    #[test]
-    fn durable_execution_prefers_its_persisted_task() {
-        let task_id = Uuid::new_v4();
-        assert_eq!(
-            durable_execution_current_task_id(Some(task_id), None),
-            Some(task_id)
-        );
-    }
-
-    #[test]
-    fn active_docket_execution_lookup_uses_conversation_execution_restore_path() {
-        let lookup = active_docket_execution_lookup_for_session("conv-1", "session-1");
-        assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
-        assert_eq!(lookup.source_conversation_id.as_deref(), Some("conv-1"));
-        assert_eq!(
-            lookup.source_client_session_id.as_deref(),
-            Some("session-1")
-        );
-    }
 }

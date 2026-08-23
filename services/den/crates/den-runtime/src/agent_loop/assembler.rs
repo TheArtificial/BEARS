@@ -728,100 +728,6 @@ mod tests {
     }
 
     #[test]
-    fn active_docket_execution_lookup_keeps_conversation_restore_path() {
-        let lookup = active_docket_execution_lookup(Some("session-1"), "conversation-1");
-
-        assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
-        assert_eq!(
-            lookup.source_client_session_id.as_deref(),
-            Some("session-1")
-        );
-        assert_eq!(
-            lookup.source_conversation_id.as_deref(),
-            Some("conversation-1")
-        );
-    }
-
-    #[test]
-    fn active_docket_execution_lookup_restores_without_live_session() {
-        let lookup = active_docket_execution_lookup(None, "conversation-1");
-
-        assert!(lookup.session_id.is_none());
-        assert!(lookup.source_client_session_id.is_none());
-        assert_eq!(
-            lookup.source_conversation_id.as_deref(),
-            Some("conversation-1")
-        );
-    }
-
-    #[test]
-    fn headless_execution_without_user_projection_focuses_its_job() {
-        let job_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
-        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
-        let execution = DocketExecutionSessionRow {
-            id: Uuid::nil(),
-            bear_id: Uuid::nil(),
-            owner_profile: "work".to_string(),
-            session_id: "headless-session".to_string(),
-            source_conversation_id: None,
-            source_client_session_id: Some("headless-session".to_string()),
-            job_id,
-            run_id: Uuid::nil(),
-            task_id: Some(task_id),
-            state: "active".to_string(),
-            created_at: time::OffsetDateTime::UNIX_EPOCH,
-            updated_at: time::OffsetDateTime::UNIX_EPOCH,
-        };
-
-        let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(BearProfile::Work, None, Some(&execution), None, true),
-        );
-        assert_eq!(
-            orientation,
-            ObjectiveOrientation::DocketExecution {
-                job: crate::agent_loop::DocketExecutionOrientation {
-                    job_id: job_id.to_string(),
-                    active_task_ref: Some(OrientationTaskRef::DocketTask {
-                        job_id: Some(job_id.to_string()),
-                        task_id: task_id.to_string(),
-                        title: None,
-                    }),
-                    mutable: true,
-                }
-            }
-        );
-    }
-
-    #[test]
-    fn pair_does_not_treat_legacy_execution_as_work_assignment() {
-        let execution = DocketExecutionSessionRow {
-            id: Uuid::nil(),
-            bear_id: Uuid::nil(),
-            owner_profile: "pair".to_string(),
-            session_id: "pair-session".to_string(),
-            source_conversation_id: Some("conversation-1".to_string()),
-            source_client_session_id: Some("pair-session".to_string()),
-            job_id: Uuid::new_v4(),
-            run_id: Uuid::nil(),
-            task_id: None,
-            state: "active".to_string(),
-            created_at: time::OffsetDateTime::UNIX_EPOCH,
-            updated_at: time::OffsetDateTime::UNIX_EPOCH,
-        };
-
-        let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(BearProfile::Pair, None, Some(&execution), None, true),
-        );
-
-        assert_eq!(
-            orientation,
-            ObjectiveOrientation::Freeform {
-                policy: FreeformPolicy::task_definition_permitted(),
-            }
-        );
-    }
-
-    #[test]
     fn planned_activity_plan_does_not_orient_to_task() {
         let task_list_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
         let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
@@ -865,7 +771,7 @@ mod tests {
         // A visible pending session task is context only until Pair explicitly
         // selects it as the current task.
         let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(BearProfile::Pair, Some(&plan), None, None, true),
+            objective_orientation_input(BearProfile::Pair, Some(&plan), None, true),
         );
         assert_eq!(
             orientation,
@@ -875,7 +781,7 @@ mod tests {
         );
 
         let orientation = crate::agent_loop::resolve_objective_orientation(
-            objective_orientation_input(BearProfile::Pair, Some(&plan), None, Some(task_id), true),
+            objective_orientation_input(BearProfile::Pair, Some(&plan), Some(task_id), true),
         );
         assert!(matches!(orientation, ObjectiveOrientation::Oriented { .. }));
     }

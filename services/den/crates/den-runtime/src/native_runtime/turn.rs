@@ -2286,7 +2286,17 @@ mod tests {
     }
 
     #[test]
-    fn native_turn_profile_keeps_resolved_safety_limits() {
+    fn native_turn_hard_budget_comes_from_resolved_control_profile() {
+        let standard = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/test"),
+            model_default: Some(den_core::AgentLoopControlLevel::Standard),
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearProfile::Pair),
+            objective_orientation: None,
+            pre_risk: false,
+        });
         let resolved = resolve_agent_loop_control(AgentLoopControlResolutionInput {
             model_handle: Some("openai/test"),
             model_default: Some(den_core::AgentLoopControlLevel::Strict),
@@ -2298,6 +2308,10 @@ mod tests {
             pre_risk: false,
         });
         let base = resolved.profile;
+        assert_ne!(
+            base.budget.emergency_hard_steps,
+            standard.profile.budget.emergency_hard_steps
+        );
         let initialized = native_turn_control_profile(resolved, 1.5);
 
         assert_eq!(initialized.level, den_core::AgentLoopControlLevel::Strict);
@@ -2335,17 +2349,6 @@ mod tests {
                     .replenish_read
             ) * 1.5)
                 .ceil() as u32
-        );
-    }
-
-    #[test]
-    fn active_docket_execution_lookup_uses_conversation_execution_restore_path() {
-        let lookup = active_docket_execution_lookup_for_session("conv-1", "session-1");
-        assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
-        assert_eq!(lookup.source_conversation_id.as_deref(), Some("conv-1"));
-        assert_eq!(
-            lookup.source_client_session_id.as_deref(),
-            Some("session-1")
         );
     }
 
