@@ -1518,6 +1518,20 @@ impl SessionTrackingStream {
     // The Err carries the full runtime event to emit; boxing it would ripple
     // through every `?` call site for no runtime win on this cold path.
     #[allow(clippy::result_large_err)]
+    fn checkpoint_allows_read_only_diagnostic_tool(tool_name: &str) -> bool {
+        // Checkpoints must not make a stalled run unobservable. Keep this explicit:
+        // these server tools inspect durable state and cannot advance or mutate it.
+        matches!(
+            tool_name,
+            "list_work_runs"
+                | "get_work_run"
+                | "get_job"
+                | "list_jobs"
+                | "list_docket_entries"
+                | "get_task_list_status"
+        )
+    }
+
     fn block_or_recover_if_checkpoint_pending(
         &mut self,
         attempted_action: &str,
@@ -2196,16 +2210,18 @@ impl Stream for SessionTrackingStream {
                     }
                     return Poll::Ready(Some(Ok(started)));
                 }
-                if let Err(event) =
-                    self.block_or_recover_if_checkpoint_pending(&format!("tool_call:{tool_name}"))
-                {
-                    if matches!(
-                        event,
-                        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
-                    ) {
-                        self.finished = true;
+                if !Self::checkpoint_allows_read_only_diagnostic_tool(&tool_name) {
+                    if let Err(event) = self
+                        .block_or_recover_if_checkpoint_pending(&format!("tool_call:{tool_name}"))
+                    {
+                        if matches!(
+                            event,
+                            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
+                        ) {
+                            self.finished = true;
+                        }
+                        return Poll::Ready(Some(Ok(event)));
                     }
-                    return Poll::Ready(Some(Ok(event)));
                 }
                 if let Err(event) =
                     self.block_or_recover_if_checkpoint_task_action_pending(&tool_name)
@@ -2655,6 +2671,18 @@ mod tests {
         assert!(oriented_child_limit_error(6, 5).is_none());
         let error = oriented_child_limit_error(6, 6).expect("cap is enforced");
         assert!(error.contains("max_children is 6"));
+    }
+
+    #[test]
+    fn pending_checkpoint_allows_only_explicit_read_only_diagnostics() {
+        assert!(
+            SessionTrackingStream::checkpoint_allows_read_only_diagnostic_tool("list_work_runs")
+        );
+        assert!(SessionTrackingStream::checkpoint_allows_read_only_diagnostic_tool("get_job"));
+        assert!(
+            !SessionTrackingStream::checkpoint_allows_read_only_diagnostic_tool("dispatch_work")
+        );
+        assert!(!SessionTrackingStream::checkpoint_allows_read_only_diagnostic_tool("run_command"));
     }
 
     #[tokio::test]
