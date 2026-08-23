@@ -2198,13 +2198,16 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
 
     let docket_job_id: Uuid = sqlx::query_scalar(
         r"
-        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal)
-        VALUES ($1, $2, 'pair', 'Surface diagnostics job')
+        INSERT INTO bear_jobs (
+            bear_id, created_by_user_id, created_by_role, goal, source_conversation_id
+        )
+        VALUES ($1, $2, 'pair', 'Surface diagnostics job', $3)
         RETURNING id
         ",
     )
     .bind(bear_id)
     .bind(user_id)
+    .bind(&conversation_id)
     .fetch_one(&pool)
     .await
     .expect("insert docket job");
@@ -2242,21 +2245,21 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .expect("insert docket task");
     sqlx::query(
         r"
-        INSERT INTO docket_execution_sessions (
-            bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id, job_id, run_id, task_id
+        INSERT INTO docket_execution_attempts (
+            bear_id, task_id, owner_kind, pair_session_id, pair_run_id,
+            fence_epoch, authorization_key, state, started_at
         )
-        VALUES ($1, 'pair', $2, $3, $2, $4, $5, $6)
+        VALUES ($1, $2, 'pair', $3, $4, 1, $5, 'running', NOW())
         ",
     )
     .bind(bear_id)
-    .bind(&session_id)
-    .bind(&conversation_id)
-    .bind(docket_job_id)
-    .bind(docket_run_id)
     .bind(docket_task_id)
+    .bind(&session_id)
+    .bind(docket_run_id)
+    .bind(Uuid::new_v4())
     .execute(&pool)
     .await
-    .expect("insert docket execution session");
+    .expect("insert canonical docket execution attempt");
     sqlx::query(
         r"
         INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
