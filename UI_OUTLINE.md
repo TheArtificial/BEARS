@@ -8,9 +8,16 @@
 
 #### Web chat
 
+- chat via API
+
 #### Web chat with sandbox
 
+- chat via API
+- sandbox workspace browser
+
 #### ACP chat (Zed)
+
+- CLI protocol via armature over BearWire
 
 ### Bear admin
 
