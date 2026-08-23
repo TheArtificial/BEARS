@@ -789,12 +789,11 @@ async fn list_active_task_ids(pool: &PgPool, job_id: Uuid) -> Result<Vec<Uuid>, 
               AND executing_task_id IS NOT NULL
               AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
             UNION
-            SELECT session.task_id AS active_task_id
-            FROM docket_execution_sessions session
-            JOIN bear_tasks task ON task.id = session.task_id
-            WHERE session.job_id = $1
-              AND session.task_id IS NOT NULL
-              AND session.state = 'active'
+            SELECT attempt.task_id AS active_task_id
+            FROM docket_execution_attempts attempt
+            JOIN bear_tasks task ON task.id = attempt.task_id
+            WHERE task.job_id = $1
+              AND attempt.state IN ('authorized', 'running', 'paused')
               AND task.settled_by_entry_id IS NULL
         ) AS active_tasks
         "#,
@@ -1050,11 +1049,9 @@ async fn reconcile_job_status(
                       AND work_run.executing_task_id = task.id
                       AND work_run.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')
                 ) OR EXISTS (
-                    SELECT 1 FROM docket_execution_sessions execution_session
-                    WHERE execution_session.job_id = $1
-                      AND execution_session.run_id = $2
-                      AND execution_session.task_id = task.id
-                      AND execution_session.state = 'active'
+                    SELECT 1 FROM docket_execution_attempts attempt
+                    WHERE attempt.task_id = task.id
+                      AND attempt.state IN ('authorized', 'running', 'paused')
                 )
             ) AS "in_progress!: _",
             COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'blocked') AS "blocked!: _",

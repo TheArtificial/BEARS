@@ -359,15 +359,16 @@ async fn checkout_rejects_without_binding_when_no_task_is_actionable() {
         .expect("work run exists");
     assert!(persisted.executing_task_id.is_none());
     assert!(persisted.bearwire_session_id.is_none());
-    let active_sessions: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM docket_execution_sessions
-         WHERE owner_profile = 'work' AND session_id = $1 AND state = 'active'",
+    let active_attempts: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM docket_execution_attempts
+         WHERE owner_kind = 'work' AND work_run_id = $1
+           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')",
     )
-    .bind(&session_id)
+    .bind(run.id)
     .fetch_one(&pool)
     .await
-    .expect("count execution sessions");
-    assert_eq!(active_sessions, 0);
+    .expect("count canonical execution attempts");
+    assert_eq!(active_attempts, 0);
 
     let second_checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
         .await
@@ -983,10 +984,10 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
         DocketExecutionAttemptOwner::Work { work_run_id } if work_run_id == run.id
     ));
     let execution_count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM docket_execution_sessions
-         WHERE bear_id = $1 AND owner_profile = 'work' AND session_id = $2 AND state = 'active'",
+        "SELECT COUNT(*) FROM docket_execution_attempts
+         WHERE bear_id = $1 AND owner_kind = 'work' AND work_run_id = $2 AND state = 'running'",
         bear_id,
-        &session_id,
+        run.id,
     )
     .fetch_one(&pool)
     .await

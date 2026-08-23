@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            COUNT(*) FILTER (\n                WHERE EXISTS (\n                    SELECT 1 FROM bear_work_runs work_run\n                    WHERE work_run.job_run_id = $2\n                      AND work_run.executing_task_id = task.id\n                      AND work_run.state IN ('claimed', 'provisioning', 'running', 'paused', 'reporting')\n                ) OR EXISTS (\n                    SELECT 1 FROM docket_execution_attempts attempt\n                    WHERE attempt.task_id = task.id\n                      AND attempt.state IN ('authorized', 'running', 'paused')\n                )\n            ) AS \"in_progress!: _\",\n            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'blocked') AS \"blocked!: _\",\n            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled')) AS \"unfinished!: _\"\n        FROM bear_tasks task\n        LEFT JOIN bear_task_run_state state\n          ON state.task_id = task.id AND state.run_id = $2\n        WHERE task.job_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "in_progress!: _",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "blocked!: _",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "unfinished!: _",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "ec1fe6bf91acf3d1aa6c21e48580421890a863f529617671c6b28dcc2212ae88"
+}

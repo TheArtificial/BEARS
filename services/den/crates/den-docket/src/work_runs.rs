@@ -14,14 +14,14 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use den_core::{BearProfile, DenError};
+use den_core::DenError;
 
 use crate::execution_profiles::resolve_execution_profile;
 use crate::model::{
     select_dispatch_notebook_context, DocketEntryListFilter, DocketEntryRow,
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptRow,
     DocketExecutionAttemptStart, DocketExecutionBinding, DocketExecutionDisposition,
-    DocketExecutionGate, DocketExecutionReason, DocketExecutionSessionUpsert, DocketTaskDifficulty,
+    DocketExecutionGate, DocketExecutionReason, DocketTaskDifficulty,
 };
 use crate::recovery::claim_turn_attempt;
 use crate::routing::{route_turn, ExecutionSurface, TurnIntent, TurnSource};
@@ -1702,22 +1702,6 @@ pub async fn checkout_work_run_for_session(
     .await?;
     let goal = job.goal;
     let commit_policy = job.commit_policy;
-    crate::db::upsert_execution_session(
-        pool,
-        DocketExecutionSessionUpsert {
-            bear_id,
-            owner_profile: BearProfile::Work,
-            session_id: session_id.to_string(),
-            source_conversation_id: None,
-            source_client_session_id: Some(session_id.to_string()),
-            job_id: run.job_id,
-            run_id: run.job_run_id,
-            task_id: Some(task.0),
-            state: "active".to_string(),
-        },
-    )
-    .await?;
-
     let task_title = format!(
         "{} work task{}",
         tasks.len(),

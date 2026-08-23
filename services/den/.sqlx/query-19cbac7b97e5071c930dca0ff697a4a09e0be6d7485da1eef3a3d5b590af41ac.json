@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) FROM docket_execution_attempts\n         WHERE bear_id = $1 AND owner_kind = 'work' AND work_run_id = $2 AND state = 'running'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "19cbac7b97e5071c930dca0ff697a4a09e0be6d7485da1eef3a3d5b590af41ac"
+}

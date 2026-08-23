@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, task_id, pair_run_id, fence_epoch, state, updated_at\n         FROM docket_execution_attempts\n         WHERE bear_id = $1 AND owner_kind = 'pair' AND pair_session_id = $2\n           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')\n         ORDER BY updated_at DESC\n         LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "pair_run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "fence_epoch",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "01c464694b59cef68857ecfef5a59623707ca58412c6ae898f52f5fcb171cf73"
+}

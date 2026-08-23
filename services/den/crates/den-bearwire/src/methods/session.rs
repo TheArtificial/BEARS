@@ -26,10 +26,7 @@ use den_runtime::{
     current_task::{preview_pair_current_task_selection, select_pair_current_task},
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
-    runtime::task_context::{
-        active_docket_execution_lookup_for_session, resolve_runtime_task_context,
-        RuntimeTaskResolveRequest,
-    },
+    runtime::task_context::{resolve_runtime_task_context, RuntimeTaskResolveRequest},
     turn_obligations,
 };
 use den_service::{
@@ -280,17 +277,12 @@ async fn session_state_payload(
         })
     });
     let active_docket_execution = if work_enabled {
-        PgDocketService::from_pool(&state.sqlx_pool)
-            .get_active_execution_session(
-                session.bear_id,
-                BearProfile::Pair,
-                active_docket_execution_lookup_for_session(
-                    &conversation_runtime_id,
-                    &session.client_session_id,
-                ),
-            )
-            .await?
-            .map(active_docket_execution_projection)
+        active_pair_execution_attempt(
+            &state.sqlx_pool,
+            session.bear_id,
+            &session.client_session_id,
+        )
+        .await?
     } else {
         None
     };
@@ -381,21 +373,37 @@ fn pair_current_task_projection(
     }))
 }
 
-fn active_docket_execution_projection(execution: den_docket::DocketExecutionSessionRow) -> Value {
-    json!({
-        "schema": "den.docket.active_execution.v1",
-        "source": "docket_execution_session",
-        "id": execution.id,
-        "owner_profile": execution.owner_profile,
-        "session_id": execution.session_id,
-        "source_conversation_id": execution.source_conversation_id,
-        "source_client_session_id": execution.source_client_session_id,
-        "job_id": execution.job_id,
-        "run_id": execution.run_id,
-        "task_id": execution.task_id,
-        "state": execution.state,
-        "updated_at": execution.updated_at,
-    })
+async fn active_pair_execution_attempt(
+    pool: &PgPool,
+    bear_id: uuid::Uuid,
+    session_id: &str,
+) -> Result<Option<Value>, CustomError> {
+    let attempt = sqlx::query!(
+        "SELECT id, task_id, pair_run_id, fence_epoch, state, updated_at
+         FROM docket_execution_attempts
+         WHERE bear_id = $1 AND owner_kind = 'pair' AND pair_session_id = $2
+           AND state IN ('authorized', 'running', 'paused')
+         ORDER BY updated_at DESC
+         LIMIT 1",
+        bear_id,
+        session_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(attempt.map(|attempt| {
+        json!({
+            "schema": "den.docket.execution_attempt.v1",
+            "source": "docket_execution_attempt",
+            "id": attempt.id,
+            "owner_kind": "pair",
+            "session_id": session_id,
+            "pair_run_id": attempt.pair_run_id,
+            "task_id": attempt.task_id,
+            "fence_epoch": attempt.fence_epoch,
+            "state": attempt.state,
+            "updated_at": attempt.updated_at,
+        })
+    }))
 }
 
 fn active_activity_plan_projection(

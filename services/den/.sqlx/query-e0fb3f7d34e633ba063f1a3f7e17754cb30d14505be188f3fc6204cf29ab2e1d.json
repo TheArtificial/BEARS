@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT active_task_id AS \"executing_task_id!: _\"\n        FROM (\n            SELECT executing_task_id AS active_task_id\n            FROM bear_work_runs\n            WHERE job_id = $1\n              AND executing_task_id IS NOT NULL\n              AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')\n            UNION\n            SELECT attempt.task_id AS active_task_id\n            FROM docket_execution_attempts attempt\n            JOIN bear_tasks task ON task.id = attempt.task_id\n            WHERE task.job_id = $1\n              AND attempt.state IN ('authorized', 'running', 'paused')\n              AND task.settled_by_entry_id IS NULL\n        ) AS active_tasks\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "executing_task_id!: _",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "e0fb3f7d34e633ba063f1a3f7e17754cb30d14505be188f3fc6204cf29ab2e1d"
+}
