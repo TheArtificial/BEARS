@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE docket_execution_attempts\n        SET state = 'settled', settled_at = COALESCE(settled_at, NOW()), updated_at = NOW()\n        WHERE id = $1\n          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "77451443db45af10559e796286fd84749f13abf77ca20e4f23d4146301e1c7f8"
+}

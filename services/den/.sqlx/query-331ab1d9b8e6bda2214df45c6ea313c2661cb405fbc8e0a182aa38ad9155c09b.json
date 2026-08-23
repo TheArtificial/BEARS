@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id\n        FROM docket_execution_attempts\n        WHERE bear_id = $1 AND task_id = $2\n          AND owner_kind = 'pair' AND pair_session_id = $3\n          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')\n        ORDER BY updated_at DESC LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "331ab1d9b8e6bda2214df45c6ea313c2661cb405fbc8e0a182aa38ad9155c09b"
+}
