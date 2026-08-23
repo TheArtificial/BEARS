@@ -1739,7 +1739,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
 }
 
 #[tokio::test]
-async fn docket_requires_explicit_parent_completion_after_children_are_terminal() {
+async fn docket_completes_parent_after_children_are_terminal() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket parent completion test; database unavailable");
         return;
@@ -1747,6 +1747,7 @@ async fn docket_requires_explicit_parent_completion_after_children_are_terminal(
     let (user_id, bear_id) = seed_user_and_bear(&pool, "parent-rollup").await;
     let service = PgDocketService::from_pool(&pool);
     let mut create = two_task_job(user_id, bear_id);
+    create.criteria.clear();
     create.tasks[1].parent_client_key = Some("first".to_string());
     let created = service.create_job(create).await.expect("create job");
     let run_id = created.job.current_run_id.expect("current run");
@@ -1789,35 +1790,28 @@ async fn docket_requires_explicit_parent_completion_after_children_are_terminal(
         .iter()
         .find(|state| state.task_id == parent_id)
         .expect("parent run state");
-    assert_eq!(parent_state.status.as_str(), "pending");
-    assert_eq!(parent_state.result_summary, None);
-
-    service
-        .record_task_success(
-            bear_id,
-            parent_id,
-            run_id,
-            "parent complete".to_string(),
-            None,
-            None,
-        )
-        .await
-        .expect("complete parent explicitly");
-    let projection = service
-        .get_job(bear_id, created.job.id)
-        .await
-        .expect("reload job")
-        .expect("job exists");
-    let parent_state = projection
-        .task_states
-        .iter()
-        .find(|state| state.task_id == parent_id)
-        .expect("parent run state");
     assert_eq!(parent_state.status.as_str(), "done");
     assert_eq!(
         parent_state.result_summary.as_deref(),
-        Some("parent complete")
+        Some("Completed automatically after all child tasks reached terminal states.")
     );
+
+    let completed = service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: created.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: Some("parent-rollup-session".to_string()),
+            source_conversation_id: None,
+            source_client_session_id: Some("parent-rollup-session".to_string()),
+        })
+        .await
+        .expect("complete job after automatic parent roll-up");
+    assert!(completed.completed);
+    assert_eq!(completed.selected_task_id, None);
+    assert_eq!(completed.job.job.status, "completed");
 }
 
 #[tokio::test]

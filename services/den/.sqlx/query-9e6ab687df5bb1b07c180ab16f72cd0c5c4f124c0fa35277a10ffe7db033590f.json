@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE bear_task_run_state parent_state\n            SET status = 'done',\n                result_summary = COALESCE(\n                    parent_state.result_summary,\n                    'Completed automatically after all child tasks reached terminal states.'\n                ),\n                finished_at = COALESCE(parent_state.finished_at, NOW()),\n                updated_at = NOW()\n            FROM bear_tasks parent\n            WHERE parent_state.task_id = parent.id\n              AND parent_state.run_id = $2\n              AND parent.job_id = $1\n              AND parent_state.status = 'pending'\n              AND EXISTS (\n                  SELECT 1 FROM bear_tasks child\n                  WHERE child.parent_task_id = parent.id\n              )\n              AND NOT EXISTS (\n                  SELECT 1\n                  FROM bear_tasks child\n                  LEFT JOIN bear_task_run_state child_state\n                    ON child_state.task_id = child.id AND child_state.run_id = $2\n                  WHERE child.parent_task_id = parent.id\n                    AND COALESCE(child_state.status, 'pending') NOT IN ('done', 'cancelled')\n              )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9e6ab687df5bb1b07c180ab16f72cd0c5c4f124c0fa35277a10ffe7db033590f"
+}

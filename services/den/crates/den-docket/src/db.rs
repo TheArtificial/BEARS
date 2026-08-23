@@ -1156,6 +1156,48 @@ async fn reconcile_settled_task_run_state(
     )
     .execute(&mut **tx)
     .await?;
+
+    // Parents are roll-up phases, never independently executable. Once every
+    // direct child is terminal, settle the parent so it cannot strand the job
+    // in a no-actionable-task state. Repeat for nested phases.
+    loop {
+        let updated = sqlx::query!(
+            r#"
+            UPDATE bear_task_run_state parent_state
+            SET status = 'done',
+                result_summary = COALESCE(
+                    parent_state.result_summary,
+                    'Completed automatically after all child tasks reached terminal states.'
+                ),
+                finished_at = COALESCE(parent_state.finished_at, NOW()),
+                updated_at = NOW()
+            FROM bear_tasks parent
+            WHERE parent_state.task_id = parent.id
+              AND parent_state.run_id = $2
+              AND parent.job_id = $1
+              AND parent_state.status = 'pending'
+              AND EXISTS (
+                  SELECT 1 FROM bear_tasks child
+                  WHERE child.parent_task_id = parent.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM bear_tasks child
+                  LEFT JOIN bear_task_run_state child_state
+                    ON child_state.task_id = child.id AND child_state.run_id = $2
+                  WHERE child.parent_task_id = parent.id
+                    AND COALESCE(child_state.status, 'pending') NOT IN ('done', 'cancelled')
+              )
+            "#,
+            job_id,
+            run_id,
+        )
+        .execute(&mut **tx)
+        .await?;
+        if updated.rows_affected() == 0 {
+            break;
+        }
+    }
     Ok(())
 }
 
