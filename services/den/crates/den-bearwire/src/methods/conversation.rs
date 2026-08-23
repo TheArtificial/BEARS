@@ -64,11 +64,9 @@ async fn list_docket_diagnostic_events(
     sqlx::query_as::<_, DocketDiagnosticEventRow>(
         r"
         WITH execution_jobs AS (
-            SELECT DISTINCT ON (job_id) job_id
-            FROM docket_execution_sessions
-            WHERE bear_id = $1
-              AND source_conversation_id = $2
-            ORDER BY job_id, updated_at DESC
+            SELECT id AS job_id
+            FROM bear_jobs
+            WHERE bear_id = $1 AND source_conversation_id = $2
         ), docket_events AS (
             SELECT events.id, events.created_at, events.event_type, events.payload,
                    events.task_id
