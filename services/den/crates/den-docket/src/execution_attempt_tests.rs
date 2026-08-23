@@ -1,9 +1,9 @@
 use crate::integration_tests::{seed_user_and_bear, test_pool, two_task_job};
 use crate::{
-    DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptStart,
-    DocketExecutionAttemptState, DocketPairAwaitingUserQuestion, DocketPairAwaitingUserResume,
-    DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
-    DocketService, PgDocketService,
+    DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptRelease,
+    DocketExecutionAttemptStart, DocketExecutionAttemptState, DocketPairAwaitingUserQuestion,
+    DocketPairAwaitingUserResume, DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport,
+    DocketPairContinuationDecision, DocketService, PgDocketService,
 };
 use uuid::Uuid;
 
@@ -190,4 +190,74 @@ async fn pair_bounded_outcomes_are_fenced_and_choose_canonical_yields() {
         })
         .await
         .is_ok());
+}
+
+#[tokio::test]
+async fn released_running_attempt_is_fenced_idempotent_and_not_startable() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket integration test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "execution-attempt-release").await;
+    let service = PgDocketService::from_pool(&pool);
+    let job = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create job");
+    let authorized = service
+        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+            bear_id,
+            task_id: job.tasks[0].id,
+            owner: DocketExecutionAttemptOwner::Pair {
+                session_id: format!("pair-{}", Uuid::new_v4()),
+                pair_run_id: Uuid::new_v4().to_string(),
+            },
+            authorization_key: Uuid::new_v4(),
+        })
+        .await
+        .expect("authorize attempt");
+    let running = service
+        .start_execution_attempt(DocketExecutionAttemptStart {
+            attempt_id: authorized.id,
+            fence_epoch: authorized.fence_epoch,
+        })
+        .await
+        .expect("start attempt");
+    let release = DocketExecutionAttemptRelease {
+        attempt_id: running.id,
+        fence_epoch: running.fence_epoch,
+        recovery_key: Uuid::new_v4(),
+        recovery_reason: "pair owner disappeared".to_string(),
+    };
+
+    let released = service
+        .release_execution_attempt(release.clone())
+        .await
+        .expect("release attempt");
+    assert_eq!(released.state, DocketExecutionAttemptState::Released);
+    assert!(released.released_at.is_some());
+    assert_eq!(
+        service
+            .release_execution_attempt(release)
+            .await
+            .expect("idempotent release")
+            .id,
+        running.id
+    );
+    assert!(service
+        .start_execution_attempt(DocketExecutionAttemptStart {
+            attempt_id: running.id,
+            fence_epoch: running.fence_epoch,
+        })
+        .await
+        .is_err());
+    assert!(service
+        .release_execution_attempt(DocketExecutionAttemptRelease {
+            attempt_id: running.id,
+            fence_epoch: running.fence_epoch + 1,
+            recovery_key: Uuid::new_v4(),
+            recovery_reason: "stale reconciler".to_string(),
+        })
+        .await
+        .is_err());
 }

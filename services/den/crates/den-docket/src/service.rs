@@ -15,13 +15,14 @@ use super::model::{
     task_list_projection_from_docket_job, task_list_projection_from_session_tasks,
     DocketCheckpointDirectiveAcknowledge, DocketCheckpointDirectiveRow, DocketCriterionStateUpdate,
     DocketEntryCreate, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow,
-    DocketExecutionAttemptAuthorize, DocketExecutionAttemptRow, DocketExecutionAttemptStart,
-    DocketExecutionLookup, DocketExecutionSessionRow, DocketExecutionTaskSettlement,
-    DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketPairAwaitingUserResume,
-    DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport,
-    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow, DocketSessionTaskSettlement,
-    DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
+    DocketExecutionAttemptAuthorize, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
+    DocketExecutionAttemptStart, DocketExecutionLookup, DocketExecutionSessionRow,
+    DocketExecutionTaskSettlement, DocketJobCreate, DocketJobExecuteOutcome,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
+    DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcomeDecision,
+    DocketPairBoundedOutcomeReport, DocketSchedulerObservationEnqueue,
+    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
     TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
     TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
 };
@@ -83,6 +84,13 @@ pub trait DocketService: Send + Sync {
     async fn start_execution_attempt(
         &self,
         start: DocketExecutionAttemptStart,
+    ) -> Result<DocketExecutionAttemptRow, DenError>;
+
+    /// Reconciles a lost owner by terminally releasing the exact live attempt.
+    /// `recovery_key` makes repeated recovery delivery idempotent.
+    async fn release_execution_attempt(
+        &self,
+        release: DocketExecutionAttemptRelease,
     ) -> Result<DocketExecutionAttemptRow, DenError>;
 
     /// Records a fenced Pair slice outcome and returns Docket's canonical next action.
@@ -277,6 +285,13 @@ impl DocketService for PgDocketService {
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError> {
         db::start_execution_attempt(&self.pool, start).await
+    }
+
+    async fn release_execution_attempt(
+        &self,
+        release: DocketExecutionAttemptRelease,
+    ) -> Result<DocketExecutionAttemptRow, DenError> {
+        db::release_execution_attempt(&self.pool, release).await
     }
 
     async fn report_pair_bounded_outcome(

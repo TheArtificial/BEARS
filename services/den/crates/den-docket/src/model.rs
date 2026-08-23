@@ -1296,6 +1296,16 @@ pub struct DocketExecutionAttemptStart {
     pub fence_epoch: i64,
 }
 
+/// Releases an abandoned or superseded canonical attempt. The reconciler must
+/// supply the exact fence and a stable recovery key so retries are idempotent.
+#[derive(Debug, Clone)]
+pub struct DocketExecutionAttemptRelease {
+    pub attempt_id: Uuid,
+    pub fence_epoch: i64,
+    pub recovery_key: Uuid,
+    pub recovery_reason: String,
+}
+
 /// A bounded outcome reported by the Pair-local loop. Docket owns the
 /// resulting continuation decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

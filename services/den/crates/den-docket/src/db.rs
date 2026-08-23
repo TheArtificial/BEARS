@@ -40,20 +40,21 @@ use super::model::{
     DocketCheckpointDirectiveRow, DocketCommitPolicy, DocketCriterionStateRow,
     DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryKind, DocketEntryListFilter,
     DocketEntryPromotion, DocketEntryRow, DocketEntryScope, DocketExecutionAttemptAuthorize,
-    DocketExecutionAttemptDbRow, DocketExecutionAttemptRow, DocketExecutionAttemptStart,
-    DocketExecutionControl, DocketExecutionLookup, DocketExecutionNextAction,
-    DocketExecutionReason, DocketExecutionSessionRow, DocketExecutionSessionUpsert,
-    DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketJobCreate,
-    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
-    DocketPairAwaitingUserResume, DocketPairBoundedOutcome, DocketPairBoundedOutcomeDecision,
-    DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
-    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
-    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow, DocketSessionTaskSettlement,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
-    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
-    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
-    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketExecutionAttemptDbRow, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
+    DocketExecutionAttemptStart, DocketExecutionControl, DocketExecutionLookup,
+    DocketExecutionNextAction, DocketExecutionReason, DocketExecutionSessionRow,
+    DocketExecutionSessionUpsert, DocketExecutionTaskControl, DocketExecutionTaskSettlement,
+    DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
+    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
+    DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcome,
+    DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport,
+    DocketPairContinuationDecision, DocketSchedulerObservationDeliveryState,
+    DocketSchedulerObservationDisposition, DocketSchedulerObservationEnqueue,
+    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement,
+    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
+    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1446,6 +1447,80 @@ pub(super) async fn start_execution_attempt(
             DenError::NotFound("execution attempt is not startable with this fence".to_string())
         })?,
     };
+    row.try_into()
+}
+
+/// Terminally releases the exact live attempt during reconciliation. This is
+/// deliberately a Docket transition: runtimes report facts, but never recover
+/// a different owner or regain authority after owner loss.
+pub(super) async fn release_execution_attempt(
+    pool: &PgPool,
+    release: DocketExecutionAttemptRelease,
+) -> Result<DocketExecutionAttemptRow, DenError> {
+    if release.recovery_reason.trim().is_empty() {
+        return Err(DenError::ValidationError(
+            "execution-attempt recovery requires a reason".to_string(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r#"
+        UPDATE docket_execution_attempts
+        SET state = 'released', released_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND fence_epoch = $2
+          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+        RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+                  fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
+                  released_at, created_at, updated_at
+        "#,
+    )
+    .bind(release.attempt_id)
+    .bind(release.fence_epoch)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let row = match row {
+        Some(row) => {
+            sqlx::query(
+                "INSERT INTO docket_execution_attempt_recoveries \
+                 (execution_attempt_id, fence_epoch, recovery_key, recovery_reason) \
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(release.attempt_id)
+            .bind(release.fence_epoch)
+            .bind(release.recovery_key)
+            .bind(&release.recovery_reason)
+            .execute(&mut *tx)
+            .await?;
+            row
+        }
+        None => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+            r#"
+            SELECT attempt.id, attempt.bear_id, attempt.task_id, attempt.owner_kind,
+                   attempt.pair_session_id, attempt.pair_run_id, attempt.work_run_id,
+                   attempt.fence_epoch, attempt.authorization_key, attempt.state,
+                   attempt.started_at, attempt.paused_at, attempt.settled_at,
+                   attempt.released_at, attempt.created_at, attempt.updated_at
+            FROM docket_execution_attempts attempt
+            JOIN docket_execution_attempt_recoveries recovery
+              ON recovery.execution_attempt_id = attempt.id
+             AND recovery.fence_epoch = attempt.fence_epoch
+            WHERE attempt.id = $1 AND attempt.fence_epoch = $2 AND attempt.state = 'released'
+              AND recovery.recovery_key = $3 AND recovery.recovery_reason = $4
+            "#,
+        )
+        .bind(release.attempt_id)
+        .bind(release.fence_epoch)
+        .bind(release.recovery_key)
+        .bind(&release.recovery_reason)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| {
+            DenError::NotFound(
+                "execution attempt is not releasable with this recovery fence".to_string(),
+            )
+        })?,
+    };
+    tx.commit().await?;
     row.try_into()
 }
 
