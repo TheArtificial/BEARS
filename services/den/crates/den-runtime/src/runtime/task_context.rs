@@ -1,14 +1,13 @@
 //! Runtime current-task resolution.
 //!
-//! Pair resolves its persisted session current task before considering a legacy
-//! durable Docket execution. The task-list projection is a volatile cache used
-//! to seed prompts and tools; runtime behavior resolves persisted state rather
-//! than treating a cached projection as authoritative.
+//! Pair resolves only its persisted current-task selection. The task-list
+//! projection is a volatile cache used to seed prompts and tools; runtime
+//! behavior resolves persisted state rather than treating cached or legacy
+//! execution state as authoritative.
 
 use den_core::DenError;
 use den_docket::{
-    task_list_projection_from_session_tasks_with_current_task, DocketExecutionLookup,
-    DocketService, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
+    task_list_projection_from_session_tasks_with_current_task, DocketService, PgDocketService,
     TaskListProjection,
 };
 use den_service::{bears::BearProfile, client_sessions};
@@ -17,7 +16,6 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeTaskSource {
-    DurableDocketExecution,
     SessionCurrentTask,
     None,
 }
@@ -25,7 +23,6 @@ pub enum RuntimeTaskSource {
 impl RuntimeTaskSource {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::DurableDocketExecution => "durable_docket_execution",
             Self::SessionCurrentTask => "session_current_task",
             Self::None => "none",
         }
@@ -47,9 +44,7 @@ pub struct RuntimeTaskContext {
 impl RuntimeTaskContext {
     pub fn active_activity_plan(&self) -> Option<&TaskListProjection> {
         match self.source {
-            RuntimeTaskSource::DurableDocketExecution | RuntimeTaskSource::SessionCurrentTask => {
-                self.cached_activity_plan_projection.as_ref()
-            }
+            RuntimeTaskSource::SessionCurrentTask => self.cached_activity_plan_projection.as_ref(),
             RuntimeTaskSource::None => None,
         }
     }
@@ -65,38 +60,8 @@ pub struct RuntimeTaskResolveRequest {
     pub cached_activity_plan_projection: Option<TaskListProjection>,
 }
 
-pub fn active_docket_execution_lookup(
-    session_id: Option<&str>,
-    conversation_id: &str,
-) -> DocketExecutionLookup {
-    DocketExecutionLookup {
-        session_id: session_id.map(str::to_string),
-        // ponytail: conversation-scoped Docket execution is the durable restore path for now;
-        // upgrade to an explicit session current-task record when session-local tasks land.
-        source_conversation_id: Some(conversation_id.to_string()),
-        source_client_session_id: session_id.map(str::to_string),
-    }
-}
-
-pub fn active_docket_execution_lookup_for_session(
-    conversation_id: &str,
-    client_session_id: &str,
-) -> DocketExecutionLookup {
-    active_docket_execution_lookup(Some(client_session_id), conversation_id)
-}
-
 fn is_actionable_session_task_status(status: den_docket::DocketTaskStatus) -> bool {
     status == den_docket::DocketTaskStatus::Pending
-}
-
-fn durable_execution_current_task_id(
-    execution_task_id: Option<Uuid>,
-    plan: Option<&TaskListProjection>,
-) -> Option<Uuid> {
-    execution_task_id.or_else(|| {
-        plan.and_then(|task_list| task_list.current_item.as_ref())
-            .and_then(|task| Uuid::parse_str(&task.id).ok())
-    })
 }
 
 pub async fn resolve_runtime_task_context(
@@ -148,37 +113,6 @@ pub async fn resolve_runtime_task_context(
         );
         return Ok(RuntimeTaskContext {
             source: RuntimeTaskSource::SessionCurrentTask,
-            current_task_id,
-            cached_activity_plan_projection: plan,
-        });
-    }
-
-    let service = PgDocketService::from_pool(pool);
-    if let Some(execution) = service
-        .get_active_execution_session(
-            bear_id,
-            profile,
-            active_docket_execution_lookup_for_session(&conversation_id, &client_session_id),
-        )
-        .await?
-    {
-        let plan = service
-            .checkout_task_list(
-                bear_id,
-                profile,
-                user_id,
-                TaskListCheckoutRequest {
-                    source: TaskListCheckoutSource::DocketJob {
-                        job_id: execution.job_id,
-                        parent_task_id: None,
-                    },
-                    pair_session_id: Some(session.id),
-                },
-            )
-            .await?;
-        let current_task_id = durable_execution_current_task_id(execution.task_id, plan.as_ref());
-        return Ok(RuntimeTaskContext {
-            source: RuntimeTaskSource::DurableDocketExecution,
             current_task_id,
             cached_activity_plan_projection: plan,
         });

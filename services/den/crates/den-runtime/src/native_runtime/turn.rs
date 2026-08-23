@@ -65,10 +65,7 @@ use crate::{
     turn_runs,
 };
 use den_core::DenError;
-use den_docket::{
-    DocketExecutionLookup, DocketService, PgDocketService, TaskListCheckoutRequest,
-    TaskListCheckoutSource, TaskListProjection,
-};
+use den_docket::TaskListProjection;
 use den_service::conversation::persistence::PersistedTranscriptRecord;
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> =
@@ -281,57 +278,6 @@ pub fn update_native_client_session_cached_activity_plan_projection(
     SESSION_STORE.update(&key, |session| {
         session.cached_activity_plan_projection = cached_activity_plan_projection;
     });
-}
-
-fn active_docket_execution_lookup_for_session(
-    conversation_id: &str,
-    client_session_id: &str,
-) -> DocketExecutionLookup {
-    DocketExecutionLookup {
-        session_id: Some(client_session_id.to_string()),
-        // ponytail: conversation-scoped Docket execution is the durable restore path for now;
-        // upgrade to an explicit session current-task record when session-local tasks land.
-        source_conversation_id: Some(conversation_id.to_string()),
-        source_client_session_id: Some(client_session_id.to_string()),
-    }
-}
-
-async fn refresh_cached_activity_plan_projection_from_docket(
-    pool: &PgPool,
-    conversation_id: &str,
-    client_session_id: &str,
-    bear_id: Uuid,
-    user_id: Option<i32>,
-    profile: BearProfile,
-) -> Result<Option<TaskListProjection>, DenError> {
-    let Some(user_id) = user_id else {
-        return Ok(None);
-    };
-    let service = PgDocketService::from_pool(pool);
-    let Some(execution) = service
-        .get_active_execution_session(
-            bear_id,
-            profile,
-            active_docket_execution_lookup_for_session(conversation_id, client_session_id),
-        )
-        .await?
-    else {
-        return Ok(None);
-    };
-    service
-        .checkout_task_list(
-            bear_id,
-            profile,
-            user_id,
-            TaskListCheckoutRequest {
-                source: TaskListCheckoutSource::DocketJob {
-                    job_id: execution.job_id,
-                    parent_task_id: None,
-                },
-                pair_session_id: None,
-            },
-        )
-        .await
 }
 
 pub fn native_client_session_runtime_state(
@@ -2219,21 +2165,6 @@ pub async fn continue_native_client_turn_event_stream(
         );
         SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
         return Ok(continuation_budget_stop(reason));
-    }
-    if let Some(refreshed_plan) = refresh_cached_activity_plan_projection_from_docket(
-        request.sqlx_pool,
-        &conversation_id,
-        client_session_id,
-        session.bear_id,
-        session.user_id,
-        profile,
-    )
-    .await?
-    {
-        SESSION_STORE.update(&session_key, |session| {
-            session.cached_activity_plan_projection = Some(refreshed_plan.clone());
-        });
-        session.cached_activity_plan_projection = Some(refreshed_plan);
     }
     let llm = LlmClient::new(request.config);
     let config = Arc::new(request.config.clone());

@@ -16,12 +16,10 @@ use super::model::{
     DocketCheckpointDirectiveAcknowledge, DocketCheckpointDirectiveRow, DocketCriterionStateUpdate,
     DocketEntryCreate, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow,
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
-    DocketExecutionAttemptStart, DocketExecutionLookup, DocketExecutionSessionRow,
-    DocketExecutionTaskSettlement, DocketJobCreate, DocketJobExecuteOutcome,
-    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
-    DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcomeDecision,
-    DocketPairBoundedOutcomeReport, DocketSchedulerObservationEnqueue,
-    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketExecutionAttemptStart, DocketExecutionTaskSettlement, DocketJobCreate,
+    DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection,
+    DocketJobRow, DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcomeDecision,
+    DocketPairBoundedOutcomeReport, DocketSessionTaskSettlement, DocketTaskCreate,
     DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
     TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
     TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
@@ -111,35 +109,6 @@ pub trait DocketService: Send + Sync {
         &self,
         acknowledge: DocketCheckpointDirectiveAcknowledge,
     ) -> Result<DocketCheckpointDirectiveRow, DenError>;
-
-    async fn get_active_execution_session(
-        &self,
-        bear_id: Uuid,
-        owner_profile: BearProfile,
-        lookup: DocketExecutionLookup,
-    ) -> Result<Option<DocketExecutionSessionRow>, DenError>;
-
-    async fn clear_active_execution_sessions(
-        &self,
-        bear_id: Uuid,
-        lookup: DocketExecutionLookup,
-    ) -> Result<u64, DenError>;
-
-    async fn enqueue_scheduler_observation(
-        &self,
-        enqueue: DocketSchedulerObservationEnqueue,
-    ) -> Result<DocketSchedulerObservationRow, DenError>;
-
-    async fn pending_scheduler_observations(
-        &self,
-        execution_session_id: Uuid,
-    ) -> Result<Vec<DocketSchedulerObservationRow>, DenError>;
-
-    async fn acknowledge_scheduler_observation_delivery(
-        &self,
-        observation_id: Uuid,
-        execution_session_id: Uuid,
-    ) -> Result<DocketSchedulerObservationRow, DenError>;
 
     async fn list_pair_session_tasks(
         &self,
@@ -313,50 +282,6 @@ impl DocketService for PgDocketService {
         acknowledge: DocketCheckpointDirectiveAcknowledge,
     ) -> Result<DocketCheckpointDirectiveRow, DenError> {
         db::acknowledge_checkpoint_directive(&self.pool, acknowledge).await
-    }
-
-    async fn get_active_execution_session(
-        &self,
-        bear_id: Uuid,
-        owner_profile: BearProfile,
-        lookup: DocketExecutionLookup,
-    ) -> Result<Option<DocketExecutionSessionRow>, DenError> {
-        db::get_active_execution_session(&self.pool, bear_id, owner_profile, lookup).await
-    }
-
-    async fn clear_active_execution_sessions(
-        &self,
-        bear_id: Uuid,
-        lookup: DocketExecutionLookup,
-    ) -> Result<u64, DenError> {
-        db::clear_active_execution_sessions(&self.pool, bear_id, lookup).await
-    }
-
-    async fn enqueue_scheduler_observation(
-        &self,
-        enqueue: DocketSchedulerObservationEnqueue,
-    ) -> Result<DocketSchedulerObservationRow, DenError> {
-        db::enqueue_scheduler_observation(&self.pool, enqueue).await
-    }
-
-    async fn pending_scheduler_observations(
-        &self,
-        execution_session_id: Uuid,
-    ) -> Result<Vec<DocketSchedulerObservationRow>, DenError> {
-        db::pending_scheduler_observations(&self.pool, execution_session_id).await
-    }
-
-    async fn acknowledge_scheduler_observation_delivery(
-        &self,
-        observation_id: Uuid,
-        execution_session_id: Uuid,
-    ) -> Result<DocketSchedulerObservationRow, DenError> {
-        db::acknowledge_scheduler_observation_delivery(
-            &self.pool,
-            observation_id,
-            execution_session_id,
-        )
-        .await
     }
 
     async fn list_pair_session_tasks(

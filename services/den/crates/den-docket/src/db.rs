@@ -8,7 +8,6 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::{BearProfile, DenError};
@@ -41,19 +40,17 @@ use super::model::{
     DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryKind, DocketEntryListFilter,
     DocketEntryPromotion, DocketEntryRow, DocketEntryScope, DocketExecutionAttemptAuthorize,
     DocketExecutionAttemptDbRow, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
-    DocketExecutionAttemptStart, DocketExecutionControl, DocketExecutionLookup,
-    DocketExecutionNextAction, DocketExecutionReason, DocketExecutionSessionRow,
-    DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketJobCreate,
-    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
-    DocketPairAwaitingUserResume, DocketPairBoundedOutcome, DocketPairBoundedOutcomeDecision,
-    DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
-    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
-    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow, DocketSessionTaskSettlement,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
-    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
-    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
-    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketExecutionAttemptStart, DocketExecutionControl, DocketExecutionNextAction,
+    DocketExecutionReason, DocketExecutionTaskControl, DocketExecutionTaskSettlement,
+    DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
+    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
+    DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcome,
+    DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport,
+    DocketPairContinuationDecision, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement,
+    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
+    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1827,267 +1824,6 @@ pub(super) async fn pending_checkpoint_directive_for_work_run(
     row.map(TryInto::try_into).transpose()
 }
 
-pub(super) async fn get_active_execution_session(
-    pool: &PgPool,
-    bear_id: Uuid,
-    owner_profile: BearProfile,
-    lookup: DocketExecutionLookup,
-) -> Result<Option<DocketExecutionSessionRow>, DenError> {
-    if let Some(source_conversation_id) = lookup.source_conversation_id {
-        let row = sqlx::query_as!(
-            DocketExecutionSessionRow,
-            r#"
-            SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
-                   job_id, run_id, task_id, state, created_at, updated_at
-            FROM docket_execution_sessions
-            WHERE bear_id = $1 AND owner_profile = $2 AND source_conversation_id = $3
-              AND state IN ('active', 'blocked', 'completing', 'paused')
-            ORDER BY updated_at DESC
-            LIMIT 1
-            "#,
-            bear_id,
-            owner_profile.as_str(),
-            source_conversation_id
-        )
-            .fetch_optional(pool)
-            .await?;
-        if row.is_some() {
-            return Ok(row);
-        }
-    }
-    if let Some(session_id) = lookup.session_id {
-        let row = sqlx::query_as!(
-            DocketExecutionSessionRow,
-            r#"
-            SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
-                   job_id, run_id, task_id, state, created_at, updated_at
-            FROM docket_execution_sessions
-            WHERE bear_id = $1 AND owner_profile = $2 AND session_id = $3
-              AND state IN ('active', 'blocked', 'completing', 'paused')
-            ORDER BY updated_at DESC
-            LIMIT 1
-            "#,
-            bear_id,
-            owner_profile.as_str(),
-            session_id
-        )
-            .fetch_optional(pool)
-            .await?;
-        if row.is_some() {
-            return Ok(row);
-        }
-    }
-    if let Some(source_client_session_id) = lookup.source_client_session_id {
-        return sqlx::query_as!(
-            DocketExecutionSessionRow,
-            r#"
-            SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
-                   job_id, run_id, task_id, state, created_at, updated_at
-            FROM docket_execution_sessions
-            WHERE bear_id = $1 AND owner_profile = $2 AND source_client_session_id = $3
-              AND state IN ('active', 'blocked', 'completing', 'paused')
-            ORDER BY updated_at DESC
-            LIMIT 1
-            "#,
-            bear_id,
-            owner_profile.as_str(),
-            source_client_session_id
-        )
-            .fetch_optional(pool)
-            .await
-            .map_err(Into::into);
-    }
-    Ok(None)
-}
-
-pub(super) async fn clear_active_execution_sessions(
-    pool: &PgPool,
-    bear_id: Uuid,
-    lookup: DocketExecutionLookup,
-) -> Result<u64, DenError> {
-    if lookup.source_conversation_id.is_none()
-        && lookup.session_id.is_none()
-        && lookup.source_client_session_id.is_none()
-    {
-        return Err(DenError::ValidationError(
-            "Docket execution clear requires a conversation, session, or client session id"
-                .to_string(),
-        ));
-    }
-
-    // ponytail: clear is lookup-based and marks matching active-like rows cancelled. The ceiling is
-    // richer clear reasons/history; add a Docket event if operator-facing audit needs it.
-    let result = sqlx::query!(
-        r"
-        UPDATE docket_execution_sessions
-        SET state = 'cancelled', updated_at = NOW()
-        WHERE bear_id = $1
-          AND state IN ('active', 'blocked', 'completing', 'paused')
-          AND (
-            ($2::TEXT IS NOT NULL AND source_conversation_id = $2)
-            OR ($3::TEXT IS NOT NULL AND session_id = $3)
-            OR ($4::TEXT IS NOT NULL AND source_client_session_id = $4)
-          )
-        ",
-        bear_id,
-        lookup.source_conversation_id,
-        lookup.session_id,
-        lookup.source_client_session_id
-    )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct DocketSchedulerObservationDbRow {
-    id: Uuid,
-    execution_session_id: Uuid,
-    job_id: Uuid,
-    run_id: Uuid,
-    task_id: Option<Uuid>,
-    reason: String,
-    occurrence: i32,
-    disposition: String,
-    delivery_state: String,
-    delivered_at: Option<OffsetDateTime>,
-    created_at: OffsetDateTime,
-}
-
-impl TryFrom<DocketSchedulerObservationDbRow> for DocketSchedulerObservationRow {
-    type Error = DenError;
-
-    fn try_from(row: DocketSchedulerObservationDbRow) -> Result<Self, Self::Error> {
-        let reason = match row.reason.as_str() {
-            "active_task_is_stale" => DocketExecutionReason::ActiveTaskIsStale,
-            "no_actionable_task" => DocketExecutionReason::NoActionableTask,
-            "job_complete" => DocketExecutionReason::JobComplete,
-            "job_blocked" => DocketExecutionReason::JobBlocked,
-            _ => {
-                return Err(DenError::ValidationError(
-                    "invalid scheduler observation reason".to_string(),
-                ))
-            }
-        };
-        let disposition = match row.disposition.as_str() {
-            "reconcile" => DocketSchedulerObservationDisposition::Reconcile,
-            "stop" => DocketSchedulerObservationDisposition::Stop,
-            _ => {
-                return Err(DenError::ValidationError(
-                    "invalid scheduler observation disposition".to_string(),
-                ))
-            }
-        };
-        let delivery_state = match row.delivery_state.as_str() {
-            "pending" => DocketSchedulerObservationDeliveryState::Pending,
-            "delivered" => DocketSchedulerObservationDeliveryState::Delivered,
-            _ => {
-                return Err(DenError::ValidationError(
-                    "invalid scheduler observation delivery state".to_string(),
-                ))
-            }
-        };
-        Ok(Self {
-            id: row.id,
-            execution_session_id: row.execution_session_id,
-            job_id: row.job_id,
-            run_id: row.run_id,
-            task_id: row.task_id,
-            reason,
-            occurrence: row.occurrence,
-            disposition,
-            delivery_state,
-            delivered_at: row.delivered_at,
-            created_at: row.created_at,
-        })
-    }
-}
-
-pub(super) async fn enqueue_scheduler_observation(
-    pool: &PgPool,
-    enqueue: DocketSchedulerObservationEnqueue,
-) -> Result<DocketSchedulerObservationRow, DenError> {
-    let mut tx = pool.begin().await?;
-    let session = sqlx::query!(
-        "SELECT job_id, run_id FROM docket_execution_sessions WHERE id = $1 FOR UPDATE",
-        enqueue.execution_session_id
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| DenError::NotFound("Docket execution session not found".to_string()))?;
-
-    let row = sqlx::query_as!(
-        DocketSchedulerObservationDbRow,
-        r#"
-        INSERT INTO docket_scheduler_observations (
-            execution_session_id, job_id, run_id, task_id, reason, occurrence, disposition
-        )
-        VALUES ($1, $2, $3, $4, $5,
-            COALESCE((SELECT MAX(occurrence) + 1 FROM docket_scheduler_observations
-                      WHERE execution_session_id = $1 AND reason = $5), 1)::integer, $6)
-        RETURNING id, execution_session_id, job_id, run_id, task_id,
-                  reason, occurrence, disposition, delivery_state, delivered_at, created_at
-        "#,
-        enqueue.execution_session_id,
-        session.job_id,
-        session.run_id,
-        enqueue.task_id,
-        enqueue.reason.to_string(),
-        enqueue.disposition.to_string(),
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    row.try_into()
-}
-
-pub(super) async fn pending_scheduler_observations(
-    pool: &PgPool,
-    execution_session_id: Uuid,
-) -> Result<Vec<DocketSchedulerObservationRow>, DenError> {
-    sqlx::query_as!(
-        DocketSchedulerObservationDbRow,
-        r#"
-        SELECT id, execution_session_id, job_id, run_id, task_id,
-               reason, occurrence, disposition, delivery_state, delivered_at, created_at
-        FROM docket_scheduler_observations
-        WHERE execution_session_id = $1 AND delivery_state = 'pending'
-        ORDER BY created_at, id
-        "#,
-        execution_session_id
-    )
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(TryInto::try_into)
-    .collect()
-}
-
-pub(super) async fn acknowledge_scheduler_observation_delivery(
-    pool: &PgPool,
-    observation_id: Uuid,
-    execution_session_id: Uuid,
-) -> Result<DocketSchedulerObservationRow, DenError> {
-    sqlx::query_as!(
-        DocketSchedulerObservationDbRow,
-        r#"
-        UPDATE docket_scheduler_observations
-        SET delivery_state = 'delivered', delivered_at = COALESCE(delivered_at, NOW())
-        WHERE id = $1 AND execution_session_id = $2
-        RETURNING id, execution_session_id, job_id, run_id, task_id,
-                  reason, occurrence, disposition, delivery_state, delivered_at, created_at
-        "#,
-        observation_id,
-        execution_session_id
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| {
-        DenError::NotFound("Docket scheduler observation not found for session".to_string())
-    })?
-    .try_into()
-}
-
 fn execution_control(
     run: &DocketJobRunRow,
     selected_task_id: Option<Uuid>,
@@ -3143,9 +2879,6 @@ async fn update_task_in_transaction(
     if append_outcome {
         append_terminal_outcome(&mut tx, &patched, &update).await?;
         patched = select_task(&mut tx, update.bear_id, update.task_id).await?;
-        if let (Some(job_id), Some(run_state)) = (patched.job_id, update.run_state.as_ref()) {
-            retire_task_execution_claims(&mut tx, job_id, run_state.run_id, patched.id).await?;
-        }
     }
     if let (Some(job_id), Some(run_state)) = (current.job_id, update.run_state.as_ref()) {
         reconcile_job_status(&mut tx, job_id, run_state.run_id).await?;
@@ -3751,25 +3484,6 @@ json!({
         .execute(&mut **tx)
         .await?;
     }
-    Ok(())
-}
-
-async fn retire_task_execution_claims(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    job_id: Uuid,
-    run_id: Uuid,
-    task_id: Uuid,
-) -> Result<(), DenError> {
-    sqlx::query!(
-        "UPDATE docket_execution_sessions SET state = 'cancelled', updated_at = NOW()
-         WHERE job_id = $1 AND run_id = $2 AND task_id = $3
-           AND state IN ('active', 'blocked', 'completing', 'paused')",
-        job_id,
-        run_id,
-        task_id,
-    )
-    .execute(&mut **tx)
-    .await?;
     Ok(())
 }
 

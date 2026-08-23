@@ -1,8 +1,7 @@
 use den_core::config::Config;
 use den_core::DenError;
 use den_docket::{
-    task_list_projection_from_session_tasks, DocketExecutionSessionRow, DocketService,
-    DocketTaskListFilter, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
+    task_list_projection_from_session_tasks, DocketService, DocketTaskListFilter, PgDocketService,
     TaskListProjection,
 };
 use den_memory::MemoryStoreManager;
@@ -37,7 +36,6 @@ use crate::context_budget::AssembledTurnBudgetComponents;
 use crate::runtime::compaction::{
     on_turn_assemble_compaction, render_compaction_prompt_context, CompactionMode,
 };
-use crate::runtime::task_context::active_docket_execution_lookup;
 
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
@@ -104,27 +102,7 @@ pub struct AssembledNativeTurn {
 async fn load_cached_activity_plan_projection(
     ctx: &AssembleTurnContext<'_>,
     service: &PgDocketService,
-    active_execution: Option<&DocketExecutionSessionRow>,
 ) -> Result<Option<TaskListProjection>, DenError> {
-    let Some(user_id) = ctx.user_id else {
-        return Ok(None);
-    };
-    if let Some(execution) = active_execution {
-        return service
-            .checkout_task_list(
-                ctx.bear_id,
-                ctx.profile,
-                user_id,
-                TaskListCheckoutRequest {
-                    source: TaskListCheckoutSource::DocketJob {
-                        job_id: execution.job_id,
-                        parent_task_id: None,
-                    },
-                    pair_session_id: None,
-                },
-            )
-            .await;
-    }
     load_session_anchored_activity_plan(ctx, service).await
 }
 
@@ -295,15 +273,11 @@ async fn record_objective_orientation_event(
 fn objective_orientation_input(
     profile: BearProfile,
     cached_activity_plan_projection: Option<&TaskListProjection>,
-    active_execution: Option<&DocketExecutionSessionRow>,
     explicit_pair_current_task_id: Option<Uuid>,
     work_enabled: bool,
 ) -> ObjectiveOrientationResolutionInput {
-    let work_execution = matches!(profile, BearProfile::Work)
-        .then_some(active_execution)
-        .flatten();
     ObjectiveOrientationResolutionInput {
-        docket_job_id: work_execution.map(|execution| execution.job_id.to_string()),
+        docket_job_id: None,
         docket_execution_mutable: true,
         active_task_ref: if matches!(profile, BearProfile::Pair) {
             // A session task tree is prompt context, not continuation authority.
@@ -317,19 +291,7 @@ fn objective_orientation_input(
                 })
             })
         } else {
-            cached_activity_plan_projection
-                .and_then(active_orientation_task_ref)
-                .or_else(|| {
-                    work_execution.and_then(|execution| {
-                        execution
-                            .task_id
-                            .map(|task_id| OrientationTaskRef::DocketTask {
-                                job_id: Some(execution.job_id.to_string()),
-                                task_id: task_id.to_string(),
-                                title: None,
-                            })
-                    })
-                })
+            cached_activity_plan_projection.and_then(active_orientation_task_ref)
         },
         freeform_policy: if work_enabled {
             FreeformPolicy::task_definition_permitted()
@@ -567,15 +529,8 @@ pub async fn assemble_native_turn_for_bear(
     )
     .await?;
     let docket = PgDocketService::from_pool(ctx.pool);
-    let active_execution = docket
-        .get_active_execution_session(
-            ctx.bear_id,
-            ctx.profile,
-            active_docket_execution_lookup(ctx.session_id, ctx.conversation_id),
-        )
-        .await?;
     let cached_activity_plan_projection =
-        load_cached_activity_plan_projection(&ctx, &docket, active_execution.as_ref()).await?;
+        load_cached_activity_plan_projection(&ctx, &docket).await?;
     let explicit_pair_current_task_id = if ctx.profile == BearProfile::Pair {
         match (ctx.user_id, ctx.session_id) {
             (Some(user_id), Some(client_session_id)) => {
@@ -596,7 +551,6 @@ pub async fn assemble_native_turn_for_bear(
     let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
         ctx.profile,
         cached_activity_plan_projection.as_ref(),
-        active_execution.as_ref(),
         explicit_pair_current_task_id,
         bear.work_enabled,
     ));
@@ -638,7 +592,7 @@ pub async fn assemble_native_turn_for_bear(
             session_id,
             &roots,
             &objective_orientation,
-            active_execution.as_ref(),
+            None,
         )
         .await?;
         if !supplement.trim().is_empty() {

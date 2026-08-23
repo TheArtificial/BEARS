@@ -352,11 +352,7 @@ fn pair_current_task_projection(
     context: &den_runtime::runtime::task_context::RuntimeTaskContext,
 ) -> Option<Value> {
     let task_id = context.current_task_id?;
-    if !matches!(
-        context.source,
-        den_runtime::runtime::task_context::RuntimeTaskSource::SessionCurrentTask
-            | den_runtime::runtime::task_context::RuntimeTaskSource::DurableDocketExecution
-    ) {
+    if context.source != den_runtime::runtime::task_context::RuntimeTaskSource::SessionCurrentTask {
         return None;
     }
     let item = context
@@ -485,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn pair_current_task_projects_session_and_durable_execution_focus() {
+    fn pair_current_task_projects_session_focus_only() {
         let task_id = Uuid::new_v4();
         let projected = pair_current_task_projection(&session_current_task_context(task_id))
             .expect("session-selected task should project");
@@ -520,12 +516,6 @@ mod tests {
             None,
         );
         assert!(acp_without_selection["current_task"].is_null());
-
-        let mut durable_execution = session_current_task_context(task_id);
-        durable_execution.source = RuntimeTaskSource::DurableDocketExecution;
-        let projected = pair_current_task_projection(&durable_execution)
-            .expect("scheduler-selected durable task should project");
-        assert_eq!(projected["id"], task_id.to_string());
     }
 }
 
