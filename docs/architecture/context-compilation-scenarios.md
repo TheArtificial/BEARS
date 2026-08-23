@@ -52,7 +52,7 @@ Exception, current ACP adapter direct-tool descriptors:
 |----------|-------------------|--------------------|--------------|-----------------------|----------------------|
 | Normal web chat | Stance prompt | Optional runtime fragments | transcript, memory, recall | Usually no | hidden prompt drift or over-including memory |
 | ACP/pair with tools | Stance prompt | tool/runtime reminders | client tools, Den tools, prompt memory | Yes, by tool policy | hiding/revealing tools by heuristics |
-| Docket execution active | Stance prompt | Docket runtime fragment | execution session state | Yes, permission mode | asking model to decide Write vs Ask/Plan |
+| Docket execution active | Stance prompt | Docket runtime fragment | canonical execution-attempt state | Yes, permission mode | asking model to decide Write vs Ask/Plan |
 | Prompt memory block present | Stance prompt | prompt-memory block context | selected blocks | Selection done by Den | stale or overbroad block inclusion |
 | Key memory projection | Stance prompt | projection block | SQLite latest heads | Selection done by Den | exposing raw branches or too much history |
 | Derived recall | Stance prompt | recall block | vector/keyword hits | Selection done by Den | treating recall as canonical memory |
@@ -142,7 +142,7 @@ What the user experiences:
 
 What Den does:
 
-1. Looks up the active Docket execution session.
+1. Looks up the active canonical Docket execution attempt.
 2. Supplies execution state to a repository-owned runtime fragment.
 3. Renders exactly one permission-mode instruction before inference.
 
