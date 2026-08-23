@@ -94,6 +94,7 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
         .insert(session_id.clone(), context.clone());
 
     let checkout = checkout_work_order(http, &config, &session_id, &env).await?;
+    let (execution_attempt_id, execution_attempt_fence_epoch) = checkout_attempt(&checkout)?;
     let prompt = checkout
         .get("prompt")
         .and_then(Value::as_str)
@@ -161,14 +162,25 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
             format!("headless turn failed: {err:#}"),
             Err(anyhow!("headless turn failed: {err:#}")),
         ),
-        Err(_) => (
-            "deadline_exceeded",
-            format!(
-                "headless turn exceeded its {}s deadline; exiting so the sandbox reports failure",
+        Err(_) => {
+            let summary = format!(
+                "headless turn exceeded its {}s deadline; checkpoint requested before sandbox exit",
                 deadline.as_secs()
-            ),
-            Err(anyhow!("headless deadline exceeded")),
-        ),
+            );
+            request_work_checkpoint(
+                http,
+                &config,
+                execution_attempt_id,
+                execution_attempt_fence_epoch,
+                "near_ko",
+            )
+            .await;
+            (
+                "deadline_exceeded",
+                summary,
+                Err(anyhow!("headless deadline exceeded")),
+            )
+        }
     };
 
     report_work_order(http, &config, &session_id, &env, status_hint, &summary).await;
@@ -265,6 +277,65 @@ async fn report_work_order(
     .await;
     if let Err(err) = result {
         eprintln!("bear-armature: headless work.report failed (advisory): {err:#}");
+    }
+}
+
+async fn request_work_checkpoint(
+    http: &reqwest::Client,
+    config: &Config,
+    execution_attempt_id: Uuid,
+    fence_epoch: i64,
+    signal: &str,
+) {
+    let result = bearwire::rpc_call(
+        http,
+        config,
+        "work.boundary",
+        json!({
+            "execution_attempt_id": execution_attempt_id.to_string(),
+            "fence_epoch": fence_epoch,
+            "boundary_key": Uuid::new_v4().to_string(),
+            "signal": signal,
+        }),
+    )
+    .await;
+    if let Err(err) = result {
+        eprintln!("bear-armature: headless work.boundary failed (advisory): {err:#}");
+    }
+}
+
+fn checkout_attempt(checkout: &Value) -> Result<(Uuid, i64)> {
+    let attempt_id = checkout
+        .get("execution_attempt_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("work.checkout returned no execution attempt id"))?
+        .parse()
+        .context("work.checkout returned invalid execution attempt id")?;
+    let fence_epoch = checkout
+        .get("execution_attempt_fence_epoch")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| anyhow!("work.checkout returned no execution attempt fence epoch"))?;
+    Ok((attempt_id, fence_epoch))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checkout_attempt;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    #[test]
+    fn checkout_attempt_requires_canonical_attempt_and_fence() {
+        let attempt_id = Uuid::new_v4();
+        assert_eq!(
+            checkout_attempt(&json!({
+                "execution_attempt_id": attempt_id.to_string(),
+                "execution_attempt_fence_epoch": 4,
+            }))
+            .expect("canonical checkout attempt"),
+            (attempt_id, 4)
+        );
+        assert!(checkout_attempt(&json!({})).is_err());
     }
 }
 
