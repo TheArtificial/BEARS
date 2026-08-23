@@ -43,18 +43,17 @@ use super::model::{
     DocketExecutionAttemptDbRow, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
     DocketExecutionAttemptStart, DocketExecutionControl, DocketExecutionLookup,
     DocketExecutionNextAction, DocketExecutionReason, DocketExecutionSessionRow,
-    DocketExecutionSessionUpsert, DocketExecutionTaskControl, DocketExecutionTaskSettlement,
-    DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
-    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
-    DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcome,
-    DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport,
-    DocketPairContinuationDecision, DocketSchedulerObservationDeliveryState,
-    DocketSchedulerObservationDisposition, DocketSchedulerObservationEnqueue,
-    DocketSchedulerObservationRow, DocketSessionTaskSettlement, DocketTaskCreate,
-    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement,
-    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
-    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
-    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketJobCreate,
+    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
+    DocketPairAwaitingUserResume, DocketPairBoundedOutcome, DocketPairBoundedOutcomeDecision,
+    DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
+    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
+    DocketSchedulerObservationEnqueue, DocketSchedulerObservationRow, DocketSessionTaskSettlement,
+    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
+    DocketTaskPlacement, DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow,
+    DocketTaskUpdate, DocketValidationError, TaskListItemStatus, TaskListProjection,
+    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -2089,201 +2088,6 @@ pub(super) async fn acknowledge_scheduler_observation_delivery(
     .try_into()
 }
 
-pub(super) async fn upsert_execution_session(
-    pool: &PgPool,
-    upsert: DocketExecutionSessionUpsert,
-) -> Result<DocketExecutionSessionRow, DenError> {
-    if upsert.session_id.trim().is_empty() {
-        return Err(DenError::ValidationError(
-            "Docket execution session_id must not be empty".to_string(),
-        ));
-    }
-    if let Some(task_id) = upsert.task_id {
-        let settled = sqlx::query_scalar!(
-            "SELECT settled_by_entry_id IS NOT NULL AS \"settled!\" FROM bear_tasks WHERE id = $1",
-            task_id
-        )
-        .fetch_optional(pool)
-        .await?
-        .unwrap_or(false);
-        if settled && execution_session_state_is_active_like(&upsert.state) {
-            return Err(DenError::ValidationError(format!(
-                "Docket cannot claim a settled task: task_id={task_id}"
-            )));
-        }
-    }
-    sqlx::query_as!(
-        DocketExecutionSessionRow,
-        r#"
-        INSERT INTO docket_execution_sessions (
-            bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
-            job_id, run_id, task_id, state
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT (bear_id, owner_profile, session_id)
-            WHERE state IN ('active', 'blocked', 'completing', 'paused')
-        DO UPDATE SET
-            source_conversation_id = EXCLUDED.source_conversation_id,
-            source_client_session_id = EXCLUDED.source_client_session_id,
-            job_id = EXCLUDED.job_id,
-            run_id = EXCLUDED.run_id,
-            task_id = EXCLUDED.task_id,
-            state = EXCLUDED.state,
-            updated_at = NOW()
-        RETURNING id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
-                  job_id, run_id, task_id, state, created_at, updated_at
-        "#,
-        upsert.bear_id,
-        upsert.owner_profile.as_str(),
-        upsert.session_id,
-        upsert.source_conversation_id,
-        upsert.source_client_session_id,
-        upsert.job_id,
-        upsert.run_id,
-        upsert.task_id,
-        upsert.state
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(Into::into)
-}
-
-enum ExecutionSessionRef<'a> {
-    Explicit(&'a str),
-    AcpClientSession(&'a str),
-    Conversation(&'a str),
-}
-
-impl ExecutionSessionRef<'_> {
-    fn into_session_id(self) -> String {
-        match self {
-            Self::Explicit(value) => value.to_string(),
-            Self::AcpClientSession(value) => format!("acp:{value}"),
-            Self::Conversation(value) => format!("conversation:{value}"),
-        }
-    }
-}
-
-fn non_empty_ref(value: &Option<String>) -> Option<&str> {
-    value
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-fn execution_session_ref(request: &DocketJobExecuteRequest) -> Option<ExecutionSessionRef<'_>> {
-    non_empty_ref(&request.source_conversation_id)
-        .map(ExecutionSessionRef::Conversation)
-        .or_else(|| non_empty_ref(&request.session_id).map(ExecutionSessionRef::Explicit))
-        .or_else(|| {
-            non_empty_ref(&request.source_client_session_id)
-                .map(ExecutionSessionRef::AcpClientSession)
-        })
-}
-
-fn execution_session_id(request: &DocketJobExecuteRequest) -> Option<String> {
-    execution_session_ref(request).map(ExecutionSessionRef::into_session_id)
-}
-
-fn execution_session_state_is_active_like(state: &str) -> bool {
-    matches!(state, "active" | "blocked" | "completing" | "paused")
-}
-
-async fn retire_active_execution_session(
-    pool: &PgPool,
-    request: &DocketJobExecuteRequest,
-    session_id: &str,
-    run_id: Uuid,
-    task_id: Option<Uuid>,
-    state: &str,
-) -> Result<bool, DenError> {
-    // ponytail: one execution session can have at most one active-like row today via the partial
-    // unique index; update all matching rows anyway so future repair/backfill duplicates clear too.
-    let result = sqlx::query!(
-        r"
-        UPDATE docket_execution_sessions
-        SET source_conversation_id = $4,
-            source_client_session_id = $5,
-            job_id = $6,
-            run_id = $7,
-            task_id = $8,
-            state = $9,
-            updated_at = NOW()
-        WHERE bear_id = $1
-          AND owner_profile = $2
-          AND session_id = $3
-          AND state IN ('active', 'blocked', 'completing', 'paused')
-        ",
-        request.bear_id,
-        request.actor_role.as_str(),
-        session_id,
-        request.source_conversation_id.as_ref(),
-        request.source_client_session_id.as_ref(),
-        request.job_id,
-        run_id,
-        task_id,
-        state
-    )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() > 0)
-}
-
-async fn record_execution_session(
-    pool: &PgPool,
-    request: &DocketJobExecuteRequest,
-    run_id: Uuid,
-    task_id: Option<Uuid>,
-    state: &str,
-) -> Result<(), DenError> {
-    let Some(session_id) = execution_session_id(request) else {
-        return Ok(());
-    };
-    let retired_active = if execution_session_state_is_active_like(state) {
-        false
-    } else {
-        retire_active_execution_session(pool, request, &session_id, run_id, task_id, state).await?
-    };
-    if !retired_active {
-        upsert_execution_session(
-            pool,
-            DocketExecutionSessionUpsert {
-                bear_id: request.bear_id,
-                owner_profile: request.actor_role,
-                session_id: session_id.clone(),
-                source_conversation_id: request.source_conversation_id.clone(),
-                source_client_session_id: request.source_client_session_id.clone(),
-                job_id: request.job_id,
-                run_id,
-                task_id,
-                state: state.to_string(),
-            },
-        )
-        .await?;
-    }
-    sqlx::query!(
-        r"
-        INSERT INTO bear_job_events (job_id, run_id, event_type, task_id, by_role, by_agent_id, by_user_id, payload)
-        VALUES ($1, $2, 'focus_selected', $3, $4, $5, $6, $7::jsonb)
-        ",
-
-request.job_id,
-run_id,
-task_id,
-request.actor_role.as_str(),
-request.actor_agent_id.as_deref(),
-request.actor_user_id,
-json!({
-        "session_id": session_id,
-        "source_conversation_id": request.source_conversation_id,
-        "source_client_session_id": request.source_client_session_id,
-        "state": state,
-    }))
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 fn execution_control(
     run: &DocketJobRunRow,
     selected_task_id: Option<Uuid>,
@@ -2312,63 +2116,8 @@ pub(super) async fn reconcile_execution(
     pool: &PgPool,
     request: DocketJobExecuteRequest,
 ) -> Result<DocketJobExecuteOutcome, DenError> {
-    let Some(projection) = get_job(pool, request.bear_id, request.job_id).await? else {
-        return Err(DenError::NotFound(format!(
-            "Docket job not found: {}",
-            request.job_id
-        )));
-    };
-    let Some(run) = projection.current_run.as_ref() else {
-        return Err(DenError::ValidationError(
-            "Docket job has no current run to reconcile".to_string(),
-        ));
-    };
-    let lookup = DocketExecutionLookup {
-        session_id: request.session_id.clone(),
-        source_conversation_id: request.source_conversation_id.clone(),
-        source_client_session_id: request.source_client_session_id.clone(),
-    };
-    let Some(session) =
-        get_active_execution_session(pool, request.bear_id, request.actor_role, lookup).await?
-    else {
-        return execute_job(pool, request).await;
-    };
-    if session.job_id != request.job_id || session.run_id != run.id {
-        return Err(DenError::ValidationError(format!(
-            "Docket execution focus belongs to another job or run: session_id={}",
-            session.id
-        )));
-    }
-
-    let state_by_task = projection
-        .task_states
-        .iter()
-        .map(|state| (state.task_id, state.status.as_str()))
-        .collect::<HashMap<_, _>>();
-    let selected =
-        first_pending_leaf_in_plan_order(&projection, &state_by_task).map(|task| task.id);
-    if session.task_id != selected
-        || (selected.is_none() && execution_session_state_is_active_like(&session.state))
-    {
-        // The session belongs to this run and its old focus is no longer the
-        // plan's first unfinished leaf, so replacing it is safe and idempotent.
-        // A missing successor releases the execution claim; `blocked` remains
-        // active-like and would prevent a later checkout from claiming a task.
-        // ponytail: session focus is the sole scheduler claim today; add a
-        // separate lease table if work dispatch gains a second concurrent owner.
-        record_execution_session(
-            pool,
-            &request,
-            run.id,
-            selected,
-            if selected.is_some() {
-                "active"
-            } else {
-                "completed"
-            },
-        )
-        .await?;
-    }
+    // Canonical attempts are the only execution authority. Reconciliation is
+    // therefore selection/projection only; it must not recreate a legacy claim.
     execute_job(pool, request).await
 }
 
@@ -2396,32 +2145,28 @@ pub(super) async fn settle_execution_task(
             "Docket job has no current run to settle".to_string(),
         ));
     };
-    let session_id = execution_session_id(&execution).ok_or_else(|| {
-        DenError::ValidationError("Docket execution has no session identity".to_string())
+    let session_id = execution.session_id.as_deref().ok_or_else(|| {
+        DenError::ValidationError("Docket execution settlement requires a Pair session".to_string())
     })?;
-    let session = sqlx::query_as!(
-        DocketExecutionSessionRow,
+    let attempt_id = sqlx::query_scalar!(
         r#"
-        SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
-               job_id, run_id, task_id, state, created_at, updated_at
-        FROM docket_execution_sessions
-        WHERE bear_id = $1 AND owner_profile = $2 AND session_id = $3
-          AND job_id = $4 AND run_id = $5 AND task_id = $6
-          AND state IN ('active', 'blocked', 'completing', 'paused')
+        SELECT id
+        FROM docket_execution_attempts
+        WHERE bear_id = $1 AND task_id = $2
+          AND owner_kind = 'pair' AND pair_session_id = $3
+          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
         ORDER BY updated_at DESC LIMIT 1
         "#,
         execution.bear_id,
-        execution.actor_role.as_str(),
-        session_id,
-        execution.job_id,
-        run.id,
         settlement.task_id,
+        session_id,
     )
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| {
         DenError::ValidationError(
-            "Docket execution settlement task is not owned by the active session claim".to_string(),
+            "Docket execution settlement task is not owned by a live canonical Pair attempt"
+                .to_string(),
         )
     })?;
     let mut tx = pool.begin().await?;
@@ -2447,24 +2192,12 @@ pub(super) async fn settle_execution_task(
     .await?;
     sqlx::query!(
         r#"
-        UPDATE docket_execution_sessions
-        SET state = 'completed', updated_at = NOW()
+        UPDATE docket_execution_attempts
+        SET state = 'settled', settled_at = COALESCE(settled_at, NOW()), updated_at = NOW()
         WHERE id = $1
-          AND bear_id = $2
-          AND owner_profile = $3
-          AND session_id = $4
-          AND job_id = $5
-          AND run_id = $6
-          AND task_id = $7
-          AND state IN ('active', 'blocked', 'completing', 'paused')
+          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
         "#,
-        session.id,
-        execution.bear_id,
-        execution.actor_role.as_str(),
-        session_id,
-        execution.job_id,
-        run.id,
-        settlement.task_id,
+        attempt_id,
     )
     .execute(&mut *tx)
     .await?;
@@ -2539,30 +2272,6 @@ pub(super) async fn execute_job(
         // Execution is run-owned; task state records only durable outcomes.
         let selected =
             first_pending_leaf_in_plan_order(&projection, &state_by_task).map(|task| task.id);
-        let active_is_terminal = matches!(
-            state_by_task.get(active).copied(),
-            Some("done" | "blocked" | "cancelled")
-        );
-        let lookup = DocketExecutionLookup {
-            session_id: request.session_id.clone(),
-            source_conversation_id: request.source_conversation_id.clone(),
-            source_client_session_id: request.source_client_session_id.clone(),
-        };
-        let owns_terminal_session_claim = active_is_terminal
-            && get_active_execution_session(pool, request.bear_id, request.actor_role, lookup)
-                .await?
-                .is_some_and(|session| {
-                    session.job_id == request.job_id
-                        && session.run_id == run.id
-                        && session.task_id == Some(*active)
-                });
-        if owns_terminal_session_claim {
-            // `update_task` commits the durable outcome before the focus can be
-            // reconciled. Recover that interrupted handoff only for the exact
-            // execution session that owns the terminal claim; a live Work run
-            // remains a separate owner and must use its own lifecycle.
-            return Box::pin(reconcile_execution(pool, request)).await;
-        }
         if selected != Some(*active) {
             let job = get_job(pool, request.bear_id, request.job_id)
                 .await?
@@ -2613,7 +2322,6 @@ pub(super) async fn execute_job(
 
     if let Some(next) = first_pending_leaf_in_plan_order(&projection, &state_by_task) {
         mark_job_running(pool, &request, run.id).await?;
-        record_execution_session(pool, &request, run.id, Some(next.id), "active").await?;
         let job = get_job(pool, request.bear_id, request.job_id)
             .await?
             .ok_or_else(|| {
@@ -2643,7 +2351,6 @@ pub(super) async fn execute_job(
 
     if tasks_complete && criteria_complete {
         complete_job_run(pool, &request, run.id).await?;
-        record_execution_session(pool, &request, run.id, None, "completed").await?;
         let job = get_job(pool, request.bear_id, request.job_id)
             .await?
             .ok_or_else(|| {
@@ -2670,9 +2377,6 @@ pub(super) async fn execute_job(
             message: "All tasks and criteria are complete; job completed.".to_string(),
         })
     } else {
-        // The job may be blocked on criteria, but it has no actionable task.
-        // Do not retain an active-like session claim with no task to own.
-        record_execution_session(pool, &request, run.id, None, "completed").await?;
         let job = get_job(pool, request.bear_id, request.job_id)
             .await?
             .ok_or_else(|| {

@@ -510,6 +510,16 @@ async fn docket_execute_reports_no_session_then_attached_pair_binding(pool: sqlx
     .await
     .expect("load Pair attachment");
     assert_eq!(attached_count, 1);
+    let legacy_session_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM docket_execution_sessions WHERE job_id = $1")
+            .bind(job.job.id)
+            .fetch_one(&pool)
+            .await
+            .expect("load legacy execution sessions");
+    assert_eq!(
+        legacy_session_count, 0,
+        "Pair execution uses canonical attempts only"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
