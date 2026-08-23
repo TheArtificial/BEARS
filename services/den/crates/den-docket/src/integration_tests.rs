@@ -7,14 +7,12 @@ use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
-    DocketEntryScope, DocketExecutionLookup, DocketExecutionReason, DocketExecutionTaskSettlement,
-    DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobOverlapResolution,
-    DocketSchedulerObservationDeliveryState, DocketSchedulerObservationDisposition,
-    DocketSchedulerObservationEnqueue, DocketService, DocketSessionTaskSettlement,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
-    DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
-    DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher,
-    TaskListSyncRequest, TaskListVisibility,
+    DocketEntryScope, DocketExecutionTaskSettlement, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
+    DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
+    DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
+    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy,
+    TaskDispatcher, TaskListSyncRequest, TaskListVisibility,
 };
 
 fn primary_output_result_refs() -> Value {
@@ -32,6 +30,24 @@ fn primary_output_result_refs() -> Value {
             "execution_provenance": "local integration test"
         }
     })
+}
+
+pub(super) async fn live_pair_attempt(
+    pool: &PgPool,
+    bear_id: Uuid,
+    pair_session_id: &str,
+) -> Option<(Uuid, Uuid, String)> {
+    sqlx::query_as(
+        "SELECT task_id, pair_run_id, state FROM docket_execution_attempts
+         WHERE bear_id = $1 AND owner_kind = 'pair' AND pair_session_id = $2
+           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(bear_id)
+    .bind(pair_session_id)
+    .fetch_optional(pool)
+    .await
+    .expect("lookup live canonical Pair attempt")
 }
 
 pub(super) async fn test_pool() -> Option<PgPool> {
@@ -611,23 +627,13 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     assert!(first.control.retryable);
     assert!(first.control.reason.is_none());
     assert_eq!(first.job.job.status, "running");
-    let active_execution = service
-        .get_active_execution_session(
-            bear_id,
-            BearProfile::Pair,
-            DocketExecutionLookup {
-                session_id: None,
-                source_conversation_id: None,
-                source_client_session_id: Some("pair-integration-session".to_string()),
-            },
-        )
-        .await
-        .expect("lookup active execution")
-        .expect("active execution binding");
-    assert_eq!(active_execution.job_id, created.job.id);
-    assert_eq!(active_execution.run_id, run_id);
-    assert_eq!(active_execution.task_id, Some(first_task_id));
-    assert_eq!(active_execution.state, "active");
+    // Selecting a task establishes only objective context. Pair execution authority
+    // starts later through the fenced canonical-attempt gate.
+    assert!(
+        live_pair_attempt(&pool, bear_id, "pair-integration-session")
+            .await
+            .is_none()
+    );
 
     let focus_event_count = sqlx::query_scalar!(
         r"
@@ -926,21 +932,10 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .expect("reconcile completed task focus before criteria");
 
     // A criteria-only block must not retain a claim for a terminal task.
-    let released_execution = service
-        .get_active_execution_session(
-            bear_id,
-            BearProfile::Pair,
-            DocketExecutionLookup {
-                session_id: Some("pair-integration-session".to_string()),
-                source_conversation_id: None,
-                source_client_session_id: None,
-            },
-        )
-        .await
-        .expect("lookup released execution focus");
     assert!(
-        released_execution.is_none(),
-        "released focus: {released_execution:?}"
+        live_pair_attempt(&pool, bear_id, "pair-integration-session")
+            .await
+            .is_none()
     );
 
     let blocked = service
@@ -995,19 +990,11 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         completed.job.current_run.as_ref().unwrap().state,
         "completed"
     );
-    let stale_execution = service
-        .get_active_execution_session(
-            bear_id,
-            BearProfile::Pair,
-            DocketExecutionLookup {
-                session_id: None,
-                source_conversation_id: None,
-                source_client_session_id: Some("pair-integration-session".to_string()),
-            },
-        )
-        .await
-        .expect("lookup stale execution");
-    assert!(stale_execution.is_none());
+    assert!(
+        live_pair_attempt(&pool, bear_id, "pair-integration-session")
+            .await
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -1101,7 +1088,6 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         .create_job(two_task_job(user_id, bear_id))
         .await
         .expect("create job");
-    let run_id = created.job.current_run_id.expect("current run");
     let first_task_id = created.tasks[0].id;
     let second_task_id = created.tasks[1].id;
 
@@ -1126,38 +1112,9 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         Some(first_task_id)
     );
 
-    let active_execution = service
-        .get_active_execution_session(
-            bear_id,
-            BearProfile::Pair,
-            DocketExecutionLookup {
-                session_id: None,
-                source_conversation_id: Some("conversation-1".to_string()),
-                source_client_session_id: Some("client-session-2".to_string()),
-            },
-        )
+    assert!(live_pair_attempt(&pool, bear_id, "conversation-1")
         .await
-        .expect("lookup active execution")
-        .expect("conversation-bound active execution");
-    assert_eq!(active_execution.session_id, "conversation:conversation-1");
-    assert_eq!(active_execution.job_id, created.job.id);
-    assert_eq!(active_execution.run_id, run_id);
-    assert_eq!(active_execution.task_id, Some(first_task_id));
-
-    let session_fallback = service
-        .get_active_execution_session(
-            bear_id,
-            BearProfile::Pair,
-            DocketExecutionLookup {
-                session_id: Some(active_execution.session_id.clone()),
-                source_conversation_id: Some("missing-conversation".to_string()),
-                source_client_session_id: Some("missing-client-session".to_string()),
-            },
-        )
-        .await
-        .expect("fallback lookup active execution")
-        .expect("session-bound active execution");
-    assert_eq!(session_fallback.id, active_execution.id);
+        .is_none());
 
     let resumed = service
         .execute_job(DocketJobExecuteRequest {
@@ -1949,127 +1906,4 @@ async fn create_job_requires_explicit_resolution_for_exact_active_overlap() {
         .expect("read predecessor")
         .expect("predecessor exists");
     assert_eq!(predecessor.job.status, "cancelled");
-}
-
-#[tokio::test]
-async fn scheduler_observations_are_session_scoped_and_idempotently_acknowledged() {
-    let Some(pool) = test_pool().await else {
-        eprintln!("skipping postgres-backed docket integration test; database unavailable");
-        return;
-    };
-    let (user_id, bear_id) = seed_user_and_bear(&pool, "scheduler-observation").await;
-    let service = PgDocketService::from_pool(&pool);
-
-    let first_job = service
-        .create_job(two_task_job(user_id, bear_id))
-        .await
-        .expect("create first job");
-    service
-        .execute_job(DocketJobExecuteRequest {
-            bear_id,
-            job_id: first_job.job.id,
-            actor_role: BearProfile::Pair,
-            actor_user_id: Some(user_id),
-            actor_agent_id: None,
-            session_id: Some("scheduler-observation-first".to_string()),
-            source_conversation_id: None,
-            source_client_session_id: Some("scheduler-observation-first".to_string()),
-        })
-        .await
-        .expect("execute first job");
-    let first_session = service
-        .get_active_execution_session(
-            bear_id,
-            BearProfile::Pair,
-            DocketExecutionLookup {
-                session_id: None,
-                source_conversation_id: None,
-                source_client_session_id: Some("scheduler-observation-first".to_string()),
-            },
-        )
-        .await
-        .expect("lookup first execution session")
-        .expect("first execution session is active");
-
-    let second_job = service
-        .create_job(two_task_job(user_id, bear_id))
-        .await
-        .expect("create second job");
-    service
-        .execute_job(DocketJobExecuteRequest {
-            bear_id,
-            job_id: second_job.job.id,
-            actor_role: BearProfile::Pair,
-            actor_user_id: Some(user_id),
-            actor_agent_id: None,
-            session_id: Some("scheduler-observation-second".to_string()),
-            source_conversation_id: None,
-            source_client_session_id: Some("scheduler-observation-second".to_string()),
-        })
-        .await
-        .expect("execute second job");
-    let second_session = service
-        .get_active_execution_session(
-            bear_id,
-            BearProfile::Pair,
-            DocketExecutionLookup {
-                session_id: None,
-                source_conversation_id: None,
-                source_client_session_id: Some("scheduler-observation-second".to_string()),
-            },
-        )
-        .await
-        .expect("lookup second execution session")
-        .expect("second execution session is active");
-
-    let enqueue = |disposition| DocketSchedulerObservationEnqueue {
-        execution_session_id: first_session.id,
-        task_id: first_session.task_id,
-        reason: DocketExecutionReason::ActiveTaskIsStale,
-        disposition,
-    };
-    let first = service
-        .enqueue_scheduler_observation(enqueue(DocketSchedulerObservationDisposition::Reconcile))
-        .await
-        .expect("enqueue first observation");
-    let second = service
-        .enqueue_scheduler_observation(enqueue(DocketSchedulerObservationDisposition::Reconcile))
-        .await
-        .expect("enqueue repeated observation");
-    assert_eq!(first.occurrence, 1);
-    assert_eq!(second.occurrence, 2);
-    assert_eq!(
-        first.delivery_state,
-        DocketSchedulerObservationDeliveryState::Pending
-    );
-
-    let first_pending = service
-        .pending_scheduler_observations(first_session.id)
-        .await
-        .expect("list first session pending observations");
-    assert_eq!(first_pending.len(), 2);
-    assert!(service
-        .pending_scheduler_observations(second_session.id)
-        .await
-        .expect("list second session pending observations")
-        .is_empty());
-
-    let delivered = service
-        .acknowledge_scheduler_observation_delivery(first.id, first_session.id)
-        .await
-        .expect("acknowledge observation");
-    let delivered_at = delivered.delivered_at.expect("delivery timestamp");
-    let retried = service
-        .acknowledge_scheduler_observation_delivery(first.id, first_session.id)
-        .await
-        .expect("idempotently acknowledge observation");
-    assert_eq!(
-        retried.delivery_state,
-        DocketSchedulerObservationDeliveryState::Delivered
-    );
-    assert_eq!(retried.delivered_at, Some(delivered_at));
-    assert!(service
-        .acknowledge_scheduler_observation_delivery(second.id, second_session.id)
-        .await
-        .is_err());
 }
