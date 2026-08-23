@@ -1863,25 +1863,6 @@ pub async fn get_job_work_task_run_statuses(
     Ok(rows.into_iter().map(|row| (row.id, row.status)).collect())
 }
 
-/// Close the work-stance execution session opened by `work.checkout`.
-pub async fn close_work_execution_session(
-    pool: &PgPool,
-    bear_id: Uuid,
-    session_id: &str,
-) -> Result<(), DenError> {
-    sqlx::query!(
-        "UPDATE docket_execution_sessions
-         SET state = 'completed', updated_at = now()
-         WHERE bear_id = $1 AND owner_profile = 'work' AND session_id = $2
-           AND state IN ('active', 'blocked', 'completing', 'paused')",
-        bear_id,
-        session_id
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 /// Bears that have jobs with unfinished tasks, for the optional auto-enqueue
 /// sweep (`WORK_DISPATCH_AUTO`).
 pub async fn list_bears_with_work_tasks(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {

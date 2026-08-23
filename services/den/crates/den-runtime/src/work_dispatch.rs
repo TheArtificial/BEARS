@@ -718,9 +718,6 @@ async fn harvest_run(
         },
     });
 
-    if let Some(session_id) = run.bearwire_session_id.as_deref() {
-        let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
-    }
     revoke_token_for_run(pool, run.id).await;
 
     let finalize = WorkRunFinalize {
@@ -761,9 +758,6 @@ async fn cancel_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient,
     // event log / an internal cancel endpoint on the API process.
     revoke_token_for_run(pool, run.id).await;
     teardown_sandbox(pool, config, client, run, false).await;
-    if let Some(session_id) = run.bearwire_session_id.as_deref() {
-        let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
-    }
     let _ = work_runs::finalize_work_run(
         pool,
         run.id,
