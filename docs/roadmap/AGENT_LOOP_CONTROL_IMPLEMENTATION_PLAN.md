@@ -89,19 +89,27 @@ Work rejection checkpoint correlation and acknowledgement are specified in
 4. Recovery reconciles every partial transition: no ownerless running attempt,
    no selected task presented as executing without an attempt, and no two
    live attempts for the same exclusive owner/task scope.
-5. Existing `docket_execution_sessions`, Pair runs, Work runs, and the
-   scheduler-observation outbox are migration inputs/projections until mapped
-   to this attempt identity. Do not add runtime delivery to the outbox first.
+5. **Completed (pre-release):** `docket_execution_sessions` and the
+   scheduler-observation outbox were removed after Pair/Work ownership,
+   projections, diagnostics, and tests were rebased to canonical attempt
+   identity. They are not compatibility inputs or runtime fallbacks.
+
+The persistence and authority replacement is complete in pre-release:
+canonical attempts now cover Pair and Work authorization, fencing, bounded
+outcomes, owner-loss release, projections, and diagnostics; the legacy
+execution-session and scheduler-observation tables/APIs are gone. Remaining
+work is behavioral hardening and the other loop-control roadmap phases, not
+legacy-state reconciliation or observation rebasing.
 
 | Task | Done when |
 | --- | --- |
-| Specify canonical attempt transitions | Transition table defines actor, transaction boundary, idempotency key, fencing behavior, valid outcomes, and recovery for Pair and Work. |
-| Persist attempts | Docket migration/repository enforces owner/task identity, active-attempt uniqueness, immutable fencing epochs, and auditable timestamps. |
-| Gate Pair and Work | Start/resume/dispatch requires an authorized attempt; task selection remains an objective-only operation. |
-| Report outcomes | Pair and Work report typed bounded outcomes; Pair alone supports precise `awaiting_user`. Docket, not the runtime, advances/retries/settles task-tree work. |
-| Reconcile legacy state | Stale current-task/run/execution-session combinations become explicit non-dispatchable/reconcilable states. |
-| Rebase observations | Observation records reference a canonical attempt and exact owner correlation; delivery is designed only after this mapping exists. |
-| Validate failures | Database-backed tests cover double start, stale epoch, lost acknowledgement, process abandonment, duplicate report, user wait/resume, and Work retry/advance. |
+| Specify canonical attempt transitions | **Complete.** Transition table defines actor, transaction boundary, idempotency key, fencing behavior, valid outcomes, and recovery for Pair and Work. |
+| Persist attempts | **Complete.** Docket persistence enforces owner/task identity, active-attempt uniqueness, immutable fencing epochs, and auditable timestamps. |
+| Gate Pair and Work | **Complete.** Start/resume/dispatch requires an authorized attempt; task selection remains an objective-only operation. |
+| Report outcomes | **Complete.** Pair and Work report typed bounded outcomes; Pair supports precise `awaiting_user`. Docket, not the runtime, advances/retries/settles task-tree work. |
+| Reconcile legacy state | **Complete (pre-release deletion).** Legacy execution-session state and fallbacks were removed rather than reconciled. |
+| Rebase observations | **Complete (pre-release deletion).** The legacy scheduler-observation outbox was removed rather than rebased. |
+| Validate failures | **In progress.** Core fencing, duplicate, start, owner-loss, and focused Pair/Work paths are covered; continue adding database-backed recovery coverage as remaining attempt transitions change. |
 
 **Exit gate:** Docket can prove, from durable state, why each autonomous Pair or
 Work continuation is allowed, who owns it, and what outcome makes the next
@@ -289,7 +297,10 @@ Recent slices have moved the plan through the governance/focus/orientation found
 ### Implementation review and adjustments
 
 - Prefer **events over new state tables** for diagnostics. Focus and task-definition history fit well as existing Docket events; orientation transitions should use an existing conversation/BearWire event stream or similarly lightweight log rather than a new heavy table.
-- Keep **legacy Docket-execution persistence** and diagnostic history separate. `docket_execution_sessions` is migration input only; a selected current task remains Pair's objective, while the matching canonical Docket execution attempt is the sole Pair continuation authority. Events explain how objective, attempt, orientation, and assignment changed over time.
+- Keep **Docket attempt history** and diagnostics separate. Canonical
+  `docket_execution_attempts` is the sole continuation authority; a selected
+  current task remains Pair's objective. Events explain how objective,
+  attempt, orientation, and assignment changed over time.
 - Treat `/focus` strictly as a compatibility UX layer while it exists. Do not improve matching or add new callers; replace it with current-task projection plus explicit set/clear/assignment actions.
 - Do not build a generic `FocusTarget`. The target architecture needs a typed session current-task reference (session-local or Docket task) and a separate typed Work Job assignment; they are not interchangeable.
 - Keep broad budget enforcement behind the replay/tuning spine. The ledger/replay slices are now in place; next budget/checkpoint changes should either be replayable through the existing summary/comparison helpers or recorded as typed loop-control decisions.
