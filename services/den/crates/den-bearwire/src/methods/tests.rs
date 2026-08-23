@@ -3311,6 +3311,63 @@ async fn work_checkpoint_acknowledgement_unblocks_a_fresh_checkout(pool: sqlx::P
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn work_checkpoint_signals_require_a_fresh_fence(pool: sqlx::PgPool) {
+    for signal in ["repeated_failure", "near_ko"] {
+        let user_id = create_test_user(&pool).await;
+        let (bear_id, bear_slug) = create_test_bear(&pool).await;
+        let token = create_token_for_bear(&pool, user_id, bear_id).await;
+        let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
+        let state = test_state(pool.clone());
+        let checkout = rpc_value(
+            state.clone(), &token, "work.checkout",
+            json!({ "bear_slug": bear_slug, "session_id": format!("work-{}", Uuid::new_v4().simple()), "work_order_id": work_run_id, "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] } }),
+        ).await;
+        let attempt_id: Uuid = checkout["result"]["execution_attempt_id"]
+            .as_str()
+            .expect("attempt id")
+            .parse()
+            .expect("UUID");
+        let fence_epoch = checkout["result"]["execution_attempt_fence_epoch"]
+            .as_i64()
+            .expect("fence epoch");
+        let boundary = rpc_value(
+            state.clone(), &token, "work.boundary",
+            json!({ "bear_slug": bear_slug, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "boundary_key": Uuid::new_v4(), "signal": signal }),
+        ).await;
+        assert_eq!(
+            boundary["result"]["gate"]["disposition"], "require_checkpoint",
+            "{signal}: {boundary}"
+        );
+        let directive_id: Uuid = sqlx::query_scalar("SELECT id FROM docket_checkpoint_directives WHERE execution_attempt_id = $1 AND fence_epoch = $2")
+            .bind(attempt_id).bind(fence_epoch).fetch_one(&pool).await.expect("checkpoint directive");
+        let artifact_ref = format!("artifact_{}", Uuid::new_v4().simple());
+        let artifact_id: Uuid = sqlx::query_scalar("INSERT INTO artifacts (artifact_ref, bear_id, owner_profile, kind, storage_kind) VALUES ($1, $2, 'work', 'runtime_checkpoint', 'db_text') RETURNING id")
+            .bind(&artifact_ref).bind(bear_id).fetch_one(&pool).await.expect("checkpoint artifact");
+        sqlx::query("INSERT INTO artifact_links (artifact_id, target_kind, target_id, role) VALUES ($1, 'work_run', $2, 'runtime_checkpoint')")
+            .bind(artifact_id).bind(work_run_id.to_string()).execute(&pool).await.expect("link checkpoint artifact");
+        let acknowledged = rpc_value(
+            state.clone(), &token, "work.acknowledge_checkpoint",
+            json!({ "bear_slug": bear_slug, "directive_id": directive_id, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "checkpoint_artifact_ref": artifact_ref }),
+        ).await;
+        assert_eq!(
+            acknowledged["result"]["state"], "acknowledged",
+            "{signal}: {acknowledged}"
+        );
+        let resumed = rpc_value(
+            state, &token, "work.checkout",
+            json!({ "bear_slug": bear_slug, "session_id": format!("work-{}", Uuid::new_v4().simple()), "work_order_id": work_run_id, "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] } }),
+        ).await;
+        assert!(
+            resumed["result"]["execution_attempt_fence_epoch"]
+                .as_i64()
+                .expect("resumed fence")
+                > fence_epoch,
+            "{signal}: {resumed}"
+        );
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn work_checkout_preserves_selected_pair_current_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
