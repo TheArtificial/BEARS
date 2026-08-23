@@ -230,6 +230,49 @@ async fn provision_run(
         return;
     };
 
+    // Docket owns sibling ordering. Claim the exact runnable task before
+    // minting credentials or creating a sandbox, so an out-of-order run never
+    // consumes a sandbox only to be rejected afterwards.
+    let service = PgDocketService::from_pool(pool);
+    let task = match service.runnable_work_tasks(run.bear_id, 500).await {
+        Ok(tasks) => tasks
+            .into_iter()
+            .find(|task| task.task.job_id == Some(run.job_id)),
+        Err(err) => {
+            fail_run(pool, run, "runnable_task_lookup", &err.to_string(), None).await;
+            return;
+        }
+    };
+    let Some(task) = task else {
+        fail_run(
+            pool,
+            run,
+            "no_runnable_task",
+            "work run has no eligible pending task",
+            None,
+        )
+        .await;
+        return;
+    };
+    if let Err(err) = service
+        .mark_task_started(
+            run.bear_id,
+            task.task.id,
+            run.job_run_id,
+            Some("work-dispatch".to_string()),
+        )
+        .await
+    {
+        fail_run(pool, run, "task_start", &err.to_string(), None).await;
+        return;
+    }
+    if let Err(err) =
+        work_runs::merge_work_run_result_refs(pool, run.id, &json!({ "task_id": task.task.id }))
+            .await
+    {
+        tracing::warn!(error = %err, work_run_id = %run.id, task_id = %task.task.id, "work_dispatch: failed to persist active task");
+    }
+
     // Ephemeral armature token, minted as the job creator (v1: only
     // user-created jobs dispatch to work). The id is persisted immediately so
     // even a crashed worker's successor can revoke it.
@@ -352,34 +395,6 @@ async fn provision_run(
         revoke_token_for_run(pool, run.id).await;
         fail_run(pool, run, "record_provisioned", &err.to_string(), None).await;
         return;
-    }
-    let service = PgDocketService::from_pool(pool);
-    let task = match service.runnable_work_tasks(run.bear_id, 500).await {
-        Ok(tasks) => tasks
-            .into_iter()
-            .find(|task| task.task.job_id == Some(run.job_id)),
-        Err(err) => {
-            tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: runnable task lookup failed");
-            None
-        }
-    };
-    if let Some(task) = task {
-        if let Err(err) = service
-            .mark_task_started(
-                run.bear_id,
-                task.task.id,
-                run.job_run_id,
-                Some("work-dispatch".to_string()),
-            )
-            .await
-        {
-            tracing::warn!(error = %err, work_run_id = %run.id, task_id = %task.task.id, "work_dispatch: mark_task_started failed");
-        } else if let Err(err) =
-            work_runs::merge_work_run_result_refs(pool, run.id, &json!({ "task_id": task.task.id }))
-                .await
-        {
-            tracing::warn!(error = %err, work_run_id = %run.id, task_id = %task.task.id, "work_dispatch: failed to persist active task");
-        }
     }
     tracing::info!(
         work_run_id = %run.id,
