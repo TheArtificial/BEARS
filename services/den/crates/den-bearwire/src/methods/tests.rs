@@ -3138,7 +3138,7 @@ async fn work_checkout_returns_a_stable_canonical_attempt(pool: sqlx::PgPool) {
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
-    let state = test_state(pool);
+    let state = test_state(pool.clone());
     let session_id = format!("work-{}", Uuid::new_v4().simple());
 
     let checkout = rpc_value(
@@ -3189,6 +3189,32 @@ async fn work_checkout_returns_a_stable_canonical_attempt(pool: sqlx::PgPool) {
         checkout["result"]["execution_attempt_fence_epoch"],
         "re-checkout must retain the Work attempt fence"
     );
+
+    let attempt_id: Uuid = checkout["result"]["execution_attempt_id"]
+        .as_str()
+        .expect("checkout returns attempt id")
+        .parse()
+        .expect("attempt id is UUID");
+    let fence_epoch = checkout["result"]["execution_attempt_fence_epoch"]
+        .as_i64()
+        .expect("checkout returns fence epoch");
+    let boundary = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "work.boundary",
+        json!({ "bear_slug": bear_slug, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "boundary_key": Uuid::new_v4() }),
+    )
+    .await;
+    assert_eq!(boundary["result"]["ok"], true, "{boundary}");
+
+    let stale = rpc_value(
+        test_state(pool),
+        &token,
+        "work.boundary",
+        json!({ "bear_slug": bear_slug, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch + 1, "boundary_key": Uuid::new_v4() }),
+    )
+    .await;
+    assert!(stale.get("error").is_some(), "{stale}");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -3214,6 +3240,16 @@ async fn work_checkpoint_acknowledgement_unblocks_a_fresh_checkout(pool: sqlx::P
         .expect("checkout returns fence epoch");
     let directive_id: Uuid = sqlx::query_scalar("INSERT INTO docket_checkpoint_directives (execution_attempt_id, fence_epoch, state) VALUES ($1, $2, 'pending') RETURNING id")
         .bind(attempt_id).bind(fence_epoch).fetch_one(&pool).await.expect("create pending checkpoint directive");
+
+    let boundary = rpc_value(
+        state.clone(), &token, "work.boundary",
+        json!({ "bear_slug": bear_slug, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "boundary_key": Uuid::new_v4() }),
+    ).await;
+    assert_eq!(boundary["result"]["ok"], false, "{boundary}");
+    assert_eq!(
+        boundary["result"]["gate"]["disposition"], "require_checkpoint",
+        "{boundary}"
+    );
 
     let denied = rpc_value(
         state.clone(), &token, "work.checkout",

@@ -40,7 +40,8 @@ use super::model::{
     DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryKind, DocketEntryListFilter,
     DocketEntryPromotion, DocketEntryRow, DocketEntryScope, DocketExecutionAttemptAuthorize,
     DocketExecutionAttemptDbRow, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
-    DocketExecutionAttemptStart, DocketExecutionControl, DocketExecutionNextAction,
+    DocketExecutionAttemptStart, DocketExecutionBinding, DocketExecutionControl,
+    DocketExecutionDisposition, DocketExecutionGate, DocketExecutionNextAction,
     DocketExecutionReason, DocketExecutionTaskControl, DocketExecutionTaskSettlement,
     DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
@@ -49,8 +50,8 @@ use super::model::{
     DocketPairContinuationDecision, DocketSessionTaskSettlement, DocketTaskCreate,
     DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement,
     DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
-    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
-    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    DocketValidationError, DocketWorkBoundaryCheck, TaskListItemStatus, TaskListProjection,
+    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -1662,6 +1663,61 @@ pub(super) async fn resume_pair_awaiting_user(
     };
     tx.commit().await?;
     row.try_into()
+}
+
+pub(super) async fn check_work_boundary(
+    pool: &PgPool,
+    check: DocketWorkBoundaryCheck,
+) -> Result<DocketExecutionGate, DenError> {
+    // `boundary_key` intentionally has no persistence: a boundary check is a
+    // pure read of durable attempt/directive state, so exact retries produce
+    // the same answer without adding an outbox or a second authority record.
+    let _ = check.boundary_key;
+    let attempt = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        "SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id, \
+                fence_epoch, authorization_key, state, started_at, paused_at, settled_at, \
+                released_at, created_at, updated_at FROM docket_execution_attempts \
+         WHERE id = $1 AND bear_id = $2 AND fence_epoch = $3 AND owner_kind = 'work' AND state = 'running'",
+    )
+    .bind(check.attempt_id)
+    .bind(check.bear_id)
+    .bind(check.fence_epoch)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DenError::NotFound("work attempt is not running with this fence".to_string()))?;
+    let attempt: DocketExecutionAttemptRow = attempt.try_into()?;
+    let pending = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM docket_checkpoint_directives \
+         WHERE execution_attempt_id = $1 AND fence_epoch = $2 AND state = 'pending')",
+    )
+    .bind(check.attempt_id)
+    .bind(check.fence_epoch)
+    .fetch_one(pool)
+    .await?;
+    if pending {
+        return Ok(DocketExecutionGate::Rejected {
+            reason: DocketExecutionReason::CheckpointRequired,
+            disposition: DocketExecutionDisposition::RequireCheckpoint,
+        });
+    }
+    let work_run_id = match attempt.owner {
+        super::model::DocketExecutionAttemptOwner::Work { work_run_id } => work_run_id,
+        super::model::DocketExecutionAttemptOwner::Pair { .. } => {
+            unreachable!("query filters work owner")
+        }
+    };
+    Ok(DocketExecutionGate::Allowed {
+        task_id: attempt.task_id,
+        binding: DocketExecutionBinding::WorkRun {
+            work_run_id,
+            job_run_id: sqlx::query_scalar!(
+                "SELECT job_run_id FROM bear_work_runs WHERE id = $1",
+                work_run_id
+            )
+            .fetch_one(pool)
+            .await?,
+        },
+    })
 }
 
 pub(super) async fn require_checkpoint_directive(

@@ -1296,6 +1296,16 @@ pub struct DocketExecutionAttemptStart {
     pub fence_epoch: i64,
 }
 
+/// Exact safe-boundary revalidation for a running Work attempt. `boundary_key`
+/// makes transport retries idempotent without granting a lease or selecting work.
+#[derive(Debug, Clone)]
+pub struct DocketWorkBoundaryCheck {
+    pub bear_id: Uuid,
+    pub attempt_id: Uuid,
+    pub fence_epoch: i64,
+    pub boundary_key: Uuid,
+}
+
 /// Releases an abandoned or superseded canonical attempt. The reconciler must
 /// supply the exact fence and a stable recovery key so retries are idempotent.
 #[derive(Debug, Clone)]

@@ -14,7 +14,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use den_docket::{work_runs, DocketCheckpointDirectiveAcknowledge, DocketService, PgDocketService};
+use den_docket::{
+    work_runs, DocketCheckpointDirectiveAcknowledge, DocketService, DocketWorkBoundaryCheck,
+    PgDocketService,
+};
 use den_http::errors::CustomError;
 use den_service::{
     bears::{render_turn_fragment, repository_prompt_fragment_registry},
@@ -96,6 +99,33 @@ pub(crate) async fn work_checkout_result(
         // per-run override is stored yet.
         "deadline_secs": Value::Null,
     }))
+}
+
+pub(crate) async fn work_boundary_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (_user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: WorkBoundaryRequest = parse_params(params)?;
+    let gate = PgDocketService::from_pool(&state.sqlx_pool)
+        .check_work_boundary(DocketWorkBoundaryCheck {
+            bear_id: bear.id,
+            attempt_id: request.execution_attempt_id,
+            fence_epoch: request.fence_epoch,
+            boundary_key: request.boundary_key,
+        })
+        .await?;
+    Ok(
+        json!({ "ok": matches!(gate, den_docket::DocketExecutionGate::Allowed { .. }), "gate": gate }),
+    )
+}
+
+#[derive(Deserialize)]
+struct WorkBoundaryRequest {
+    execution_attempt_id: Uuid,
+    fence_epoch: i64,
+    boundary_key: Uuid,
 }
 
 #[derive(Deserialize)]

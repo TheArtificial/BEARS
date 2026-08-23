@@ -16,13 +16,14 @@ use super::model::{
     DocketCheckpointDirectiveAcknowledge, DocketCheckpointDirectiveRow, DocketCriterionStateUpdate,
     DocketEntryCreate, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow,
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
-    DocketExecutionAttemptStart, DocketExecutionTaskSettlement, DocketJobCreate,
-    DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection,
-    DocketJobRow, DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcomeDecision,
-    DocketPairBoundedOutcomeReport, DocketSessionTaskSettlement, DocketTaskCreate,
-    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
-    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
+    DocketExecutionAttemptStart, DocketExecutionGate, DocketExecutionTaskSettlement,
+    DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketPairAwaitingUserResume,
+    DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport, DocketSessionTaskSettlement,
+    DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
+    DocketWorkBoundaryCheck, TaskListCheckoutRequest, TaskListCheckoutSource,
+    TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome,
+    TaskListSyncRequest,
 };
 
 /// Orchestration API for task and job state. The only public entry point to the
@@ -83,6 +84,13 @@ pub trait DocketService: Send + Sync {
         &self,
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError>;
+
+    /// Revalidates exact canonical Work authority at a safe boundary. A
+    /// pending checkpoint directive denies a new runtime window.
+    async fn check_work_boundary(
+        &self,
+        check: DocketWorkBoundaryCheck,
+    ) -> Result<DocketExecutionGate, DenError>;
 
     /// Reconciles a lost owner by terminally releasing the exact live attempt.
     /// `recovery_key` makes repeated recovery delivery idempotent.
@@ -254,6 +262,13 @@ impl DocketService for PgDocketService {
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError> {
         db::start_execution_attempt(&self.pool, start).await
+    }
+
+    async fn check_work_boundary(
+        &self,
+        check: DocketWorkBoundaryCheck,
+    ) -> Result<DocketExecutionGate, DenError> {
+        db::check_work_boundary(&self.pool, check).await
     }
 
     async fn release_execution_attempt(
