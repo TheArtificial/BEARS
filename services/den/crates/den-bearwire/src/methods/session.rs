@@ -581,6 +581,22 @@ pub(crate) async fn session_open_result(
         den_docket::work_runs::reconnect_attached_work_run(&state.sqlx_pool, &session_id)
             .await?
             .is_some();
+    match den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id).await?
+    {
+        Some(work_run) => tracing::info!(
+            work_run_id = %work_run.id,
+            job_id = %work_run.job_id,
+            task_id = ?work_run.executing_task_id,
+            session_id = %session_id,
+            reconnected,
+            "session.open preserved live Work-run binding"
+        ),
+        None => tracing::debug!(
+            session_id = %session_id,
+            reconnected,
+            "session.open has no live Work-run binding"
+        ),
+    }
     if let Some(client_context) = client_context.as_ref() {
         client_sessions::update_adapter_environment(
             &state.sqlx_pool,

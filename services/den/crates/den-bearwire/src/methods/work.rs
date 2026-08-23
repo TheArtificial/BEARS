@@ -66,7 +66,10 @@ pub(crate) async fn work_checkout_result(
     tracing::info!(
         work_run_id = %checkout.run.id,
         job_id = %checkout.run.job_id,
+        task_id = ?checkout.run.executing_task_id,
         session_id = %request.session_id,
+        execution_attempt_id = ?checkout.execution_attempt.as_ref().map(|attempt| attempt.id),
+        fence_epoch = ?checkout.execution_attempt.as_ref().map(|attempt| attempt.fence_epoch),
         bear_slug = %bear.slug,
         "work.checkout bound armature session to work run"
     );

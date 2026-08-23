@@ -2185,15 +2185,26 @@ async fn run_start_with_recovery_source(
         .transpose()?;
     // Stance signal: a session bound to a live work run via `work.checkout`
     // runs in the Work stance; every other BearWire session stays Pair.
-    let stance =
-        if den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id)
-            .await?
-            .is_some()
-        {
-            BearProfile::Work
-        } else {
-            BearProfile::Pair
-        };
+    let live_work_run =
+        den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id).await?;
+    let stance = if let Some(work_run) = live_work_run {
+        tracing::info!(
+            work_run_id = %work_run.id,
+            job_id = %work_run.job_id,
+            task_id = ?work_run.executing_task_id,
+            session_id = %session_id,
+            stance = "work",
+            "run.start resolved live Work-run binding"
+        );
+        BearProfile::Work
+    } else {
+        tracing::debug!(
+            session_id = %session_id,
+            stance = "pair",
+            "run.start found no live Work-run binding"
+        );
+        BearProfile::Pair
+    };
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, stance)
         .await?
         .ok_or_else(|| {

@@ -93,6 +93,11 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
         .await
         .insert(session_id.clone(), context.clone());
 
+    tracing::info!(
+        work_order_id = %env.work_order_id,
+        session_id = %session_id,
+        "headless requesting work checkout"
+    );
     let checkout = checkout_work_order(http, &config, &session_id, &env).await?;
     let (execution_attempt_id, execution_attempt_fence_epoch) = checkout_attempt(&checkout)?;
     let prompt = checkout
@@ -113,6 +118,14 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
         session_id,
         prompt.len(),
         deadline.as_secs()
+    );
+
+    tracing::info!(
+        work_order_id = %env.work_order_id,
+        session_id = %session_id,
+        execution_attempt_id = %execution_attempt_id,
+        fence_epoch = execution_attempt_fence_epoch,
+        "headless checkout received canonical Work attempt"
     );
 
     // Headless bypasses ACP's session/prompt request handler, so register the
