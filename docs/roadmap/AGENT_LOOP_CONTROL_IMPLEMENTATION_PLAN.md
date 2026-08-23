@@ -109,6 +109,57 @@ continuation eligible. Pair can autonomously proceed through an active task
 tree, but pauses only for a durable safety/authority condition or a precise
 user question.
 
+### Pair session-title attempt indicator — appended 2026-08-23
+
+The Pair session-title prefix is deliberately only glanceable semantic sugar:
+it answers whether the session is currently working on a task. It is not a
+focus mode, task selection indicator, Job indicator, execution authority
+claim, or a source of durable state.
+
+The ACP/session-title projection must derive its prefix exclusively from the
+canonical Docket attempt for that Pair session/owner:
+
+| Canonical attempt state | Prefix |
+| --- | --- |
+| `Running` | `▶️ ` |
+| `Paused` | `⏸️ ` |
+| no attempt, or `Authorized`, `AwaitingUser`, `Stopping`, `Settled`, or `Released` | none |
+
+A selected current task never affects this projection by itself. In particular,
+a ready-but-not-started task, a completed task left selected during
+reconciliation, an `awaiting_user` attempt, and any stale or unknown attempt
+state have **no prefix**. Unknown/error is fail-closed: remove the indicator
+rather than implying execution.
+
+#### Implementation slice
+
+1. Replace the ACP adapter's legacy unconditional `⌖ ` focus-title decoration
+   and `publish_focus_title_update` coupling with a small pure
+   `attempt_title_prefix(state)` projection. Preserve the user-authored bare
+   title separately; every publish must strip any prior managed indicator
+   before applying the current one, so repeated updates cannot stack prefixes.
+2. Read attempt state from Docket's canonical attempt projection keyed to the
+   Pair session/owner correlation, not from `/focus`, selected-task state, Job
+   status, run status, or model-loop events. A title update must occur after a
+   successfully durable attempt transition and during session recovery/
+   reconciliation; the title write remains best-effort and cannot affect the
+   transition result.
+3. Remove the remaining legacy focus terminology and behavior from this title
+   path (`FOCUS_TITLE_PREFIX`, `project_focused_acp_title`, and the
+   focus-triggered-only publish). Keep any `/focus` compatibility command only
+   if separately required, but it must neither add a title prefix nor imply
+   execution.
+4. Add focused adapter tests: `Running` adds exactly `▶️ `; `Paused` adds
+   exactly `⏸️ `; every other enumerated state and absent/unknown state removes
+   the prefix; transitions `Running -> Paused -> Settled` produce
+   `▶️ -> ⏸️ -> bare`; and pre-prefixed user/session titles are normalized
+   without duplication. Add an integration test that task selection alone
+   leaves the title bare.
+
+This is a projection-only change. It creates no new durable session field,
+requires no new dependency, and must not participate in Docket scheduling or
+attempt authorization.
+
 #### Pair outer-loop implementation status — 2026-08-21 (reconciled 2026-08-22)
 
 **Implemented Pair bounded-slice path.** The canonical-attempt start boundary
