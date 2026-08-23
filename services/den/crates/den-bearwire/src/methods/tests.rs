@@ -592,6 +592,49 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
     assert!(replay_after["events"].as_array().unwrap().is_empty());
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn session_open_preserves_sandbox_work_session_binding(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let work_run_id = create_checkoutable_work_run(&pool, user_id, bear_id).await;
+    let session_id = format!("work-{}", Uuid::new_v4().simple());
+    let state = test_state(pool.clone());
+
+    let checkout = rpc_value(
+        state.clone(),
+        &token,
+        "work.checkout",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "work_order_id": work_run_id,
+            "compatibility": { "protocol": 1, "capabilities": ["tool_attempt_token"] },
+        }),
+    )
+    .await;
+    assert_eq!(checkout["result"]["ok"], true, "{checkout}");
+
+    let opened = rpc_value(
+        state,
+        &token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "client": "bear-armature",
+        }),
+    )
+    .await;
+    assert_eq!(opened["result"]["ok"], true, "{opened}");
+
+    let live = den_docket::work_runs::get_live_work_run_by_session(&pool, &session_id)
+        .await
+        .expect("look up live Work run")
+        .expect("session remains bound to live Work run after session.open");
+    assert_eq!(live.id, work_run_id);
+}
+
 fn start_mock_openai_sse_server() -> String {
     start_mock_openai_sse_server_asserting_body(Vec::new())
 }
