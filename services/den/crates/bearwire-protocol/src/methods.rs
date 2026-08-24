@@ -212,6 +212,27 @@ pub struct DocketJobDiagnosticsRequest {
     pub job_id: String,
 }
 
+/// Bounded, Bear-scoped operational failures. Raw prompts and tool payloads are never stored.
+#[derive(Debug, Deserialize)]
+pub struct RuntimeDiagnosticsListRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub work_run_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub runtime_run_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub session_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub docket_job_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub event_code: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub severity: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_i64_from_value")]
+    pub limit: Option<i64>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DocketJobsExecuteRequest {
     #[serde(deserialize_with = "deserialize_required_string")]

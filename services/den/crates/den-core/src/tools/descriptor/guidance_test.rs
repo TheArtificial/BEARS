@@ -5,8 +5,8 @@ use crate::{
             DEN_DOCKET_ENTRY_APPEND_PROVIDER, DEN_DOCKET_ENTRY_LIST_PROVIDER,
             DEN_JOB_CREATE_PROVIDER, DEN_JOB_RECONCILE, DEN_JOB_RECONCILE_PROVIDER,
             DEN_JOB_SETTLE_TASK, DEN_JOB_SETTLE_TASK_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
-            DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER,
-            DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
+            DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER,
+            DEN_SITUATION_GET_PROVIDER, DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
             DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_SELECT_PROVIDER,
             DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
         },
@@ -286,6 +286,19 @@ fn docket_work_descriptors_keep_execution_evidence_and_surfaces_explicit() {
         .description
         .contains("not implicitly accessible to Pair"));
     assert!(work_run.description.contains("work run e4e4797b"));
+
+    let diagnostics = descriptors
+        .iter()
+        .find(|descriptor| descriptor.provider_name == DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER)
+        .expect("list_runtime_diagnostics descriptor");
+    assert!(diagnostics.description.contains("not raw server logs"));
+    assert_eq!(
+        diagnostics.input_schema["properties"]["severity"]["enum"],
+        serde_json::json!(["warning", "error"])
+    );
+    assert!(builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
+        .iter()
+        .any(|descriptor| descriptor.provider_name == DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER));
 
     for (provider_name, expected_handle) in [
         ("create_job", "job e4e4797b"),

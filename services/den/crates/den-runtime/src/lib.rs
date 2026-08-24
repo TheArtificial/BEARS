@@ -40,6 +40,8 @@ pub mod context_budget;
 pub mod current_task;
 /// Surface-agnostic runtime failure/warning UX policy projections.
 pub mod runtime_error_ux;
+/// Bounded, searchable evidence for user-visible runtime exceptions.
+pub mod runtime_exception_events;
 /// Surface projection contracts for turn obligations.
 pub mod surface_projection;
 /// Typed identifiers for turn coordination.

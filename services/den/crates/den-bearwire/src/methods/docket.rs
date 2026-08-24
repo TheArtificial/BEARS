@@ -11,10 +11,13 @@ use uuid::Uuid;
 
 use bearwire_protocol::methods::{
     DocketJobDiagnosticsRequest, DocketJobsExecuteRequest, DocketJobsListRequest,
-    DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest,
+    DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest, RuntimeDiagnosticsListRequest,
 };
 use den_http::errors::CustomError;
 use den_runtime::current_task::select_pair_current_task;
+use den_runtime::runtime_exception_events::{
+    self, RuntimeExceptionEventFilter, RuntimeExceptionSeverity,
+};
 use den_service::{
     artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
     client_sessions, DenState,
@@ -48,6 +51,51 @@ pub async fn docket_jobs_list_result(
     Ok(json!({
         "jobs": jobs,
     }))
+}
+
+/// Lists bounded, sanitized runtime failures for the authenticated Bear.
+/// This is an operations evidence surface, not a general log query API.
+pub async fn runtime_diagnostics_list_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let request: RuntimeDiagnosticsListRequest = parse_params(params)?;
+    let (_, bear) = authenticated_bear(state, headers, params).await?;
+    let severity = match request.severity.as_deref() {
+        None => None,
+        Some("warning") => Some(RuntimeExceptionSeverity::Warning),
+        Some("error") => Some(RuntimeExceptionSeverity::Error),
+        Some(value) => {
+            return Err(CustomError::ValidationError(format!(
+                "invalid severity {value:?}; expected warning or error"
+            )))
+        }
+    };
+    let parse_optional_uuid = |name: &str, value: Option<String>| {
+        value
+            .map(|value| {
+                Uuid::parse_str(&value).map_err(|error| {
+                    CustomError::ValidationError(format!("invalid {name}: {error}"))
+                })
+            })
+            .transpose()
+    };
+    let events = runtime_exception_events::list(
+        &state.sqlx_pool,
+        RuntimeExceptionEventFilter {
+            bear_id: Some(bear.id),
+            work_run_id: parse_optional_uuid("work_run_id", request.work_run_id)?,
+            runtime_run_id: request.runtime_run_id,
+            session_id: request.session_id,
+            docket_job_id: parse_optional_uuid("docket_job_id", request.docket_job_id)?,
+            event_code: request.event_code,
+            severity,
+            limit: request.limit,
+        },
+    )
+    .await?;
+    Ok(json!({ "events": events }))
 }
 
 pub async fn docket_job_diagnostics_result(

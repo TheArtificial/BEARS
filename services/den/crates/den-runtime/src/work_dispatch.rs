@@ -25,6 +25,10 @@ use den_sandbox::protocol::{
 };
 use den_sandbox::SandboxClient;
 
+use crate::runtime_exception_events::{
+    self, NewRuntimeExceptionEvent, RuntimeExceptionContext, RuntimeExceptionSeverity,
+};
+
 const LEASE: Duration = Duration::from_mins(2);
 const ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_hours(1);
 const SURFACE_SYNC_INTERVAL: Duration = Duration::from_mins(5);
@@ -835,6 +839,27 @@ async fn fail_run(
     refs: Option<Value>,
 ) {
     tracing::warn!(work_run_id = %run.id, reason, message, "work_dispatch: run failed");
+    if let Err(error) = runtime_exception_events::record(
+        pool,
+        NewRuntimeExceptionEvent {
+            severity: RuntimeExceptionSeverity::Error,
+            component: "den_runtime.work_dispatch".to_string(),
+            event_code: format!("work_run_failed_{reason}"),
+            message: message.to_string(),
+            details: refs.clone().unwrap_or_else(|| json!({})),
+            context: RuntimeExceptionContext {
+                work_run_id: Some(run.id),
+                docket_job_id: Some(run.job_id),
+                docket_task_id: run.executing_task_id,
+                bear_id: Some(run.bear_id),
+                ..RuntimeExceptionContext::default()
+            },
+        },
+    )
+    .await
+    {
+        tracing::warn!(error = %error, work_run_id = %run.id, "work_dispatch: failed to persist runtime exception event");
+    }
     let service = PgDocketService::from_pool(pool);
     let active_task_id = run
         .result_refs

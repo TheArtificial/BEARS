@@ -29,6 +29,9 @@ use den_runtime::{
     native_runtime::start_native_profile_turn_event_stream,
     runtime::bearwire_projection::wire::runtime_stream_event_to_bearwire_events,
     runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
+    runtime_exception_events::{
+        self, NewRuntimeExceptionEvent, RuntimeExceptionContext, RuntimeExceptionSeverity,
+    },
     surface_projection::bearwire_client_method_for_action,
     turn_ids::{ClientSessionId, TurnRunId},
     turn_obligations,
@@ -1348,6 +1351,27 @@ pub(crate) async fn fail_run_lifecycle(
         diagnostic_context = diagnostic_context.as_deref(),
         "BearWire run failed"
     );
+    let diagnostic_details = context.clone().unwrap_or_else(|| json!({}));
+    if let Err(error) = runtime_exception_events::record(
+        pool,
+        NewRuntimeExceptionEvent {
+            severity: RuntimeExceptionSeverity::Error,
+            component: "den_bearwire.run".to_string(),
+            event_code: format!("bearwire_run_failed_{}", reason.as_str()),
+            message: message.clone(),
+            details: diagnostic_details,
+            context: RuntimeExceptionContext {
+                session_id: Some(session_id.to_string()),
+                runtime_run_id: Some(run_id.to_string()),
+                bear_id: Some(bear_id),
+                ..RuntimeExceptionContext::default()
+            },
+        },
+    )
+    .await
+    {
+        tracing::warn!(session_id, run_id, error = %error, "failed to persist runtime exception event");
+    }
     let mut event = BearWireEvent::ephemeral(
         "run.failed",
         json!({

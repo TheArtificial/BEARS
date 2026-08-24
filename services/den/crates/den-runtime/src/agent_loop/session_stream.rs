@@ -1529,6 +1529,7 @@ impl SessionTrackingStream {
                 | "list_jobs"
                 | "list_docket_entries"
                 | "get_task_list_status"
+                | "list_runtime_diagnostics"
         )
     }
 
@@ -2679,6 +2680,11 @@ mod tests {
             SessionTrackingStream::checkpoint_allows_read_only_diagnostic_tool("list_work_runs")
         );
         assert!(SessionTrackingStream::checkpoint_allows_read_only_diagnostic_tool("get_job"));
+        assert!(
+            SessionTrackingStream::checkpoint_allows_read_only_diagnostic_tool(
+                "list_runtime_diagnostics"
+            )
+        );
         assert!(
             !SessionTrackingStream::checkpoint_allows_read_only_diagnostic_tool("dispatch_work")
         );
