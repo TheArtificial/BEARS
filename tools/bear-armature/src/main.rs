@@ -3896,6 +3896,7 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
 }
 
 async fn execute_local_tool(
+    config: &Config,
     adapter_state: &mut AdapterState,
     mcp_registry: &McpRegistry,
     session_id: &str,
@@ -3904,6 +3905,15 @@ async fn execute_local_tool(
     policy: &ToolPolicy,
 ) -> Result<Value> {
     match tool_name {
+        "list_runtime_diagnostics" => {
+            crate::bearwire::rpc_call(
+                &reqwest::Client::new(),
+                config,
+                "runtime.diagnostics.list",
+                runtime_diagnostics_rpc_params(&config.bear, args)?,
+            )
+            .await
+        }
         "fs_read_text_file" | "fs.read_text_file" => {
             if read_text_file_requires_client_surface(&args) {
                 if client_supports_read_text_file(adapter_state) {
@@ -4028,6 +4038,15 @@ async fn execute_local_tool(
             "unsupported Den tool_request tool_name {tool_name}"
         )),
     }
+}
+
+fn runtime_diagnostics_rpc_params(bear_slug: &str, args: Value) -> Result<Value> {
+    let mut params = args;
+    let object = params
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("list_runtime_diagnostics arguments must be an object"))?;
+    object.insert("bear_slug".to_string(), json!(bear_slug));
+    Ok(params)
 }
 
 async fn handle_direct_list_directory(
@@ -8630,6 +8649,7 @@ async fn handle_tool_request_event(
         }
     } else {
         execute_local_tool(
+            config,
             adapter_state,
             mcp_registry,
             session_id,
@@ -18914,6 +18934,19 @@ mod tests {
 mod bearwire_tool_request_parser_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn runtime_diagnostics_params_add_current_bear_slug() {
+        assert_eq!(
+            runtime_diagnostics_rpc_params("builder", json!({"work_run_id": "run-1"})).unwrap(),
+            json!({"bear_slug": "builder", "work_run_id": "run-1"})
+        );
+    }
+
+    #[test]
+    fn runtime_diagnostics_params_reject_non_object_arguments() {
+        assert!(runtime_diagnostics_rpc_params("builder", json!(null)).is_err());
+    }
 
     #[test]
     fn parses_canonical_bearwire_tool_request_data() {
