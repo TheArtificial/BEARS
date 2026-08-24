@@ -1419,6 +1419,41 @@ async fn docket_task_list_sync_rejects_completed_item_without_evidence() {
 }
 
 #[tokio::test]
+async fn mark_task_started_allows_each_job_first_pending_leaf() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket dispatcher test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "dispatcher-multiple-jobs").await;
+    let service = PgDocketService::from_pool(&pool);
+    let first = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create first job");
+    let second = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create second job");
+    let second_task_id = second.tasks[0].id;
+    let second_run_id = second.job.current_run_id.expect("second job run");
+
+    let runnable = service
+        .runnable_work_tasks(bear_id, 10)
+        .await
+        .expect("runnable work tasks");
+    assert!(runnable
+        .iter()
+        .any(|task| task.task.id == first.tasks[0].id));
+    assert!(runnable.iter().any(|task| task.task.id == second_task_id));
+
+    let started = service
+        .mark_task_started(bear_id, second_task_id, second_run_id, None)
+        .await
+        .expect("start the first pending leaf of the second job");
+    assert_eq!(started.task.id, second_task_id);
+}
+
+#[tokio::test]
 async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket dispatcher test; database unavailable");
