@@ -3905,7 +3905,9 @@ async fn execute_local_tool(
     policy: &ToolPolicy,
 ) -> Result<Value> {
     match tool_name {
-        "list_runtime_diagnostics" => {
+        // Den may deliver either the model-facing provider name or the canonical
+        // descriptor name. Both must reach the same BearWire diagnostic query.
+        name if is_runtime_diagnostics_tool(name) => {
             crate::bearwire::rpc_call(
                 &reqwest::Client::new(),
                 config,
@@ -4038,6 +4040,13 @@ async fn execute_local_tool(
             "unsupported Den tool_request tool_name {tool_name}"
         )),
     }
+}
+
+fn is_runtime_diagnostics_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "list_runtime_diagnostics" | "den.runtime_diagnostics.list"
+    )
 }
 
 fn runtime_diagnostics_rpc_params(bear_slug: &str, args: Value) -> Result<Value> {
@@ -18946,6 +18955,13 @@ mod bearwire_tool_request_parser_tests {
     #[test]
     fn runtime_diagnostics_params_reject_non_object_arguments() {
         assert!(runtime_diagnostics_rpc_params("builder", json!(null)).is_err());
+    }
+
+    #[test]
+    fn canonical_runtime_diagnostics_name_is_handled_locally() {
+        assert!(is_runtime_diagnostics_tool("den.runtime_diagnostics.list"));
+        assert!(is_runtime_diagnostics_tool("list_runtime_diagnostics"));
+        assert!(!is_runtime_diagnostics_tool("list_work_runs"));
     }
 
     #[test]
