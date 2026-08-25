@@ -1737,8 +1737,27 @@ fn format_den_status(message: &str) -> String {
     format!("**Den**: {message}")
 }
 
+fn local_step_claim_timeout_user_message(data: &Value) -> Option<&'static str> {
+    if data.get("reason").and_then(Value::as_str) != Some("client_obligation_timeout") {
+        return None;
+    }
+
+    let obligations = data
+        .pointer("/context/affected_obligations")
+        .or_else(|| data.get("affected_obligations"))
+        .and_then(Value::as_array)?;
+    let local_step_never_started = obligations.iter().any(|obligation| {
+        obligation.get("expected_responder_action").and_then(Value::as_str) == Some("tool_result")
+            && obligation.get("claimed").and_then(Value::as_bool) == Some(false)
+    });
+    local_step_never_started.then_some(
+        "Builder Bear could not begin a local workspace operation before it timed out. No local operation was started, so send another message to retry.",
+    )
+}
+
 fn bearwire_run_failed_user_message(event: &Value) -> String {
     let data = event.get("data").unwrap_or(&Value::Null);
+    let local_step_timeout_message = local_step_claim_timeout_user_message(data);
     let user_message = data
         .get("user_message")
         .and_then(Value::as_str)
@@ -1769,7 +1788,9 @@ fn bearwire_run_failed_user_message(event: &Value) -> String {
         .get("run_id")
         .and_then(Value::as_str)
         .or_else(|| data.get("run_id").and_then(Value::as_str));
-    let mut rendered = if let Some(user_message) = user_message {
+    let mut rendered = if let Some(message) = local_step_timeout_message {
+        format_den_status(message)
+    } else if let Some(user_message) = user_message {
         format_den_status(user_message)
     } else if let Some(reason) = reason {
         format_den_status(&format!("Run failed ({reason}): {message}"))
@@ -3095,6 +3116,33 @@ mod tests {
         assert!(message.contains("unsupported_parameter"));
         assert!(message.contains("tools[64].name is invalid"));
         assert!(message.contains("run-err"));
+    }
+
+    #[test]
+    fn bearwire_run_failed_user_message_hides_unclaimed_local_step_timeout_details() {
+        let event = json!({
+            "type": "run.failed",
+            "run_id": "run-timeout",
+            "data": {
+                "reason": "client_obligation_timeout",
+                "message": "The work surface did not return the requested result for fs_list_directory before the local-step wait expired.",
+                "context": {
+                    "affected_obligations": [{
+                        "expected_responder_action": "tool_result",
+                        "tool_name": "fs_list_directory",
+                        "claimed": false
+                    }]
+                }
+            }
+        });
+
+        let message = bearwire_run_failed_user_message(&event);
+
+        assert!(message.contains("could not begin a local workspace operation"));
+        assert!(message.contains("No local operation was started"));
+        assert!(message.contains("Run: `run-timeout`"));
+        assert!(!message.contains("fs_list_directory"));
+        assert!(!message.contains("work surface did not return"));
     }
 
     #[test]
