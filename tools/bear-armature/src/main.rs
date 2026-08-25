@@ -8,8 +8,24 @@ mod tool_tasks;
 mod tools;
 mod update;
 
+fn local_step_wait_expiry_message(error_chain: &str) -> Option<String> {
+    if !error_chain.contains("before the local-step wait expired") {
+        return None;
+    }
+
+    let run = error_chain
+        .split_once("\n\nRun: ")
+        .map(|(_, run)| format!("\n\nRun: {}", run.trim()));
+    Some(format!(
+        "Builder Bear could not begin a local workspace operation before it timed out. No local operation was started, so send another message to retry.{}",
+        run.unwrap_or_default()
+    ))
+}
+
 fn classify_prompt_failure(error_chain: &str) -> (&'static str, String) {
-    if error_chain.contains("Den API connectivity failure:") {
+    if let Some(message) = local_step_wait_expiry_message(error_chain) {
+        ("local_step_wait_expired", message)
+    } else if error_chain.contains("Den API connectivity failure:") {
         (
             "den_api_unavailable",
             "Den could not continue this turn because its API is unavailable. Check your connection or try again shortly.".to_string(),
@@ -61,6 +77,19 @@ mod prompt_failure_tests {
         );
         assert_eq!(kind, "bearwire_missing_terminal_event");
         assert!(message.contains("final outcome"));
+    }
+
+    #[test]
+    fn rewrites_local_step_wait_expiry_for_users() {
+        let (kind, message) = classify_prompt_failure(
+            "BEARS prompt stopped: **Den**: Builder Bear (test) stopped because the work surface did not claim `fs_list_directory` before the local-step wait expired. Send another message to retry.\n\nRun: `run-1`",
+        );
+        assert_eq!(kind, "local_step_wait_expired");
+        assert!(message.contains("could not begin a local workspace operation"));
+        assert!(message.contains("No local operation was started"));
+        assert!(message.contains("Run: `run-1`"));
+        assert!(!message.contains("fs_list_directory"));
+        assert!(!message.contains("work surface did not claim"));
     }
 
     #[test]
