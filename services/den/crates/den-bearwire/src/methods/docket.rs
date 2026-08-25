@@ -222,7 +222,7 @@ pub async fn docket_jobs_execute_result(
         state,
         user_id,
         bear.id,
-        request.session_id.as_deref(),
+        pair_binding_session_id(&request),
         outcome,
     )
     .await
@@ -248,7 +248,7 @@ pub async fn docket_jobs_reconcile_result(
         state,
         user_id,
         bear.id,
-        request.session_id.as_deref(),
+        pair_binding_session_id(&request),
         outcome,
     )
     .await
@@ -368,6 +368,13 @@ fn parse_outcome_disposition(value: &str) -> Result<DocketOutcomeDisposition, Cu
             "invalid Docket outcome_disposition: {value}"
         ))),
     }
+}
+
+fn pair_binding_session_id(request: &DocketJobsExecuteRequest) -> Option<&str> {
+    request
+        .source_client_session_id
+        .as_deref()
+        .or(request.session_id.as_deref())
 }
 
 fn execution_request(
@@ -530,6 +537,32 @@ async fn source_conversation_id(
 mod tests {
     use super::*;
     use den_docket::model::DocketExecutionTaskControl;
+
+    #[test]
+    fn pair_binding_prefers_the_explicit_client_session_id() {
+        let request = DocketJobsExecuteRequest {
+            bear_slug: "builder".to_owned(),
+            job_id: Uuid::new_v4().to_string(),
+            session_id: Some("conversation-session".to_owned()),
+            conversation_id: None,
+            source_client_session_id: Some("acp-session".to_owned()),
+        };
+
+        assert_eq!(pair_binding_session_id(&request), Some("acp-session"));
+    }
+
+    #[test]
+    fn pair_binding_falls_back_to_session_id() {
+        let request = DocketJobsExecuteRequest {
+            bear_slug: "builder".to_owned(),
+            job_id: Uuid::new_v4().to_string(),
+            session_id: Some("acp-session".to_owned()),
+            conversation_id: None,
+            source_client_session_id: None,
+        };
+
+        assert_eq!(pair_binding_session_id(&request), Some("acp-session"));
+    }
 
     #[test]
     fn execution_status_makes_stale_focus_actionable() {
