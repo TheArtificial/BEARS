@@ -7,11 +7,11 @@ use den_core::tools::constants::{
     DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_ARCHIVE,
     DEN_JOB_CANCEL, DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND,
     DEN_JOB_GET, DEN_JOB_LIST, DEN_JOB_RECONCILE, DEN_JOB_SETTLE_TASK, DEN_JOB_UPDATE,
-    DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
-    DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_SELECT,
-    DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
-    DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
-    DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
+    DEN_RUNTIME_DIAGNOSTICS_LIST, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
+    DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
+    DEN_TASK_LIST_SYNC, DEN_TASK_SELECT, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS,
+    DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET,
+    DEN_WORK_RUN_LIST, DEN_WORK_RUN_RESOLVE_STALLED, DEN_WORK_SURFACE_CONFIRM,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
@@ -37,6 +37,9 @@ use crate::{
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_runtime::plan_mode;
+use den_runtime::runtime_exception_events::{
+    self, RuntimeExceptionEventFilter, RuntimeExceptionSeverity,
+};
 use den_runtime::{
     agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
     current_task::select_pair_current_task,
@@ -144,6 +147,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_TASK_FIND
             | DEN_TASK_UPDATE
             | DEN_TASK_UPDATE_CURRENT_STATUS
+            | DEN_RUNTIME_DIAGNOSTICS_LIST
             | DEN_TASK_SELECT
             | DEN_DOCKET_ENTRY_APPEND
             | DEN_DOCKET_ENTRY_PROMOTE
@@ -165,6 +169,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
 mod workflow_tool_tests {
     use den_core::tools::constants::{
         DEN_JOB_ARCHIVE, DEN_JOB_CANCEL, DEN_JOB_RECONCILE, DEN_JOB_SETTLE_TASK,
+        DEN_RUNTIME_DIAGNOSTICS_LIST,
     };
 
     #[test]
@@ -173,6 +178,7 @@ mod workflow_tool_tests {
         assert!(super::is_workflow_tool(DEN_JOB_ARCHIVE));
         assert!(super::is_workflow_tool(DEN_JOB_RECONCILE));
         assert!(super::is_workflow_tool(DEN_JOB_SETTLE_TASK));
+        assert!(super::is_workflow_tool(DEN_RUNTIME_DIAGNOSTICS_LIST));
     }
 }
 
@@ -496,6 +502,60 @@ fn default_task_kind() -> DocketTaskKind {
 
 fn default_task_scope() -> DocketTaskScope {
     DocketTaskScope::Template
+}
+
+#[derive(Debug, Deserialize)]
+struct RuntimeDiagnosticsListArguments {
+    work_run_id: Option<String>,
+    runtime_run_id: Option<String>,
+    session_id: Option<String>,
+    docket_job_id: Option<String>,
+    event_code: Option<String>,
+    severity: Option<String>,
+    limit: Option<i64>,
+}
+
+pub(crate) async fn list_runtime_diagnostics(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let arguments: RuntimeDiagnosticsListArguments = serde_json::from_value(arguments)
+        .map_err(|error| CustomError::ValidationError(error.to_string()))?;
+    let parse_optional_uuid = |name: &str, value: Option<String>| {
+        value
+            .map(|value| {
+                Uuid::parse_str(&value).map_err(|error| {
+                    CustomError::ValidationError(format!("invalid {name}: {error}"))
+                })
+            })
+            .transpose()
+    };
+    let severity = match arguments.severity.as_deref() {
+        None => None,
+        Some("warning") => Some(RuntimeExceptionSeverity::Warning),
+        Some("error") => Some(RuntimeExceptionSeverity::Error),
+        Some(value) => {
+            return Err(CustomError::ValidationError(format!(
+                "invalid severity {value:?}; expected warning or error"
+            )))
+        }
+    };
+    let events = runtime_exception_events::list(
+        pool,
+        RuntimeExceptionEventFilter {
+            bear_id: Some(context.bear_id),
+            work_run_id: parse_optional_uuid("work_run_id", arguments.work_run_id)?,
+            runtime_run_id: arguments.runtime_run_id,
+            session_id: arguments.session_id,
+            docket_job_id: parse_optional_uuid("docket_job_id", arguments.docket_job_id)?,
+            event_code: arguments.event_code,
+            severity,
+            limit: arguments.limit,
+        },
+    )
+    .await?;
+    Ok(json!({ "events": events }))
 }
 
 pub(crate) async fn list_task_lists(
@@ -2657,7 +2717,6 @@ mod test {
                 id,
                 bear_id: Uuid::nil(),
                 job_id: None,
-                pair_session_id: None,
                 parent_task_id,
                 sibling_order: 0,
                 kind: "execution".to_string(),
