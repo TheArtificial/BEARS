@@ -257,7 +257,7 @@ async fn work_execution_orientation(
     let row = sqlx::query_as::<_, (Uuid, Uuid)>(
         "SELECT attempts.task_id, tasks.job_id \
          FROM docket_execution_attempts attempts \
-         JOIN docket_tasks tasks ON tasks.id = attempts.task_id \
+         JOIN bear_tasks tasks ON tasks.id = attempts.task_id \
          WHERE attempts.bear_id = $1 AND attempts.owner_kind = 'work' \
            AND attempts.work_run_id = $2 AND attempts.state = 'running'",
     )
