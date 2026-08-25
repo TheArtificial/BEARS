@@ -48,10 +48,10 @@ use crate::{
         AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
         AgentStepOverflowContext, AssembleTurnContext, CheckpointArtifactInput, CheckpointField,
         CheckpointReplayPolicy, CheckpointTaskContext, CheckpointTrigger, CheckpointVisibility,
-        GroundingProbeFinding, GroundingProbeResultInput, GroundingProbeSignalKind,
-        NativeToolDispatchMode, ObjectiveOrientation, RuntimeCheckpointRequest,
-        SessionTrackingStream, ToolBudgetClass, ToolContinuationObservation, TurnBudgetStopReason,
-        TurnBudgetWarning,
+        DocketExecutionOrientation, GroundingProbeFinding, GroundingProbeResultInput,
+        GroundingProbeSignalKind, NativeToolDispatchMode, ObjectiveOrientation, OrientationTaskRef,
+        RuntimeCheckpointRequest, SessionTrackingStream, ToolBudgetClass,
+        ToolContinuationObservation, TurnBudgetStopReason, TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{
@@ -242,6 +242,49 @@ fn prompt_for_model(prompt: &str, prompt_context: Option<&serde_json::Value>) ->
         return prompt.to_string();
     };
     format!("{host_context}\n\n<user_message>\n{prompt}\n</user_message>")
+}
+
+async fn work_execution_orientation(
+    pool: &PgPool,
+    bear_id: Uuid,
+    work_run_id: Option<Uuid>,
+) -> Result<ObjectiveOrientation, DenError> {
+    let Some(work_run_id) = work_run_id else {
+        return Ok(ObjectiveOrientation::Freeform {
+            policy: Default::default(),
+        });
+    };
+    let row = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT attempts.task_id, tasks.job_id \
+         FROM docket_execution_attempts attempts \
+         JOIN docket_tasks tasks ON tasks.id = attempts.task_id \
+         WHERE attempts.bear_id = $1 AND attempts.owner_kind = 'work' \
+           AND attempts.work_run_id = $2 AND attempts.state = 'running'",
+    )
+    .bind(bear_id)
+    .bind(work_run_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map_or_else(
+        || ObjectiveOrientation::Freeform {
+            policy: Default::default(),
+        },
+        |(task_id, job_id)| work_execution_orientation_from_ids(task_id, job_id),
+    ))
+}
+
+fn work_execution_orientation_from_ids(task_id: Uuid, job_id: Uuid) -> ObjectiveOrientation {
+    ObjectiveOrientation::DocketExecution {
+        job: DocketExecutionOrientation {
+            job_id: job_id.to_string(),
+            active_task_ref: Some(OrientationTaskRef::DocketTask {
+                job_id: Some(job_id.to_string()),
+                task_id: task_id.to_string(),
+                title: None,
+            }),
+            mutable: false,
+        },
+    }
 }
 
 /// Returns whether this turn recovered from context overflow via emergency compaction.
@@ -713,6 +756,7 @@ struct BuildSessionInput<'a> {
     request_id: Option<Uuid>,
     run_id: Option<&'a str>,
     checkpoint_audit_context: Option<den_protocol::CheckpointAuditContext>,
+    work_run_id: Option<Uuid>,
     stream_tokens: bool,
     api_style: Option<crate::llm::LlmApiStyle>,
     supports_reasoning_effort: Option<bool>,
@@ -754,6 +798,7 @@ async fn build_session(
         request_id,
         run_id,
         checkpoint_audit_context,
+        work_run_id,
         stream_tokens,
         api_style,
         supports_reasoning_effort,
@@ -803,7 +848,11 @@ async fn build_session(
     let messages = assembled.messages;
     let budget_components = assembled.budget_components;
     let cached_activity_plan_projection = assembled.cached_activity_plan_projection;
-    let objective_orientation = assembled.objective_orientation;
+    let objective_orientation = if profile.profile == BearProfile::Work {
+        work_execution_orientation(deps.pool, bear_id, work_run_id).await?
+    } else {
+        assembled.objective_orientation
+    };
     if profile.profile == BearProfile::Work {
         if !bear.work_enabled {
             return Err(DenError::ValidationError(
@@ -1086,6 +1135,20 @@ mod pair_execution_run_tests {
     }
 
     #[test]
+    fn work_execution_orientation_is_docket_execution() {
+        let task_id = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+        assert!(matches!(
+            work_execution_orientation_from_ids(task_id, job_id),
+            ObjectiveOrientation::DocketExecution { job }
+                if job.job_id == job_id.to_string()
+                    && matches!(job.active_task_ref,
+                        Some(OrientationTaskRef::DocketTask { job_id: Some(ref id), ref task_id, .. })
+                        if id == &job_id.to_string() && task_id == &task_id.to_string())
+        ));
+    }
+
+    #[test]
     fn pair_execution_run_requires_session_connected_current_item_in_active_list() {
         assert!(pair_execution_needs_run(
             &list("active", Some("s"), true),
@@ -1134,6 +1197,7 @@ pub async fn run_native_profile_turn_collect_assistant_text(
             request_id: None,
             run_id: None,
             checkpoint_audit_context: None,
+            work_run_id: None,
             stream_tokens: false,
             api_style: None,
             supports_reasoning_effort: None,
@@ -1199,6 +1263,7 @@ pub async fn start_native_web_chat_turn_event_stream(
             request_id: Some(params.request_id),
             run_id: None,
             checkpoint_audit_context: None,
+            work_run_id: None,
             stream_tokens: true,
             api_style: None,
             supports_reasoning_effort: None,
@@ -1293,6 +1358,9 @@ pub async fn start_native_profile_turn_event_stream(
             request_id: Some(request.request_id),
             run_id: request.run_id,
             checkpoint_audit_context: request.checkpoint_audit_context,
+            work_run_id: request
+                .checkpoint_audit_context
+                .map(|context| context.work_run_id),
             stream_tokens: request.stream_tokens,
             api_style: request.api_style,
             supports_reasoning_effort: request.supports_reasoning_effort,
