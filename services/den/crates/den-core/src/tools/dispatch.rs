@@ -66,6 +66,65 @@ pub trait ToolContext:
 {
 }
 
+/// Whether this dispatcher has a concrete native-session execution arm for a
+/// canonical Den tool. The native `den` crate handles workflow tools separately.
+pub fn has_native_session_executor(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        DEN_BEAR_GET_SELF
+            | DEN_USER_GET_CURRENT
+            | DEN_BEAR_LIST_MEMBERS
+            | DEN_CAPABILITIES_LIST_SELF
+            | DEN_CAPABILITY_SEARCH
+            | DEN_CAPABILITY_DESCRIBE
+            | DEN_CHANNEL_GET_CONTEXT
+            | DEN_POLICY_GET_SELF
+            | DEN_SITUATION_GET
+            | DEN_SITUATION_GET_PROVIDER
+            | DEN_CONVERSATION_SET_TITLE
+            | DEN_WEB_FETCH
+            | DEN_WEB_SEARCH
+            | DEN_TOOL_OUTPUT_READ
+            | DEN_MEMORY_WRITE_ENTRY
+            | DEN_MEMORY_STATUS
+            | DEN_MEMORY_TREE
+            | DEN_MEMORY_READ
+            | DEN_MEMORY_SEARCH
+            | DEN_ENTITY_BROWSE
+            | DEN_ENTITY_BROWSE_PROVIDER
+            | DEN_ENTITY_RESOLVE
+            | DEN_ENTITY_RESOLVE_PROVIDER
+            | DEN_ENTITY_LINK_MEMORY
+            | DEN_ENTITY_LINK_MEMORY_PROVIDER
+            | DEN_ENTITY_MERGE
+            | DEN_ENTITY_MERGE_PROVIDER
+            | DEN_ENTITY_SPLIT
+            | DEN_ENTITY_SPLIT_PROVIDER
+            | DEN_ENTITY_WRITE_ACCESS_RULE
+            | DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER
+            | DEN_ENTITY_WRITE_ANCHOR
+            | DEN_ENTITY_WRITE_ANCHOR_PROVIDER
+            | DEN_MEMORY_ORIENT_WORK_SURFACE
+            | DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD
+            | DEN_PROMPT_MEMORY_UPSERT
+            | DEN_PROMPT_MEMORY_LIST
+            | DEN_PROMPT_MEMORY_PATCH
+            | DEN_MEMORY_REQUEST_REVIEW
+            | DEN_MEMORY_LIST_PROPOSALS
+            | DEN_MEMORY_READ_PROPOSAL
+            | DEN_MEMORY_RESOLVE_PROPOSAL
+            | DEN_MEMORY_APPLY_CORE_UPDATE
+            | DEN_MEMORY_MARK_LIFECYCLE
+            | DEN_PLAN_MODE_ENTER
+            | DEN_PLAN_MODE_STATUS
+            | DEN_PLAN_MODE_RECORD_APPROVAL
+            | DEN_PLAN_MODE_EXIT
+            | DEN_PLAN_MODE_CANCEL
+            | DEN_BEAR_ENVIRONMENT
+            | DEN_OBSERVATION_WRITE
+    )
+}
+
 pub async fn authorize_den_tool(
     ctx: &impl ToolContext,
     tool_name: &str,

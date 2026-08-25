@@ -473,6 +473,27 @@ impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitl
 }
 
 #[cfg(test)]
+mod native_session_routing_tests {
+    use den_core::tools::descriptor::builtin_den_tool_descriptors_for_pair_acp_surface;
+
+    use super::*;
+
+    #[test]
+    fn every_pair_surface_tool_has_a_native_session_route() {
+        for descriptor in builtin_den_tool_descriptors_for_pair_acp_surface() {
+            let routed = workflow::is_workflow_tool(descriptor.name)
+                || den_core::tools::dispatch::has_native_session_executor(descriptor.name)
+                || descriptor.name == DEN_TASK_LISTS_REQUEST_HANDOFF;
+            assert!(
+                routed,
+                "Pair tool `{}` has no native session route",
+                descriptor.name
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod test;
 
 #[cfg(test)]
