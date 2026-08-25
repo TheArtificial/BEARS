@@ -1159,40 +1159,6 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         crate::DocketExecutionNextAction::WorkCurrentTask
     ));
     assert_eq!(advanced.control.task.current_task_id, Some(second_task_id));
-
-    let terminal_claims = sqlx::query_scalar!(
-        r#"
-        SELECT count(*)
-        FROM docket_execution_sessions
-        WHERE bear_id = $1
-          AND owner_profile = 'pair'
-          AND source_conversation_id = 'conversation-1'
-          AND task_id = $2
-          AND state IN ('active', 'blocked', 'completing', 'paused')
-        "#,
-        bear_id,
-        first_task_id,
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count terminal active claims");
-    assert_eq!(terminal_claims, Some(0));
-
-    let active_rows = sqlx::query_scalar!(
-        r"
-        SELECT count(*)
-        FROM docket_execution_sessions
-        WHERE bear_id = $1
-          AND owner_profile = 'pair'
-          AND source_conversation_id = 'conversation-1'
-          AND state IN ('active', 'blocked', 'completing', 'paused')
-        ",
-        bear_id,
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count active conversation rows");
-    assert_eq!(active_rows, Some(1));
 }
 
 #[tokio::test]
@@ -1245,23 +1211,6 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
         .await
         .expect("persist terminal outcome without reconciliation");
 
-    let claims_after_settlement = sqlx::query_scalar!(
-        r#"
-        SELECT count(*)
-        FROM docket_execution_sessions
-        WHERE bear_id = $1
-          AND session_id = 'terminal-session-claim'
-          AND task_id = $2
-          AND state IN ('active', 'blocked', 'completing', 'paused')
-        "#,
-        bear_id,
-        first_task_id,
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count claims retired by terminal settlement");
-    assert_eq!(claims_after_settlement, Some(0));
-
     let recovered = service
         .execute_job(request)
         .await
@@ -1272,40 +1221,6 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
         recovered.control.next_action,
         crate::DocketExecutionNextAction::WorkCurrentTask
     ));
-
-    let unsettled_claims = sqlx::query_scalar!(
-        r#"
-        SELECT count(*)
-        FROM docket_execution_sessions
-        WHERE bear_id = $1
-          AND session_id = 'terminal-session-claim'
-          AND task_id = $2
-          AND state IN ('active', 'blocked', 'completing', 'paused')
-        "#,
-        bear_id,
-        second_task_id,
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count active unsettled-task claims");
-    assert_eq!(unsettled_claims, Some(1));
-
-    let terminal_claims = sqlx::query_scalar!(
-        r#"
-        SELECT count(*)
-        FROM docket_execution_sessions
-        WHERE bear_id = $1
-          AND session_id = 'terminal-session-claim'
-          AND task_id = $2
-          AND state IN ('active', 'blocked', 'completing', 'paused')
-        "#,
-        bear_id,
-        first_task_id,
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count repaired terminal claims");
-    assert_eq!(terminal_claims, Some(0));
 
     let retried = service
         .execute_job(DocketJobExecuteRequest {
@@ -1333,21 +1248,6 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
     .execute(&pool)
     .await
     .expect("create historical settled-state skew");
-    sqlx::query!(
-        r#"
-        UPDATE docket_execution_sessions
-        SET state = 'active', updated_at = NOW()
-        WHERE bear_id = $1
-          AND session_id = 'terminal-session-claim'
-          AND task_id = $2
-          AND state = 'completed'
-        "#,
-        bear_id,
-        first_task_id,
-    )
-    .execute(&pool)
-    .await
-    .expect("create stale settled-task claim");
     service
         .execute_job(DocketJobExecuteRequest {
             bear_id,
@@ -1370,22 +1270,6 @@ async fn execute_job_reconciles_its_own_terminal_session_claim() {
     .await
     .expect("read repaired state");
     assert_eq!(repaired, "done");
-    let repaired_claims = sqlx::query_scalar!(
-        r#"
-        SELECT count(*)
-        FROM docket_execution_sessions
-        WHERE bear_id = $1
-          AND session_id = 'terminal-session-claim'
-          AND task_id = $2
-          AND state IN ('active', 'blocked', 'completing', 'paused')
-        "#,
-        bear_id,
-        first_task_id,
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count reconciled stale settled-task claims");
-    assert_eq!(repaired_claims, Some(0));
 }
 
 #[tokio::test]

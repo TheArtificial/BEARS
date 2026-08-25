@@ -1438,42 +1438,6 @@ impl TryFrom<DocketExecutionAttemptDbRow> for DocketExecutionAttemptRow {
     }
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
-pub struct DocketExecutionSessionRow {
-    pub id: Uuid,
-    pub bear_id: Uuid,
-    pub owner_profile: String,
-    pub session_id: String,
-    pub source_conversation_id: Option<String>,
-    pub source_client_session_id: Option<String>,
-    pub job_id: Uuid,
-    pub run_id: Uuid,
-    pub task_id: Option<Uuid>,
-    pub state: String,
-    pub created_at: OffsetDateTime,
-    pub updated_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct DocketExecutionLookup {
-    pub session_id: Option<String>,
-    pub source_conversation_id: Option<String>,
-    pub source_client_session_id: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct DocketExecutionSessionUpsert {
-    pub bear_id: Uuid,
-    pub owner_profile: BearProfile,
-    pub session_id: String,
-    pub source_conversation_id: Option<String>,
-    pub source_client_session_id: Option<String>,
-    pub job_id: Uuid,
-    pub run_id: Uuid,
-    pub task_id: Option<Uuid>,
-    pub state: String,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct DocketExecutionTaskControl {
     /// The task the scheduler would select next from the plan.

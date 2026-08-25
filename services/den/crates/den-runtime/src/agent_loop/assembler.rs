@@ -592,7 +592,6 @@ pub async fn assemble_native_turn_for_bear(
             session_id,
             &roots,
             &objective_orientation,
-            None,
         )
         .await?;
         if !supplement.trim().is_empty() {

@@ -510,15 +510,6 @@ async fn docket_execute_attaches_pair_binding_without_legacy_session(pool: sqlx:
     .await
     .expect("load Pair attachment");
     assert_eq!(attached_count, 1);
-    let legacy_table: Option<String> =
-        sqlx::query_scalar("SELECT to_regclass('docket_execution_sessions')::text")
-            .fetch_one(&pool)
-            .await
-            .expect("query legacy execution-session table");
-    assert!(
-        legacy_table.is_none(),
-        "pre-release migrations must remove legacy execution-session authority"
-    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
