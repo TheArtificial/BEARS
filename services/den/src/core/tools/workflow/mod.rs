@@ -652,18 +652,11 @@ pub(crate) async fn get_task_list_status(
     };
     let session_anchor_id = session.as_ref().map(|session| session.id);
 
+    // Use the same canonical eligibility query as current-task selection. The
+    // generic task list defaults to root tasks and hides an attached child task.
     let tasks = if let Some(session_anchor_id) = session_anchor_id {
         PgDocketService::from_pool(pool)
-            .list_tasks(
-                context.bear_id,
-                DocketTaskListFilter {
-                    job_id: None,
-                    pair_session_id: Some(session_anchor_id),
-                    parent_task_id: None,
-                    include_descendants: false,
-                    limit: 500,
-                },
-            )
+            .list_pair_session_tasks(context.bear_id, session_anchor_id)
             .await?
     } else {
         Vec::new()
@@ -1230,17 +1223,9 @@ async fn session_anchored_task_list_projection(
     role: BearProfile,
     pair_session_id: Uuid,
 ) -> Result<Option<TaskListProjection>, CustomError> {
+    // Keep cached activity plans consistent with current-task selection.
     let tasks = PgDocketService::from_pool(pool)
-        .list_tasks(
-            context.bear_id,
-            DocketTaskListFilter {
-                job_id: None,
-                pair_session_id: Some(pair_session_id),
-                parent_task_id: None,
-                include_descendants: false,
-                limit: 500,
-            },
-        )
+        .list_pair_session_tasks(context.bear_id, pair_session_id)
         .await?;
     let selected_task_id = if let Some(client_session_id) = context.client_session_id.as_deref() {
         client_sessions::find_for_user_bear_session_id(
