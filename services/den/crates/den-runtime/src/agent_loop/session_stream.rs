@@ -880,8 +880,13 @@ impl SessionTrackingStream {
                         });
                         return Ok(Box::pin(stream::iter(vec![
                             Ok(RuntimeStreamEvent::Semantic(
-                                RuntimeSemanticEvent::AssistantTextDelta {
-                                    text: reason.user_message(),
+                                RuntimeSemanticEvent::RunProgress {
+                                    kind: "turn_budget_exhausted".to_string(),
+                                    text: Some(reason.user_message()),
+                                    phase: Some("budget".to_string()),
+                                    detail: Some(serde_json::json!({
+                                        "reason": reason.persistence_reason(),
+                                    })),
                                 },
                             )),
                             Ok(RuntimeStreamEvent::Semantic(

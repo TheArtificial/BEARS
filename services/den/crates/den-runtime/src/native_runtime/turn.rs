@@ -1550,8 +1550,13 @@ fn continuation_budget_stop(
 ) -> (RuntimeStreamContinuation, RuntimeEventStream) {
     let stream: RuntimeEventStream = Box::pin(stream::iter(vec![
         Ok(RuntimeStreamEvent::Semantic(
-            RuntimeSemanticEvent::AssistantTextDelta {
-                text: reason.user_message(),
+            RuntimeSemanticEvent::RunProgress {
+                kind: "turn_budget_exhausted".to_string(),
+                text: Some(reason.user_message()),
+                phase: Some("budget".to_string()),
+                detail: Some(serde_json::json!({
+                    "reason": reason.persistence_reason(),
+                })),
             },
         )),
         Ok(RuntimeStreamEvent::Semantic(
@@ -3055,11 +3060,19 @@ mod tests {
             .expect("terminal event")
             .expect("event ok");
         match event {
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text }) => {
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+                kind,
+                text: Some(text),
+                phase,
+                detail: Some(detail),
+            }) => {
+                assert_eq!(kind, "turn_budget_exhausted");
+                assert_eq!(phase.as_deref(), Some("budget"));
+                assert_eq!(detail["reason"], "emergency_hard_step_limit");
                 assert!(text.contains("emergency continuation fuse"));
                 assert!(text.contains("step=8/emergency_hard_steps=8"));
             }
-            other => panic!("expected terminal stop message, got {other:?}"),
+            other => panic!("expected Den status for terminal stop, got {other:?}"),
         }
         SESSION_STORE.remove(&session_key);
     }
