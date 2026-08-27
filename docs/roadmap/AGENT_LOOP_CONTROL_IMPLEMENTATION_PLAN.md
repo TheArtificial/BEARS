@@ -756,6 +756,8 @@ Clients project the current task or Work assignment as the visible plan objectiv
 
 ## Phase 4 — Checkpoint trigger state
 
+**Status: Complete (2026-08-27).** Runtime owns typed checkpoint state and trigger evaluation for read/search exploration, consecutive failures, repeated tool signatures near ko, low budget, and pre-risk mutation. Native session-stream wiring updates this state from typed tool observations and installs the resulting checkpoint request. The earlier proposed runtime `TaskGateRejection` signal is deliberately superseded: Docket owns task-gate decisions under the canonical-attempt authority model, and runtime must not infer or synthesize a task-tree gate rejection. The former observe-only event name is likewise obsolete: runtime now emits the typed `runtime_checkpoint_required` progress projection when it installs a request; enforcement remains governed by the configured loop-control mode. Focused unit and session-stream coverage exercises the implemented trigger reasons and checkpoint request path.
+
 **Goal:** track loop-health signals needed for runtime checkpoints.
 
 Suggested state:
@@ -781,14 +783,14 @@ pub enum CheckpointReason {
 
 | Task | Done when |
 | --- | --- |
-| Classify tool calls | Read/search, mutative, execute, destructive, and no-op/failure outcomes are typed. |
-| Track exploration since mutation | Read/search counter increments and resets only on meaningful mutation. |
-| Track failure and repeat signals | Consecutive failures and repeated signatures feed checkpoint state. |
-| Track task-gate rejection | Gate rejection state can request a checkpoint before stronger stop behavior. |
-| Add observe-only diagnostics | Runtime can emit `runtime_checkpoint_would_trigger` without forcing behavior. |
-| Add tests | Each trigger reason fires under profile-specific thresholds. |
+| Classify tool calls | **Complete.** Typed observations classify read/search, mutation, destructive, execution, and failure outcomes. |
+| Track exploration since mutation | **Complete.** Read/search counter increments and resets only on meaningful mutation. |
+| Track failure and repeat signals | **Complete.** Consecutive failures and repeated signatures feed checkpoint state. |
+| Track task-gate rejection | **Superseded.** Docket owns authoritative task-gate decisions; runtime does not infer task-tree gate rejection. |
+| Add observe-only diagnostics | **Complete (revised).** Installing a request emits typed `runtime_checkpoint_required` progress; configured enforcement determines whether continuation is gated. |
+| Add tests | **Complete.** Profile-specific exploration, failure, repeated-signature, low-budget, and pre-risk coverage is in place. |
 
-**Exit gate:** checkpoint triggers are observable and tested but may still run in observe-only mode.
+**Exit gate: Met.** Checkpoint triggers are observable and tested; enforcement is handled by the later runtime checkpoint path.
 
 ## Phase 5 — Structured checkpoint request and checkpoint tool protocol
 
