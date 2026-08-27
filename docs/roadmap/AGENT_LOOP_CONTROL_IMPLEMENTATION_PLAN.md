@@ -794,6 +794,8 @@ pub enum CheckpointReason {
 
 ## Phase 5 — Structured checkpoint request and checkpoint tool protocol
 
+**Status: Complete (2026-08-27).** Runtime owns typed, serializable checkpoint request/response DTOs with stable request ids, injects the `checkpoint` function-tool schema only while a request is pending, and parses/validates tool arguments once at the native runtime boundary. Invalid, stale, and missing-field responses produce typed recovery progress and retain deterministic runtime authority; unrecoverable checkpoint-protocol loops remain bounded by the recovery fuse. The earlier suggestion to parse assistant-text JSON as a degraded fallback is intentionally superseded: accepting free-form assistant text as checkpoint protocol input would make the runtime boundary ambiguous. The explicit checkpoint tool call is the only accepted response channel.
+
 **Goal:** implement Option B as a typed runtime-owned `checkpoint` tool call rather than unstructured assistant prose or assistant text JSON.
 
 A checkpoint request should include enough context to make the response auditable:
@@ -843,14 +845,14 @@ Do not force learned facts and uncertainty into required JSON arrays. Keep model
 
 | Task | Done when |
 | --- | --- |
-| Define request/report DTOs | `RuntimeCheckpointRequest` and `RuntimeCheckpointResponse` are typed and serializable; the response DTO is the `checkpoint` tool argument shape. |
-| Add checkpoint ids | Every request/report pair has a stable id scoped to run/turn. |
-| Add model instruction fragment | Runtime asks the model to call the `checkpoint` tool, not to answer with JSON text. |
-| Parse response at boundary | Tool arguments are parsed once at the runtime boundary into typed structs. Assistant-text JSON is degraded fallback only. |
-| Validate required fields | Missing/invalid checkpoint tool fields produce a typed recovery nudge/advisory result; hard failure is reserved for emergency fuses or unrecoverable protocol loops. |
-| Add tests | Valid, missing-field, invalid-next-action, stale-checkpoint-id, and degraded assistant-text fallback cases are covered. |
+| Define request/report DTOs | **Complete.** `RuntimeCheckpointRequest` and `RuntimeCheckpointResponse` are typed and serializable; the response DTO is the checkpoint tool argument shape. |
+| Add checkpoint ids | **Complete.** Each installed request has a generated id scoped to its runtime run/turn context. |
+| Add model instruction fragment | **Complete.** The injected function tool and runtime recovery guidance direct the model to call `checkpoint`, not produce text JSON. |
+| Parse response at boundary | **Complete (revised).** Tool arguments are parsed exactly once at the native runtime boundary. Assistant-text JSON is deliberately not a protocol fallback. |
+| Validate required fields | **Complete.** Missing/invalid/stale tool fields emit typed recovery guidance; hard failure is reserved for the bounded unrecoverable recovery loop and emergency fuses. |
+| Add tests | **Complete.** Structured success, missing fields, stale ids, malformed arguments, invalid task-action combinations, and recovery progress are covered. |
 
-**Exit gate:** the runtime can request and parse a structured checkpoint tool report, but it still does not mutate task state from it.
+**Exit gate: Met.** The runtime requests and parses structured checkpoint tool reports without allowing reports to mutate task state.
 
 ## Phase 6 — Checkpoint artifact retention and audit policy
 

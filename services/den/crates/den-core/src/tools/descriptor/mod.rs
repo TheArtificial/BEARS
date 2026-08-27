@@ -767,7 +767,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_DOCKET_ENTRY_APPEND,
             "Append Docket entry",
-            "Append a durable finding, decision, obstacle, follow-up, milestone, or question to a task journal or job notebook. Outcomes are settlement-owned and cannot be appended manually. Questions may be recorded only by Pair.",
+            "Append a durable finding, decision, obstacle, follow-up, milestone, or question to a task journal or job notebook. Outcomes are settlement-owned and cannot be appended manually. Questions may be recorded only by Pair. A task-journal entry without task_id uses this client session's selected current task; otherwise it is rejected before persistence.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],

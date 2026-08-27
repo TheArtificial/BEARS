@@ -2434,6 +2434,23 @@ pub(crate) async fn update_current_task_status(
     }))
 }
 
+async fn current_client_session_task_id(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+) -> Result<Option<Uuid>, CustomError> {
+    let Some(client_session_id) = context.client_session_id.as_deref() else {
+        return Ok(None);
+    };
+    Ok(client_sessions::find_for_user_bear_session_id(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+    )
+    .await?
+    .and_then(|session| session.current_task_id))
+}
+
 pub(crate) async fn append_docket_entry(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -2441,11 +2458,24 @@ pub(crate) async fn append_docket_entry(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketEntryAppendArguments = serde_json::from_value(arguments)?;
+    let task_id = match (args.scope, args.task_id) {
+        (DocketEntryScope::TaskJournal, Some(task_id)) => Some(task_id),
+        (DocketEntryScope::TaskJournal, None) => current_client_session_task_id(pool, context)
+            .await?
+            .ok_or_else(|| {
+                DenError::ValidationError(
+                    "task_journal requires task_id or a selected current task in this client session"
+                        .to_string(),
+                )
+            })
+            .map(Some)?,
+        (DocketEntryScope::JobNotebook, task_id) => task_id,
+    };
     let entry = PgDocketService::from_pool(pool)
         .append_entry(DocketEntryCreate {
             bear_id: context.bear_id,
             job_id: args.job_id,
-            task_id: args.task_id,
+            task_id,
             run_id: args.run_id,
             scope: args.scope,
             kind: args.kind.into(),
