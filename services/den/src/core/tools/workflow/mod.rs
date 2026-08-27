@@ -1820,7 +1820,7 @@ pub(crate) async fn reconcile_job_execution(
 }
 
 /// Keep hosted Docket execution aligned with the BearWire endpoint: a task
-/// selected for Pair execution must be attached to, and current in, this ACP
+/// selected for Pair execution must be attached to, and current in, this
 /// client session before the result is reported to the model.
 async fn bind_selected_pair_task_to_current_session(
     pool: &PgPool,
