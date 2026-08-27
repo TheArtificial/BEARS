@@ -457,6 +457,16 @@ pub async fn create_json_artifact(
     pool: &PgPool,
     input: CreateJsonArtifactInput,
 ) -> Result<ArtifactMetadata, DenError> {
+    let mut tx = pool.begin().await?;
+    let artifact = create_json_artifact_in_tx(&mut tx, input).await?;
+    tx.commit().await?;
+    Ok(artifact)
+}
+
+pub async fn create_json_artifact_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: CreateJsonArtifactInput,
+) -> Result<ArtifactMetadata, DenError> {
     if !input.payload.is_object() && !input.payload.is_array() {
         return Err(DenError::ValidationError(
             "artifact JSON payload must be an object or array".to_string(),
@@ -479,7 +489,6 @@ pub async fn create_json_artifact(
     validate_json_object("provenance", &input.reserve.provenance)?;
     validate_json_object("metadata", &input.reserve.metadata)?;
     let artifact_ref = new_artifact_ref();
-    let mut tx = pool.begin().await?;
     let artifact = sqlx::query_as!(
         ArtifactRow,
         "INSERT INTO artifacts (
@@ -505,7 +514,7 @@ pub async fn create_json_artifact(
         input.reserve.metadata,
         input.reserve.expires_at,
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     let row = sqlx::query_as!(
         ArtifactRow,
@@ -522,14 +531,13 @@ pub async fn create_json_artifact(
         artifact.bear_id,
         i64::try_from(payload_bytes.len()).expect("payload size is bounded"),
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     sqlx::query("INSERT INTO artifact_json_payloads (artifact_id, payload) VALUES ($1, $2)")
         .bind(artifact.id)
         .bind(input.payload)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-    tx.commit().await?;
     artifact_from_row(row)
 }
 
@@ -838,6 +846,16 @@ pub async fn attach_artifact(
     pool: &PgPool,
     input: AttachArtifactInput,
 ) -> Result<ArtifactLink, DenError> {
+    let mut tx = pool.begin().await?;
+    let link = attach_artifact_in_tx(&mut tx, input).await?;
+    tx.commit().await?;
+    Ok(link)
+}
+
+pub async fn attach_artifact_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: AttachArtifactInput,
+) -> Result<ArtifactLink, DenError> {
     validate_non_empty("target kind", &input.target_kind)?;
     validate_non_empty("target id", &input.target_id)?;
     validate_non_empty("artifact link role", &input.role)?;
@@ -866,7 +884,7 @@ pub async fn attach_artifact(
         input.metadata,
         input.created_by_user_id,
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut **tx)
     .await?;
 
     match row {

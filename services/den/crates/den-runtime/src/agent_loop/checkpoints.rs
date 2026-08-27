@@ -1,9 +1,9 @@
 use den_core::{BearProfile, DenError};
 use den_protocol::ContextBudgetReport;
 use den_service::artifacts::{
-    attach_artifact, create_json_artifact, ArtifactStorageKind,
-    ArtifactVisibility as RegistryVisibility, AttachArtifactInput, CreateJsonArtifactInput,
-    ReserveArtifactInput,
+    attach_artifact, attach_artifact_in_tx, create_json_artifact, create_json_artifact_in_tx,
+    ArtifactStorageKind, ArtifactVisibility as RegistryVisibility, AttachArtifactInput,
+    CreateJsonArtifactInput, ReserveArtifactInput,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -85,6 +85,9 @@ pub struct CheckpointArtifactInput {
 
 #[derive(Debug, Clone)]
 pub struct CheckpointResponseInput {
+    pub bear_id: Uuid,
+    pub created_by_user_id: Option<i32>,
+    pub owner_profile: BearProfile,
     pub run_id: String,
     pub checkpoint_id: String,
     pub response: RuntimeCheckpointResponse,
@@ -1256,6 +1259,18 @@ pub async fn record_checkpoint_response(
 ) -> Result<CheckpointArtifactRow, DenError> {
     let response_json = serde_json::to_value(&input.response)
         .map_err(|err| DenError::System(format!("serialize checkpoint response: {err}")))?;
+    let mut tx = pool.begin().await?;
+    let checkpoint = record_checkpoint_response_in_tx(&mut tx, &input, response_json).await?;
+    record_checkpoint_response_json_artifact_in_tx(&mut tx, &input, &checkpoint).await?;
+    tx.commit().await?;
+    Ok(checkpoint)
+}
+
+async fn record_checkpoint_response_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: &CheckpointResponseInput,
+    response_json: Value,
+) -> Result<CheckpointArtifactRow, DenError> {
     let row = sqlx::query_as!(
         CheckpointArtifactRow,
         r"
@@ -1275,15 +1290,85 @@ pub async fn record_checkpoint_response(
         response_json,
         input.validation_status.as_str()
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut **tx)
     .await?;
 
-    row.ok_or_else(|| {
+    let checkpoint = row.ok_or_else(|| {
         DenError::NotFound(format!(
             "checkpoint artifact not found: run_id={} checkpoint_id={}",
             input.run_id, input.checkpoint_id
         ))
-    })
+    })?;
+    Ok(checkpoint)
+}
+
+async fn record_checkpoint_response_json_artifact_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: &CheckpointResponseInput,
+    checkpoint: &CheckpointArtifactRow,
+) -> Result<(), DenError> {
+    let artifact = create_json_artifact_in_tx(
+        tx,
+        CreateJsonArtifactInput {
+            reserve: ReserveArtifactInput {
+                bear_id: input.bear_id,
+                created_by_user_id: input.created_by_user_id,
+                owner_profile: input.owner_profile,
+                kind: "runtime_checkpoint".to_string(),
+                title: Some("Runtime checkpoint response".to_string()),
+                summary: Some(checkpoint.reason.clone()),
+                content_type: Some("application/json".to_string()),
+                storage_kind: ArtifactStorageKind::DbText,
+                visibility: RegistryVisibility::PrivateToProfile,
+                provenance: serde_json::json!({"source": "den_runtime"}),
+                metadata: serde_json::json!({
+                    "excluded_from_transcript": true,
+                    "excluded_from_default_replay": true,
+                    "checkpoint_artifact_kind": "validated_response",
+                }),
+                expires_at: None,
+            },
+            payload: serde_json::json!({
+                "checkpoint_id": checkpoint.checkpoint_id,
+                "run_id": checkpoint.run_id,
+                "validation_status": input.validation_status.as_str(),
+                "request": checkpoint.request,
+                "response": input.response,
+            }),
+        },
+    )
+    .await?;
+    for (target_kind, target_id) in [
+        (
+            "work_run",
+            checkpoint.related_work_run_id.map(|id| id.to_string()),
+        ),
+        (
+            "docket_job",
+            checkpoint.related_docket_job_id.map(|id| id.to_string()),
+        ),
+        (
+            "docket_task",
+            checkpoint.related_docket_task_id.map(|id| id.to_string()),
+        ),
+    ] {
+        if let Some(target_id) = target_id {
+            attach_artifact_in_tx(
+                tx,
+                AttachArtifactInput {
+                    artifact_ref: artifact.artifact_ref.clone(),
+                    bear_id: input.bear_id,
+                    target_kind: target_kind.to_string(),
+                    target_id,
+                    role: "runtime_checkpoint".to_string(),
+                    metadata: serde_json::json!({}),
+                    created_by_user_id: input.created_by_user_id,
+                },
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn list_checkpoints_for_run(
@@ -2012,6 +2097,9 @@ mod tests {
         let updated = record_checkpoint_response(
             &pool,
             CheckpointResponseInput {
+                bear_id,
+                created_by_user_id: Some(user_id),
+                owner_profile: BearProfile::Work,
                 run_id: run_id.clone(),
                 checkpoint_id: "ckpt-1".to_string(),
                 response: response(),
@@ -2022,6 +2110,34 @@ mod tests {
         .expect("record response");
         assert_eq!(updated.validation_status, "valid");
         assert!(updated.response.is_some());
+
+        let response_artifact = sqlx::query(
+            "SELECT p.payload
+             FROM artifacts a
+             JOIN artifact_json_payloads p ON p.artifact_id = a.id
+             WHERE a.bear_id = $1
+               AND a.kind = 'runtime_checkpoint'
+               AND a.metadata->>'checkpoint_artifact_kind' = 'validated_response'",
+        )
+        .bind(bear_id)
+        .fetch_one(&pool)
+        .await
+        .expect("load validated checkpoint response artifact");
+        let response_payload: Value = response_artifact.try_get("payload").unwrap();
+        assert_eq!(response_payload["checkpoint_id"], "ckpt-1");
+        assert_eq!(response_payload["validation_status"], "valid");
+        assert_eq!(response_payload["request"]["reason"], "over_exploration");
+        assert_eq!(response_payload["response"]["next_action"], "validate");
+
+        let links_after_response: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM artifact_links l JOIN artifacts a ON a.id = l.artifact_id
+             WHERE a.bear_id = $1 AND a.kind = 'runtime_checkpoint' AND l.role = 'runtime_checkpoint'",
+        )
+        .bind(bear_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count response artifact links");
+        assert_eq!(links_after_response, 6);
 
         let all = list_checkpoints_for_run(&pool, &run_id)
             .await

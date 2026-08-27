@@ -856,7 +856,7 @@ Do not force learned facts and uncertainty into required JSON arrays. Keep model
 
 ## Phase 6 — Checkpoint artifact retention and audit policy
 
-**Status: In progress (updated 2026-08-20).** `bear_run_checkpoints` persists request/response audit payloads by run and keeps them separate from Docket events and replay data. Authenticated `conversation.diagnostics` has an opt-in, bounded checkpoint projection for an owned Pair run (`include_checkpoints: true`), with SQLx coverage. **Work/Job audit linking is complete:** BearWire resolves the authoritative live Work binding when constructing the native session and passes opaque `CheckpointAuditContext` (`work_run_id`, `docket_job_id`) to runtime for persistence; runtime does not query Docket. The existing owned-run diagnostics projection returns those persisted references. **The initial retention policy is complete:** runtime-owned Work checkpoint request installation persists `audit_only` artifacts with replay policy `none`; Pair, Chat, Curate, and Watch requests remain in-memory by default. Artifact-ref migration remains open.
+**Status: Complete (updated 2026-08-20).** `bear_run_checkpoints` remains the live checkpoint projection, while request installation and validated responses each create immutable `runtime_checkpoint` JSON artifacts. Both artifacts link to the authoritative Work run, Docket job, and Docket task when present. Response persistence, response-artifact creation, and audit links commit atomically, so a validated projection cannot exist without its required immutable audit artifact. Authenticated `conversation.diagnostics` has an opt-in, bounded checkpoint projection for an owned Pair run (`include_checkpoints: true`), with SQLx coverage. Pair, Chat, Curate, and Watch requests remain in-memory by default.
 
 **Goal:** make checkpoints useful for `work` run audit without polluting conversation history or Docket task events.
 
@@ -904,12 +904,12 @@ Retention rules:
 
 | Task | Done when |
 | --- | --- |
-| Add checkpoint artifact API | Runtime can persist request/response payloads by run id, preferably as `runtime_checkpoint` artifact refs. |
-| Keep artifact outside Docket events | Checkpoints do not appear as `bear_task_events` or `bear_job_events`. |
-| Add `work` audit retention | `work` runs retain valid checkpoint artifacts with task refs where available. |
-| Add pair/chat retention policy | Interactive stances avoid durable clutter unless recovery policy requires it. |
-| Add read API for audits | Operator tooling can inspect checkpoint artifacts for a run/job. |
-| Add tests | Checkpoints are retained for `work`, not conversation history, not task events, and not model replay unless policy says so. |
+| Add checkpoint artifact API | **Complete.** Runtime writes immutable `runtime_checkpoint` JSON artifacts for persisted Work requests and validated responses. |
+| Keep artifact outside Docket events | **Complete.** Checkpoints do not appear as `bear_task_events` or `bear_job_events`. |
+| Add `work` audit retention | **Complete.** Work artifacts carry run, Job, and task audit links when those authoritative references exist. |
+| Add pair/chat retention policy | **Complete.** Interactive stances avoid durable clutter unless recovery policy requires it. |
+| Add read API for audits | **Complete.** Owned-run diagnostics provides an opt-in bounded checkpoint projection; artifact links provide the canonical audit registry view. |
+| Add tests | **Complete.** Focused runtime coverage proves request/response artifacts and their matching Work/Job/task links; checkpoints remain separate from task events and default replay. |
 
 **Exit gate:** structured checkpoints are auditable for `work` while preserving Docket/task boundaries.
 
