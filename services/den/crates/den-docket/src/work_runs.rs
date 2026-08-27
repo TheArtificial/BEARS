@@ -1003,6 +1003,41 @@ pub async fn finalize_work_run(
     .fetch_one(&mut *tx)
     .await?;
 
+    // A terminal work run cannot retain task-level execution authority: a
+    // retry gets a new work-run id and therefore a new authorization key.
+    // Release this run's exact live attempt before committing so the retry
+    // cannot collide with docket_execution_attempts_live_task_idx.
+    if let Some(attempt) = sqlx::query!(
+        "UPDATE docket_execution_attempts
+         SET state = 'released', released_at = NOW(), updated_at = NOW()
+         WHERE work_run_id = $1
+           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+         RETURNING id, fence_epoch",
+        row.id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        sqlx::query!(
+            "INSERT INTO docket_execution_attempt_recoveries
+                 (execution_attempt_id, fence_epoch, recovery_key, recovery_reason)
+             VALUES ($1, $2, $3, 'work run finalized')",
+            attempt.id,
+            attempt.fence_epoch,
+            Uuid::new_v4(),
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query!(
+        "UPDATE docket_turn_claims
+         SET state = 'settled', updated_at = NOW()
+         WHERE work_run_id = $1 AND state = 'executing'",
+        row.id,
+    )
+    .execute(&mut *tx)
+    .await?;
+
     // A work run is execution telemetry, not task or job authority. Task and
     // criterion state are reconciled by their own transactional updates; a
     // terminal (including stale) work run must not complete or block the job.

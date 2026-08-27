@@ -1077,6 +1077,16 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     assert_eq!(job_run_state, "dispatched");
     assert!(finalized.runner_id.is_none());
     assert!(finalized.lease_expires_at.is_none());
+    let live_attempts: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM docket_execution_attempts
+         WHERE work_run_id = $1
+           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')",
+    )
+    .bind(run.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(live_attempts, 0, "terminal work run releases its attempt");
     assert!(finalized.finished_at.is_some());
     // Merged refs keep the turn outcome recorded earlier.
     let refs = finalized.result_refs.expect("result refs");
@@ -1117,11 +1127,43 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .await
     .unwrap();
 
-    // A recovered task can be re-enqueued (attempt 2).
+    // A recovered task can be re-enqueued (attempt 2) and checked out. This
+    // used to fail here because the terminal first run still owned a live
+    // attempt for the same task.
     let retry = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .expect("retry enqueue");
     assert_eq!(retry.attempt, 2);
+    claim_next_work_run(&pool, "runner-retry", std::time::Duration::from_mins(1))
+        .await
+        .unwrap()
+        .expect("claim retry");
+    record_work_run_provisioned(
+        &pool,
+        retry.id,
+        &WorkRunProvisioned {
+            sandbox_server_url: "http://sandbox:3002".into(),
+            sandbox_id: "retry".into(),
+            sandbox_type: "container".into(),
+            sandbox_strength: "container: test".into(),
+            work_surface: serde_json::json!({}),
+            rust_dependency_preparation: None,
+        },
+    )
+    .await
+    .expect("provision retry");
+    let retry_checkout = checkout_work_run_for_session(
+        &pool,
+        retry.id,
+        bear_id,
+        &format!("headless-{}", Uuid::new_v4().simple()),
+    )
+    .await
+    .expect("retry checkout must acquire a fresh canonical attempt");
+    assert!(matches!(
+        retry_checkout.gate,
+        DocketExecutionGate::Allowed { .. }
+    ));
 
     // get_work_run round-trips.
     assert_eq!(
