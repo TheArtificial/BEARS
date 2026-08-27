@@ -1578,11 +1578,17 @@ impl SessionTrackingStream {
             return;
         }
         let pool = self.pool.clone();
+        let bear_id = self.bear_id;
+        let user_id = self.user_id;
+        let owner_profile = self.profile;
         let session_id = self.client_session_id.clone();
         tokio::spawn(async move {
             if let Err(err) = record_checkpoint_response(
                 &pool,
                 CheckpointResponseInput {
+                    bear_id,
+                    created_by_user_id: user_id,
+                    owner_profile,
                     run_id: request.run_id,
                     checkpoint_id: request.checkpoint_id,
                     response,
