@@ -2035,7 +2035,10 @@ impl Stream for SessionTrackingStream {
                 }
                 Poll::Ready(Err(error)) => {
                     self.pending_server_tool = None;
-                    return Poll::Ready(Some(Err(error)));
+                    self.finished = true;
+                    return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(format!(
+                        "Server-tool execution failed: {error}"
+                    )))));
                 }
                 Poll::Pending => return Poll::Pending,
             }
@@ -2054,7 +2057,10 @@ impl Stream for SessionTrackingStream {
                     if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
                         self.remove_recent_server_tool_chain_from_session(&tool_call_id);
                     }
-                    return Poll::Ready(Some(Err(error)));
+                    self.finished = true;
+                    return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(format!(
+                        "Server-tool continuation failed: {error}"
+                    )))));
                 }
                 Poll::Pending => return Poll::Pending,
             }
@@ -2370,6 +2376,10 @@ impl Stream for SessionTrackingStream {
                         "native runtime server-tool continuation failed; removing recent tool chain from in-memory session"
                     );
                     self.remove_recent_server_tool_chain_from_session(&tool_call_id);
+                    self.finished = true;
+                    return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(format!(
+                        "Server-tool continuation failed: {error}"
+                    )))));
                 }
                 self.finished = true;
                 Poll::Ready(Some(Err(error)))
@@ -3775,6 +3785,97 @@ mod tests {
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
         ));
         assert!(stream.next().await.is_none(), "EOF follows terminal event");
+    }
+
+    #[tokio::test]
+    async fn server_tool_execution_error_emits_terminal_failure() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+        stream.pending_server_tool = Some(Box::pin(async {
+            Err(DenError::System("synthetic tool failure".to_string()))
+        }));
+
+        let terminal = stream
+            .next()
+            .await
+            .expect("terminal event")
+            .expect("semantic event");
+        assert!(
+            matches!(
+                terminal,
+                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { ref message, .. })
+                    if message == "Server-tool execution failed: Server Error: synthetic tool failure"
+            ),
+            "expected terminal server-tool execution failure, got {terminal:?}"
+        );
+        assert!(stream.next().await.is_none(), "EOF follows terminal event");
+    }
+    #[tokio::test]
+    async fn server_tool_continuation_error_emits_terminal_failure() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+        stream.pending_server_tool_continuation = Some("call-failed".to_string());
+        stream.pending_server_tool_stream = Some(Box::pin(async {
+            Err(DenError::System(
+                "synthetic continuation failure".to_string(),
+            ))
+        }));
+
+        let terminal = stream
+            .next()
+            .await
+            .expect("terminal event")
+            .expect("semantic event");
+        assert!(
+            matches!(
+                terminal,
+                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { ref message, .. })
+                    if message == "Server-tool continuation failed: Server Error: synthetic continuation failure"
+            ),
+            "expected terminal server-tool continuation failure, got {terminal:?}"
+        );
+        assert!(
+            stream.next().await.is_none(),
+            "terminal event is followed by EOF"
+        );
     }
 
     #[tokio::test]
