@@ -7,14 +7,14 @@ use tokio::time::{sleep, Duration, Instant};
 use uuid::Uuid;
 
 use crate::{
-    adapter_contract_context, den_request_context, env_bool,
+    adapter_contract_context, classify_completed_turn_without_text, den_request_context, env_bool,
     handle_conversation_resolved_projection, handle_permission_request_event,
     handle_plan_update_projection, handle_session_info_projection, handle_status_text_for_turn,
     is_den_server_tool_request, plan_entries_from_plan_update_event,
     project_den_owned_tool_request, send_agent_message_chunk_for_turn,
     send_agent_thought_chunk_for_turn, send_tool_call_update_for_turn, spawn_tool_request_task,
-    stream_allows_prompt_end_response, truncate_for_log, AdapterSharedState, AdapterState, Config,
-    SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
+    stream_allows_prompt_end_response, truncate_for_log, AdapterSharedState, AdapterState,
+    CompletedTurnWithoutText, Config, SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
 };
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -911,26 +911,43 @@ pub(crate) async fn handle_prompt(
     }
 
     if saw_done && !saw_visible_output {
-        // ponytail: A completed run is valid even when the model emits no text, but
-        // ending the ACP turn empty makes the host invent an unhelpful status message.
-        // If Den later supplies a structured completion summary, project that instead.
-        let message = format!(
-            "Den finished this turn without an assistant response (run `{run_id}`). If you expected an answer, send a follow-up message."
-        );
-        tracing::warn!(
-            target: "bear_armature::lifecycle",
-            session_id,
-            run_id,
-            diagnostics = %diagnostics.summary(),
-            "BearWire run completed without visible assistant output"
-        );
-        eprintln!(
-            "bear-armature: BearWire run completed without visible assistant output session_id={} run_id={} diagnostics={}",
-            session_id,
-            run_id,
-            diagnostics.summary()
-        );
-        send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message).await?;
+        match classify_completed_turn_without_text(saw_error, saw_tool_activity) {
+            CompletedTurnWithoutText::Expected => {
+                tracing::debug!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    diagnostics = %diagnostics.summary(),
+                    "BearWire run completed without visible assistant output after tool activity"
+                );
+            }
+            CompletedTurnWithoutText::Anomalous => {
+                let reason = if saw_error {
+                    "tool calls failed"
+                } else {
+                    "no tool activity or assistant output was observed"
+                };
+                let message = format!(
+                    "**Armature**: Den completed this turn without an assistant response (run `{run_id}`); {reason}. Check the diagnostics above or send a follow-up message."
+                );
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    diagnostics = %diagnostics.summary(),
+                    "BearWire run completed without visible assistant output"
+                );
+                eprintln!(
+                    "bear-armature: BearWire run completed without visible assistant output session_id={} run_id={} reason={} diagnostics={}",
+                    session_id,
+                    run_id,
+                    reason,
+                    diagnostics.summary()
+                );
+                send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
+                    .await?;
+            }
+        }
     }
 
     if let Some(response_id) = response.claim() {
@@ -1747,7 +1764,10 @@ fn local_step_claim_timeout_user_message(data: &Value) -> Option<&'static str> {
         .or_else(|| data.get("affected_obligations"))
         .and_then(Value::as_array)?;
     let local_step_never_started = obligations.iter().any(|obligation| {
-        obligation.get("expected_responder_action").and_then(Value::as_str) == Some("tool_result")
+        obligation
+            .get("expected_responder_action")
+            .and_then(Value::as_str)
+            == Some("tool_result")
             && obligation.get("claimed").and_then(Value::as_bool) == Some(false)
     });
     local_step_never_started.then_some(

@@ -44,7 +44,25 @@ fn classify_prompt_failure(error_chain: &str) -> (&'static str, String) {
 
 #[cfg(test)]
 mod prompt_failure_tests {
-    use super::classify_prompt_failure;
+    use super::{
+        classify_completed_turn_without_text, classify_prompt_failure, CompletedTurnWithoutText,
+    };
+
+    #[test]
+    fn classifies_completed_turn_without_text() {
+        assert_eq!(
+            classify_completed_turn_without_text(false, true),
+            CompletedTurnWithoutText::Expected
+        );
+        assert_eq!(
+            classify_completed_turn_without_text(true, true),
+            CompletedTurnWithoutText::Anomalous
+        );
+        assert_eq!(
+            classify_completed_turn_without_text(false, false),
+            CompletedTurnWithoutText::Anomalous
+        );
+    }
 
     #[test]
     fn classifies_event_delivery_failure() {
@@ -1369,6 +1387,23 @@ impl SseStreamDiagnostics {
             self.saw_tool_activity,
             self.saw_error,
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompletedTurnWithoutText {
+    Expected,
+    Anomalous,
+}
+
+fn classify_completed_turn_without_text(
+    saw_error: bool,
+    saw_tool_activity: bool,
+) -> CompletedTurnWithoutText {
+    if saw_error || !saw_tool_activity {
+        CompletedTurnWithoutText::Anomalous
+    } else {
+        CompletedTurnWithoutText::Expected
     }
 }
 
