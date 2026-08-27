@@ -17,14 +17,15 @@ use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
     DocketCriterionStatus, DocketEffortHint, DocketEntryCreate, DocketEntryKind,
     DocketEntryListFilter, DocketEntryPromotion, DocketEntryScope, DocketExecutionNextAction,
-    DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobOverlapResolution, DocketJobProjection, DocketJobStatus, DocketJobStatusReport,
-    DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketService, DocketSessionTaskSettlement,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
-    DocketTaskKind, DocketTaskListFilter, DocketTaskPlacement, DocketTaskRunStateUpdate,
-    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, DocketValidationError, MutationPolicy,
-    PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection,
-    TaskListSyncRequest, TaskListVisibility,
+    DocketExecutionTaskSettlement, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobOverlapResolution, DocketJobProjection,
+    DocketJobStatus, DocketJobStatusReport, DocketJobSurfaceAssignmentInput, DocketJobUpdate,
+    DocketService, DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
+    DocketTaskPlacement, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
+    DocketTaskUpdate, DocketValidationError, MutationPolicy, PgDocketService,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
+    TaskListVisibility,
 };
 
 use crate::{
@@ -2268,6 +2269,49 @@ pub(crate) async fn update_task(
     }))
 }
 
+pub(crate) async fn settle_execution_task(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketCurrentTaskStatusArguments = serde_json::from_value(arguments)?;
+    let job_id = args.job_id.ok_or_else(|| {
+        DenError::ValidationError("settle_execution_task requires job_id".to_string())
+    })?;
+    if args.run_id.is_some() {
+        return Err(DenError::ValidationError(
+            "settle_execution_task uses the active Docket execution run; do not pass run_id"
+                .to_string(),
+        )
+        .into());
+    }
+    let outcome = PgDocketService::from_pool(pool)
+        .settle_execution_task(DocketExecutionTaskSettlement {
+            execution: DocketJobExecuteRequest {
+                bear_id: context.bear_id,
+                job_id,
+                actor_role: role,
+                actor_user_id: Some(context.user_id),
+                actor_agent_id: clean_optional(&context.binding_id),
+                session_id: Some(context.session_id.clone()),
+                source_conversation_id: clean_optional(&context.conversation_id),
+                source_client_session_id: context.client_session_id.clone(),
+            },
+            task_id: args.task_id,
+            status: args.status,
+            outcome_disposition: args.outcome_disposition,
+            result_refs: args.result_refs,
+            result_summary: args.result_summary,
+        })
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "outcome": outcome,
+    }))
+}
+
 pub(crate) async fn update_current_task_status(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -2276,6 +2320,16 @@ pub(crate) async fn update_current_task_status(
 ) -> Result<Value, CustomError> {
     let args: DocketCurrentTaskStatusArguments = serde_json::from_value(arguments)?;
     if args.job_id.is_none() && args.run_id.is_none() {
+        if let Some(task_id) = current_client_session_task_id(pool, context).await? {
+            if task_id == args.task_id {
+                return Err(DenError::ValidationError(
+                    "update_current_task_status cannot settle the current task claimed by execute_job/reconcile_job_execution; use settle_execution_task with its job_id and task_id"
+                        .to_string(),
+                )
+                .into());
+            }
+        }
+
         let pair_session_id = resolve_task_session_anchor_id(pool, context, None).await?;
         let session_tasks = PgDocketService::from_pool(pool)
             .list_tasks(
@@ -2367,10 +2421,10 @@ pub(crate) async fn update_current_task_status(
         .into());
     }
     let job_id = args.job_id.ok_or_else(|| {
-        DenError::ValidationError(
-            "update_current_task_status requires explicit job_id and run_id; legacy execution-session inference is no longer supported"
-                .to_string(),
-        )
+        DenError::ValidationError(format!(
+            "update_current_task_status cannot settle Job task {} without job_id and run_id; pass both from get_job/execute_job, or use settle_execution_task when execute_job/reconcile_job_execution claimed the task",
+            args.task_id
+        ))
     })?;
     let run_id = args.run_id.ok_or_else(|| {
         DenError::ValidationError(

@@ -201,6 +201,12 @@ fn current_task_status_descriptor_exposes_compatible_outcomes() {
     assert!(descriptor
         .description
         .contains("blocked accepts blocked or failed"));
+    assert!(builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
+        .iter()
+        .any(|descriptor| descriptor.provider_name == DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER));
+    assert!(!builtin_den_tool_descriptors_for_profile(BearProfile::Work)
+        .iter()
+        .any(|descriptor| descriptor.provider_name == DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER));
 }
 
 #[test]

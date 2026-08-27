@@ -306,7 +306,7 @@ async fn invoke_workflow_tool(
             workflow::reconcile_job_execution(pool, context, role, arguments).await?
         }
         DEN_JOB_SETTLE_TASK => {
-            workflow::update_current_task_status(pool, context, role, arguments).await?
+            workflow::settle_execution_task(pool, context, role, arguments).await?
         }
         DEN_JOB_EVALUATE_CRITERION => {
             workflow::evaluate_criterion(pool, context, role, arguments).await?
