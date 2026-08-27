@@ -307,7 +307,7 @@ impl TurnBudgetStopReason {
                     .map(|name| format!(" for `{name}`"))
                     .unwrap_or_default();
                 format!(
-                    "I stopped because this turn repeated the same tool-call pattern{tool} without changing the search state (rule of ko, repeats={repeats}/limit={limit}). The recent tool results were recorded, but the model appears to be looping."
+                    "I stopped because this turn repeated the same tool-call pattern{tool} without changing the work state (rule of ko, repeats={repeats}/limit={limit}). The recent tool results were recorded, but the model appears to be looping."
                 )
             }
             Self::EmergencyHardStepLimit {
@@ -1014,6 +1014,19 @@ mod tests {
             tool_signature("memory_read", r#"{"b":2,"a":1}"#),
             tool_signature("memory_read", r#"{"a":1,"b":2}"#)
         );
+    }
+
+    #[test]
+    fn rule_of_ko_message_describes_unchanged_work_state() {
+        let message = TurnBudgetStopReason::RuleOfKo {
+            repeats: 3,
+            limit: 2,
+            tool_name: Some("get_work_run".to_string()),
+        }
+        .user_message();
+
+        assert!(message.contains("without changing the work state"));
+        assert!(!message.contains("search state"));
     }
 
     #[test]

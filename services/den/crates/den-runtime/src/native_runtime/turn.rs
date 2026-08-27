@@ -2590,9 +2590,18 @@ mod tests {
         assert!(matches!(
             events.as_slice(),
             [
-                Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text })),
+                Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+                    kind,
+                    text: Some(text),
+                    phase,
+                    detail: Some(detail),
+                })),
                 Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { turn: None })),
-            ] if text.contains("Send “continue”") && !text.contains("elapsed=")
+            ] if kind == "turn_budget_exhausted"
+                && phase.as_deref() == Some("budget")
+                && detail["reason"] == "wall_clock_limit"
+                && text.contains("Send “continue”")
+                && !text.contains("elapsed=")
         ));
     }
 

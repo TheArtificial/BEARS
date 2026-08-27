@@ -740,7 +740,7 @@ Clients project the current task or Work assignment as the visible plan objectiv
 
 ## Phase 3 — Budget/ko/failure integration
 
-**Status: In progress (2026-08-16).** Native turn construction now retains the resolved control profile's budget instead of replacing it with the legacy stance capability budget. Model/Bear multipliers affect only ordinary tool and post-mutation verification capacity; wall-clock, emergency-step, failure, and KO limits stay level-specific safety boundaries. The remaining gate is validating initialization and the resulting KO/failure/replenishment behavior together at the native-turn boundary.
+**Status: Complete (2026-08-27).** Native turn construction resolves the control profile, applies only the permitted model/Bear multiplier to ordinary tool and post-mutation verification capacity, and stores that result as the session's turn budget. `evaluate_turn_budget` consumes that resolved policy for KO, consecutive-failure, class/total-tool, wall-clock, and emergency-step decisions; focused unit coverage verifies KO cutoff, failure cutoff, verification replenishment, global-fuse preservation, and JSON-signature canonicalization. The earlier remaining initialization gate is met.
 
 **Goal:** initialize loop budgets from the resolved control profile.
 
