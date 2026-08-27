@@ -16,8 +16,8 @@ use den_core::tools::constants::{
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
     DocketCriterionStatus, DocketEffortHint, DocketEntryCreate, DocketEntryKind,
-    DocketEntryListFilter, DocketEntryPromotion, DocketEntryScope, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
+    DocketEntryListFilter, DocketEntryPromotion, DocketEntryScope, DocketExecutionNextAction,
+    DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobOverlapResolution, DocketJobProjection, DocketJobStatus, DocketJobStatusReport,
     DocketJobSurfaceAssignmentInput, DocketJobUpdate, DocketService, DocketSessionTaskSettlement,
     DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
@@ -1751,6 +1751,7 @@ pub(crate) async fn execute_job(
             source_client_session_id: context.client_session_id.clone(),
         })
         .await?;
+    let pair_binding = bind_selected_pair_task_to_current_session(pool, context, &outcome).await?;
     let status_report = docket_job_status_report(&outcome.job);
     update_focused_conversation_title(pool, context, &outcome.job, &status_report).await?;
     let run = outcome.job.current_run.as_ref();
@@ -1765,6 +1766,7 @@ pub(crate) async fn execute_job(
             "run_id": run.map(|run| run.id),
         },
         "outcome": outcome,
+        "pair_binding": pair_binding,
         "domain": "docket",
         "bear_id": context.bear_id,
         "status_report": status_report,
@@ -1798,6 +1800,7 @@ pub(crate) async fn reconcile_job_execution(
             source_client_session_id: context.client_session_id.clone(),
         })
         .await?;
+    let pair_binding = bind_selected_pair_task_to_current_session(pool, context, &outcome).await?;
     let status_report = docket_job_status_report(&outcome.job);
     update_focused_conversation_title(pool, context, &outcome.job, &status_report).await?;
     let run = outcome.job.current_run.as_ref();
@@ -1809,9 +1812,68 @@ pub(crate) async fn reconcile_job_execution(
             "run_id": run.map(|run| run.id),
         },
         "outcome": outcome,
+        "pair_binding": pair_binding,
         "domain": "docket",
         "bear_id": context.bear_id,
         "status_report": status_report,
+    }))
+}
+
+/// Keep hosted Docket execution aligned with the BearWire endpoint: a task
+/// selected for Pair execution must be attached to, and current in, this ACP
+/// client session before the result is reported to the model.
+async fn bind_selected_pair_task_to_current_session(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    outcome: &docket::DocketJobExecuteOutcome,
+) -> Result<Value, CustomError> {
+    if !matches!(
+        outcome.control.next_action,
+        DocketExecutionNextAction::WorkCurrentTask
+    ) {
+        return Ok(json!({
+            "status": "not_applicable",
+            "reason": "Docket did not select a Pair task.",
+        }));
+    }
+    let Some(task_id) = outcome.control.task.selected_task_id else {
+        return Ok(json!({
+            "status": "not_applicable",
+            "reason": "Docket did not select a Pair task.",
+        }));
+    };
+    let Some(client_session_id) = context.client_session_id.as_deref() else {
+        return Ok(json!({
+            "status": "not_attempted",
+            "reason": "no_authenticated_pair_session",
+            "task_id": task_id,
+            "current_task_selected": false,
+        }));
+    };
+    let session = client_sessions::find_for_user_bear_session_id(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+    PgDocketService::from_pool(pool)
+        .attach_task_to_pair_session(context.bear_id, task_id, session.id)
+        .await?;
+    select_pair_current_task(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+        Some(task_id),
+    )
+    .await?;
+    Ok(json!({
+        "status": "attached",
+        "task_id": task_id,
+        "client_session_id": client_session_id,
+        "current_task_selected": true,
     }))
 }
 
