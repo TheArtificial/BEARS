@@ -2413,11 +2413,22 @@ async fn handle_bearwire_event(
             .await?;
         }
         "tool_call.failed" => {
+            let tool_name = event
+                .pointer("/data/tool_call/name")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let failure_summary = tool_call_finished_summary(
+                event.get("data").unwrap_or(&Value::Null),
+                tool_name,
+                true,
+            );
             tracing::warn!(
                 target: "bear_armature::lifecycle",
                 session_id,
                 run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
                 tool_call_id = event.pointer("/data/tool_call/id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                tool_name,
+                error = %truncate_for_log(&failure_summary, 500),
                 "BearWire tool_call.failed received"
             );
             outcome.saw_tool_activity = true;
