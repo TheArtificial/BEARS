@@ -2921,6 +2921,69 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn near_ko_checkpoint_blocks_tools_without_resetting_the_hard_ko_budget_stop() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session
+            .agent_loop_control
+            .profile
+            .checkpoints
+            .same_signature_warning_threshold = Some(1);
+        let observation = crate::agent_loop::ToolContinuationObservation {
+            tool_name: "memory_read".to_string(),
+            signature: "memory_read:{path=control.rs}".to_string(),
+            class: crate::agent_loop::ToolBudgetClass::Read,
+            failed: false,
+            grounding_probe_signal: None,
+        };
+        let checkpoint_evaluation = evaluate_checkpoint_trigger(
+            &session.agent_loop_control.profile,
+            &crate::agent_loop::CheckpointState {
+                last_signature: Some(observation.signature.clone()),
+                ..Default::default()
+            },
+            &[observation.clone()],
+            false,
+        );
+        let request = SessionTrackingStream::checkpoint_request_for_tool_observation(
+            &session,
+            &observation,
+            checkpoint_evaluation.trigger,
+        )
+        .expect("near-ko repeat triggers checkpoint");
+        assert_eq!(
+            request.reason,
+            crate::agent_loop::CheckpointReason::SameSignatureNearKo
+        );
+        session.pending_checkpoint_request = Some(request);
+        let mut stream = test_tracking_stream_with_session(&session);
+        assert!(
+            stream
+                .block_or_recover_if_checkpoint_pending("tool_call:memory_read")
+                .is_err(),
+            "a near-ko checkpoint cannot be bypassed with another tool call"
+        );
+
+        let first = crate::agent_loop::evaluate_turn_budget(
+            session.turn_budget,
+            1,
+            0,
+            &Default::default(),
+            &[observation.clone()],
+        );
+        let hard_ko = crate::agent_loop::evaluate_turn_budget(
+            session.turn_budget,
+            2,
+            0,
+            &first.next_state,
+            &[observation],
+        );
+        assert!(matches!(
+            hard_ko.stop_reason,
+            Some(crate::agent_loop::TurnBudgetStopReason::RuleOfKo { .. })
+        ));
+    }
+
     #[test]
     fn checkpoint_request_retention_is_work_audit_only() {
         assert_eq!(
