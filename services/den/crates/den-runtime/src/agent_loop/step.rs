@@ -787,6 +787,22 @@ fn checkpoint_tools(
     tools
 }
 
+fn resolved_request_profile_progress_event(
+    request_profile: &den_core::ModelRequestProfile,
+) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+        kind: "model_request_profile_resolved".to_string(),
+        text: None,
+        phase: Some("model_routing".to_string()),
+        detail: Some(serde_json::json!({
+            "approved_model_ref": request_profile.approved_model_ref,
+            "agent_primary_step": request_profile.agent_primary_step.as_str(),
+            "supports_reasoning_effort": request_profile.supports_reasoning_effort,
+            "thinking_effort": request_profile.thinking_effort.map(ThinkingEffort::as_str),
+        })),
+    })
+}
+
 fn resolved_control_progress_event(
     control: &crate::agent_loop::ResolvedAgentLoopControl,
 ) -> RuntimeStreamEvent {
@@ -1015,6 +1031,7 @@ pub async fn run_agent_step_stream(
         overflow,
     )) as RuntimeEventStream;
     let prefix_events = [
+        Some(resolved_request_profile_progress_event(&request_profile)),
         Some(resolved_control_progress_event(&session.agent_loop_control)),
         context_budget_pressure_event,
         reasoning_effort_disposition_event,
@@ -1034,6 +1051,35 @@ pub async fn run_agent_step_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolved_request_profile_is_typed_and_uses_only_the_approved_model_reference() {
+        let profile = den_core::ModelRequestProfile {
+            approved_model_ref: "openai/approved".to_string(),
+            agent_primary_step: AgentPrimaryStep::Checkpoint,
+            supports_reasoning_effort: Some(true),
+            thinking_effort: Some(ThinkingEffort::High),
+        };
+
+        let RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+            kind,
+            phase,
+            text,
+            detail: Some(detail),
+        }) = resolved_request_profile_progress_event(&profile)
+        else {
+            panic!("expected resolved request profile progress event");
+        };
+
+        assert_eq!(kind, "model_request_profile_resolved");
+        assert_eq!(phase.as_deref(), Some("model_routing"));
+        assert!(text.is_none());
+        assert_eq!(detail["approved_model_ref"], "openai/approved");
+        assert_eq!(detail["agent_primary_step"], "checkpoint");
+        assert_eq!(detail["thinking_effort"], "high");
+        assert!(detail.get("prompt").is_none());
+        assert!(detail.get("transcript").is_none());
+    }
 
     #[test]
     fn pending_checkpoint_exposes_only_the_runtime_checkpoint_tool() {
