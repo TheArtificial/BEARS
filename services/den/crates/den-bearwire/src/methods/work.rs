@@ -14,12 +14,17 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use den_core::BearProfile;
 use den_docket::{
     work_runs, DocketCheckpointDirectiveAcknowledge, DocketService, DocketWorkBoundaryCheck,
     DocketWorkBoundarySignal, PgDocketService,
 };
 use den_http::errors::CustomError;
 use den_service::{
+    artifacts::{
+        self, ArtifactStorageKind, ArtifactVisibility, AttachArtifactInput,
+        CreateJsonArtifactInput, ReserveArtifactInput,
+    },
     bears::{render_turn_fragment, repository_prompt_fragment_registry},
     DenState,
 };
@@ -132,6 +137,132 @@ struct WorkBoundaryRequest {
     boundary_key: Uuid,
     #[serde(default)]
     signal: Option<DocketWorkBoundarySignal>,
+}
+
+#[derive(Deserialize)]
+struct WorkCheckpointEvidenceRequest {
+    directive_id: Uuid,
+    execution_attempt_id: Uuid,
+    fence_epoch: i64,
+    summary: String,
+}
+
+pub(crate) async fn work_checkpoint_evidence_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (_user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: WorkCheckpointEvidenceRequest = parse_params(params)?;
+    let summary = request.summary.trim();
+    if summary.is_empty() || summary.len() > 4_000 {
+        return Err(CustomError::ValidationError(
+            "checkpoint summary must be 1..=4000 characters".to_string(),
+        ));
+    }
+    // The directive, evidence artifact, link, and released fence form one
+    // handoff. Keep all of them in this transaction so a failed acknowledgement
+    // cannot leave an orphaned checkpoint artifact behind.
+    let mut tx = state.sqlx_pool.begin().await?;
+    let work_run_id: Uuid = sqlx::query_scalar(
+        "SELECT work_run_id FROM docket_execution_attempts WHERE id = $1 AND fence_epoch = $2 AND owner_kind = 'work' AND bear_id = $3",
+    )
+    .bind(request.execution_attempt_id)
+    .bind(request.fence_epoch)
+    .bind(bear.id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| CustomError::NotFound("work execution attempt not found".to_string()))?;
+    let directive: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT directive.state, directive.acknowledged_artifact_ref \
+         FROM docket_checkpoint_directives directive \
+         JOIN docket_execution_attempts attempt ON attempt.id = directive.execution_attempt_id \
+         WHERE directive.id = $1 AND directive.execution_attempt_id = $2 \
+           AND directive.fence_epoch = $3 AND attempt.owner_kind = 'work' \
+           AND attempt.bear_id = $4 FOR UPDATE",
+    )
+    .bind(request.directive_id)
+    .bind(request.execution_attempt_id)
+    .bind(request.fence_epoch)
+    .bind(bear.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((directive_state, acknowledged_artifact_ref)) = directive else {
+        return Err(CustomError::NotFound(
+            "checkpoint directive is not pending for this exact attempt and fence".to_string(),
+        ));
+    };
+    if directive_state == "acknowledged" {
+        let artifact_ref = acknowledged_artifact_ref.ok_or_else(|| {
+            CustomError::ValidationError(
+                "acknowledged checkpoint directive has no artifact".to_string(),
+            )
+        })?;
+        tx.commit().await?;
+        return Ok(
+            json!({ "ok": true, "directive_id": request.directive_id, "checkpoint_artifact_ref": artifact_ref }),
+        );
+    }
+    if directive_state != "pending" {
+        return Err(CustomError::NotFound(
+            "checkpoint directive is not pending for this exact attempt and fence".to_string(),
+        ));
+    }
+    let artifact = artifacts::create_json_artifact_in_tx(
+        &mut tx,
+        CreateJsonArtifactInput {
+            reserve: ReserveArtifactInput {
+                bear_id: bear.id,
+                created_by_user_id: Some(_user_id),
+                owner_profile: BearProfile::Work,
+                kind: "runtime_checkpoint".to_string(),
+                title: Some("Work checkpoint acknowledgement".to_string()),
+                summary: Some(summary.to_string()),
+                content_type: Some("application/json".to_string()),
+                storage_kind: ArtifactStorageKind::DbText,
+                visibility: ArtifactVisibility::PrivateToProfile,
+                provenance: json!({ "creating_stance": "work", "directive_id": request.directive_id, "execution_attempt_id": request.execution_attempt_id, "fence_epoch": request.fence_epoch }),
+                metadata: json!({}),
+                expires_at: None,
+            },
+            payload: json!({ "directive_id": request.directive_id, "execution_attempt_id": request.execution_attempt_id, "fence_epoch": request.fence_epoch, "summary": summary }),
+        },
+    )
+    .await?;
+    artifacts::attach_artifact_in_tx(
+        &mut tx,
+        AttachArtifactInput {
+            artifact_ref: artifact.artifact_ref.clone(),
+            bear_id: bear.id,
+            target_kind: "work_run".to_string(),
+            target_id: work_run_id.to_string(),
+            role: "runtime_checkpoint".to_string(),
+            metadata: json!({}),
+            created_by_user_id: Some(_user_id),
+        },
+    )
+    .await?;
+    sqlx::query(
+        "UPDATE docket_checkpoint_directives SET state = 'acknowledged', \
+         acknowledged_artifact_ref = $2, acknowledged_at = NOW() \
+         WHERE id = $1 AND state = 'pending'",
+    )
+    .bind(request.directive_id)
+    .bind(&artifact.artifact_ref)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE docket_execution_attempts SET state = 'released', released_at = NOW(), \
+         updated_at = NOW() WHERE id = $1 AND fence_epoch = $2 AND state = 'running'",
+    )
+    .bind(request.execution_attempt_id)
+    .bind(request.fence_epoch)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(
+        json!({ "ok": true, "directive_id": request.directive_id, "checkpoint_artifact_ref": artifact.artifact_ref }),
+    )
 }
 
 #[derive(Deserialize)]

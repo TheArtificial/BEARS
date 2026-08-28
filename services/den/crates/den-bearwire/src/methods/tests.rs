@@ -3295,33 +3295,32 @@ async fn work_checkpoint_acknowledgement_unblocks_a_fresh_checkout(pool: sqlx::P
         "{denied}"
     );
 
-    let artifact_ref = format!("artifact_{}", Uuid::new_v4().simple());
-    let artifact_id: Uuid = sqlx::query_scalar("INSERT INTO artifacts (artifact_ref, bear_id, owner_profile, kind, storage_kind) VALUES ($1, $2, 'work', 'runtime_checkpoint', 'db_text') RETURNING id")
-        .bind(&artifact_ref).bind(bear_id).fetch_one(&pool).await.expect("create checkpoint artifact");
-    sqlx::query("INSERT INTO artifact_links (artifact_id, target_kind, target_id, role) VALUES ($1, 'work_run', $2, 'runtime_checkpoint')")
-        .bind(artifact_id).bind(work_run_id.to_string()).execute(&pool).await.expect("link checkpoint artifact to work run");
-
     let acknowledge = rpc_value(
-        state.clone(), &token, "work.acknowledge_checkpoint",
-        json!({ "bear_slug": bear_slug, "directive_id": directive_id, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "checkpoint_artifact_ref": artifact_ref }),
+        state.clone(), &token, "work.checkpoint_evidence",
+        json!({ "bear_slug": bear_slug, "directive_id": directive_id, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "summary": "exploration limit reached; requesting a fresh fence" }),
     ).await;
     assert_eq!(
-        acknowledge["result"]["state"], "acknowledged",
+        acknowledge["result"]["directive_id"],
+        directive_id.to_string(),
         "{acknowledge}"
     );
-    let replay = rpc_value(
-        state.clone(), &token, "work.acknowledge_checkpoint",
-        json!({ "bear_slug": bear_slug, "directive_id": directive_id, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch, "checkpoint_artifact_ref": artifact_ref }),
-    ).await;
+    let artifact_ref = acknowledge["result"]["checkpoint_artifact_ref"]
+        .as_str()
+        .expect("evidence endpoint returns artifact ref");
+    let acknowledged: Option<(String, String)> = sqlx::query_as(
+        "SELECT state, acknowledged_artifact_ref FROM docket_checkpoint_directives WHERE id = $1",
+    )
+    .bind(directive_id)
+    .fetch_optional(&pool)
+    .await
+    .expect("directive query");
     assert_eq!(
-        replay["result"]["directive_id"],
-        directive_id.to_string(),
-        "{replay}"
+        acknowledged,
+        Some(("acknowledged".to_string(), artifact_ref.to_string()))
     );
-    assert_eq!(replay["result"]["state"], "acknowledged", "{replay}");
     let stale_fence = rpc_value(
-        state.clone(), &token, "work.acknowledge_checkpoint",
-        json!({ "bear_slug": bear_slug, "directive_id": directive_id, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch + 1, "checkpoint_artifact_ref": artifact_ref }),
+        state.clone(), &token, "work.checkpoint_evidence",
+        json!({ "bear_slug": bear_slug, "directive_id": directive_id, "execution_attempt_id": attempt_id, "fence_epoch": fence_epoch + 1, "summary": "must reject stale fence" }),
     ).await;
     assert!(stale_fence.get("error").is_some(), "{stale_fence}");
 

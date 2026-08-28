@@ -186,6 +186,7 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
                 execution_attempt_id,
                 execution_attempt_fence_epoch,
                 "near_ko",
+                &summary,
             )
             .await;
             (
@@ -299,6 +300,7 @@ async fn request_work_checkpoint(
     execution_attempt_id: Uuid,
     fence_epoch: i64,
     signal: &str,
+    summary: &str,
 ) {
     let result = bearwire::rpc_call(
         http,
@@ -312,8 +314,31 @@ async fn request_work_checkpoint(
         }),
     )
     .await;
-    if let Err(err) = result {
-        eprintln!("bear-armature: headless work.boundary failed (advisory): {err:#}");
+    let gate = match result {
+        Ok(value) => value.get("gate").cloned().unwrap_or(Value::Null),
+        Err(err) => {
+            eprintln!("bear-armature: headless work.boundary failed (advisory): {err:#}");
+            return;
+        }
+    };
+    if gate.get("disposition").and_then(Value::as_str) != Some("require_checkpoint") {
+        return;
+    }
+    // The server derives the work run from this exact fenced attempt and
+    // creates/link/validates the immutable evidence before acknowledging it.
+    let directive_id = match gate.get("directive_id").and_then(Value::as_str) {
+        Some(value) => value,
+        None => {
+            eprintln!("bear-armature: work.boundary require_checkpoint omitted directive_id");
+            return;
+        }
+    };
+    if let Err(err) = bearwire::rpc_call(
+        http, config, "work.checkpoint_evidence",
+        json!({ "directive_id": directive_id, "execution_attempt_id": execution_attempt_id.to_string(),
+                "fence_epoch": fence_epoch, "summary": summary }),
+    ).await {
+        eprintln!("bear-armature: work.checkpoint_evidence failed: {err:#}");
     }
 }
 

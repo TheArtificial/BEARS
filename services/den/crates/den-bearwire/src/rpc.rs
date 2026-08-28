@@ -221,6 +221,11 @@ pub(crate) async fn rpc(
             methods::work::work_boundary_result(&state, &headers, &request.params).await,
             "BearWire work.boundary failed",
         ),
+        "work.checkpoint_evidence" => method_response(
+            request.id,
+            methods::work::work_checkpoint_evidence_result(&state, &headers, &request.params).await,
+            "BearWire work.checkpoint_evidence failed",
+        ),
         "work.acknowledge_checkpoint" => method_response(
             request.id,
             methods::work::work_acknowledge_checkpoint_result(&state, &headers, &request.params)
