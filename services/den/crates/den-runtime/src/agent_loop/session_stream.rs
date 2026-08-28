@@ -2358,20 +2358,14 @@ impl Stream for SessionTrackingStream {
                     }
                     return Poll::Ready(Some(Ok(event)));
                 }
-                if self.assistant_text.trim().is_empty() {
-                    let fallback = "BEARS completed the turn without assistant output.".to_string();
-                    self.assistant_text.clone_from(&fallback);
-                    self.persist_assistant_tool_step();
-                    self.pending_pause_after_tool =
-                        Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
-                    return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
-                        RuntimeSemanticEvent::AssistantTextDelta { text: fallback },
-                    ))));
-                }
-                self.persist_assistant_tool_step();
-                self.begin_final_gate_focus_resolution();
-                cx.waker().wake_by_ref();
-                Poll::Pending
+                // A tool-only turn may intentionally have no assistant prose. The ACP adapter
+                // owns rendering/classifying that terminal state because it observes client-side
+                // tool results as well; do not invent assistant text here. With no prose there
+                // is no assistant step to persist or final-answer gate to resolve.
+                self.finished = true;
+                return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::TurnCompleted { turn: None },
+                ))));
             }
             Poll::Ready(Some(Err(error))) => {
                 if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
@@ -3486,7 +3480,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_turn_completion_emits_fallback_assistant_output_first() {
+    async fn empty_turn_completion_emits_completion_without_synthetic_assistant_output() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:client-test", bear_id);
         let store = AgentLoopSessionStore::default();
@@ -3508,18 +3502,12 @@ mod tests {
             Arc::new(den_core::config::Config::test_stub()),
             MemoryStoreManager::new(&den_core::config::Config::test_stub()),
             BearProfile::Pair,
-            NativeToolDispatchMode::DeferToClient,
+            NativeToolDispatchMode::ServerSideInProcess,
         );
 
-        let first = stream.next().await.expect("fallback event").expect("ok");
+        let first = stream.next().await.expect("completion event").expect("ok");
         assert!(matches!(
             first,
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { ref text })
-                if text.contains("completed the turn without assistant output")
-        ));
-        let second = stream.next().await.expect("completion event").expect("ok");
-        assert!(matches!(
-            second,
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
         ));
         assert!(stream.next().await.is_none());
