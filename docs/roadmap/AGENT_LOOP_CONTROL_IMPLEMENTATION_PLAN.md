@@ -915,7 +915,7 @@ Retention rules:
 
 ## Phase 7 — Checkpoint enforcement in the loop
 
-**Status: Superseded in part (2026-08-20).** Runtime-owned checkpoint enforcement remains valid as an inner-loop safety mechanism. The prior execution-gate and scheduler-observation foundation is not the canonical outer-loop authority: reconcile it with the Docket-owned execution-attempt model before extending delivery or adding dispositions. A checkpoint never authorizes execution, advances a task, or resumes an attempt; it only informs the owner runtime's bounded outcome report.
+**Status: In progress (2026-08-27).** Runtime-owned checkpoint enforcement remains valid as an inner-loop safety mechanism. Pending runtime checkpoints now restrict the next model inference to the runtime-owned `checkpoint` tool, so they are enforcement boundaries rather than advisory tool additions. The prior execution-gate and scheduler-observation foundation is not the canonical outer-loop authority: reconcile it with the Docket-owned execution-attempt model before extending delivery or adding dispositions. A checkpoint never authorizes execution, advances a task, or resumes an attempt; it only informs the owner runtime's bounded outcome report.
 
 **Goal:** make checkpoint triggers affect continuation without making checkpoint advice authoritative.
 
@@ -996,7 +996,7 @@ When a trigger fires:
 
 | Task | Done when |
 | --- | --- |
-| Enforce over-exploration checkpoints | Read/search threshold forces checkpoint before more read/search; the checkpoint can justify only a bounded fresh window, not unlimited exploration. |
+| Enforce over-exploration checkpoints | **Complete (2026-08-27).** A pending checkpoint replaces the model tool set with the runtime-owned `checkpoint` tool, so read/search threshold detection blocks additional exploration until a report is handled; response handling resets only checkpoint observation counters, preserving authoritative budgets and ko limits. |
 | Enforce failure checkpoints | Consecutive failures force checkpoint before retry; retry is allowed only if runtime policy still permits it. |
 | Enforce same-signature checkpoint | Near-ko repeated signature forces different action or checkpoint; ko exhaustion still stops even if the checkpoint recommends retry. |
 | Enforce task-gate checkpoint | First/repeated gate rejection can require checkpoint before stronger gate behavior; checkpoint advice cannot satisfy the gate without task/Docket evidence. |

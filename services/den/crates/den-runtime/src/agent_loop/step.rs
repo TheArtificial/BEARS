@@ -769,13 +769,20 @@ fn should_try_preflight_context_compaction(
 }
 
 fn tools_with_checkpoint_tool(session: &AgentLoopSession) -> Vec<crate::llm::LlmToolDefinition> {
-    let mut tools = session.tools.clone();
-    if session.pending_checkpoint_request.is_some()
-        && !tools
-            .iter()
-            .any(|tool| tool.name == RUNTIME_CHECKPOINT_TOOL_NAME)
-    {
-        tools.push(checkpoint_tool_definition());
+    checkpoint_tools(
+        session.pending_checkpoint_request.is_some(),
+        session.tools.clone(),
+    )
+}
+
+fn checkpoint_tools(
+    pending_checkpoint: bool,
+    tools: Vec<crate::llm::LlmToolDefinition>,
+) -> Vec<crate::llm::LlmToolDefinition> {
+    if pending_checkpoint {
+        // A pending checkpoint is an enforcement boundary, not an extra advisory tool.
+        // Do not offer ordinary tools until the runtime-owned report has been handled.
+        return vec![checkpoint_tool_definition()];
     }
     tools
 }
@@ -1027,6 +1034,21 @@ pub async fn run_agent_step_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_checkpoint_exposes_only_the_runtime_checkpoint_tool() {
+        let tools = checkpoint_tools(
+            true,
+            vec![crate::llm::LlmToolDefinition {
+                name: "fs_read_text_file".to_string(),
+                description: None,
+                parameters: serde_json::json!({}),
+            }],
+        );
+
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, RUNTIME_CHECKPOINT_TOOL_NAME);
+    }
 
     #[test]
     fn resolved_control_progress_is_typed_and_transcript_free() {
