@@ -38,6 +38,31 @@ fn checkpoint_required_progress_projects_as_ephemeral_run_progress() {
 }
 
 #[test]
+fn resolved_model_profile_projects_approved_reference_to_bearwire_run_diagnostics() {
+    let projected = runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::RunProgress {
+            kind: "model_request_profile_resolved".to_string(),
+            text: None,
+            phase: Some("model_routing".to_string()),
+            detail: Some(serde_json::json!({
+                "approved_model_ref": "openai/approved-model",
+                "agent_primary_step": "checkpoint",
+                "supports_reasoning_effort": true,
+                "thinking_effort": "high",
+            })),
+        },
+    ));
+
+    assert!(matches!(projected.as_slice(), [event]
+        if event.event_type == "run.progress"
+            && event.data["kind"] == "model_request_profile_resolved"
+            && event.data["phase"] == "model_routing"
+            && event.data["detail"]["approved_model_ref"] == "openai/approved-model"
+            && event.data["detail"]["agent_primary_step"] == "checkpoint"
+            && event.data["detail"]["thinking_effort"] == "high"));
+}
+
+#[test]
 fn provider_activity_is_not_projected_to_bearwire_or_sse() {
     assert!(
         runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::ProviderActivity).is_empty()

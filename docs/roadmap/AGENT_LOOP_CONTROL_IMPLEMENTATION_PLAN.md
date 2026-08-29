@@ -1008,7 +1008,7 @@ When a trigger fires:
 
 ## Phase 8 — Model-task routing and reasoning effort
 
-**Status: In progress (2026-08-20).** The shared typed `ModelRequestProfile` resolver owns symbolic `agent_primary` step classification and optional provider-neutral reasoning effort. Bifrost catalog reasoning-effort support now propagates through Pair preflight into the native session request profile; native model-request construction consumes the approved model reference and compatibility-filtered thinking override. Typed transcript-free diagnostics report override disposition (`applied`, `skipped_unsupported`, `skipped_unknown`, or API-incompatible) before the model stream. Bounded delegation/escalation and fuller resolved-profile routing diagnostics remain open.
+**Status: In progress (updated 2026-08-28).** The shared typed `ModelRequestProfile` resolver owns symbolic `agent_primary` step classification and optional provider-neutral reasoning effort. Bifrost catalog reasoning-effort support propagates through Pair preflight into the native session request profile; native model-request construction uses only its approved model reference and a compatibility-filtered thinking override. The resolved profile is emitted as transcript-free `model_request_profile_resolved` progress and is preserved as canonical BearWire `run.progress` diagnostic detail; focused runtime projection coverage proves that production route. Typed diagnostics also report override disposition (`applied`, `skipped_unsupported`, `skipped_unknown`, or API-incompatible) before the model stream. Bounded delegation/escalation remains open.
 
 **Goal:** route loop-control model calls through the model tasks layer, with reasoning effort as one provider-neutral request-profile field.
 
