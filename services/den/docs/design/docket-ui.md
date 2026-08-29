@@ -7,9 +7,20 @@ journals, retries, delivery policy, and isolated Work runs. Creating or
 dispatching one is not the default way for Pair to perform ordinary work.
 
 A Pair session instead has an optional current task that supplies its working
-objective. Task delegation is deferred; do not offer, imply, or simulate
-`delegate_task` until its real execution lifecycle and shared workspace-safety
-protocol exist. The planned contract and prerequisites are recorded in
+objective. Assigning a task (and therefore its task tree) to a Pair session is
+not the same as binding that session to Docket execution: Pair may work a
+current task conversationally while Docket does not control execution.
+
+Docket execution control is explicit and scoped. `/focus` is the single command
+that hands execution control to Docket for the focused work; there is no
+separate `/docket` mode or command. A model may self-assign a task to a session,
+most commonly by creating a new task, without entering focused execution.
+User steering interrupts focused execution and returns control to the
+conversation; it must not be treated as an ambiguous secondary stance.
+
+Task delegation is deferred; do not offer, imply, or simulate `delegate_task`
+until its real execution lifecycle and shared workspace-safety protocol exist.
+The planned contract and prerequisites are recorded in
 `docs/roadmap/TASK_DELEGATION_LIFECYCLE_PLAN.md`. Docket dispatches always use
 isolated sandbox checkouts and must not be presented as changes to Pair's
 attached workspace.
