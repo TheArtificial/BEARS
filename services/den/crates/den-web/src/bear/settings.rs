@@ -39,6 +39,7 @@ use den_runtime::{
     runtime::compaction_observability::RuntimeCompactionEventStatus,
 };
 use den_service::prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile;
+use den_service::recall::recall_watermark_for_bear;
 use den_service::{
     bears::{
         context_profile_from_json, db as bears_db,
@@ -1574,6 +1575,63 @@ async fn memory_stats_for_bear(
     }
 }
 
+#[derive(Serialize)]
+struct RecallHealthView {
+    status: &'static str,
+    detail: String,
+    lag_count: Option<i64>,
+    failed_run_count: Option<i64>,
+    last_success_at: Option<String>,
+}
+
+async fn recall_health_for_bear(state: &AppState, bear_id: Uuid) -> RecallHealthView {
+    match recall_watermark_for_bear(
+        state.sqlx_pool(),
+        state.config.as_ref(),
+        &state.memory_stores,
+        bear_id,
+    )
+    .await
+    {
+        Ok(None) => RecallHealthView {
+            status: "unavailable",
+            detail: "Semantic recall is not configured; memory search uses the keyword fallback."
+                .to_string(),
+            lag_count: None,
+            failed_run_count: None,
+            last_success_at: None,
+        },
+        Ok(Some(watermark)) => {
+            let healthy = watermark.is_healthy();
+            RecallHealthView {
+                status: if healthy { "healthy" } else { "degraded" },
+                detail: if healthy {
+                    "Semantic recall is current and its worker has no failures since the last success."
+                        .to_string()
+                } else {
+                    format!(
+                        "Semantic recall is behind: {} record(s) awaiting indexing and {} failed worker run(s).",
+                        watermark.lag_count, watermark.failed_run_count
+                    )
+                },
+                lag_count: Some(watermark.lag_count),
+                failed_run_count: Some(watermark.failed_run_count),
+                last_success_at: watermark.last_success_at,
+            }
+        }
+        Err(err) => {
+            tracing::warn!(%bear_id, "bear recall health unavailable: {err}");
+            RecallHealthView {
+                status: "unknown",
+                detail: "Recall health could not be checked.".to_string(),
+                lag_count: None,
+                failed_run_count: None,
+                last_success_at: None,
+            }
+        }
+    }
+}
+
 async fn overview_view(
     Path(slug): Path<String>,
     Query(query): Query<DomainQuery>,
@@ -1606,6 +1664,7 @@ async fn overview_view(
             }
         }
     };
+    let recall_health = recall_health_for_bear(&state, id).await;
     let conversation_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*)::bigint AS \"count!: i64\" FROM conversations WHERE bear_id = $1",
         id
@@ -1679,6 +1738,7 @@ async fn overview_view(
             roles_ready,
             roles_error,
             memory_stats,
+            recall_health,
             legacy_import_locked => memory_stats.as_ref().map(|stats| stats.record_count > 0).unwrap_or(true),
             conversation_count,
             pending_reviews,

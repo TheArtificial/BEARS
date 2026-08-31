@@ -114,6 +114,18 @@
                 </tbody>
             </table>
             <p class="form-hint">
+                Recall status: <strong>{{ recall_health.status | e }}</strong> · {{ recall_health.detail | e }}
+                {% if recall_health.last_success_at %}<br />Last successful index: {{ recall_health.last_success_at | e }}{% endif %}
+            </p>
+            {% if recall_health.lag_count is not none %}
+            <table>
+                <tbody>
+                    <tr><td>Awaiting indexing</td><td>{{ recall_health.lag_count }}</td></tr>
+                    <tr><td>Failed index runs</td><td>{{ recall_health.failed_run_count }}</td></tr>
+                </tbody>
+            </table>
+            {% endif %}
+            <p class="form-hint">
                 <a href="/bear/{{ bear.slug | e }}/memory">Open memory</a>
             </p>
             {% else %}
