@@ -280,7 +280,9 @@ pub async fn docket_jobs_settle_task_result(
                 actor_role: BearProfile::Pair,
                 actor_user_id: Some(user_id),
                 actor_agent_id: None,
-                session_id: request.session_id,
+                // Pair attempts are keyed by the Armature client session; both
+                // protocol spellings identify it at this boundary.
+                session_id: pair_attempt_session_id(&request),
                 source_conversation_id: request.conversation_id,
                 source_client_session_id: request.source_client_session_id,
             },
@@ -375,6 +377,13 @@ fn pair_binding_session_id(request: &DocketJobsExecuteRequest) -> Option<&str> {
         .source_client_session_id
         .as_deref()
         .or(request.session_id.as_deref())
+}
+
+fn pair_attempt_session_id(request: &DocketJobsSettleTaskRequest) -> Option<String> {
+    request
+        .source_client_session_id
+        .clone()
+        .or(request.session_id.clone())
 }
 
 fn execution_request(
@@ -562,6 +571,27 @@ mod tests {
         };
 
         assert_eq!(pair_binding_session_id(&request), Some("acp-session"));
+    }
+
+    #[test]
+    fn pair_attempt_session_prefers_the_explicit_client_session_id() {
+        let request = DocketJobsSettleTaskRequest {
+            bear_slug: "builder".to_owned(),
+            job_id: Uuid::new_v4().to_string(),
+            task_id: Uuid::new_v4().to_string(),
+            status: "done".to_owned(),
+            outcome_disposition: None,
+            result_refs: None,
+            result_summary: None,
+            session_id: Some("conversation-session".to_owned()),
+            conversation_id: None,
+            source_client_session_id: Some("acp-session".to_owned()),
+        };
+
+        assert_eq!(
+            pair_attempt_session_id(&request).as_deref(),
+            Some("acp-session")
+        );
     }
 
     #[test]
