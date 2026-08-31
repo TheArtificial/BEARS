@@ -398,12 +398,12 @@ fn execution_request(
         actor_role: BearProfile::Pair,
         actor_user_id: Some(user_id),
         actor_agent_id: None,
-        session_id: request.session_id.clone(),
+        // The ACP client session is the durable Pair-attempt owner. A caller
+        // may supply a separate conversational/session envelope, but it must
+        // not split Docket focus from the attempt that later settles it.
+        session_id: pair_binding_session_id(request).map(str::to_owned),
         source_conversation_id: request.conversation_id.clone(),
-        source_client_session_id: request
-            .source_client_session_id
-            .clone()
-            .or_else(|| request.session_id.clone()),
+        source_client_session_id: pair_binding_session_id(request).map(str::to_owned),
     }
 }
 
@@ -558,6 +558,12 @@ mod tests {
         };
 
         assert_eq!(pair_binding_session_id(&request), Some("acp-session"));
+        let execution = execution_request(Uuid::new_v4(), 1, Uuid::new_v4(), &request);
+        assert_eq!(execution.session_id.as_deref(), Some("acp-session"));
+        assert_eq!(
+            execution.source_client_session_id.as_deref(),
+            Some("acp-session")
+        );
     }
 
     #[test]
