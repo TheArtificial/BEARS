@@ -508,6 +508,20 @@ pub struct ManagedSurface {
     pub allowed_outbound_hosts: AllowedOutboundHosts,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<ManagedCredential>,
+    /// Optional GitHub App installation. The app identity and private key are
+    /// provider deployment secrets, never part of this managed payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_app: Option<ManagedGitHubApp>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedGitHubApp {
+    pub installation_id: i64,
+    /// Authorizes publishing branches. False retains anonymous/read-only
+    /// behavior even when the App is installed for the repository.
+    #[serde(default)]
+    pub write_enabled: bool,
 }
 
 /// Credential material for a managed surface's upstream. Values are written

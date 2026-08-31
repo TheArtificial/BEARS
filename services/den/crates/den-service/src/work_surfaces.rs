@@ -16,7 +16,8 @@ use uuid::Uuid;
 
 use den_core::DenError;
 use den_sandbox::protocol::{
-    AllowedOutboundHosts, ManagedConfig, ManagedCredential, ManagedImage, ManagedSurface,
+    AllowedOutboundHosts, ManagedConfig, ManagedCredential, ManagedGitHubApp, ManagedImage,
+    ManagedSurface,
 };
 
 pub const SURFACE_ROLE_OWNER: &str = "owner";
@@ -78,14 +79,16 @@ pub struct WorkSurfaceRow {
     pub default_image: Option<String>,
     pub allowed_outbound_hosts: Vec<String>,
     pub credential_kind: Option<String>,
+    pub github_app_installation_id: Option<i64>,
+    pub github_app_write_enabled: bool,
     pub created_by_user_id: i32,
     pub created_at: time::OffsetDateTime,
     pub updated_at: time::OffsetDateTime,
 }
 
 const SURFACE_COLUMNS: &str = "s.id, s.name, s.description, g.upstream_url, g.default_ref, \
-     g.default_image, g.allowed_outbound_hosts, g.credential_kind, s.created_by_user_id, \
-     s.created_at, s.updated_at";
+     g.default_image, g.allowed_outbound_hosts, g.credential_kind, g.github_app_installation_id, \
+     g.github_app_write_enabled, s.created_by_user_id, s.created_at, s.updated_at";
 
 const GIT_SURFACE_FROM: &str = "FROM work_surfaces s \
     INNER JOIN git_work_surface_details g ON g.id = s.id \
@@ -111,6 +114,9 @@ pub struct WorkSurfaceUpdate {
     pub default_image: Option<Option<String>>,
     /// Replaces the full surface-owned list; an empty list denies all egress.
     pub allowed_outbound_hosts: Option<Vec<String>>,
+    /// `Some(None)` removes GitHub App authorization for this surface.
+    pub github_app_installation_id: Option<Option<i64>>,
+    pub github_app_write_enabled: Option<bool>,
 }
 
 pub async fn create_surface(
@@ -229,7 +235,9 @@ pub async fn update_surface(
             upstream_url = COALESCE($2, upstream_url),
             default_ref = COALESCE($3, default_ref),
             default_image = CASE WHEN $4 THEN $5 ELSE default_image END,
-            allowed_outbound_hosts = CASE WHEN $6 THEN $7 ELSE allowed_outbound_hosts END
+            allowed_outbound_hosts = CASE WHEN $6 THEN $7 ELSE allowed_outbound_hosts END,
+            github_app_installation_id = CASE WHEN $8 THEN $9 ELSE github_app_installation_id END,
+            github_app_write_enabled = CASE WHEN $10 THEN $11 ELSE github_app_write_enabled END
         WHERE id = $1
         ",
     )
@@ -245,6 +253,10 @@ pub async fn update_surface(
             .map(validate_allowed_outbound_hosts)
             .transpose()?,
     )
+    .bind(update.github_app_installation_id.is_some())
+    .bind(update.github_app_installation_id.flatten())
+    .bind(update.github_app_write_enabled.is_some())
+    .bind(update.github_app_write_enabled.unwrap_or(false))
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 0 {
@@ -332,16 +344,16 @@ pub async fn surface_by_id(
     pool: &PgPool,
     surface_id: Uuid,
 ) -> Result<Option<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as!(
-        WorkSurfaceRow,
+    Ok(sqlx::query_as::<_, WorkSurfaceRow>(
         r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
                   g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  g.github_app_installation_id, g.github_app_write_enabled,
                   s.created_by_user_id, s.created_at, s.updated_at
            FROM work_surfaces s
            INNER JOIN git_work_surface_details g ON g.id = s.id
            WHERE s.kind = 'git_workspace' AND s.id = $1"#,
-        surface_id
     )
+    .bind(surface_id)
     .fetch_optional(pool)
     .await?)
 }
@@ -350,30 +362,30 @@ pub async fn surface_by_name(
     pool: &PgPool,
     name: &str,
 ) -> Result<Option<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as!(
-        WorkSurfaceRow,
+    Ok(sqlx::query_as::<_, WorkSurfaceRow>(
         r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
                   g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  g.github_app_installation_id, g.github_app_write_enabled,
                   s.created_by_user_id, s.created_at, s.updated_at
            FROM work_surfaces s
            INNER JOIN git_work_surface_details g ON g.id = s.id
            WHERE s.kind = 'git_workspace' AND s.name = $1"#,
-        name
     )
+    .bind(name)
     .fetch_optional(pool)
     .await?)
 }
 
 pub async fn list_all_surfaces(pool: &PgPool) -> Result<Vec<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as!(
-        WorkSurfaceRow,
+    Ok(sqlx::query_as::<_, WorkSurfaceRow>(
         r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
                   g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  g.github_app_installation_id, g.github_app_write_enabled,
                   s.created_by_user_id, s.created_at, s.updated_at
            FROM work_surfaces s
            INNER JOIN git_work_surface_details g ON g.id = s.id
            WHERE s.kind = 'git_workspace'
-           ORDER BY s.name"#
+           ORDER BY s.name"#,
     )
     .fetch_all(pool)
     .await?)
@@ -383,10 +395,10 @@ pub async fn list_surfaces_managed_by(
     pool: &PgPool,
     user_id: i32,
 ) -> Result<Vec<WorkSurfaceRow>, DenError> {
-    Ok(sqlx::query_as!(
-        WorkSurfaceRow,
+    Ok(sqlx::query_as::<_, WorkSurfaceRow>(
         r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
                   g.default_image, g.allowed_outbound_hosts, g.credential_kind,
+                  g.github_app_installation_id, g.github_app_write_enabled,
                   s.created_by_user_id, s.created_at, s.updated_at
            FROM work_surfaces s
            INNER JOIN git_work_surface_details g ON g.id = s.id
@@ -396,8 +408,8 @@ pub async fn list_surfaces_managed_by(
                  WHERE m.surface_id = s.id AND m.user_id = $1
              )
            ORDER BY s.name"#,
-        user_id
     )
+    .bind(user_id)
     .fetch_all(pool)
     .await?)
 }
@@ -756,6 +768,8 @@ struct SurfaceSyncRow {
     allowed_outbound_hosts: Vec<String>,
     credential_kind: Option<String>,
     credential_encrypted: Option<String>,
+    github_app_installation_id: Option<i64>,
+    github_app_write_enabled: bool,
 }
 
 /// Build the declarative managed-config payload for the sandbox provider.
@@ -769,7 +783,8 @@ pub async fn build_managed_config(
     let surface_rows = sqlx::query_as::<_, SurfaceSyncRow>(
         r"
         SELECT s.name, g.upstream_url, g.default_ref, g.default_image,
-               g.allowed_outbound_hosts, g.credential_kind, g.credential_encrypted
+               g.allowed_outbound_hosts, g.credential_kind, g.credential_encrypted,
+               g.github_app_installation_id, g.github_app_write_enabled
         FROM work_surfaces s
         INNER JOIN git_work_surface_details g ON g.id = s.id
         WHERE s.kind = 'git_workspace'
@@ -798,6 +813,11 @@ pub async fn build_managed_config(
         hasher.update(row.credential_kind.as_deref().unwrap_or("").as_bytes());
         hasher.update([0]);
         hasher.update(row.credential_encrypted.as_deref().unwrap_or("").as_bytes());
+        hasher.update([0]);
+        if let Some(installation_id) = row.github_app_installation_id {
+            hasher.update(installation_id.to_le_bytes());
+        }
+        hasher.update([u8::from(row.github_app_write_enabled)]);
         hasher.update([1]);
     }
     for image in &images {
@@ -834,6 +854,12 @@ pub async fn build_managed_config(
             allowed_outbound_hosts: AllowedOutboundHosts::new(allowed_outbound_hosts)
                 .expect("validated before managed config construction"),
             credential,
+            github_app: row
+                .github_app_installation_id
+                .map(|installation_id| ManagedGitHubApp {
+                    installation_id,
+                    write_enabled: row.github_app_write_enabled,
+                }),
         });
     }
     let images = images

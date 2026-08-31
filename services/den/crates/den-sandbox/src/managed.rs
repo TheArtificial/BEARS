@@ -268,6 +268,7 @@ mod tests {
             default_image: Some("base".to_string()),
             allowed_outbound_hosts: AllowedOutboundHosts::default(),
             credential,
+            github_app: None,
         }
     }
 

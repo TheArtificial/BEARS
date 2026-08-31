@@ -552,6 +552,8 @@ async fn update(
             default_ref: clean(&form.default_ref),
             default_image: Some(clean(&form.default_image)),
             allowed_outbound_hosts: Some(outbound_hosts_from_form(&form.allowed_outbound_hosts)),
+            github_app_installation_id: None,
+            github_app_write_enabled: None,
         },
     )
     .await?;

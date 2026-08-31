@@ -275,6 +275,8 @@ async fn surface_update_and_delete() {
             default_ref: Some("trunk".to_string()),
             default_image: Some(Some("rust".to_string())),
             allowed_outbound_hosts: None,
+            github_app_installation_id: None,
+            github_app_write_enabled: None,
         },
     )
     .await
@@ -284,6 +286,20 @@ async fn surface_update_and_delete() {
     assert_eq!(updated.upstream_url, "https://example.invalid/other.git");
     assert_eq!(updated.default_ref, "trunk");
     assert_eq!(updated.default_image.as_deref(), Some("rust"));
+
+    let github_app = update_surface(
+        &pool,
+        surface.id,
+        WorkSurfaceUpdate {
+            github_app_installation_id: Some(Some(12345)),
+            github_app_write_enabled: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("enable GitHub App publishing");
+    assert_eq!(github_app.github_app_installation_id, Some(12345));
+    assert!(github_app.github_app_write_enabled);
 
     delete_surface(&pool, surface.id).await.expect("delete");
     assert!(surface_by_id(&pool, surface.id)

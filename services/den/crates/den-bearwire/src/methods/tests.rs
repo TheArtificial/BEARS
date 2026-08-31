@@ -2092,6 +2092,16 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     )
     .await
     .expect("persist user message");
+    persist_canonical_conversation_record(
+        &context,
+        &CanonicalConversationRecord::visible_assistant_message(
+            "I found the requested file.",
+            json!({ "event": "assistant_message" }),
+            None,
+        ),
+    )
+    .await
+    .expect("persist assistant message");
     append_message(
         &pool,
         conversation.id,
@@ -2144,6 +2154,15 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     let messages = response["result"]["messages"]
         .as_array()
         .expect("messages array");
+    assert!(
+        messages.iter().any(|message| {
+            message.get("kind").and_then(Value::as_str) == Some("message")
+                && message.get("role").and_then(Value::as_str) == Some("assistant")
+                && message.get("text").and_then(Value::as_str)
+                    == Some("I found the requested file.")
+        }),
+        "conversation history must replay persisted assistant output: {response}"
+    );
     let tool_call = messages
         .iter()
         .find(|message| message.get("kind").and_then(Value::as_str) == Some("tool_call"))
@@ -2359,6 +2378,14 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     let surface_events = surface_response["result"]["surface_events"]
         .as_array()
         .expect("surface_events array");
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("message")
+                && event.get("role").and_then(Value::as_str) == Some("assistant")
+                && event.get("text").and_then(Value::as_str) == Some("I found the requested file.")
+        }),
+        "surface history must replay persisted assistant output: {surface_response}"
+    );
     let message_event = surface_events
         .iter()
         .find(|event| {
