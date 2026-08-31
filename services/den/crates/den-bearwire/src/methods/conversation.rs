@@ -483,7 +483,7 @@ async fn conversation_history_like_result(
         conversation.id,
         before_sequence_no,
         limit,
-        persistence::ConversationHistoryProjection::UserHistory,
+        persistence::ConversationHistoryProjection::ModelTranscript,
     )
     .await?;
     let has_more = rows.len() >= limit as usize;
