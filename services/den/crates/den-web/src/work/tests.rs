@@ -713,7 +713,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
 }
 
 #[tokio::test]
-async fn legacy_job_lifecycle_can_extend_then_complete() {
+async fn job_lifecycle_can_extend_then_complete() {
     let _guard = TEST_DB_LOCK.lock().await;
     let Some(pool) = test_pool().await else {
         return;
@@ -781,11 +781,6 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
     .await
     .expect("task count");
     assert_eq!(task_count, 2);
-    sqlx::query("UPDATE docket_execution_sessions SET state = 'completed' WHERE run_id = $1")
-        .bind(run_id)
-        .execute(&pool)
-        .await
-        .expect("complete execution session");
     sqlx::query("UPDATE bear_task_run_state SET status = 'done' WHERE run_id = $1")
         .bind(run_id)
         .execute(&pool)
