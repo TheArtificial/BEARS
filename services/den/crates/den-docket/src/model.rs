@@ -2233,7 +2233,7 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
     DocketJobStatusReport {
         job_id: projection.job.id,
         run_id: projection.current_run.as_ref().map(|run| run.id),
-        job_status: job_status.to_string(),
+        job_status,
         run_state: projection.current_run.as_ref().map(|run| run.state.clone()),
         current_task_id: current_task.map(|task| task.id),
         current_task_title: current_task.map(|task| task.title.clone()),

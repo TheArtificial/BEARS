@@ -90,14 +90,14 @@ pub async fn record(pool: &PgPool, event: NewRuntimeExceptionEvent) -> Result<()
     let expires_at = OffsetDateTime::now_utc() + Duration::days(RETENTION_DAYS);
     // sqlx-dynamic: optional diagnostic filters keep this low-volume ops query compact.
     sqlx::query(
-        r#"INSERT INTO runtime_exception_events (
+        r"INSERT INTO runtime_exception_events (
                 id, expires_at, severity, component, event_code, message, details,
                 session_id, runtime_run_id, work_run_id, docket_job_id, docket_task_id,
                 conversation_id, bear_id, build_revision
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7,
                 $8, $9, $10, $11, $12, $13, $14, $15
-            )"#,
+            )",
     )
     .bind(Uuid::new_v4())
     .bind(expires_at)
@@ -125,7 +125,7 @@ pub async fn list(
 ) -> Result<Vec<RuntimeExceptionEvent>, sqlx::Error> {
     // sqlx-dynamic: all predicates are fixed and parameterized; optional filters avoid separate query variants.
     sqlx::query_as::<_, RuntimeExceptionEvent>(
-        r#"SELECT id, created_at, severity, component, event_code, message, details,
+        r"SELECT id, created_at, severity, component, event_code, message, details,
                   session_id, runtime_run_id, work_run_id, docket_job_id, docket_task_id,
                   conversation_id, bear_id, build_revision
            FROM runtime_exception_events
@@ -137,7 +137,7 @@ pub async fn list(
              AND ($6::text IS NULL OR event_code = $6)
              AND ($7::text IS NULL OR severity = $7)
            ORDER BY created_at DESC
-           LIMIT $8"#,
+           LIMIT $8",
     )
     .bind(filter.bear_id)
     .bind(filter.work_run_id)
@@ -161,12 +161,12 @@ pub async fn prune(pool: &PgPool) -> Result<u64, sqlx::Error> {
         .rows_affected();
     // sqlx-dynamic: fixed capacity cleanup with no dynamic identifiers or untrusted input.
     let overflow = sqlx::query(
-        r#"DELETE FROM runtime_exception_events
+        r"DELETE FROM runtime_exception_events
            WHERE id IN (
                SELECT id FROM runtime_exception_events
                ORDER BY created_at DESC
                OFFSET $1
-           )"#,
+           )",
     )
     .bind(MAX_ROWS)
     .execute(pool)

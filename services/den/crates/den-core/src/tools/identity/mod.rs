@@ -96,107 +96,6 @@ pub fn capability_describe(
         .ok_or_else(|| DenError::NotFound(format!("unknown capability: {}", args.r#ref)))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        tools::{
-            arguments::DenToolChannelContext, capability_catalog::SessionCapabilityDescriptor,
-            context::DenToolInvocationContext,
-        },
-        BearProfile,
-    };
-    use uuid::Uuid;
-
-    fn context(session_capabilities: Vec<SessionCapabilityDescriptor>) -> DenToolInvocationContext {
-        DenToolInvocationContext {
-            bear_id: Uuid::nil(),
-            bear_slug: "test".to_string(),
-            binding_id: "test".to_string(),
-            profile: Some(BearProfile::Pair),
-            user_id: 1,
-            username: None,
-            membership_role: None,
-            conversation_id: "conversation".to_string(),
-            session_id: "session".to_string(),
-            work_run_id: None,
-            client_session_id: Some("client-1".to_string()),
-            conversation_selection: None,
-            runtime_target: None,
-            workspace_roots: vec!["/workspace/repo".to_string()],
-            session_capabilities,
-            session_policy: None,
-            activity: None,
-            runtime: None,
-            context_budget: None,
-            projected_memory: None,
-            recalled_memory: None,
-            request_id: None,
-            channel: DenToolChannelContext::default(),
-        }
-    }
-
-    fn live_session_tool() -> SessionCapabilityDescriptor {
-        SessionCapabilityDescriptor {
-            instance_id: "client-1:mcp__filesystem__read".to_string(),
-            name: "mcp__filesystem__read".to_string(),
-            summary: "Read files through the connected MCP provider.".to_string(),
-            kind: "tool".to_string(),
-            provider: "mcp".to_string(),
-            execution_locality: "connected MCP provider".to_string(),
-            authority: "current client connection and turn policy".to_string(),
-            surface: "workspace roots: /workspace/repo".to_string(),
-            availability: "available".to_string(),
-            tags: vec!["session-bound".to_string(), "mcp".to_string()],
-        }
-    }
-
-    #[test]
-    fn discovery_includes_available_session_instances_but_not_unavailable_ones() {
-        let mut unavailable = live_session_tool();
-        unavailable.instance_id = "client-1:mcp__stale".to_string();
-        unavailable.availability = "unavailable".to_string();
-        let context = context(vec![live_session_tool(), unavailable]);
-
-        let result = capability_describe(
-            json!({ "ref": "capability-instance:client-1:mcp__filesystem__read" }),
-            BearProfile::Pair,
-            &context,
-        )
-        .unwrap();
-        assert_eq!(
-            result["capability"]["ref"],
-            "capability-instance:client-1:mcp__filesystem__read"
-        );
-        assert!(capability_describe(
-            json!({ "ref": "capability-instance:client-1:mcp__stale" }),
-            BearProfile::Pair,
-            &context,
-        )
-        .is_err());
-        assert_eq!(
-            result["capability"]["descriptor_lifecycle"],
-            "session_instance"
-        );
-        assert_eq!(
-            result["capability"]["code_mode_compatibility"],
-            "requires_explicit_local_provider_mediation"
-        );
-    }
-
-    #[test]
-    fn session_instances_do_not_change_durable_role_filtering() {
-        let context = context(vec![live_session_tool()]);
-        let chat_entries = capability_entries_for_context(BearProfile::Chat, &context);
-        assert!(chat_entries
-            .iter()
-            .any(|entry| { entry.r#ref == "capability-instance:client-1:mcp__filesystem__read" }));
-        assert!(!chat_entries
-            .iter()
-            .any(|entry| entry.r#ref == "tool:den.docket.create_job"));
-    }
-}
-
 pub async fn get_bear_self(
     dir: &impl BearDirectory,
     context: &DenToolInvocationContext,
@@ -355,5 +254,106 @@ pub fn authorize_tool_for_profile(tool_name: &str, role: BearProfile) -> Result<
         Err(DenError::Authorization(format!(
             "Den tool `{tool_name}` is not available to the `{role}` role"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        tools::{
+            arguments::DenToolChannelContext, capability_catalog::SessionCapabilityDescriptor,
+            context::DenToolInvocationContext,
+        },
+        BearProfile,
+    };
+    use uuid::Uuid;
+
+    fn context(session_capabilities: Vec<SessionCapabilityDescriptor>) -> DenToolInvocationContext {
+        DenToolInvocationContext {
+            bear_id: Uuid::nil(),
+            bear_slug: "test".to_string(),
+            binding_id: "test".to_string(),
+            profile: Some(BearProfile::Pair),
+            user_id: 1,
+            username: None,
+            membership_role: None,
+            conversation_id: "conversation".to_string(),
+            session_id: "session".to_string(),
+            work_run_id: None,
+            client_session_id: Some("client-1".to_string()),
+            conversation_selection: None,
+            runtime_target: None,
+            workspace_roots: vec!["/workspace/repo".to_string()],
+            session_capabilities,
+            session_policy: None,
+            activity: None,
+            runtime: None,
+            context_budget: None,
+            projected_memory: None,
+            recalled_memory: None,
+            request_id: None,
+            channel: DenToolChannelContext::default(),
+        }
+    }
+
+    fn live_session_tool() -> SessionCapabilityDescriptor {
+        SessionCapabilityDescriptor {
+            instance_id: "client-1:mcp__filesystem__read".to_string(),
+            name: "mcp__filesystem__read".to_string(),
+            summary: "Read files through the connected MCP provider.".to_string(),
+            kind: "tool".to_string(),
+            provider: "mcp".to_string(),
+            execution_locality: "connected MCP provider".to_string(),
+            authority: "current client connection and turn policy".to_string(),
+            surface: "workspace roots: /workspace/repo".to_string(),
+            availability: "available".to_string(),
+            tags: vec!["session-bound".to_string(), "mcp".to_string()],
+        }
+    }
+
+    #[test]
+    fn discovery_includes_available_session_instances_but_not_unavailable_ones() {
+        let mut unavailable = live_session_tool();
+        unavailable.instance_id = "client-1:mcp__stale".to_string();
+        unavailable.availability = "unavailable".to_string();
+        let context = context(vec![live_session_tool(), unavailable]);
+
+        let result = capability_describe(
+            json!({ "ref": "capability-instance:client-1:mcp__filesystem__read" }),
+            BearProfile::Pair,
+            &context,
+        )
+        .unwrap();
+        assert_eq!(
+            result["capability"]["ref"],
+            "capability-instance:client-1:mcp__filesystem__read"
+        );
+        assert!(capability_describe(
+            json!({ "ref": "capability-instance:client-1:mcp__stale" }),
+            BearProfile::Pair,
+            &context,
+        )
+        .is_err());
+        assert_eq!(
+            result["capability"]["descriptor_lifecycle"],
+            "session_instance"
+        );
+        assert_eq!(
+            result["capability"]["code_mode_compatibility"],
+            "requires_explicit_local_provider_mediation"
+        );
+    }
+
+    #[test]
+    fn session_instances_do_not_change_durable_role_filtering() {
+        let context = context(vec![live_session_tool()]);
+        let chat_entries = capability_entries_for_context(BearProfile::Chat, &context);
+        assert!(chat_entries
+            .iter()
+            .any(|entry| { entry.r#ref == "capability-instance:client-1:mcp__filesystem__read" }));
+        assert!(!chat_entries
+            .iter()
+            .any(|entry| entry.r#ref == "tool:den.docket.create_job"));
     }
 }

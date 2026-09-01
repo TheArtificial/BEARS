@@ -459,8 +459,8 @@ fn execution_result_payload(
 ) -> Result<Value, CustomError> {
     let run = outcome.job.current_run.as_ref();
     let execution_state = run
-        .map(|run| run.state.to_string())
-        .unwrap_or("not_started".to_owned());
+        .map(|run| run.state.clone())
+        .unwrap_or_else(|| "not_started".to_owned());
     let status = execution_status(&outcome.control);
     let gate = outcome.control.gate();
 

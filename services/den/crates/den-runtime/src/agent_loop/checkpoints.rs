@@ -1549,7 +1549,7 @@ mod tests {
             record_loop_control_decision(
                 &pool,
                 LoopControlLedgerInput {
-                    run_id: run_id.to_string(),
+                    run_id: run_id.clone(),
                     turn_step_id: None,
                     conversation_message_id: None,
                     decision_id: decision_id.to_string(),
@@ -1627,7 +1627,7 @@ mod tests {
             record_loop_control_decision(
                 &pool,
                 LoopControlLedgerInput {
-                    run_id: run_id.to_string(),
+                    run_id: run_id.clone(),
                     turn_step_id: None,
                     conversation_message_id: None,
                     decision_id: decision_id.to_string(),

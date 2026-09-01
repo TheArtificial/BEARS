@@ -844,7 +844,7 @@ impl SessionTrackingStream {
                     session.step,
                     session.turn_budget_state.started_at.elapsed().as_millis() as u64,
                     &session.turn_budget_state,
-                    &[observation.clone()],
+                    std::slice::from_ref(&observation),
                 );
                 store.update(&session_key, |session| {
                     session.turn_budget_state = evaluation.next_state.clone();
@@ -863,42 +863,41 @@ impl SessionTrackingStream {
                                 reason: reason_code.to_string(),
                             },
                         ))])) as RuntimeEventStream);
-                    } else {
-                        tracing::warn!(
-                            event = "native_turn_budget_fuse",
-                            session_key = %session_key,
-                            conversation_id = %session.conversation_id,
-                            client_session_id = %session.client_session_id,
-                            request_id = ?session.request_id,
-                            run_id = ?session.run_id,
-                            step = session.step,
-                            limit = session.turn_budget.emergency_hard_steps,
-                            "server-side continuation stopped by turn budget"
-                        );
-                        store.update(&session_key, |session| {
-                            session.turn_budget_state = Default::default();
-                        });
-                        return Ok(Box::pin(stream::iter(vec![
-                            Ok(RuntimeStreamEvent::Semantic(
-                                RuntimeSemanticEvent::RunProgress {
-                                    kind: "turn_budget_exhausted".to_string(),
-                                    text: Some(reason.user_message()),
-                                    phase: Some("budget".to_string()),
-                                    detail: Some(serde_json::json!({
-                                        "reason": reason.persistence_reason(),
-                                    })),
-                                },
-                            )),
-                            Ok(RuntimeStreamEvent::Semantic(
-                                RuntimeSemanticEvent::TurnCompleted { turn: None },
-                            )),
-                        ])) as RuntimeEventStream);
                     }
+                    tracing::warn!(
+                        event = "native_turn_budget_fuse",
+                        session_key = %session_key,
+                        conversation_id = %session.conversation_id,
+                        client_session_id = %session.client_session_id,
+                        request_id = ?session.request_id,
+                        run_id = ?session.run_id,
+                        step = session.step,
+                        limit = session.turn_budget.emergency_hard_steps,
+                        "server-side continuation stopped by turn budget"
+                    );
+                    store.update(&session_key, |session| {
+                        session.turn_budget_state = Default::default();
+                    });
+                    return Ok(Box::pin(stream::iter(vec![
+                        Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::RunProgress {
+                                kind: "turn_budget_exhausted".to_string(),
+                                text: Some(reason.user_message()),
+                                phase: Some("budget".to_string()),
+                                detail: Some(serde_json::json!({
+                                    "reason": reason.persistence_reason(),
+                                })),
+                            },
+                        )),
+                        Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::TurnCompleted { turn: None },
+                        )),
+                    ])) as RuntimeEventStream);
                 }
                 let checkpoint_evaluation = evaluate_checkpoint_trigger(
                     &session.agent_loop_control.profile,
                     &session.checkpoint_state,
-                    &[observation.clone()],
+                    std::slice::from_ref(&observation),
                     false,
                 );
                 let checkpoint_request = Self::checkpoint_request_for_tool_observation(
@@ -941,8 +940,7 @@ impl SessionTrackingStream {
                 Ok(Box::pin(
                     stream::iter(
                         checkpoint_progress
-                            .map(|event| Ok(RuntimeStreamEvent::Semantic(event)))
-                            .into_iter(),
+                            .map(|event| Ok(RuntimeStreamEvent::Semantic(event))),
                     )
                     .chain(next_stream),
                 ) as RuntimeEventStream)
@@ -1538,6 +1536,9 @@ impl SessionTrackingStream {
         )
     }
 
+    // The Err variant is a full RuntimeStreamEvent forwarded to the stream, not
+    // an error path worth boxing; the call is not hot.
+    #[allow(clippy::result_large_err)]
     fn block_or_recover_if_checkpoint_pending(
         &mut self,
         attempted_action: &str,
@@ -2363,9 +2364,9 @@ impl Stream for SessionTrackingStream {
                 // tool results as well; do not invent assistant text here. With no prose there
                 // is no assistant step to persist or final-answer gate to resolve.
                 self.finished = true;
-                return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                     RuntimeSemanticEvent::TurnCompleted { turn: None },
-                ))));
+                ))))
             }
             Poll::Ready(Some(Err(error))) => {
                 if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
@@ -2896,7 +2897,7 @@ mod tests {
         let evaluation = evaluate_checkpoint_trigger(
             &session.agent_loop_control.profile,
             &session.checkpoint_state,
-            &[observation.clone()],
+            std::slice::from_ref(&observation),
             false,
         );
         let request = SessionTrackingStream::checkpoint_request_for_tool_observation(
@@ -2942,7 +2943,7 @@ mod tests {
                 last_signature: Some(observation.signature.clone()),
                 ..Default::default()
             },
-            &[observation.clone()],
+            std::slice::from_ref(&observation),
             false,
         );
         let request = SessionTrackingStream::checkpoint_request_for_tool_observation(
@@ -2969,7 +2970,7 @@ mod tests {
             1,
             0,
             &Default::default(),
-            &[observation.clone()],
+            std::slice::from_ref(&observation),
         );
         let hard_ko = crate::agent_loop::evaluate_turn_budget(
             session.turn_budget,

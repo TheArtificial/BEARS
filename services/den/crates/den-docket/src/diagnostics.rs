@@ -76,7 +76,7 @@ pub struct DiagnosticEvent {
 /// The raw outcome remains available on [`DiagnosticOutcome`] for compatibility,
 /// but consumers should render this shape rather than infer recovery semantics
 /// from individual attempt fields.
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct NormalizedFailure {
     pub outcome: String,
     pub cause: Option<String>,
