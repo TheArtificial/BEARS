@@ -17,6 +17,7 @@ fn legacy_test_bear(bear_id: Uuid) -> Bear {
         default_model: None,
         default_tool_budget_multiplier: None,
         work_enabled: true,
+        cabinet_enabled: true,
         tools_enabled: None,
         runtime_plan: None,
         context_profile: None,

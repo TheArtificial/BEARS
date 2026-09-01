@@ -1,0 +1,136 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, slug, name, description, default_model, default_tool_budget_multiplier,\n               tools_enabled AS \"tools_enabled?: Json<serde_json::Value>\",\n               work_enabled, cabinet_enabled, runtime_plan AS \"runtime_plan?: Json<serde_json::Value>\",\n               context_profile AS \"context_profile?: Json<serde_json::Value>\",\n               provisioning_version, system_prompt, birthday, created_at, updated_at,\n               live_reflection_enabled, live_reflection_stale_after_minutes,\n               live_reflection_activity_threshold, live_reflection_sweep_limit\n        FROM bears\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "slug",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "default_model",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "default_tool_budget_multiplier",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 6,
+        "name": "tools_enabled?: Json<serde_json::Value>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "work_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "cabinet_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "runtime_plan?: Json<serde_json::Value>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "context_profile?: Json<serde_json::Value>",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 11,
+        "name": "provisioning_version",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "system_prompt",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "birthday",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "live_reflection_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 17,
+        "name": "live_reflection_stale_after_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 18,
+        "name": "live_reflection_activity_threshold",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 19,
+        "name": "live_reflection_sweep_limit",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3bc7ed58fec40829c82e2323005c5b0697fd52751d0aaf8607b323394b69d1b2"
+}

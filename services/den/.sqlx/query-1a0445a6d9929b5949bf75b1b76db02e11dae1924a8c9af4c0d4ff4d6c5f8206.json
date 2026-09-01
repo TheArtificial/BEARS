@@ -1,0 +1,67 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT i.cabinet_ref, i.kind, i.title, i.lifecycle, i.collection_ref, i.mission_ref,\n                  i.updated_at, v.version_ref AS current_version_ref\n           FROM cabinet_items i\n           JOIN cabinet_item_versions v ON v.id = i.current_version_id\n           WHERE i.lifecycle = $1\n             AND ($2::text IS NULL OR i.kind = $2)\n             AND ($3::text IS NULL OR i.title ILIKE $3 OR v.content ILIKE $3)\n           ORDER BY i.updated_at DESC\n           LIMIT $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "cabinet_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "lifecycle",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "collection_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "mission_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "current_version_ref",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "1a0445a6d9929b5949bf75b1b76db02e11dae1924a8c9af4c0d4ff4d6c5f8206"
+}

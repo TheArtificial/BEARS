@@ -1,0 +1,22 @@
+[package]
+name = "den-cabinet"
+version.workspace = true
+edition = "2021"
+
+# Cabinet contract types (docs/architecture/cabinet-contract.md; Phase 0 of
+# docs/roadmap/CABINET_IMPLEMENTATION_PLAN.md): provider-neutral refs, records,
+# operation inputs, and authorization vocabulary for Den's shared knowledge
+# layer. Contract-layer leaf: depends only on den-core. The Phase 1 facade and
+# Postgres storage live above this crate.
+
+[lints]
+workspace = true
+
+[dependencies]
+den-core = { path = "../den-core" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+time = { workspace = true, features = ["serde", "serde-well-known"] }
+uuid.workspace = true

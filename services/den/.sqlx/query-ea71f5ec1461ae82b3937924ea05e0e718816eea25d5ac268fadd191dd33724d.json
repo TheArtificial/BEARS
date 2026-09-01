@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM cabinet_source_links WHERE item_id = $1 AND source_ref = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ea71f5ec1461ae82b3937924ea05e0e718816eea25d5ac268fadd191dd33724d"
+}
