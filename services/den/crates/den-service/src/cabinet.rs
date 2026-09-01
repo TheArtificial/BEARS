@@ -800,6 +800,31 @@ pub async fn restore_item(
     set_lifecycle(pool, scope, cabinet_ref, &["archived"], Lifecycle::Active).await
 }
 
+/// Tombstone an item. Versions stay readable to the storage layer so existing
+/// citations keep their meaning, but the item leaves search, read, and history.
+///
+/// Phase 1 exposes this to people only (the `/cabinet` UI); no model tool calls
+/// it. Hard purge remains an operator/compliance action outside this facade.
+pub async fn delete_item(
+    pool: &PgPool,
+    scope: &ActorScope,
+    cabinet_ref: &CabinetItemRef,
+) -> Result<(), CabinetError> {
+    if matches!(scope.actor, Actor::Bear { .. }) {
+        return Err(CabinetError::Policy(
+            "deleting a Cabinet item is reserved to people; Bears may archive instead".to_string(),
+        ));
+    }
+    set_lifecycle(
+        pool,
+        scope,
+        cabinet_ref,
+        &["active", "archived"],
+        Lifecycle::Deleted,
+    )
+    .await
+}
+
 /// `cabinet_link_source`: attach origin/citation provenance to an item.
 pub async fn link_source(
     pool: &PgPool,
@@ -1209,5 +1234,160 @@ mod tests {
         .await
         .expect("read after restore");
         assert_eq!(read_back.item.lifecycle, Lifecycle::Active);
+    }
+
+    #[tokio::test]
+    async fn people_can_delete_but_bears_can_only_archive() {
+        let _guard = DB_LOCK.lock().await;
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let person = create_user(&pool).await;
+        let bear = create_bear(&pool, true).await;
+        let view = create_item(
+            &pool,
+            create_request(person.clone(), "Deletable", "body"),
+        )
+        .await
+        .expect("create");
+        let cabinet_ref = view.item.cabinet_ref.clone();
+
+        // A Bear may not delete, whatever its stance.
+        let refused = delete_item(&pool, &bear, &cabinet_ref).await;
+        assert!(matches!(refused, Err(CabinetError::Policy(_))));
+        // ... and the item is untouched.
+        read(
+            &pool,
+            ReadRequest {
+                scope: bear.clone(),
+                cabinet_ref: cabinet_ref.clone(),
+                version_ref: None,
+            },
+        )
+        .await
+        .expect("still readable after refused delete");
+
+        // A person may, and the tombstone hides it from read, history, and search.
+        delete_item(&pool, &person, &cabinet_ref)
+            .await
+            .expect("person deletes");
+        assert!(matches!(
+            read(
+                &pool,
+                ReadRequest {
+                    scope: person.clone(),
+                    cabinet_ref: cabinet_ref.clone(),
+                    version_ref: None,
+                },
+            )
+            .await,
+            Err(CabinetError::NotFound)
+        ));
+        assert!(matches!(
+            history(
+                &pool,
+                HistoryRequest {
+                    scope: person.clone(),
+                    cabinet_ref: cabinet_ref.clone(),
+                },
+            )
+            .await,
+            Err(CabinetError::NotFound)
+        ));
+        let hits = search(
+            &pool,
+            SearchRequest {
+                scope: person,
+                query: "Deletable".to_string(),
+                filters: SearchFilters::default(),
+            },
+        )
+        .await
+        .expect("search");
+        assert!(!hits
+            .iter()
+            .any(|hit| hit.cabinet_ref == cabinet_ref));
+    }
+
+    #[tokio::test]
+    async fn source_links_can_be_added_and_removed_after_creation() {
+        let _guard = DB_LOCK.lock().await;
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let bear = create_bear(&pool, true).await;
+        let view = create_item(&pool, create_request(bear.clone(), "Sourced", "body"))
+            .await
+            .expect("create");
+        assert!(view.sources.is_empty());
+        let cabinet_ref = view.item.cabinet_ref.clone();
+
+        let link = link_source(
+            &pool,
+            LinkSourceRequest {
+                scope: bear.clone(),
+                cabinet_ref: cabinet_ref.clone(),
+                link: den_cabinet::NewSourceLink {
+                    source_kind: SourceKind::Url,
+                    locator: "https://example.com/a".to_string(),
+                    role: SourceRole::Origin,
+                },
+            },
+        )
+        .await
+        .expect("link source");
+
+        // A locator that contradicts its kind is refused.
+        assert!(link_source(
+            &pool,
+            LinkSourceRequest {
+                scope: bear.clone(),
+                cabinet_ref: cabinet_ref.clone(),
+                link: den_cabinet::NewSourceLink {
+                    source_kind: SourceKind::Url,
+                    locator: "book://isbn/9780262046305".to_string(),
+                    role: SourceRole::Citation,
+                },
+            },
+        )
+        .await
+        .is_err());
+
+        let after_add = read(
+            &pool,
+            ReadRequest {
+                scope: bear.clone(),
+                cabinet_ref: cabinet_ref.clone(),
+                version_ref: None,
+            },
+        )
+        .await
+        .expect("read");
+        assert_eq!(after_add.sources.len(), 1);
+        // Linking provenance does not publish a revision.
+        assert_eq!(after_add.version.revision(), 1);
+
+        unlink_source(
+            &pool,
+            UnlinkSourceRequest {
+                scope: bear.clone(),
+                cabinet_ref: cabinet_ref.clone(),
+                source_ref: link.source_ref.clone(),
+            },
+        )
+        .await
+        .expect("unlink source");
+        let after_remove = read(
+            &pool,
+            ReadRequest {
+                scope: bear.clone(),
+                cabinet_ref,
+                version_ref: None,
+            },
+        )
+        .await
+        .expect("read");
+        assert!(after_remove.sources.is_empty());
+        assert_eq!(after_remove.version.revision(), 1);
     }
 }

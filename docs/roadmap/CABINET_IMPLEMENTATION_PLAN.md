@@ -1,6 +1,6 @@
 # Cabinet implementation plan
 
-**Status:** In progress — Phase 0 landed (contract doc + `den-cabinet` types/checks); Phase 1 implemented (Postgres storage + `den_service::cabinet` facade, `cabinet_search/read/create/update` tools with the per-Bear `bears.cabinet_enabled` gate, `/cabinet` wiki UI, [user guide](../guides/cabinet.md)); Phases 2–4 not started.  
+**Status:** In progress — Phase 0 landed (contract doc + `den-cabinet` types/checks); Phase 1 implemented (Postgres storage + `den_service::cabinet` facade, `cabinet_search/read/history/create/update/source_link/lifecycle` tools with the per-Bear `bears.cabinet_enabled` gate, person-only item deletion, `/cabinet` wiki UI, [user guide](../guides/cabinet.md)); Phases 2–4 not started.  
 **Scope:** Shared, human-editable, policy-controlled knowledge for Den.  
 **Decisions (2026-08):** one Cabinet layer per Den (Missions/collections partition it, not multiple cabinet instances); humans and authorized Bears edit directly (true wiki — every write publishes an immutable version, revision history is the safety net); review/approval is Phase 2 policy, not a Phase 1 gate; Phase 1 storage is Den Postgres behind the provider-neutral facade.  
 **Related architecture:** [Cabinet contract](../architecture/cabinet-contract.md), [Bear charter and Cabinet Missions](../architecture/bear-charter-and-cabinet-missions.md), [ADR-0004 — Artifacts, Garage, and Cabinet separation](../decisions/adr-0004-artifacts-garage.md)

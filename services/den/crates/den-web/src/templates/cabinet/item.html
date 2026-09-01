@@ -28,9 +28,9 @@
 {{ content | markdown }}
 </article>
 
-{% if sources %}
 <section>
     <h2>Sources</h2>
+    {% if sources %}
     <ul>
         {% for source in sources %}
         <li>
@@ -40,11 +40,40 @@
             {% else %}
             <code>{{ source.locator }}</code>
             {% endif %}
+            {% if lifecycle == "active" %}
+            <form method="post" action="/cabinet/{{ cabinet_ref }}/sources/{{ source.ref }}/remove">
+                <button type="submit">Remove</button>
+            </form>
+            {% endif %}
         </li>
         {% endfor %}
     </ul>
+    {% else %}
+    <p>No sources recorded. Sources say where this knowledge came from; Cabinet stores the link, not the linked content.</p>
+    {% endif %}
+
+    {% if lifecycle == "active" %}
+    <form method="post" action="/cabinet/{{ cabinet_ref }}/sources">
+        <label for="source_kind">Kind</label>
+        <select id="source_kind" name="source_kind">
+            <option value="url">url</option>
+            <option value="offline">offline</option>
+            <option value="artifact">artifact</option>
+            <option value="conversation">conversation</option>
+            <option value="external_record">external_record</option>
+        </select>
+        <label for="locator">Locator</label>
+        <input id="locator" name="locator" required placeholder="https://... or book://isbn/...">
+        <label for="role">Role</label>
+        <select id="role" name="role">
+            <option value="origin">origin</option>
+            <option value="citation">citation</option>
+            <option value="related">related</option>
+        </select>
+        <button type="submit">Link source</button>
+    </form>
+    {% endif %}
 </section>
-{% endif %}
 
 <hr>
 <p>
@@ -60,6 +89,12 @@
 {% if is_current and lifecycle == "active" %}
 <form method="post" action="/cabinet/{{ cabinet_ref }}/archive">
     <button type="submit">Archive item</button>
+</form>
+{% endif %}
+{% if is_current and lifecycle != "deleted" %}
+<form method="post" action="/cabinet/{{ cabinet_ref }}/delete"
+      onsubmit="return confirm('Delete this item? It leaves Cabinet for everyone. Existing citations of its revisions keep working. Bears cannot do this.');">
+    <button type="submit">Delete item</button>
 </form>
 {% endif %}
 {% endblock %}

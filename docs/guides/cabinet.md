@@ -22,17 +22,33 @@ Open **`/cabinet`** while logged in.
   ever merged silently and nothing is overwritten.
 - **History** — every revision is immutable and permanently viewable at
   `/cabinet/{item}/history`, with author kind and timestamp.
+- **Sources** — record where an item's knowledge came from (a URL, a book, an
+  artifact, a conversation). Cabinet stores the link, not the linked content,
+  and adding or removing one does not publish a revision.
 - **Archive / restore** — archiving hides an item from default search and
-  blocks edits until restored. Deletion is a tombstone: revision history stays
-  citable. There is no hard delete in the UI.
+  blocks edits until restored. Reversible, and every revision stays readable.
+- **Delete** — tombstones the item: it leaves Cabinet for everyone, while its
+  revisions are retained so anything that already cited them keeps resolving.
+  **Only people can delete.** A Bear that tries is refused by the server, so
+  the most destructive thing a Bear can do to shared knowledge is archive it.
+  Hard purge (removing the retained revisions) is an operator action, not a
+  button here.
 
 ## What Bears can do
 
-Bears use the same knowledge store through four tools: `cabinet_search`,
-`cabinet_read` (all stances), `cabinet_create`, `cabinet_update`
-(`chat`/`pair`/`curate` stances). A Bear's edits go through exactly the same
-facade, versioning, and conflict rules as yours, and show up in history as
-Bear-authored with the acting stance.
+Bears use the same knowledge store through the same facade:
+
+| Tool | Stances | What it does |
+|---|---|---|
+| `cabinet_search`, `cabinet_read`, `cabinet_history` | all | find, read (any revision), and inspect revision history |
+| `cabinet_create`, `cabinet_update` | chat, pair, curate | create an item, publish a revision |
+| `cabinet_source_link` | chat, pair, curate | attach or detach provenance (no revision published) |
+| `cabinet_lifecycle` | curate only | archive or restore an item |
+
+A Bear's edits go through exactly the same facade, versioning, and conflict
+rules as yours, and show up in history as Bear-authored with the acting
+stance. Bears cannot delete: the most destructive act available to one is a
+reversible archive, and only `curate` can do even that.
 
 Cabinet is deliberately separate from a Bear's private memory: memory tools
 cannot write Cabinet, and Cabinet tools cannot write Bear memory.

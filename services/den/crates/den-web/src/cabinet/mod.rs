@@ -22,8 +22,9 @@ use crate::{
     web::{self, AppState},
 };
 use den_cabinet::{
-    ActorScope, CabinetError, CabinetItemRef, CabinetVersionRef, CreateItemRequest,
-    HistoryRequest, ItemKind, Lifecycle, ReadRequest, SearchFilters, SearchRequest,
+    ActorScope, CabinetError, CabinetItemRef, CabinetSourceRef, CabinetVersionRef,
+    CreateItemRequest, HistoryRequest, ItemKind, Lifecycle, LinkSourceRequest, NewSourceLink,
+    ReadRequest, SearchFilters, SearchRequest, SourceKind, SourceRole, UnlinkSourceRequest,
     UpdateItemRequest,
 };
 use den_core::ids::UserId;
@@ -38,6 +39,15 @@ pub fn router() -> Router<AppState> {
         .route("/cabinet/{cabinet_ref}/history", get(history))
         .route("/cabinet/{cabinet_ref}/archive", axum::routing::post(archive))
         .route("/cabinet/{cabinet_ref}/restore", axum::routing::post(restore))
+        .route("/cabinet/{cabinet_ref}/delete", axum::routing::post(delete))
+        .route(
+            "/cabinet/{cabinet_ref}/sources",
+            axum::routing::post(add_source),
+        )
+        .route(
+            "/cabinet/{cabinet_ref}/sources/{source_ref}/remove",
+            axum::routing::post(remove_source),
+        )
 }
 
 fn require_user_scope(auth_session: &AuthSession) -> Result<ActorScope, CustomError> {
@@ -200,6 +210,7 @@ async fn item(
         .iter()
         .map(|source| {
             serde_json::json!({
+                "ref": source.source_ref.as_str(),
                 "kind": source.source_kind,
                 "locator": source.locator,
                 "role": source.role,
@@ -428,6 +439,89 @@ async fn restore(
         "{}?message={}",
         item_url(&cabinet_ref),
         urlencoding::encode("Item restored.")
+    ))
+    .into_response())
+}
+
+/// Tombstone an item. Deletion is a person-only operation (see
+/// `den_service::cabinet::delete_item`); Bears may only archive.
+async fn delete(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(cabinet_ref): Path<String>,
+) -> Result<Response, CustomError> {
+    let scope = require_user_scope(&auth_session)?;
+    let cabinet_ref = parse_item_ref(&cabinet_ref)?;
+    cabinet_service::delete_item(state.sqlx_pool(), &scope, &cabinet_ref)
+        .await
+        .map_err(cabinet_error)?;
+    Ok(Redirect::to(&format!(
+        "/cabinet?message={}",
+        urlencoding::encode("Item deleted. Its revisions are retained for existing citations.")
+    ))
+    .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct AddSourceForm {
+    source_kind: SourceKind,
+    locator: String,
+    role: SourceRole,
+}
+
+async fn add_source(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(cabinet_ref): Path<String>,
+    Form(form): Form<AddSourceForm>,
+) -> Result<Response, CustomError> {
+    let scope = require_user_scope(&auth_session)?;
+    let cabinet_ref = parse_item_ref(&cabinet_ref)?;
+    let url = item_url(&cabinet_ref);
+    cabinet_service::link_source(
+        state.sqlx_pool(),
+        LinkSourceRequest {
+            scope,
+            cabinet_ref,
+            link: NewSourceLink {
+                source_kind: form.source_kind,
+                locator: form.locator.trim().to_string(),
+                role: form.role,
+            },
+        },
+    )
+    .await
+    .map_err(cabinet_error)?;
+    Ok(Redirect::to(&format!(
+        "{url}?message={}",
+        urlencoding::encode("Source linked.")
+    ))
+    .into_response())
+}
+
+async fn remove_source(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((cabinet_ref, source_ref)): Path<(String, String)>,
+) -> Result<Response, CustomError> {
+    let scope = require_user_scope(&auth_session)?;
+    let cabinet_ref = parse_item_ref(&cabinet_ref)?;
+    let url = item_url(&cabinet_ref);
+    let source_ref = CabinetSourceRef::parse(&source_ref)
+        .map_err(|error| CustomError::ValidationError(error.to_string()))?;
+    cabinet_service::unlink_source(
+        state.sqlx_pool(),
+        UnlinkSourceRequest {
+            scope,
+            cabinet_ref,
+            source_ref,
+        },
+    )
+    .await
+    .map_err(cabinet_error)?;
+    Ok(Redirect::to(&format!(
+        "{url}?message={}",
+        urlencoding::encode("Source link removed.")
     ))
     .into_response())
 }
