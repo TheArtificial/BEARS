@@ -868,9 +868,10 @@ async fn credential_env(
             add_token_env(&mut env, token.trim());
         }
         Some(RootCredential::GitHubAppInstallation {
-            installation_id, ..
+            installation_id,
+            write_enabled,
         }) => {
-            let token = github_installation_token(root, *installation_id).await?;
+            let token = github_installation_token(root, *installation_id, *write_enabled).await?;
             add_token_env(&mut env, &token);
         }
     }
@@ -893,6 +894,7 @@ fn add_token_env(env: &mut Vec<(String, String)>, token: &str) {
 async fn github_installation_token(
     root: &SyncableRoot,
     installation_id: i64,
+    write_enabled: bool,
 ) -> Result<String, RootsError> {
     let app_id = std::env::var("GITHUB_APP_ID").map_err(|_| RootsError::Git {
         name: root.name.clone(),
@@ -927,6 +929,11 @@ async fn github_installation_token(
         })?;
     let api =
         std::env::var("GITHUB_API_URL").unwrap_or_else(|_| "https://api.github.com".to_string());
+    let permissions = if write_enabled {
+        serde_json::json!({ "contents": "write" })
+    } else {
+        serde_json::json!({ "contents": "read" })
+    };
     let response = reqwest::Client::new()
         .post(format!(
             "{}/app/installations/{installation_id}/access_tokens",
@@ -935,6 +942,7 @@ async fn github_installation_token(
         .bearer_auth(jwt)
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .header(reqwest::header::USER_AGENT, "bear-den-sandbox")
+        .json(&serde_json::json!({ "permissions": permissions }))
         .send()
         .await
         .map_err(|err| RootsError::Git {

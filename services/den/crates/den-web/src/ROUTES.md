@@ -140,7 +140,7 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 - `GET /work/surfaces` — surfaces the user manages (admins: all) + surfaces available to their bears
 - `GET /work/surfaces/new` / `POST /work/surfaces/new` — create a managed Git surface (creator becomes owner; optional encrypted credential); job-scoped query/form fields can assign the Bear, attach the surface, and return to the originating job
 - `GET /work/surfaces/{surface_id}` — manage page (managers/owners/site admins only; deny-as-404): settings, write-only credential, managers, assigned bears, provider readiness, delete
-- `POST /work/surfaces/{surface_id}/update` · `/credential` · `/credential/clear` · `/managers/grant` · `/managers/revoke` · `/bears/assign` · `/bears/unassign` · `/delete`
+- `POST /work/surfaces/{surface_id}/update` · `/credential` · `/credential/clear` · `/github-app` · `/github-app/clear` · `/managers/grant` · `/managers/revoke` · `/bears/assign` · `/bears/unassign` · `/delete`
 - `POST /work/surfaces/{surface_id}/sync` — test and prepare: push managed config, verify credential/upstream/default ref, and clone/fetch the provider's pristine mirror without launching a work run
 
 Mutations push the managed config (surfaces + image catalog) to the sandbox provider best-effort; the dispatch worker reconciles every 5 minutes. New surfaces are prepared immediately and failed preparation remains visible/retryable from the surface page.

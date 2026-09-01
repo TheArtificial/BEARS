@@ -88,6 +88,32 @@
 </section>
 
 <section>
+    <h2>GitHub App authorization</h2>
+    <p>Optional GitHub-specific authorization for this repository. Other Git hosts continue to use the generic credential above.</p>
+    {% if github_app_installation_id %}
+    <p>Installation <code>{{ github_app_installation_id }}</code> is authorized for {% if github_app_write_enabled %}read and write{% else %}read-only{% endif %} access.</p>
+    {% else %}
+    <p>No GitHub App installation is authorized.</p>
+    {% endif %}
+    <form method="post" action="/work/surfaces/{{ surface_id }}/github-app">
+        <p>
+            <label>Installation ID<br>
+                <input type="number" name="installation_id" min="1" required value="{{ github_app_installation_id or '' }}">
+            </label>
+        </p>
+        <p>
+            <label><input type="checkbox" name="write_enabled" value="true" {% if github_app_write_enabled %}checked{% endif %}> Allow publishing</label>
+        </p>
+        <p><button type="submit">{% if github_app_installation_id %}Update authorization{% else %}Authorize installation{% endif %}</button></p>
+    </form>
+    {% if github_app_installation_id %}
+    <form method="post" action="/work/surfaces/{{ surface_id }}/github-app/clear">
+        <p><button type="submit">Clear GitHub App authorization</button></p>
+    </form>
+    {% endif %}
+</section>
+
+<section>
     <h2>Managers</h2>
     <table>
         <thead><tr><th>User</th><th>Role</th><th></th></tr></thead>

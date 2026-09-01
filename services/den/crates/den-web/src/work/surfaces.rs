@@ -50,6 +50,14 @@ pub fn router() -> Router<AppState> {
             post(clear_credential),
         )
         .route(
+            "/work/surfaces/{surface_id}/github-app",
+            post(set_github_app),
+        )
+        .route(
+            "/work/surfaces/{surface_id}/github-app/clear",
+            post(clear_github_app),
+        )
+        .route(
             "/work/surfaces/{surface_id}/managers/grant",
             post(grant_manager),
         )
@@ -511,6 +519,8 @@ async fn detail(
             default_image => surface.default_image,
             allowed_outbound_hosts => surface.allowed_outbound_hosts.join("\n"),
             credential_kind => surface.credential_kind,
+            github_app_installation_id => surface.github_app_installation_id,
+            github_app_write_enabled => surface.github_app_write_enabled,
             managers => managers,
             assigned_bears => assigned,
             assignable_bears => assignable,
@@ -609,6 +619,88 @@ async fn clear_credential(
     Ok(surface_redirect(
         surface_id,
         "Credential cleared.",
+        sync_note,
+    ))
+}
+
+fn validate_github_app_origin(upstream_url: &str) -> Result<(), CustomError> {
+    let url = url::Url::parse(upstream_url).map_err(|_| {
+        CustomError::ValidationError(
+            "GitHub App authorization requires an HTTPS github.com origin".to_string(),
+        )
+    })?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(CustomError::ValidationError(
+            "GitHub App authorization requires an HTTPS github.com origin".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubAppForm {
+    installation_id: i64,
+    #[serde(default)]
+    write_enabled: bool,
+}
+
+async fn set_github_app(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(surface_ref): Path<String>,
+    Form(form): Form<GitHubAppForm>,
+) -> Result<Response, CustomError> {
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
+    let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
+    validate_github_app_origin(&surface.upstream_url)?;
+    if form.installation_id <= 0 {
+        return Err(CustomError::ValidationError(
+            "GitHub App installation id must be positive".to_string(),
+        ));
+    }
+    work_surfaces::update_surface(
+        state.sqlx_pool(),
+        surface_id,
+        WorkSurfaceUpdate {
+            github_app_installation_id: Some(Some(form.installation_id)),
+            github_app_write_enabled: Some(form.write_enabled),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let sync_note = push_surfaces_best_effort(&state).await;
+    Ok(surface_redirect(
+        surface_id,
+        "GitHub App authorization updated.",
+        sync_note,
+    ))
+}
+
+async fn clear_github_app(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(surface_ref): Path<String>,
+) -> Result<Response, CustomError> {
+    let surface_id = resolve_work_surface_prefix(state.sqlx_pool(), &surface_ref).await?;
+    load_managed_surface(&state, &auth_session, surface_id).await?;
+    work_surfaces::update_surface(
+        state.sqlx_pool(),
+        surface_id,
+        WorkSurfaceUpdate {
+            github_app_installation_id: Some(None),
+            github_app_write_enabled: Some(false),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let sync_note = push_surfaces_best_effort(&state).await;
+    Ok(surface_redirect(
+        surface_id,
+        "GitHub App authorization cleared.",
         sync_note,
     ))
 }
@@ -739,4 +831,17 @@ async fn sync_now(
         Err(error) => format!("Surface is not ready: {error}"),
     };
     Ok(surface_redirect(surface_id, &message, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_github_app_origin;
+
+    #[test]
+    fn github_app_requires_plain_github_https_origin() {
+        assert!(validate_github_app_origin("https://github.com/owner/repo.git").is_ok());
+        assert!(validate_github_app_origin("git@github.com:owner/repo.git").is_err());
+        assert!(validate_github_app_origin("https://gitlab.com/owner/repo.git").is_err());
+        assert!(validate_github_app_origin("https://token@github.com/owner/repo.git").is_err());
+    }
 }
