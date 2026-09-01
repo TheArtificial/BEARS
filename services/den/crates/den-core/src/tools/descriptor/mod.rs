@@ -1146,10 +1146,6 @@ pub fn builtin_den_tool_descriptor_for_provider_name(
         })
 }
 
-pub fn is_builtin_den_tool(tool_name: &str) -> bool {
-    builtin_den_tool_descriptor_for_provider_name(tool_name).is_some()
-}
-
 pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
     match name {
         DEN_WEB_FETCH => &[DEN_WEB_FETCH_LEGACY_PROVIDER],

@@ -219,13 +219,27 @@ fn den_server_tools_advertise_semantic_aliases_not_legacy_den_prefixes() {
 
 #[test]
 fn all_descriptors_are_known_tools() {
-    for descriptor in builtin_den_tool_descriptors() {
-        assert!(
-            is_builtin_den_tool(descriptor.name),
-            "unknown descriptor name: {}",
-            descriptor.name
-        );
-    }
+    let unknown = builtin_den_tool_descriptors()
+        .into_iter()
+        .map(|descriptor| descriptor.name)
+        .filter(|name| !is_builtin_den_tool(name))
+        .collect::<Vec<_>>();
+    assert!(
+        unknown.is_empty(),
+        "descriptors the invocation gate would reject: {unknown:?}"
+    );
+}
+
+#[test]
+fn builtin_tool_gate_accepts_canonical_names_only() {
+    // `/internal/den-tools/invoke` dispatches on canonical names, so provider
+    // names and legacy aliases must not pass the gate.
+    assert!(is_builtin_den_tool(DEN_JOB_RECONCILE));
+    assert!(is_builtin_den_tool(DEN_JOB_SETTLE_TASK));
+    assert!(!is_builtin_den_tool(DEN_JOB_RECONCILE_PROVIDER));
+    assert!(!is_builtin_den_tool(DEN_JOB_SETTLE_TASK_PROVIDER));
+    assert!(!is_builtin_den_tool(DEN_MEMORY_TREE_LEGACY_PROVIDER));
+    assert!(!is_builtin_den_tool("den.job.does_not_exist"));
 }
 
 #[test]
