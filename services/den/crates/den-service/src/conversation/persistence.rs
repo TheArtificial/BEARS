@@ -320,6 +320,25 @@ impl PersistedConversationMessage {
         self.to_model_transcript_message()
     }
 
+    pub fn to_model_history_record(&self) -> Option<PersistedUserHistoryMessage> {
+        if let Some(message) = self.to_model_transcript_message() {
+            return Some(PersistedUserHistoryMessage {
+                sequence_no: message.sequence_no,
+                kind: "message".to_string(),
+                message_id: message.message_id,
+                role: message.role,
+                content: message.content,
+                tool_call_id: None,
+                tool_name: None,
+                status: None,
+                arguments: serde_json::Value::Null,
+                raw_output: serde_json::Value::Null,
+                created_at: message.created_at,
+            });
+        }
+        self.to_user_history_record()
+    }
+
     pub fn to_user_history_record(&self) -> Option<PersistedUserHistoryMessage> {
         if let Some(message) = self.to_user_history_transcript_message() {
             return Some(PersistedUserHistoryMessage {

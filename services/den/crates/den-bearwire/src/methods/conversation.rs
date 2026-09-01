@@ -492,7 +492,7 @@ async fn conversation_history_like_result(
         .iter()
         .rev()
         .filter_map(|row| {
-            let message = row.to_user_history_record()?;
+            let message = row.to_model_history_record()?;
             let kind = message.kind.as_str();
             match kind {
                 "tool_call" => Some(json!(SurfaceHistoryEvent::ToolCall {
