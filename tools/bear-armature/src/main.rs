@@ -5184,17 +5184,16 @@ async fn handle_session_load(
         adapter_state.clone(),
         None,
     );
-    let mode = den
-        .as_ref()
-        .map(infer_mode_from_den_session)
-        .unwrap_or(MODE_ASK);
-    // ACP clients may not accept session updates until session/load resolves.
-    // Acknowledge the lifecycle request before replaying its visible transcript.
-    write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
         surface_submitted_plan_fallback(session_id, den).await?;
     }
+
+    let mode = den
+        .as_ref()
+        .map(infer_mode_from_den_session)
+        .unwrap_or(MODE_ASK);
+    write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
     send_available_commands_update(session_id).await?;
     if let Some(context_budget) = den.and_then(|session| session.get("context_budget").cloned()) {
         send_context_budget_usage_update(session_id, context_budget).await?;
@@ -15400,19 +15399,6 @@ mod tests {
         })
         .await;
         result.unwrap();
-
-        let load_response = output
-            .iter()
-            .position(|frame| frame.get("id") == Some(&json!("load-1")))
-            .expect("session/load response");
-        let first_history_update = output
-            .iter()
-            .position(|frame| frame.get("method").and_then(Value::as_str) == Some("session/update"))
-            .expect("session/load history update");
-        assert!(
-            load_response < first_history_update,
-            "session/load must resolve before history updates: {output:#?}"
-        );
 
         let user_chunks = output
             .iter()
