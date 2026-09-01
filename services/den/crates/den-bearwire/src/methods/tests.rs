@@ -405,11 +405,16 @@ async fn rpc_value(state: DenState, token: &str, method: &str, params: Value) ->
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn docket_execute_attaches_pair_binding_without_legacy_session(pool: sqlx::PgPool) {
+async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
-    let state = test_state(pool.clone());
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-encryption-key".to_string();
+    config.llm_api_url = start_mock_openai_sse_server();
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
     let surface_id = Uuid::new_v4();
@@ -471,22 +476,6 @@ async fn docket_execute_attaches_pair_binding_without_legacy_session(pool: sqlx:
         .await
         .expect("create Docket job");
 
-    let without_session = rpc_value(
-        state.clone(),
-        &token,
-        "docket.jobs.execute",
-        json!({ "bear_slug": bear_slug, "job_id": job.job.id }),
-    )
-    .await;
-    assert_eq!(
-        without_session["result"]["pair_binding"]["status"],
-        "not_attempted"
-    );
-    assert_eq!(
-        without_session["result"]["pair_binding"]["reason"],
-        "no_authenticated_pair_session"
-    );
-
     let attached = rpc_value(
         state,
         &token,
@@ -502,6 +491,10 @@ async fn docket_execute_attaches_pair_binding_without_legacy_session(pool: sqlx:
         attached["result"]["pair_binding"]["current_task_selected"],
         true
     );
+    assert_eq!(attached["result"]["pair_binding"]["loop_started"], true);
+    assert!(attached["result"]["pair_binding"]["loop_run_id"]
+        .as_str()
+        .is_some_and(|run_id| !run_id.is_empty()));
     let attached_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM bear_pair_task_attachments WHERE task_id = $1 AND released_at IS NULL",
     )
@@ -2881,7 +2874,7 @@ async fn command_obligation_expiry_blocks_automatic_retry_as_outcome_unknown(poo
     assert_eq!(failed.event.data["reason"], "command_outcome_unknown");
     assert_eq!(
         failed.event.data["message"],
-        "Command result couldn't be confirmed. The connection ended before Builder Bear could report whether the command completed. To avoid duplicate changes, the command was not retried automatically."
+        "Connection failure: Builder Bear lost contact with the BearWire service or connected work surface before it could confirm whether the command completed. To avoid duplicate changes, the command was not retried automatically."
     );
     assert_eq!(
         failed.event.data["context"]["recovery"]["automatic_retry_allowed"],

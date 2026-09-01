@@ -151,7 +151,9 @@ async fn cabinet_read(
     )
     .await
     .map_err(cabinet_error)?;
-    Ok(json!({ "domain": "cabinet", "item": view.item, "version": view.version, "sources": view.sources }))
+    Ok(
+        json!({ "domain": "cabinet", "item": view.item, "version": view.version, "sources": view.sources }),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -184,7 +186,9 @@ async fn cabinet_create(
     )
     .await
     .map_err(cabinet_error)?;
-    Ok(json!({ "domain": "cabinet", "item": view.item, "version": view.version, "sources": view.sources }))
+    Ok(
+        json!({ "domain": "cabinet", "item": view.item, "version": view.version, "sources": view.sources }),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,7 +221,9 @@ async fn cabinet_update(
     )
     .await
     .map_err(cabinet_error)?;
-    Ok(json!({ "domain": "cabinet", "item": view.item, "version": view.version, "sources": view.sources }))
+    Ok(
+        json!({ "domain": "cabinet", "item": view.item, "version": view.version, "sources": view.sources }),
+    )
 }
 
 #[derive(Debug, Deserialize)]

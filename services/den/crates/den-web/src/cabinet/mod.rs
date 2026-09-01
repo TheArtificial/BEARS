@@ -37,8 +37,14 @@ pub fn router() -> Router<AppState> {
         .route("/cabinet/{cabinet_ref}", get(item))
         .route("/cabinet/{cabinet_ref}/edit", get(edit_form).post(update))
         .route("/cabinet/{cabinet_ref}/history", get(history))
-        .route("/cabinet/{cabinet_ref}/archive", axum::routing::post(archive))
-        .route("/cabinet/{cabinet_ref}/restore", axum::routing::post(restore))
+        .route(
+            "/cabinet/{cabinet_ref}/archive",
+            axum::routing::post(archive),
+        )
+        .route(
+            "/cabinet/{cabinet_ref}/restore",
+            axum::routing::post(restore),
+        )
         .route("/cabinet/{cabinet_ref}/delete", axum::routing::post(delete))
         .route(
             "/cabinet/{cabinet_ref}/sources",

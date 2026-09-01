@@ -939,8 +939,7 @@ impl SessionTrackingStream {
                 let next_stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
                 Ok(Box::pin(
                     stream::iter(
-                        checkpoint_progress
-                            .map(|event| Ok(RuntimeStreamEvent::Semantic(event))),
+                        checkpoint_progress.map(|event| Ok(RuntimeStreamEvent::Semantic(event))),
                     )
                     .chain(next_stream),
                 ) as RuntimeEventStream)

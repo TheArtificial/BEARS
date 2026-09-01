@@ -805,11 +805,23 @@ pub(crate) async fn session_current_task_start_result(
             "Pair task controls are disabled".to_string(),
         ));
     }
+    start_pair_current_task(state, user_id, bear, &request.session_id).await
+}
+
+/// Starts the Pair loop for the session's selected task. Docket `/focus` uses
+/// this after selecting its task so task assignment cannot leave loop control
+/// inactive.
+pub(crate) async fn start_pair_current_task(
+    state: &DenState,
+    user_id: i32,
+    bear: den_service::bears::Bear,
+    session_id: &str,
+) -> Result<Value, CustomError> {
     let session = client_sessions::find_for_user_bear_session_id(
         &state.sqlx_pool,
         user_id,
         bear.id,
-        &request.session_id,
+        session_id,
     )
     .await?
     .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
@@ -822,15 +834,14 @@ pub(crate) async fn session_current_task_start_result(
         &state.sqlx_pool,
         user_id,
         bear.id,
-        &request.session_id,
+        session_id,
         task_id,
     )
     .await?;
 
-    if let Some(run) =
-        den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, &request.session_id)
-            .await?
-            .filter(|run| run.bear_id == bear.id && run.user_id == user_id)
+    if let Some(run) = den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, session_id)
+        .await?
+        .filter(|run| run.bear_id == bear.id && run.user_id == user_id)
     {
         if run.state == "continuing" {
             // A continuing run has no live stream after process loss. Return the
@@ -874,7 +885,7 @@ pub(crate) async fn session_current_task_start_result(
                 &state.sqlx_pool,
                 bear.id,
                 task_id,
-                &request.session_id,
+                session_id,
                 &recovered.run_id,
             )
             .await?;
@@ -885,7 +896,7 @@ pub(crate) async fn session_current_task_start_result(
                 "reused": true,
                 "recovered_run_id": recovered.run_id,
                 "run_id": recovered.run_id,
-                "session_id": request.session_id,
+                "session_id": session_id,
                 "task_id": task_id,
                 "state": recovered.state,
                 "execution_attempt_id": attempt.id,
@@ -896,7 +907,7 @@ pub(crate) async fn session_current_task_start_result(
             &state.sqlx_pool,
             bear.id,
             task_id,
-            &request.session_id,
+            session_id,
             &run.run_id,
         )
         .await?;
@@ -905,7 +916,7 @@ pub(crate) async fn session_current_task_start_result(
             "started": false,
             "reused": true,
             "run_id": run.run_id,
-            "session_id": request.session_id,
+            "session_id": session_id,
             "task_id": task_id,
             "state": run.state,
             "execution_attempt_id": attempt.id,
@@ -919,7 +930,7 @@ pub(crate) async fn session_current_task_start_result(
     // clients require concurrent idempotency rather than retry idempotency.
     let mut start_params = serde_json::Map::new();
     start_params.insert("bear_slug".to_string(), json!(bear.slug));
-    start_params.insert("session_id".to_string(), json!(request.session_id));
+    start_params.insert("session_id".to_string(), json!(session_id));
     start_params.insert(
         "prompt".to_string(),
         json!(format!("Start working on the selected task: {title}")),

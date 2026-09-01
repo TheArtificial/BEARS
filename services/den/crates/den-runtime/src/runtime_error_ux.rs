@@ -222,7 +222,7 @@ pub fn run_failed_user_message(
 ) -> Option<String> {
     if reason == "command_outcome_unknown" {
         return Some(format!(
-            "{} could not confirm the command's final status after the connected client stopped responding. The command may still be running or may already have made changes. Reconnect, call `run_state` with run ID `{}`, then inspect the reported command result and workspace before retrying it.",
+            "Connection failure: {} lost contact with the BearWire service or connected work surface, so it could not confirm the command's final status. The command may still be running or may already have made changes. Reconnect, call `run_state` with run ID `{}`, then inspect the reported command result and workspace before retrying it.",
             display_bear_name(bear_name),
             context
                 .and_then(|value| value.get("recovery"))
@@ -587,7 +587,7 @@ mod tests {
 
         assert_eq!(
             projection.user_message.as_deref(),
-            Some("Builder Bear could not confirm the command's final status after the connected client stopped responding. The command may still be running or may already have made changes. Reconnect, call `run_state` with run ID `run-1`, then inspect the reported command result and workspace before retrying it."),
+            Some("**Den**: Connection failure: Builder Bear lost contact with the BearWire service or connected work surface, so it could not confirm the command's final status. The command may still be running or may already have made changes. Reconnect, call `run_state` with run ID `run-1`, then inspect the reported command result and workspace before retrying it."),
         );
     }
 

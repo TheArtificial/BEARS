@@ -118,7 +118,6 @@ fn parse_kind(kind: &str) -> Result<ItemKind, CabinetError> {
     }
 }
 
-
 fn parse_lifecycle(lifecycle: &str) -> Result<Lifecycle, CabinetError> {
     match lifecycle {
         "active" => Ok(Lifecycle::Active),
@@ -129,7 +128,6 @@ fn parse_lifecycle(lifecycle: &str) -> Result<Lifecycle, CabinetError> {
         ))),
     }
 }
-
 
 fn parse_review(review: &str) -> Result<ReviewState, CabinetError> {
     match review {
@@ -156,7 +154,6 @@ fn parse_source_kind(kind: &str) -> Result<SourceKind, CabinetError> {
     }
 }
 
-
 fn parse_source_role(role: &str) -> Result<SourceRole, CabinetError> {
     match role {
         "origin" => Ok(SourceRole::Origin),
@@ -167,7 +164,6 @@ fn parse_source_role(role: &str) -> Result<SourceRole, CabinetError> {
         ))),
     }
 }
-
 
 fn item_from_row(
     row: &ItemRow,
@@ -359,7 +355,10 @@ async fn load_version(
 }
 
 /// `cabinet_search`: metadata/text search over items the actor may read.
-pub async fn search(pool: &PgPool, request: SearchRequest) -> Result<Vec<ItemSummary>, CabinetError> {
+pub async fn search(
+    pool: &PgPool,
+    request: SearchRequest,
+) -> Result<Vec<ItemSummary>, CabinetError> {
     authorize(pool, &request.scope).await?;
     if request.filters.collection_ref.is_some() || request.filters.mission_ref.is_some() {
         return Err(CabinetError::Policy(
@@ -509,7 +508,10 @@ pub async fn create_item(
     request: CreateItemRequest,
 ) -> Result<ItemView, CabinetError> {
     authorize(pool, &request.scope).await?;
-    reject_phase2_bindings(request.collection_ref.as_ref(), request.mission_ref.as_ref())?;
+    reject_phase2_bindings(
+        request.collection_ref.as_ref(),
+        request.mission_ref.as_ref(),
+    )?;
     let title = request.title.trim();
     if title.is_empty() {
         return Err(violation(ContractViolation::EmptyField {
@@ -676,9 +678,7 @@ pub async fn update_item(
     let current_version =
         CabinetVersionRef::parse(&current.current_version_ref).map_err(violation)?;
     if current_version != request.base_version {
-        return Err(CabinetError::Conflict {
-            current_version,
-        });
+        return Err(CabinetError::Conflict { current_version });
     }
 
     let revision = u32::try_from(current.current_revision)
@@ -831,8 +831,7 @@ pub async fn link_source(
     request: LinkSourceRequest,
 ) -> Result<SourceLink, CabinetError> {
     authorize(pool, &request.scope).await?;
-    validate_source_locator(request.link.source_kind, &request.link.locator)
-        .map_err(violation)?;
+    validate_source_locator(request.link.source_kind, &request.link.locator).map_err(violation)?;
     let row = load_item_row(pool, &request.cabinet_ref)
         .await?
         .ok_or(CabinetError::NotFound)?;
@@ -1218,7 +1217,10 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(update_result.unwrap_err(), CabinetError::Policy(_)));
+        assert!(matches!(
+            update_result.unwrap_err(),
+            CabinetError::Policy(_)
+        ));
 
         restore_item(&pool, &human, &created.item.cabinet_ref)
             .await
@@ -1244,12 +1246,9 @@ mod tests {
         };
         let person = create_user(&pool).await;
         let bear = create_bear(&pool, true).await;
-        let view = create_item(
-            &pool,
-            create_request(person.clone(), "Deletable", "body"),
-        )
-        .await
-        .expect("create");
+        let view = create_item(&pool, create_request(person.clone(), "Deletable", "body"))
+            .await
+            .expect("create");
         let cabinet_ref = view.item.cabinet_ref.clone();
 
         // A Bear may not delete, whatever its stance.
@@ -1304,9 +1303,7 @@ mod tests {
         )
         .await
         .expect("search");
-        assert!(!hits
-            .iter()
-            .any(|hit| hit.cabinet_ref == cabinet_ref));
+        assert!(!hits.iter().any(|hit| hit.cabinet_ref == cabinet_ref));
     }
 
     #[tokio::test]
