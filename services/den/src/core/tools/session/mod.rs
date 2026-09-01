@@ -146,6 +146,13 @@ pub async fn invoke_den_tool(
         return invoke_workflow_tool(pool, config, stores, tool_name, arguments, &context).await;
     }
 
+    if crate::core::tools::cabinet_tools::is_cabinet_tool(tool_name) {
+        return crate::core::tools::cabinet_tools::invoke_cabinet_tool(
+            pool, tool_name, arguments, &context,
+        )
+        .await;
+    }
+
     let ctx = DenToolContext::new(pool, config, stores);
     den_core::tools::dispatch::invoke_den_tool(&ctx, tool_name, arguments, context)
         .await
@@ -284,7 +291,7 @@ async fn invoke_workflow_tool(
         DEN_JOB_CANCEL => {
             workflow::set_job_lifecycle(
                 pool,
-                &context,
+                context,
                 role,
                 arguments,
                 den_docket::DocketJobStatus::Cancelled,
@@ -294,7 +301,7 @@ async fn invoke_workflow_tool(
         DEN_JOB_ARCHIVE => {
             workflow::set_job_lifecycle(
                 pool,
-                &context,
+                context,
                 role,
                 arguments,
                 den_docket::DocketJobStatus::Archived,
@@ -482,6 +489,7 @@ mod native_session_routing_tests {
     fn every_pair_surface_tool_has_a_native_session_route() {
         for descriptor in builtin_den_tool_descriptors_for_pair_acp_surface() {
             let routed = workflow::is_workflow_tool(descriptor.name)
+                || crate::core::tools::cabinet_tools::is_cabinet_tool(descriptor.name)
                 || den_core::tools::dispatch::has_native_session_executor(descriptor.name)
                 || descriptor.name == DEN_TASK_LISTS_REQUEST_HANDOFF;
             assert!(

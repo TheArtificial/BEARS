@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ item_title }}{% endblock %}
+{% block content %}
+<p><a href="/cabinet">← Cabinet</a></p>
+
+{% if message %}
+<p><strong>{{ message }}</strong></p>
+{% endif %}
+
+{% if not is_current %}
+<p>
+    <strong>You are viewing revision {{ revision }}, not the current version.</strong>
+    <a href="/cabinet/{{ cabinet_ref }}">View current</a>
+</p>
+{% endif %}
+
+{% if lifecycle == "archived" %}
+<p>
+    <strong>This item is archived.</strong>
+</p>
+<form method="post" action="/cabinet/{{ cabinet_ref }}/restore">
+    <button type="submit">Restore</button>
+</form>
+{% endif %}
+
+<h1>{{ item_title }}</h1>
+<article>
+{{ content | markdown }}
+</article>
+
+{% if sources %}
+<section>
+    <h2>Sources</h2>
+    <ul>
+        {% for source in sources %}
+        <li>
+            {{ source.role }} ({{ source.kind }}):
+            {% if source.kind == "url" %}
+            <a href="{{ source.locator }}" rel="noreferrer">{{ source.locator }}</a>
+            {% else %}
+            <code>{{ source.locator }}</code>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
+<hr>
+<p>
+    Revision {{ revision }} · {{ authored_at | timeago }} ·
+    {% if authored_by.actor_kind == "bear" %}by a Bear ({{ authored_by.stance }} stance){% else %}by a person{% endif %}
+</p>
+<p>
+    {% if is_current and lifecycle == "active" %}
+    <a href="/cabinet/{{ cabinet_ref }}/edit">Edit</a> ·
+    {% endif %}
+    <a href="/cabinet/{{ cabinet_ref }}/history">History</a>
+</p>
+{% if is_current and lifecycle == "active" %}
+<form method="post" action="/cabinet/{{ cabinet_ref }}/archive">
+    <button type="submit">Archive item</button>
+</form>
+{% endif %}
+{% endblock %}

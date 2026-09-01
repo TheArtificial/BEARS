@@ -1,6 +1,7 @@
 pub mod activity_payloads;
 pub mod aliases;
 pub mod arguments;
+pub mod cabinet_tools;
 pub mod constants;
 pub mod context;
 pub mod descriptor;

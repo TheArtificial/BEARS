@@ -21,6 +21,7 @@ pub mod observability;
 
 pub mod admin;
 pub mod bear;
+pub mod cabinet;
 pub mod design;
 pub mod filters;
 pub mod home;
@@ -345,6 +346,7 @@ pub async fn server(
                 .merge(bear::memory::router())
                 .merge(bear::manage::router())
                 .merge(onboarding::router())
+                .merge(cabinet::router())
                 .merge(work::router())
                 .nest("/bear/{bear_slug}", work::docket_router())
                 // TSR: conversation links use `/bear/{slug}/?conversation_id=…`; plain `/bear/{slug}` is the canonical chat URL.

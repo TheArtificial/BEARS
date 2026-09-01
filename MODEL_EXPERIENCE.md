@@ -77,6 +77,14 @@ The model touches memory in exactly three ways, each bounded:
 
 Trusted facts come from typed context, not chat text: human identity for an ACP `pair` session comes from the session token via `session_info`, and conflicting claims in the conversation do not override it.
 
+### Cabinet: shared knowledge, distinct from memory
+
+Cabinet is the Den-wide shared knowledge wiki that humans and Bears read and edit together ([contract](docs/architecture/cabinet-contract.md)). The model sees four tools: `cabinet_search` and `cabinet_read` on every stance, `cabinet_create` and `cabinet_update` on `chat`/`pair`/`curate`. The distinction the descriptors teach:
+
+- **Bear memory is private cognition; Cabinet is shared, durable, human-visible knowledge.** Memory tools never write Cabinet, and Cabinet tools never write memory.
+- **Every write publishes an immutable revision** (Phase 1 direct-edit; no review gate). `cabinet_update` requires the `base_version` from a fresh `cabinet_read`; a stale base returns a structured conflict with the new current version — the model re-reads, merges, and retries. Nothing merges silently.
+- **Authorization is server-side.** Bears with `cabinet_enabled` off do not see the tools, and the facade independently rejects them; item-level (Mission/collection) policy arrives in Phase 2.
+
 ## Continuation, obligations, and budgets
 
 - **Continuation is core runtime behavior.** After a blocking tool result or an approval decision, the core turn coordinator — not an edge or the model — decides when the turn may legally continue; open client obligations block continuation ([ADR-0048](docs/decisions/adr-0048-core-turn-client-obligation-coordinator.md)).

@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO cabinet_source_links\n            (source_ref, item_id, source_kind, locator, role, created_by, created_at)\n           VALUES ($1, $2, $3, $4, $5, $6, $7)\n           ON CONFLICT (item_id, source_kind, locator, role) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cc63957cfff5a6873a49160f19ae50cebee9a8b3697d5ea030000a4c968ef3b9"
+}

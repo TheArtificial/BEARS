@@ -1,8 +1,9 @@
 # Cabinet implementation plan
 
-**Status:** Proposed  
+**Status:** In progress — Phase 0 landed (contract doc + `den-cabinet` types/checks); Phase 1 implemented (Postgres storage + `den_service::cabinet` facade, `cabinet_search/read/create/update` tools with the per-Bear `bears.cabinet_enabled` gate, `/cabinet` wiki UI, [user guide](../guides/cabinet.md)); Phases 2–4 not started.  
 **Scope:** Shared, human-editable, policy-controlled knowledge for Den.  
-**Related architecture:** [Bear charter and Cabinet Missions](../architecture/bear-charter-and-cabinet-missions.md), [ADR-0004 — Artifacts, Garage, and Cabinet separation](../decisions/adr-0004-artifacts-garage.md)
+**Decisions (2026-08):** one Cabinet layer per Den (Missions/collections partition it, not multiple cabinet instances); humans and authorized Bears edit directly (true wiki — every write publishes an immutable version, revision history is the safety net); review/approval is Phase 2 policy, not a Phase 1 gate; Phase 1 storage is Den Postgres behind the provider-neutral facade.  
+**Related architecture:** [Cabinet contract](../architecture/cabinet-contract.md), [Bear charter and Cabinet Missions](../architecture/bear-charter-and-cabinet-missions.md), [ADR-0004 — Artifacts, Garage, and Cabinet separation](../decisions/adr-0004-artifacts-garage.md)
 
 ## Boundary
 
@@ -15,7 +16,7 @@ Den owns the agent-facing facade, authorization, and policy. The backing provide
 ## Goals
 
 - Give humans a durable, editable shared-knowledge surface.
-- Give authorized Bears a bounded Den-mediated API for finding, reading, proposing, and updating Cabinet material.
+- Give authorized Bears a bounded Den-mediated API for finding, reading, creating, and updating Cabinet material.
 - Support Cabinet Missions, collections, documents/items, source links, metadata, and artifact attachments without conflating them.
 - Preserve provenance, review state, authorization, and immutable citations/snapshots where needed.
 
@@ -30,18 +31,18 @@ Den owns the agent-facing facade, authorization, and policy. The backing provide
 
 ### Phase 0 — Contract and boundary
 
-- Define strongly typed identities and minimum records for Cabinet item, collection, Mission scope, source link, attachment link, proposal/review state, and immutable item version/snapshot.
+- Define strongly typed identities and minimum records for Cabinet item, collection, Mission scope, source link, attachment link, review state (reserved for Phase 2 policy), and immutable item version/snapshot.
 - Define the distinction between a Cabinet catalog/item, artifact ref, external source, and derived recall passage.
-- Specify Den operations: search, read, create proposal, update proposal, approve/publish, and attachment link/unlink; all accept explicit Bear/user/Mission scope rather than special strings.
+- Specify Den operations: search, read, history, direct create/update (each write publishes an immutable version), archive/restore, and source link/unlink, plus contract-reserved organize, review/approve, and attachment link/unlink operations; all accept explicit Bear/user/Mission scope rather than special strings.
 - Define authorization inputs and outcomes: user membership, Bear membership, Mission membership, collection/kind policy, and read/write/review authority.
 
 **Exit:** a provider-neutral API/schema contract and an assertion-style contract check for required IDs, scope, provenance, and authority fields.
 
 ### Phase 1 — Den facade and minimal shared knowledge
 
-- Implement provider-neutral Cabinet storage behind Den's policy facade.
-- Add authorized search/read and proposal/create/update flows for a minimal document/item type.
-- Record author, source/provenance, revision identity, and review outcome.
+- Implement provider-neutral Cabinet storage behind Den's policy facade (Den Postgres first).
+- Add authorized search/read and direct create/update flows for a minimal document/item type: humans and authorized Bears both edit directly, every write appends an immutable version, and stale-base updates fail with a structured conflict rather than merging.
+- Record author, source/provenance, revision identity, and review state (`none` under Phase 1 direct-edit; `pending` versions are rejected until Phase 2).
 - Keep direct backing-store access out of agent tools.
 
 **Exit:** a human and an authorized Bear can share one item through Den, while an unauthorized Bear cannot read or alter it.
@@ -49,7 +50,7 @@ Den owns the agent-facing facade, authorization, and policy. The backing provide
 ### Phase 2 — Missions, organization, and review
 
 - Bind Cabinet items to optional Missions and collections.
-- Add review/approval policy for Bear-authored changes where configured.
+- Add optional review/approval policy for Bear-authored changes where configured; direct edit remains the default.
 - Add human-visible revision/provenance views and stable snapshot citations.
 
 **Exit:** a Mission can govern shared knowledge without broadening access to unrelated Cabinet material.

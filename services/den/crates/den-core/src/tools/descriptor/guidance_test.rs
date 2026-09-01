@@ -79,13 +79,12 @@ fn task_list_update_descriptor_includes_active_work_state_guidance() {
     assert!(descriptor.description.contains("session_info"));
     assert!(descriptor
         .description
-        .contains("Use durable Docket job/task tools"));
-    assert!(descriptor.description.contains("user-visible"));
-    assert!(descriptor.description.contains("current Pair task tree"));
+        .contains("Use durable Docket task tools"));
+    assert!(descriptor.description.contains("current Pair task"));
     assert!(descriptor
         .description
-        .contains("do not authorize autonomous execution"));
-    assert!(descriptor.description.contains("checkout_task_list"));
+        .contains("does not start a background job"));
+    assert!(descriptor.description.contains("create a Docket Job instead"));
 }
 
 #[test]

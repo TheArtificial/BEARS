@@ -595,6 +595,7 @@ dependencies = [
  "bytes",
  "den-api",
  "den-bearwire",
+ "den-cabinet",
  "den-core",
  "den-docket",
  "den-http",
@@ -675,6 +676,19 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "den-cabinet"
+version = "0.1.2"
+dependencies = [
+ "den-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "time",
  "uuid",
 ]
 
@@ -867,6 +881,7 @@ version = "0.1.2"
 dependencies = [
  "aes-gcm",
  "base64",
+ "den-cabinet",
  "den-core",
  "den-llm",
  "den-memory",
@@ -895,6 +910,7 @@ dependencies = [
  "axum-login",
  "bearwire-protocol",
  "bytes",
+ "den-cabinet",
  "den-core",
  "den-docket",
  "den-http",

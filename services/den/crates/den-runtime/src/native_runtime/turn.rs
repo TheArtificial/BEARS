@@ -876,6 +876,7 @@ async fn build_session(
         deps.config,
         profile.profile,
         bear.work_enabled,
+        bear.cabinet_enabled,
         may_define_task,
         client_tools,
         human_message,
@@ -1144,7 +1145,7 @@ mod pair_execution_run_tests {
                 if job.job_id == job_id.to_string()
                     && matches!(job.active_task_ref,
                         Some(OrientationTaskRef::DocketTask { job_id: Some(ref id), ref task_id, .. })
-                        if id == &job_id.to_string() && task_id == &task_id.to_string())
+                        if id == &job_id.to_string() && task_id == &task_id.clone())
         ));
     }
 

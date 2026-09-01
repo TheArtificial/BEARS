@@ -92,8 +92,8 @@ pub fn session_capability_entries(
 ) -> Vec<CapabilityEntry> {
     descriptors
         .iter()
-        .cloned()
         .filter(|descriptor| descriptor.availability == "available")
+        .cloned()
         .map(session_capability_to_catalog_entry)
         .collect()
 }

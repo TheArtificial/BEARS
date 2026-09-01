@@ -1190,92 +1190,6 @@ fn derived_job_status(
     }
 }
 
-#[cfg(test)]
-mod derived_job_status_tests {
-    use super::{derived_job_status, first_pending_leaf_in_children};
-    use std::collections::{HashMap, HashSet};
-
-    use sqlx::types::Json;
-    use time::OffsetDateTime;
-    use uuid::Uuid;
-
-    use crate::model::DocketTaskRow;
-
-    fn task(id: Uuid, parent_task_id: Option<Uuid>) -> DocketTaskRow {
-        DocketTaskRow {
-            id,
-            bear_id: Uuid::nil(),
-            job_id: Some(Uuid::nil()),
-            parent_task_id,
-            sibling_order: 0,
-            kind: "execution".to_string(),
-            scope: "run".to_string(),
-            title: "task".to_string(),
-            body: "task".to_string(),
-            completion_criteria: Json(vec!["done".to_string()]),
-            difficulty: None,
-            effort_hint: None,
-            routing_strategy: "auto".to_string(),
-            expected_context_size: None,
-            result_rollup_policy: None,
-            created_by_role: "pair".to_string(),
-            created_by_user_id: None,
-            created_by_agent_id: None,
-            created_in_run_id: None,
-            settled_by_entry_id: None,
-            created_at: OffsetDateTime::UNIX_EPOCH,
-            updated_at: OffsetDateTime::UNIX_EPOCH,
-        }
-    }
-
-    #[test]
-    fn derives_status_from_current_work_only() {
-        assert_eq!(derived_job_status(1, 1, 2, 1), "running");
-        assert_eq!(derived_job_status(0, 1, 2, 0), "blocked");
-        assert_eq!(derived_job_status(0, 0, 1, 0), "ready");
-        assert_eq!(derived_job_status(0, 0, 0, 1), "ready");
-        assert_eq!(derived_job_status(0, 0, 0, 0), "completed");
-    }
-
-    #[test]
-    fn settled_phase_with_pending_descendant_is_not_selectable() {
-        let phase_id = Uuid::new_v4();
-        let child = task(Uuid::new_v4(), Some(phase_id));
-        let phase = task(phase_id, None);
-        let mut children = HashMap::new();
-        children.insert(None, vec![&phase]);
-        children.insert(Some(phase_id), vec![&child]);
-        let states = HashMap::from([(phase_id, "done"), (child.id, "pending")]);
-
-        assert!(
-            first_pending_leaf_in_children(None, &children, &states, &mut HashSet::new()).is_err()
-        );
-    }
-
-    #[test]
-    fn settled_phase_with_terminal_descendants_is_complete() {
-        let phase_id = Uuid::new_v4();
-        let child = task(Uuid::new_v4(), Some(phase_id));
-        let phase = task(phase_id, None);
-        let mut children = HashMap::new();
-        children.insert(None, vec![&phase]);
-        children.insert(Some(phase_id), vec![&child]);
-        let states = HashMap::from([(phase_id, "done"), (child.id, "done")]);
-
-        assert!(matches!(
-            first_pending_leaf_in_children(None, &children, &states, &mut HashSet::new()),
-            Ok(None)
-        ));
-    }
-
-    #[test]
-    fn stale_task_progress_without_a_work_run_is_ready() {
-        // The query supplying `in_progress` counts only task rows backed by an
-        // active work run; a stale task state therefore reaches this branch.
-        assert_eq!(derived_job_status(0, 0, 1, 0), "ready");
-    }
-}
-
 pub(super) async fn evaluate_criterion(
     pool: &PgPool,
     update: DocketCriterionStateUpdate,
@@ -1356,7 +1270,7 @@ pub(super) async fn authorize_execution_attempt(
         }
     };
     let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
-        r#"
+        r"
         INSERT INTO docket_execution_attempts (
             bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
             fence_epoch, authorization_key, state
@@ -1380,7 +1294,7 @@ pub(super) async fn authorize_execution_attempt(
         RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
-        "#,
+        ",
     )
     .bind(authorize.bear_id)
     .bind(authorize.task_id)
@@ -1399,14 +1313,14 @@ pub(super) async fn start_execution_attempt(
     start: DocketExecutionAttemptStart,
 ) -> Result<DocketExecutionAttemptRow, DenError> {
     let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
-        r#"
+        r"
         UPDATE docket_execution_attempts
         SET state = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
         WHERE id = $1 AND fence_epoch = $2 AND state = 'authorized'
         RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
-        "#,
+        ",
     )
     .bind(start.attempt_id)
     .bind(start.fence_epoch)
@@ -1415,13 +1329,13 @@ pub(super) async fn start_execution_attempt(
     let row = match row {
         Some(row) => row,
         None => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
-            r#"
+            r"
             SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
                    fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                    released_at, created_at, updated_at
             FROM docket_execution_attempts
             WHERE id = $1 AND fence_epoch = $2 AND state = 'running'
-            "#,
+            ",
         )
         .bind(start.attempt_id)
         .bind(start.fence_epoch)
@@ -1448,7 +1362,7 @@ pub(super) async fn release_execution_attempt(
     }
     let mut tx = pool.begin().await?;
     let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
-        r#"
+        r"
         UPDATE docket_execution_attempts
         SET state = 'released', released_at = NOW(), updated_at = NOW()
         WHERE id = $1 AND fence_epoch = $2
@@ -1456,7 +1370,7 @@ pub(super) async fn release_execution_attempt(
         RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
-        "#,
+        ",
     )
     .bind(release.attempt_id)
     .bind(release.fence_epoch)
@@ -1478,7 +1392,7 @@ pub(super) async fn release_execution_attempt(
             row
         }
         None => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
-            r#"
+            r"
             SELECT attempt.id, attempt.bear_id, attempt.task_id, attempt.owner_kind,
                    attempt.pair_session_id, attempt.pair_run_id, attempt.work_run_id,
                    attempt.fence_epoch, attempt.authorization_key, attempt.state,
@@ -1490,7 +1404,7 @@ pub(super) async fn release_execution_attempt(
              AND recovery.fence_epoch = attempt.fence_epoch
             WHERE attempt.id = $1 AND attempt.fence_epoch = $2 AND attempt.state = 'released'
               AND recovery.recovery_key = $3 AND recovery.recovery_reason = $4
-            "#,
+            ",
         )
         .bind(release.attempt_id)
         .bind(release.fence_epoch)
@@ -1539,7 +1453,7 @@ pub(super) async fn report_pair_bounded_outcome(
     };
     let mut tx = pool.begin().await?;
     let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
-        r#"
+        r"
         UPDATE docket_execution_attempts
         SET state = $3,
             paused_at = CASE WHEN $3 = 'awaiting_user' THEN COALESCE(paused_at, NOW()) ELSE paused_at END,
@@ -1554,7 +1468,7 @@ pub(super) async fn report_pair_bounded_outcome(
         RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
-        "#,
+        ",
     )
     .bind(report.attempt_id)
     .bind(report.fence_epoch)
@@ -1617,7 +1531,7 @@ pub(super) async fn resume_pair_awaiting_user(
         ));
     }
     let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
-        r#"
+        r"
         UPDATE docket_execution_attempts attempt
         SET state = 'authorized', updated_at = NOW()
         WHERE attempt.id = $1 AND attempt.fence_epoch = $2
@@ -1631,7 +1545,7 @@ pub(super) async fn resume_pair_awaiting_user(
                   attempt.fence_epoch, attempt.authorization_key, attempt.state,
                   attempt.started_at, attempt.paused_at, attempt.settled_at, attempt.released_at,
                   attempt.created_at, attempt.updated_at
-        "#,
+        ",
     )
     .bind(resume.attempt_id)
     .bind(resume.fence_epoch)
@@ -1748,7 +1662,7 @@ pub(super) async fn require_checkpoint_directive(
     fence_epoch: i64,
 ) -> Result<DocketCheckpointDirectiveRow, DenError> {
     let row = sqlx::query_as::<_, DocketCheckpointDirectiveDbRow>(
-        r#"
+        r"
         INSERT INTO docket_checkpoint_directives (execution_attempt_id, fence_epoch, state)
         SELECT id, fence_epoch, 'pending'
         FROM docket_execution_attempts
@@ -1757,7 +1671,7 @@ pub(super) async fn require_checkpoint_directive(
         SET state = docket_checkpoint_directives.state
         RETURNING id, execution_attempt_id, fence_epoch, state, acknowledged_artifact_ref,
                   created_at, acknowledged_at, superseded_at
-        "#,
+        ",
     )
     .bind(attempt_id)
     .bind(fence_epoch)
@@ -1798,7 +1712,7 @@ pub(super) async fn acknowledge_checkpoint_directive(
 ) -> Result<DocketCheckpointDirectiveRow, DenError> {
     let mut tx = pool.begin().await?;
     let row = sqlx::query_as::<_, DocketCheckpointDirectiveDbRow>(
-        r#"
+        r"
         UPDATE docket_checkpoint_directives directive
         SET state = 'acknowledged', acknowledged_artifact_ref = $4,
             acknowledged_at = COALESCE(acknowledged_at, NOW())
@@ -1823,7 +1737,7 @@ pub(super) async fn acknowledge_checkpoint_directive(
         RETURNING directive.id, directive.execution_attempt_id, directive.fence_epoch,
                   directive.state, directive.acknowledged_artifact_ref,
                   directive.created_at, directive.acknowledged_at, directive.superseded_at
-        "#,
+        ",
     )
     .bind(acknowledge.directive_id)
     .bind(acknowledge.execution_attempt_id)
@@ -2494,7 +2408,7 @@ pub(super) async fn attach_job_tasks_to_pair_session(
     session_id: Uuid,
 ) -> Result<(), DenError> {
     let attached = sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_pair_task_attachments (task_id, session_id)
         SELECT id, $3 FROM bear_tasks
         WHERE bear_id = $1 AND job_id = $2 AND settled_by_entry_id IS NULL
@@ -2502,7 +2416,7 @@ pub(super) async fn attach_job_tasks_to_pair_session(
         SET session_id = EXCLUDED.session_id, attached_at = NOW(), released_at = NULL
         WHERE bear_pair_task_attachments.released_at IS NOT NULL
            OR bear_pair_task_attachments.session_id = EXCLUDED.session_id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(job_id)
@@ -2533,7 +2447,7 @@ pub(super) async fn attach_task_to_pair_session(
     session_id: Uuid,
 ) -> Result<(), DenError> {
     let attached = sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_pair_task_attachments (task_id, session_id)
         SELECT id, $3 FROM bear_tasks
         WHERE id = $2 AND bear_id = $1 AND job_id IS NOT NULL AND settled_by_entry_id IS NULL
@@ -2541,7 +2455,7 @@ pub(super) async fn attach_task_to_pair_session(
         SET session_id = EXCLUDED.session_id, attached_at = NOW(), released_at = NULL
         WHERE bear_pair_task_attachments.released_at IS NOT NULL
            OR bear_pair_task_attachments.session_id = EXCLUDED.session_id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(task_id)
@@ -2915,14 +2829,14 @@ pub(super) async fn update_task(
 }
 
 async fn update_task_in_transaction(
-    mut tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     update: &DocketTaskUpdate,
 ) -> Result<DocketTaskProjection, DenError> {
     validate_docket_task_patch(&update.definition)?;
     validate_docket_task_run_state_update(update.run_state.as_ref())?;
     let current = select_task(&mut *tx, update.bear_id, update.task_id).await?;
-    validate_task_update_scope(&mut tx, &current, &update).await?;
-    validate_in_progress_task_edit_is_paused(&mut tx, &current, &update).await?;
+    validate_task_update_scope(tx, &current, update).await?;
+    validate_in_progress_task_edit_is_paused(tx, &current, update).await?;
     if let Some(run_state) = update
         .run_state
         .as_ref()
@@ -2931,25 +2845,25 @@ async fn update_task_in_transaction(
         if run_state.status.as_str() == "done"
             && has_primary_output_evidence(run_state.result_refs.as_ref())
         {
-            validate_primary_output_registry(&mut tx, &current, run_state).await?;
-            record_completion_receipt(&mut tx, &current, run_state).await?;
+            validate_primary_output_registry(tx, &current, run_state).await?;
+            record_completion_receipt(tx, &current, run_state).await?;
         }
-        validate_parent_completion(&mut tx, &current, run_state.run_id).await?;
+        validate_parent_completion(tx, &current, run_state.run_id).await?;
     }
-    let mut patched = update_task_definition(&mut tx, &current, &update.definition).await?;
-    append_task_updated_events(&mut tx, &patched, &update).await?;
-    let append_outcome = should_append_terminal_outcome(&mut tx, &patched, &update).await?;
+    let mut patched = update_task_definition(tx, &current, &update.definition).await?;
+    append_task_updated_events(tx, &patched, update).await?;
+    let append_outcome = should_append_terminal_outcome(tx, &patched, update).await?;
     let run_state = if let Some(run_state) = update.run_state.as_ref() {
-        Some(upsert_task_run_state(&mut tx, update.task_id, run_state).await?)
+        Some(upsert_task_run_state(tx, update.task_id, run_state).await?)
     } else {
         None
     };
     if append_outcome {
-        append_terminal_outcome(&mut tx, &patched, &update).await?;
-        patched = select_task(&mut tx, update.bear_id, update.task_id).await?;
+        append_terminal_outcome(tx, &patched, update).await?;
+        patched = select_task(tx, update.bear_id, update.task_id).await?;
     }
     if let (Some(job_id), Some(run_state)) = (current.job_id, update.run_state.as_ref()) {
-        reconcile_job_status(&mut tx, job_id, run_state.run_id).await?;
+        reconcile_job_status(tx, job_id, run_state.run_id).await?;
     }
     Ok(DocketTaskProjection::new(patched, run_state))
 }
@@ -2976,7 +2890,7 @@ pub(super) async fn settle_session_task(
         })?;
     let disposition = settlement
         .outcome_disposition
-        .unwrap_or(match settlement.status {
+        .unwrap_or_else(|| match settlement.status {
             super::model::DocketTaskStatus::Done => {
                 super::model::DocketOutcomeDisposition::Completed
             }
@@ -2996,10 +2910,10 @@ pub(super) async fn settle_session_task(
     let mut tx = pool.begin().await?;
     let task = select_task(&mut tx, settlement.bear_id, settlement.task_id).await?;
     let attached = sqlx::query_scalar::<_, bool>(
-        r#"SELECT EXISTS(
+        r"SELECT EXISTS(
             SELECT 1 FROM bear_pair_task_attachments
             WHERE task_id = $1 AND session_id = $2 AND released_at IS NULL
-        )"#,
+        )",
     )
     .bind(task.id)
     .bind(settlement.pair_session_id)
@@ -3939,4 +3853,90 @@ fn task_ref_uuid(source_ref: &TaskListSourceRef) -> Option<Uuid> {
         .docket_task_id
         .as_deref()
         .and_then(|raw| Uuid::parse_str(raw).ok())
+}
+
+#[cfg(test)]
+mod derived_job_status_tests {
+    use super::{derived_job_status, first_pending_leaf_in_children};
+    use std::collections::{HashMap, HashSet};
+
+    use sqlx::types::Json;
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    use crate::model::DocketTaskRow;
+
+    fn task(id: Uuid, parent_task_id: Option<Uuid>) -> DocketTaskRow {
+        DocketTaskRow {
+            id,
+            bear_id: Uuid::nil(),
+            job_id: Some(Uuid::nil()),
+            parent_task_id,
+            sibling_order: 0,
+            kind: "execution".to_string(),
+            scope: "run".to_string(),
+            title: "task".to_string(),
+            body: "task".to_string(),
+            completion_criteria: Json(vec!["done".to_string()]),
+            difficulty: None,
+            effort_hint: None,
+            routing_strategy: "auto".to_string(),
+            expected_context_size: None,
+            result_rollup_policy: None,
+            created_by_role: "pair".to_string(),
+            created_by_user_id: None,
+            created_by_agent_id: None,
+            created_in_run_id: None,
+            settled_by_entry_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn derives_status_from_current_work_only() {
+        assert_eq!(derived_job_status(1, 1, 2, 1), "running");
+        assert_eq!(derived_job_status(0, 1, 2, 0), "blocked");
+        assert_eq!(derived_job_status(0, 0, 1, 0), "ready");
+        assert_eq!(derived_job_status(0, 0, 0, 1), "ready");
+        assert_eq!(derived_job_status(0, 0, 0, 0), "completed");
+    }
+
+    #[test]
+    fn settled_phase_with_pending_descendant_is_not_selectable() {
+        let phase_id = Uuid::new_v4();
+        let child = task(Uuid::new_v4(), Some(phase_id));
+        let phase = task(phase_id, None);
+        let mut children = HashMap::new();
+        children.insert(None, vec![&phase]);
+        children.insert(Some(phase_id), vec![&child]);
+        let states = HashMap::from([(phase_id, "done"), (child.id, "pending")]);
+
+        assert!(
+            first_pending_leaf_in_children(None, &children, &states, &mut HashSet::new()).is_err()
+        );
+    }
+
+    #[test]
+    fn settled_phase_with_terminal_descendants_is_complete() {
+        let phase_id = Uuid::new_v4();
+        let child = task(Uuid::new_v4(), Some(phase_id));
+        let phase = task(phase_id, None);
+        let mut children = HashMap::new();
+        children.insert(None, vec![&phase]);
+        children.insert(Some(phase_id), vec![&child]);
+        let states = HashMap::from([(phase_id, "done"), (child.id, "done")]);
+
+        assert!(matches!(
+            first_pending_leaf_in_children(None, &children, &states, &mut HashSet::new()),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn stale_task_progress_without_a_work_run_is_ready() {
+        // The query supplying `in_progress` counts only task rows backed by an
+        // active work run; a stale task state therefore reaches this branch.
+        assert_eq!(derived_job_status(0, 0, 1, 0), "ready");
+    }
 }

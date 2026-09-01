@@ -11,6 +11,7 @@ fn test_bear() -> Bear {
         default_tool_budget_multiplier: None,
         tools_enabled: None,
         work_enabled: false,
+        cabinet_enabled: true,
         runtime_plan: None,
         context_profile: None,
         provisioning_version: 1,

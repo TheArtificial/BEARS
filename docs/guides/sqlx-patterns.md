@@ -146,8 +146,9 @@ let total_count: i64 = query_builder.build_query_scalar().fetch_one(pool).await?
 
 **Command**:
 ```bash
-# From the repository root; starts bundled Postgres and includes test-only queries.
-./scripts/sqlx.sh prepare --workspace -- --all-targets
+# From the repository root; starts bundled Postgres, refreshes every Cargo
+# target (test-only queries included), and verifies the result is complete.
+./scripts/sqlx.sh prepare-all
 ```
 
 **What it does**:
@@ -157,11 +158,11 @@ let total_count: i64 = query_builder.build_query_scalar().fetch_one(pool).await?
 4. Enables offline compilation (no database needed at build time)
 
 **Important**:
-- The repository commits metadata for every Cargo target, including test-only queries. Always use `--workspace -- --all-targets`.
+- The repository commits metadata for every Cargo target, including test-only queries. Use `prepare-all`, never a bare `prepare --workspace -- --all-targets`: that command does **not** expand member-crate test targets, and because `prepare` replaces `.sqlx/` wholesale it deletes every previously captured member-test entry (measured: 644 -> 499 entries, independent of cargo cache state). `prepare-all` adds a per-crate pass to recover them, keeps the refresh additive by default, and fails if any query is left unresolved.
 - `scripts/sqlx.sh` supplies `DATABASE_URL` and starts the bundled database; it must have current migrations applied.
 - Database must be migrated to latest schema
 - Validates both SQL syntax AND Rust compilation
-- CI runs `./scripts/sqlx.sh migrate run` then `./scripts/sqlx.sh prepare --check --workspace -- --all-targets`, which fails if `.sqlx/` is stale.
+- CI runs `./scripts/sqlx.sh migrate run` then `./scripts/sqlx.sh prepare --check --workspace -- --all-targets`. Note `--check` only *warns* about extra entries in `.sqlx/`, so it cannot detect metadata that was never regenerated; the step that actually catches missing entries is the following `SQLX_OFFLINE=true cargo clippy --workspace --all-targets`, where absent query data is a hard error.
 
 ### Development Workflow
 
@@ -172,7 +173,7 @@ let total_count: i64 = query_builder.build_query_scalar().fetch_one(pool).await?
 ./scripts/sqlx.sh migrate run
 
 # 3. Prepare SQLx queries
-./scripts/sqlx.sh prepare --workspace -- --all-targets
+./scripts/sqlx.sh prepare-all
 
 # 4. Continue development
 cargo run
@@ -188,7 +189,7 @@ cargo run
 ./scripts/sqlx.sh migrate run
 
 # 4. CRITICAL: Prepare SQLx queries
-./scripts/sqlx.sh prepare --workspace -- --all-targets
+./scripts/sqlx.sh prepare-all
 
 # 5. Test your changes
 cargo check
@@ -201,7 +202,7 @@ cargo run
 ```bash
 # 1. Ensure all migrations are applied
 # 2. Run SQLx preparation
-./scripts/sqlx.sh prepare --workspace -- --all-targets
+./scripts/sqlx.sh prepare-all
 
 # 3. Build with production features
 cargo build --release --features production
@@ -219,7 +220,7 @@ Schema changes can cause data loss or downtime. Treat migrations as production-c
 2. **Follow existing conventions** — Use the same layout and naming as files under [`migrations/`](../migrations/); read [`migrations/README.md`](../migrations/README.md) if present.
 3. **Review before apply** — Check SQL, types, constraints, indexes, and interaction with existing SQLx queries.
 4. **Naming** — Timestamp-prefixed files, e.g. `YYYYMMDDHHMMSS_description.up.sql`; add matching `.down.sql` only when you need a reversible migration.
-5. **SQLx** — Migrations are tracked (e.g. `_sqlx_migrations`). After schema changes, apply migrations, then run `./scripts/sqlx.sh prepare --workspace -- --all-targets` so `.sqlx/` matches every target (see above).
+5. **SQLx** — Migrations are tracked (e.g. `_sqlx_migrations`). After schema changes, apply migrations, then run `./scripts/sqlx.sh prepare-all` so `.sqlx/` matches every target (see above).
 6. **Dependencies** — New columns/tables must not break existing queries until code and `.sqlx/` are updated.
 7. **Production** — Prefer additive, backward-compatible steps; plan backups before major changes.
 
@@ -336,7 +337,7 @@ Error: column "field_name" does not exist
 ```
 Error: query metadata is stale
 ```
-**Fix**: Run `./scripts/sqlx.sh prepare --workspace -- --all-targets` after schema changes.
+**Fix**: Run `./scripts/sqlx.sh prepare-all` after schema changes.
 
 **4. Parameter count mismatch**:
 ```
@@ -394,7 +395,7 @@ sqlx::query_as!(
 
 **Workflow**:
 1. Write your query
-2. Run `./scripts/sqlx.sh prepare --workspace -- --all-targets` to validate
+2. Run `./scripts/sqlx.sh prepare-all` to validate
 3. Fix any errors
 4. Test with `cargo check`
 5. Commit your changes
@@ -417,7 +418,7 @@ async fn get_user_by_id(pool: &PgPool, user_id: i32) -> Result<User, CustomError
 
 ## Troubleshooting
 
-### Issue: `./scripts/sqlx.sh prepare --workspace -- --all-targets` fails
+### Issue: `./scripts/sqlx.sh prepare-all` fails
 
 **Possible causes**:
 1. Database not running
@@ -434,7 +435,7 @@ psql $DATABASE_URL
 ./scripts/sqlx.sh migrate run
 
 # Try prepare again
-./scripts/sqlx.sh prepare --workspace -- --all-targets
+./scripts/sqlx.sh prepare-all
 ```
 
 ### Issue: Build fails with "query metadata is stale"
@@ -442,7 +443,7 @@ psql $DATABASE_URL
 **Solution**:
 ```bash
 # Regenerate metadata
-./scripts/sqlx.sh prepare --workspace -- --all-targets
+./scripts/sqlx.sh prepare-all
 
 # Clean and rebuild
 cargo clean
@@ -455,11 +456,11 @@ cargo build
 1. Check database column types: `\d table_name` in psql
 2. Verify struct field types match
 3. Use `as "field_name!"` syntax for NOT NULL fields
-4. Run `./scripts/sqlx.sh prepare --workspace -- --all-targets` to validate
+4. Run `./scripts/sqlx.sh prepare-all` to validate
 
 ## Related Documentation
 
-- [`den-quickstart.md`](den-quickstart.md) — local `DATABASE_URL`, migrations, and running the app before `./scripts/sqlx.sh prepare --workspace -- --all-targets`
+- [`den-quickstart.md`](den-quickstart.md) — local `DATABASE_URL`, migrations, and running the app before `./scripts/sqlx.sh prepare-all`
 - [infrastructure-and-ops.md](infrastructure-and-ops.md) — processes, `DATABASE_URL`, deployments
 - Migration safety — this document (section above)
 

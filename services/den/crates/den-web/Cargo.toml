@@ -29,6 +29,7 @@ web-ui-fixtures = []
 [dependencies]
 den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
+den-cabinet = { path = "../den-cabinet" }
 den-service = { path = "../den-service" }
 den-llm = { path = "../den-llm" }
 den-memory = { path = "../den-memory" }

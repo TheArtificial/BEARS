@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}History: {{ item_title }}{% endblock %}
+{% block content %}
+<p><a href="/cabinet/{{ cabinet_ref }}">← Back to item</a></p>
+<h1>History: {{ item_title }}</h1>
+<table>
+    <thead>
+        <tr><th>Revision</th><th>Authored</th><th>Author</th></tr>
+    </thead>
+    <tbody>
+        {% for version in versions %}
+        <tr>
+            <td><a href="/cabinet/{{ cabinet_ref }}?version={{ version.version_ref }}">{{ version.revision }}</a></td>
+            <td>{{ version.authored_at | timeago }}</td>
+            <td>{% if version.authored_by.actor_kind == "bear" %}Bear ({{ version.authored_by.stance }}){% else %}Person{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

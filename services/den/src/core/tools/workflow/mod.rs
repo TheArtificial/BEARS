@@ -1757,7 +1757,7 @@ pub(crate) async fn execute_job(
     update_focused_conversation_title(pool, context, &outcome.job, &status_report).await?;
     let run = outcome.job.current_run.as_ref();
     let execution_state = run
-        .map(|run| run.state.to_string())
+        .map(|run| run.state.clone())
         .unwrap_or_else(|| "not_started".to_string());
     Ok(json!({
         "action": "execution_requested",
@@ -1809,7 +1809,7 @@ pub(crate) async fn reconcile_job_execution(
         "action": "execution_reconciled",
         "execution": {
             "requested": true,
-            "state": run.map(|run| run.state.to_string()).unwrap_or_else(|| "not_started".to_string()),
+            "state": run.map(|run| run.state.clone()).unwrap_or_else(|| "not_started".to_string()),
             "run_id": run.map(|run| run.id),
         },
         "outcome": outcome,

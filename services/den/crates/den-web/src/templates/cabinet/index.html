@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Cabinet{% endblock %}
+{% block content %}
+<p><a href="/">← Dashboard</a></p>
+<h1>Cabinet</h1>
+<p>
+    Shared knowledge for this Den. Humans and Bears read and edit the same
+    items; every edit publishes a new immutable revision.
+</p>
+
+{% if message %}
+<p><strong>{{ message }}</strong></p>
+{% endif %}
+
+<form method="get" action="/cabinet">
+    <input type="text" name="q" value="{{ q or '' }}" placeholder="Search titles and content">
+    <button type="submit">Search</button>
+</form>
+
+<p>
+    <a href="/cabinet/new">New item</a>
+    {% if archived %}
+    · <a href="/cabinet">Show active items</a>
+    {% else %}
+    · <a href="/cabinet?lifecycle=archived">Show archived items</a>
+    {% endif %}
+</p>
+
+{% if items %}
+<table>
+    <thead>
+        <tr><th>Title</th><th>Updated</th></tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        <tr>
+            <td><a href="/cabinet/{{ item.cabinet_ref }}">{{ item.title }}</a></td>
+            <td>{{ item.updated_at | timeago }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>{% if q %}No items match that search.{% else %}No items yet — create the first one.{% endif %}</p>
+{% endif %}
+{% endblock %}

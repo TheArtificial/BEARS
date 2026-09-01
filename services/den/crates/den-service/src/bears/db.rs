@@ -50,6 +50,7 @@ struct BearWithMembershipRow {
     default_tool_budget_multiplier: Option<f64>,
     tools_enabled: Option<Json<serde_json::Value>>,
     work_enabled: bool,
+    cabinet_enabled: bool,
     runtime_plan: Option<Json<serde_json::Value>>,
     context_profile: Option<Json<serde_json::Value>>,
     provisioning_version: i32,
@@ -76,6 +77,7 @@ impl From<BearWithMembershipRow> for BearWithMembership {
                 default_tool_budget_multiplier: row.default_tool_budget_multiplier,
                 tools_enabled: row.tools_enabled,
                 work_enabled: row.work_enabled,
+                cabinet_enabled: row.cabinet_enabled,
                 runtime_plan: row.runtime_plan,
                 context_profile: row.context_profile,
                 provisioning_version: row.provisioning_version,
@@ -99,7 +101,7 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
         r#"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier,
                tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
-               work_enabled, runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
+               work_enabled, cabinet_enabled, runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
                context_profile AS "context_profile?: Json<serde_json::Value>",
                provisioning_version, system_prompt, birthday, created_at, updated_at,
                live_reflection_enabled, live_reflection_stale_after_minutes,
@@ -119,7 +121,7 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError>
         r#"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier,
                tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
-               work_enabled, runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
+               work_enabled, cabinet_enabled, runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
                context_profile AS "context_profile?: Json<serde_json::Value>",
                provisioning_version, system_prompt, birthday, created_at, updated_at,
                live_reflection_enabled, live_reflection_stale_after_minutes,
@@ -401,7 +403,7 @@ pub async fn list_bears_for_user(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier,
                b.tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
-               b.work_enabled, b.runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
+               b.work_enabled, b.cabinet_enabled, b.runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
                b.context_profile AS "context_profile?: Json<serde_json::Value>",
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
                b.live_reflection_enabled, b.live_reflection_stale_after_minutes,
@@ -429,7 +431,7 @@ pub async fn bear_for_user_by_slug(
         r#"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier,
                b.tools_enabled AS "tools_enabled?: Json<serde_json::Value>",
-               b.work_enabled, b.runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
+               b.work_enabled, b.cabinet_enabled, b.runtime_plan AS "runtime_plan?: Json<serde_json::Value>",
                b.context_profile AS "context_profile?: Json<serde_json::Value>",
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
                b.live_reflection_enabled, b.live_reflection_stale_after_minutes,

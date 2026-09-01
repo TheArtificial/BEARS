@@ -17,7 +17,10 @@ use crate::BearProfile;
 use crate::tools::{
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER, DEN_BEAR_GET_SELF,
-        DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CAPABILITY_DESCRIBE,
+        DEN_BEAR_LIST_MEMBERS, DEN_CABINET_CREATE, DEN_CABINET_CREATE_PROVIDER, DEN_CABINET_READ,
+        DEN_CABINET_READ_PROVIDER, DEN_CABINET_SEARCH, DEN_CABINET_SEARCH_PROVIDER,
+        DEN_CABINET_UPDATE, DEN_CABINET_UPDATE_PROVIDER, DEN_CAPABILITIES_LIST_SELF,
+        DEN_CAPABILITY_DESCRIBE,
         DEN_CAPABILITY_DESCRIBE_PROVIDER, DEN_CAPABILITY_SEARCH, DEN_CAPABILITY_SEARCH_PROVIDER,
         DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
         DEN_CORE_WRITE_RESULT_SUMMARY, DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_APPEND_PROVIDER,
@@ -167,6 +170,10 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_DOCKET_ENTRY_PROMOTE => return DEN_DOCKET_ENTRY_PROMOTE_PROVIDER.to_string(),
         DEN_DOCKET_ENTRY_LIST => return DEN_DOCKET_ENTRY_LIST_PROVIDER.to_string(),
         DEN_RUNTIME_DIAGNOSTICS_LIST => return DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER.to_string(),
+        DEN_CABINET_SEARCH => return DEN_CABINET_SEARCH_PROVIDER.to_string(),
+        DEN_CABINET_READ => return DEN_CABINET_READ_PROVIDER.to_string(),
+        DEN_CABINET_CREATE => return DEN_CABINET_CREATE_PROVIDER.to_string(),
+        DEN_CABINET_UPDATE => return DEN_CABINET_UPDATE_PROVIDER.to_string(),
         DEN_TASK_LIST_SYNC => return DEN_TASK_LIST_SYNC_PROVIDER.to_string(),
         DEN_TASK_LIST_CHECKOUT => return DEN_TASK_LIST_CHECKOUT_PROVIDER.to_string(),
         DEN_WORK_DISPATCH => return DEN_WORK_DISPATCH_PROVIDER.to_string(),
@@ -792,6 +799,42 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
         ),
         descriptor(
+            DEN_CABINET_SEARCH,
+            "Search Cabinet",
+            "Search Cabinet, the Den-wide shared knowledge wiki that humans and Bears read and edit together. Matches item titles and current content; returns item summaries with cabinet_ref and current version. Cabinet is shared durable knowledge, not your private memory: use memory tools for Bear-local notes and this for knowledge meant for people and other Bears.",
+            "bear.cabinet",
+            &["cabinet.read"],
+            ALL_PROFILES,
+            json!({"type":"object","properties":{"query":{"type":"string","description":"Substring match over titles and current content. Empty lists recent items."},"lifecycle":{"enum":["active","archived"],"description":"Defaults to active items."}},"required":["query"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_CABINET_READ,
+            "Read Cabinet item",
+            "Read one Cabinet shared-knowledge item: title, Markdown content, revision, current version ref, provenance, and source links. Pass version_ref to read an older immutable revision. Always read an item before updating it - the returned current version ref is the base_version a later cabinet_update requires.",
+            "bear.cabinet",
+            &["cabinet.read"],
+            ALL_PROFILES,
+            json!({"type":"object","properties":{"cabinet_ref":{"type":"string","description":"Item ref from cabinet_search or a citation, e.g. cabinet_item_..."},"version_ref":{"type":"string","description":"Optional immutable revision to read instead of the current version."}},"required":["cabinet_ref"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_CABINET_CREATE,
+            "Create Cabinet item",
+            "Create a new Cabinet shared-knowledge document with Markdown content. The item publishes immediately and is visible and editable by humans and other authorized Bears; write knowledge worth sharing, not session scratch or private Bear memory. Optionally attach source links recording where the knowledge came from. Search first to avoid duplicating an existing item.",
+            "bear.cabinet",
+            &["cabinet.write"],
+            &["chat", "pair", "curate"],
+            json!({"type":"object","properties":{"title":{"type":"string"},"content":{"type":"string","description":"Markdown document body."},"source_links":{"type":"array","items":{"type":"object","properties":{"source_kind":{"enum":["url","offline","artifact","conversation","external_record"]},"locator":{"type":"string","description":"https URL, synthetic scheme like book://isbn/..., artifact_... ref, or conversation id, matching source_kind."},"role":{"enum":["origin","citation","related"]}},"required":["source_kind","locator","role"],"additionalProperties":false}}},"required":["title","content"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_CABINET_UPDATE,
+            "Update Cabinet item",
+            "Publish a new revision of a Cabinet item with the full replacement Markdown content. Requires base_version: the current version ref from a fresh cabinet_read. If someone else published a newer revision first, the update fails with the new current version ref - re-read, merge your change into the latest content, and retry. Every revision is immutable and kept in history; nothing is overwritten.",
+            "bear.cabinet",
+            &["cabinet.write"],
+            &["chat", "pair", "curate"],
+            json!({"type":"object","properties":{"cabinet_ref":{"type":"string"},"content":{"type":"string","description":"Full replacement Markdown body (not a diff)."},"base_version":{"type":"string","description":"The current version ref this edit is based on, from cabinet_read."},"title":{"type":"string","description":"Optional new title."}},"required":["cabinet_ref","content","base_version"],"additionalProperties":false}),
+        ),
+        descriptor(
             DEN_RUNTIME_DIAGNOSTICS_LIST,
             "List runtime diagnostics",
             "List bounded, sanitized warning and error evidence for this Bear. Filter by Work run, runtime run, session, Docket job, event code, or severity when investigating a user-visible failure. This is a searchable exception record, not raw server logs; it never returns prompts, tool payloads, credentials, or cross-Bear events.",
@@ -1067,6 +1110,10 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_TASK_UPDATE_CURRENT_STATUS,
         DEN_DOCKET_ENTRY_APPEND,
         DEN_DOCKET_ENTRY_LIST,
+        DEN_CABINET_SEARCH,
+        DEN_CABINET_READ,
+        DEN_CABINET_CREATE,
+        DEN_CABINET_UPDATE,
         DEN_RUNTIME_DIAGNOSTICS_LIST,
         DEN_TASK_LIST_SYNC,
         DEN_TASK_LIST_CHECKOUT,
@@ -1298,6 +1345,42 @@ pub fn den_tool_completion_status_text(provider_name: &str) -> Option<String> {
 
 pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayDescriptor {
     match name {
+        DEN_CABINET_SEARCH => ToolDisplayDescriptor {
+            label,
+            category: "cabinet",
+            progress_verb: "Searching Cabinet for",
+            complete_verb: "Searched Cabinet for",
+            target_arg_keys: &["query"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Search shared Cabinet knowledge.",
+        },
+        DEN_CABINET_READ => ToolDisplayDescriptor {
+            label,
+            category: "cabinet",
+            progress_verb: "Reading Cabinet item",
+            complete_verb: "Read Cabinet item",
+            target_arg_keys: &["cabinet_ref"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read one shared Cabinet item.",
+        },
+        DEN_CABINET_CREATE => ToolDisplayDescriptor {
+            label,
+            category: "cabinet",
+            progress_verb: "Creating Cabinet item",
+            complete_verb: "Created Cabinet item",
+            target_arg_keys: &["title"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Publish a new shared Cabinet item visible to humans and Bears.",
+        },
+        DEN_CABINET_UPDATE => ToolDisplayDescriptor {
+            label,
+            category: "cabinet",
+            progress_verb: "Updating Cabinet item",
+            complete_verb: "Updated Cabinet item",
+            target_arg_keys: &["cabinet_ref", "title"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Publish a new revision of a shared Cabinet item.",
+        },
         DEN_CONVERSATION_SET_TITLE => ToolDisplayDescriptor {
             label,
             category: "conversation",
@@ -1814,6 +1897,9 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
 
 fn tool_domain(name: &str) -> &'static str {
     match name {
+        DEN_CABINET_SEARCH | DEN_CABINET_READ | DEN_CABINET_CREATE | DEN_CABINET_UPDATE => {
+            "cabinet"
+        }
         DEN_PLAN_MODE_ENTER
         | DEN_PLAN_MODE_STATUS
         | DEN_PLAN_MODE_RECORD_APPROVAL

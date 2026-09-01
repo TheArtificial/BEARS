@@ -119,6 +119,19 @@ Member-facing bear management at `/bear/{slug}/…` (read for members, write for
 
 All `/admin/*` routes use `permission_required!(…, "admin")`.
 
+## Cabinet (`src/cabinet/mod.rs`)
+
+Shared-knowledge wiki over the `den_service::cabinet` facade (Cabinet Phase 1; contract in `docs/architecture/cabinet-contract.md`).
+
+- `GET /cabinet` — list/search items (`q`, `lifecycle=archived`)
+- `GET /cabinet/new` / `POST /cabinet/new` — create an item (first published revision)
+- `GET /cabinet/{cabinet_ref}` — rendered item (`?version=` for an older immutable revision)
+- `GET /cabinet/{cabinet_ref}/edit` / `POST /cabinet/{cabinet_ref}/edit` — publish a new revision; a stale base re-renders the form with the conflict and the editor's draft
+- `GET /cabinet/{cabinet_ref}/history` — revision list
+- `POST /cabinet/{cabinet_ref}/archive` · `/restore` — lifecycle transitions
+
+All `/cabinet/*` routes use `login_required!(…)`; every Den user may read and edit (Phase 1 open-wiki default).
+
 ## Docket (`src/work/mod.rs`)
 
 - `GET /bear/{bear_slug}/jobs` — jobs + active/past Docket runs overview (auto-refreshes while runs are active)

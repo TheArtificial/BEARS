@@ -27,6 +27,9 @@ pub struct Bear {
     pub default_tool_budget_multiplier: Option<f64>,
     pub tools_enabled: Option<Json<serde_json::Value>>,
     pub work_enabled: bool,
+    /// Enables Cabinet shared-knowledge tools and facade access for this Bear.
+    #[serde(default = "default_cabinet_enabled")]
+    pub cabinet_enabled: bool,
     /// Optional runtime plan JSON.
     pub runtime_plan: Option<Json<serde_json::Value>>,
     /// Optional profile-aware context composition profile.
@@ -66,6 +69,10 @@ fn default_live_reflection_sweep_limit() -> i32 {
 
 fn default_provisioning_version() -> i32 {
     1
+}
+
+fn default_cabinet_enabled() -> bool {
+    true
 }
 
 // `BearStance` now lives in the `den-core` foundation crate (shared by runtime,

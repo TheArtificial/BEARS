@@ -52,7 +52,7 @@ Run SQLx commands through `scripts/sqlx.sh`. It starts and verifies bundled Post
 
 ```bash
 ./scripts/sqlx.sh migrate run
-./scripts/sqlx.sh prepare --workspace -- --all-targets
+./scripts/sqlx.sh prepare-all
 ./scripts/sqlx.sh migrate run
 ./scripts/sqlx.sh prepare --check --workspace -- --all-targets
 ```

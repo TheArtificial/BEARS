@@ -12,7 +12,7 @@ web-ui-fixtures = []
 # docs/roadmap/DEN_CRATE_SPLIT_PLAN.md. Members are added as they are extracted.
 [workspace]
 resolver = "2"
-members = ["crates/bearwire-protocol", "crates/den-core", "crates/den-protocol", "crates/den-service", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-oauth", "crates/den-api", "crates/den-web", "crates/den-bearwire", "crates/den-sandbox"]
+members = ["crates/bearwire-protocol", "crates/den-cabinet", "crates/den-core", "crates/den-protocol", "crates/den-service", "crates/den-llm", "crates/den-memory", "crates/den-docket", "crates/den-runtime", "crates/den-http", "crates/den-oauth", "crates/den-api", "crates/den-web", "crates/den-bearwire", "crates/den-sandbox"]
 
 [workspace.package]
 version = "0.1.2"
@@ -128,6 +128,9 @@ needless_collect = "allow"              # explicit intermediates aid readability
 # futures consumed in single-threaded contexts; real spawn-Send violations still
 # surface as hard compile errors at the spawn site.
 future_not_send = "allow"
+# Fires inside sqlx macro expansions (`sqlx::migrate!` embeds all migration
+# files) and grows with every migration, so it is noise here.
+large_stack_arrays = "allow"
 
 [profile.dev]
 # Optimize for faster linking in development
@@ -174,6 +177,7 @@ lto = "thin"
 codegen-units = 16
 
 [dependencies]
+den-cabinet = { path = "crates/den-cabinet" }
 den-core = { path = "crates/den-core" }
 den-protocol = { path = "crates/den-protocol" }
 den-service = { path = "crates/den-service" }

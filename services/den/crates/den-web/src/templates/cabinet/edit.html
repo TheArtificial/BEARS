@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Edit: {{ item_title }}{% endblock %}
+{% block content %}
+<p><a href="/cabinet/{{ cabinet_ref }}">← Back to item</a></p>
+<h1>Edit Cabinet item</h1>
+
+{% if error %}
+<p><strong>{{ error }}</strong></p>
+{% endif %}
+
+<form method="post" action="/cabinet/{{ cabinet_ref }}/edit">
+    <input type="hidden" name="base_version" value="{{ base_version }}">
+    <p>
+        <label for="title">Title</label><br>
+        <input type="text" id="title" name="title" value="{{ item_title }}" required>
+    </p>
+    <p>
+        <label for="content">Content (Markdown)</label><br>
+        <textarea id="content" name="content" rows="20" cols="100">{{ content }}</textarea>
+    </p>
+    <button type="submit">Publish revision</button>
+</form>
+{% endblock %}

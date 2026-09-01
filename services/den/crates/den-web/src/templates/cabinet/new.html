@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}New Cabinet item{% endblock %}
+{% block content %}
+<p><a href="/cabinet">← Cabinet</a></p>
+<h1>New Cabinet item</h1>
+<form method="post" action="/cabinet/new">
+    <p>
+        <label for="title">Title</label><br>
+        <input type="text" id="title" name="title" required>
+    </p>
+    <p>
+        <label for="content">Content (Markdown)</label><br>
+        <textarea id="content" name="content" rows="20" cols="100"></textarea>
+    </p>
+    <button type="submit">Create</button>
+</form>
+{% endblock %}
