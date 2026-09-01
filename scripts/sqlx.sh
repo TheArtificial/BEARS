@@ -53,6 +53,9 @@ prepare_all() {
     # neither is fatal for the merged result.
     if ! (cd "${crate}" && env DATABASE_URL="${DATABASE_URL}" \
           cargo sqlx prepare -- --all-targets >/dev/null 2>&1); then
+      # A failed pass can still leave a partial crate-local .sqlx behind;
+      # never leave those in the tree for someone to commit by accident.
+      rm -rf "${crate}.sqlx"
       printf '    %-20s skipped (standalone prepare failed)\n' "${name}"
       continue
     fi
