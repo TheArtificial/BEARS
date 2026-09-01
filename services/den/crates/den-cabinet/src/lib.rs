@@ -27,7 +27,7 @@ pub use records::{
     ReviewRecord, ReviewState, SourceKind, SourceLink, SourceRole,
 };
 pub use refs::{
-    CabinetAttachmentRef, CabinetCollectionRef, CabinetItemRef, CabinetReviewRef,
-    CabinetSourceRef, CabinetVersionRef, MissionRef,
+    CabinetAttachmentRef, CabinetCollectionRef, CabinetItemRef, CabinetReviewRef, CabinetSourceRef,
+    CabinetVersionRef, MissionRef,
 };
 pub use scope::{Actor, ActorScope, Authority, AuthorizationOutcome, DenialReason};

@@ -84,7 +84,9 @@ fn task_list_update_descriptor_includes_active_work_state_guidance() {
     assert!(descriptor
         .description
         .contains("does not start a background job"));
-    assert!(descriptor.description.contains("create a Docket Job instead"));
+    assert!(descriptor
+        .description
+        .contains("create a Docket Job instead"));
 }
 
 #[test]

@@ -112,7 +112,7 @@ pub async fn expire_client_obligations_once(
         let (reason, message, recovery) = if command_outcome_unknown {
             (
                 RunFailureReason::CommandOutcomeUnknown,
-                "Command result couldn't be confirmed. The connection ended before Builder Bear could report whether the command completed. To avoid duplicate changes, the command was not retried automatically.".to_string(),
+                "Connection failure: Builder Bear lost contact with the BearWire service or connected work surface before it could confirm whether the command completed. To avoid duplicate changes, the command was not retried automatically.".to_string(),
                 Some(json!({
                     "status": "outcome_unknown",
                     "automatic_retry_allowed": false,

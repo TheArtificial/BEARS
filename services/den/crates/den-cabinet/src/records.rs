@@ -558,10 +558,7 @@ struct SourceLinkRecord {
 }
 
 /// Validate that a locator matches its declared source kind.
-pub fn validate_source_locator(
-    kind: SourceKind,
-    locator: &str,
-) -> Result<(), ContractViolation> {
+pub fn validate_source_locator(kind: SourceKind, locator: &str) -> Result<(), ContractViolation> {
     require_non_empty("cabinet_source", "locator", locator)?;
     let mismatch = || ContractViolation::SourceLocatorMismatch {
         kind: kind.as_str(),
@@ -579,10 +576,7 @@ pub fn validate_source_locator(
             // Synthetic schemes per ADR-0008 (`book://…`, `offline://…`, …);
             // anything non-web with an explicit scheme qualifies.
             let has_scheme = locator.split_once("://").is_some_and(|(scheme, rest)| {
-                !scheme.is_empty()
-                    && !rest.is_empty()
-                    && scheme != "http"
-                    && scheme != "https"
+                !scheme.is_empty() && !rest.is_empty() && scheme != "http" && scheme != "https"
             });
             if has_scheme {
                 Ok(())

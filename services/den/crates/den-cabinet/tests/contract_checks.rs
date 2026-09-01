@@ -92,8 +92,7 @@ fn operation_inputs_require_actor_scope() {
         serde_json::from_value::<ReadRequest>(json!({ "cabinet_ref": item.as_str() })).is_err()
     );
     assert!(
-        serde_json::from_value::<HistoryRequest>(json!({ "cabinet_ref": item.as_str() }))
-            .is_err()
+        serde_json::from_value::<HistoryRequest>(json!({ "cabinet_ref": item.as_str() })).is_err()
     );
     assert!(serde_json::from_value::<CreateItemRequest>(json!({
         "kind": "document",
@@ -133,7 +132,10 @@ fn item_deserialization_rejects_missing_provenance_and_empty_title() {
     assert!(serde_json::from_value::<CabinetItem>(base.clone()).is_ok());
 
     let mut missing_creator = base.clone();
-    missing_creator.as_object_mut().unwrap().remove("created_by");
+    missing_creator
+        .as_object_mut()
+        .unwrap()
+        .remove("created_by");
     assert!(serde_json::from_value::<CabinetItem>(missing_creator).is_err());
 
     let mut empty_title = base;
@@ -148,10 +150,11 @@ fn source_locators_must_match_their_kind() {
     assert!(validate_source_locator(SourceKind::Offline, "book://isbn/9780262046305").is_ok());
     assert!(validate_source_locator(SourceKind::Offline, "https://example.com/a").is_err());
     assert!(validate_source_locator(SourceKind::Offline, "no-scheme").is_err());
-    assert!(
-        validate_source_locator(SourceKind::Artifact, &format!("artifact_{}", "a".repeat(32)))
-            .is_ok()
-    );
+    assert!(validate_source_locator(
+        SourceKind::Artifact,
+        &format!("artifact_{}", "a".repeat(32))
+    )
+    .is_ok());
     assert!(validate_source_locator(SourceKind::Artifact, "artifact_nope").is_err());
     assert!(validate_source_locator(SourceKind::Conversation, "").is_err());
 }

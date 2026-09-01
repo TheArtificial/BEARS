@@ -22,9 +22,8 @@ use crate::{
     web::{self, AppState},
 };
 use den_cabinet::{
-    ActorScope, CabinetError, CabinetItemRef, CabinetVersionRef, CreateItemRequest,
-    HistoryRequest, ItemKind, Lifecycle, ReadRequest, SearchFilters, SearchRequest,
-    UpdateItemRequest,
+    ActorScope, CabinetError, CabinetItemRef, CabinetVersionRef, CreateItemRequest, HistoryRequest,
+    ItemKind, Lifecycle, ReadRequest, SearchFilters, SearchRequest, UpdateItemRequest,
 };
 use den_core::ids::UserId;
 use den_service::cabinet as cabinet_service;
@@ -36,8 +35,14 @@ pub fn router() -> Router<AppState> {
         .route("/cabinet/{cabinet_ref}", get(item))
         .route("/cabinet/{cabinet_ref}/edit", get(edit_form).post(update))
         .route("/cabinet/{cabinet_ref}/history", get(history))
-        .route("/cabinet/{cabinet_ref}/archive", axum::routing::post(archive))
-        .route("/cabinet/{cabinet_ref}/restore", axum::routing::post(restore))
+        .route(
+            "/cabinet/{cabinet_ref}/archive",
+            axum::routing::post(archive),
+        )
+        .route(
+            "/cabinet/{cabinet_ref}/restore",
+            axum::routing::post(restore),
+        )
 }
 
 fn require_user_scope(auth_session: &AuthSession) -> Result<ActorScope, CustomError> {
