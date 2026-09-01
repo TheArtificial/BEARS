@@ -25,6 +25,7 @@ use den_service::{
 
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
+use crate::methods::session::start_pair_current_task;
 
 pub async fn docket_jobs_list_result(
     state: &DenState,
@@ -221,7 +222,7 @@ pub async fn docket_jobs_execute_result(
     execution_result(
         state,
         user_id,
-        bear.id,
+        bear,
         pair_binding_session_id(&request),
         outcome,
     )
@@ -247,7 +248,7 @@ pub async fn docket_jobs_reconcile_result(
     execution_result(
         state,
         user_id,
-        bear.id,
+        bear,
         pair_binding_session_id(&request),
         outcome,
     )
@@ -410,7 +411,7 @@ fn execution_request(
 async fn execution_result(
     state: &DenState,
     user_id: i32,
-    bear_id: Uuid,
+    bear: den_service::bears::Bear,
     client_session_id: Option<&str>,
     outcome: den_docket::DocketJobExecuteOutcome,
 ) -> Result<Value, CustomError> {
@@ -428,27 +429,31 @@ async fn execution_result(
             let session = client_sessions::find_for_user_bear_session_id(
                 &state.sqlx_pool,
                 user_id,
-                bear_id,
+                bear.id,
                 client_session_id,
             )
             .await?
             .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
             PgDocketService::from_pool(&state.sqlx_pool)
-                .attach_task_to_pair_session(bear_id, task_id, session.id)
+                .attach_task_to_pair_session(bear.id, task_id, session.id)
                 .await?;
             select_pair_current_task(
                 &state.sqlx_pool,
                 user_id,
-                bear_id,
+                bear.id,
                 client_session_id,
                 Some(task_id),
             )
             .await?;
+            let loop_start =
+                start_pair_current_task(state, user_id, bear, client_session_id).await?;
             pair_binding = json!({
                 "status": "attached",
                 "task_id": task_id,
                 "client_session_id": client_session_id,
                 "current_task_selected": true,
+                "loop_started": loop_start["started"].clone(),
+                "loop_run_id": loop_start["run_id"].clone(),
             });
         } else {
             pair_binding = json!({
