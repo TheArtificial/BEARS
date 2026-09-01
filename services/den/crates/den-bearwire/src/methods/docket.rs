@@ -383,7 +383,7 @@ fn pair_attempt_session_id(request: &DocketJobsSettleTaskRequest) -> Option<Stri
     request
         .source_client_session_id
         .clone()
-        .or(request.session_id.clone())
+        .or_else(|| request.session_id.clone())
 }
 
 fn execution_request(

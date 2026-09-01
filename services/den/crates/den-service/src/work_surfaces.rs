@@ -345,13 +345,13 @@ pub async fn surface_by_id(
     surface_id: Uuid,
 ) -> Result<Option<WorkSurfaceRow>, DenError> {
     Ok(sqlx::query_as::<_, WorkSurfaceRow>(
-        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+        r"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
                   g.default_image, g.allowed_outbound_hosts, g.credential_kind,
                   g.github_app_installation_id, g.github_app_write_enabled,
                   s.created_by_user_id, s.created_at, s.updated_at
            FROM work_surfaces s
            INNER JOIN git_work_surface_details g ON g.id = s.id
-           WHERE s.kind = 'git_workspace' AND s.id = $1"#,
+           WHERE s.kind = 'git_workspace' AND s.id = $1",
     )
     .bind(surface_id)
     .fetch_optional(pool)
@@ -363,13 +363,13 @@ pub async fn surface_by_name(
     name: &str,
 ) -> Result<Option<WorkSurfaceRow>, DenError> {
     Ok(sqlx::query_as::<_, WorkSurfaceRow>(
-        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+        r"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
                   g.default_image, g.allowed_outbound_hosts, g.credential_kind,
                   g.github_app_installation_id, g.github_app_write_enabled,
                   s.created_by_user_id, s.created_at, s.updated_at
            FROM work_surfaces s
            INNER JOIN git_work_surface_details g ON g.id = s.id
-           WHERE s.kind = 'git_workspace' AND s.name = $1"#,
+           WHERE s.kind = 'git_workspace' AND s.name = $1",
     )
     .bind(name)
     .fetch_optional(pool)
@@ -378,14 +378,14 @@ pub async fn surface_by_name(
 
 pub async fn list_all_surfaces(pool: &PgPool) -> Result<Vec<WorkSurfaceRow>, DenError> {
     Ok(sqlx::query_as::<_, WorkSurfaceRow>(
-        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+        r"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
                   g.default_image, g.allowed_outbound_hosts, g.credential_kind,
                   g.github_app_installation_id, g.github_app_write_enabled,
                   s.created_by_user_id, s.created_at, s.updated_at
            FROM work_surfaces s
            INNER JOIN git_work_surface_details g ON g.id = s.id
            WHERE s.kind = 'git_workspace'
-           ORDER BY s.name"#,
+           ORDER BY s.name",
     )
     .fetch_all(pool)
     .await?)
@@ -396,7 +396,7 @@ pub async fn list_surfaces_managed_by(
     user_id: i32,
 ) -> Result<Vec<WorkSurfaceRow>, DenError> {
     Ok(sqlx::query_as::<_, WorkSurfaceRow>(
-        r#"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
+        r"SELECT s.id, s.name, s.description, g.upstream_url, g.default_ref,
                   g.default_image, g.allowed_outbound_hosts, g.credential_kind,
                   g.github_app_installation_id, g.github_app_write_enabled,
                   s.created_by_user_id, s.created_at, s.updated_at
@@ -407,7 +407,7 @@ pub async fn list_surfaces_managed_by(
                  SELECT 1 FROM work_surface_managers m
                  WHERE m.surface_id = s.id AND m.user_id = $1
              )
-           ORDER BY s.name"#,
+           ORDER BY s.name",
     )
     .bind(user_id)
     .fetch_all(pool)
