@@ -14,6 +14,7 @@
 //! or on command lines.
 
 use crate::proc::{run_command, CommandSpec};
+use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -117,6 +118,24 @@ pub enum RootCredential {
     /// Path to a 0600 file on the sandbox host holding an HTTPS token
     /// (written by the managed-config sync).
     TokenPath { token_path: String },
+    /// A short-lived token minted by the sandbox provider. App identity and
+    /// key remain deployment secrets and never enter managed config.
+    GitHubAppInstallation {
+        installation_id: i64,
+        write_enabled: bool,
+    },
+}
+
+#[derive(Serialize)]
+struct GitHubAppClaims {
+    iat: u64,
+    exp: u64,
+    iss: String,
+}
+
+#[derive(Deserialize)]
+struct GitHubInstallationToken {
+    token: String,
 }
 
 #[derive(Clone)]
@@ -289,7 +308,7 @@ impl RootsManager {
                 detail: "pristine clone is not prepared".to_string(),
             });
         }
-        let env = credential_env(root, upstream)?;
+        let env = credential_env(root, upstream).await?;
         let head = self
             .resolve_commit(root, &pristine, &env, &upstream.default_ref)
             .await?;
@@ -387,12 +406,10 @@ impl RootsManager {
                 detail: "pristine clone is not prepared".to_string(),
             });
         }
-        let env = root
-            .upstream
-            .as_ref()
-            .map(|upstream| credential_env(root, upstream))
-            .transpose()?
-            .unwrap_or_default();
+        let env = match root.upstream.as_ref() {
+            Some(upstream) => credential_env(root, upstream).await?,
+            None => Vec::new(),
+        };
         let base = self.resolve_commit(root, &pristine, &env, base_ref).await?;
         let head = self.resolve_commit(root, &pristine, &env, head_ref).await?;
         let patch = self
@@ -424,7 +441,7 @@ impl RootsManager {
             return Ok(None);
         };
         let pristine = self.pristine_dir(root);
-        let env = credential_env(root, upstream)?;
+        let env = credential_env(root, upstream).await?;
 
         if !pristine.is_dir() {
             if let Some(parent) = pristine.parent() {
@@ -517,7 +534,7 @@ impl RootsManager {
             &["update-ref", &format!("refs/heads/{branch}"), base_commit],
         )
         .await?;
-        let env = credential_env(root, upstream)?;
+        let env = credential_env(root, upstream).await?;
         self.git(
             root,
             Some(&pristine),
@@ -705,7 +722,18 @@ impl RootsManager {
             });
         }
 
-        let env = credential_env(root, upstream)?;
+        let env = credential_env(root, upstream).await?;
+        if matches!(
+            upstream.credential,
+            Some(RootCredential::GitHubAppInstallation {
+                write_enabled: false,
+                ..
+            })
+        ) {
+            return Err(RootsError::PublishUnsupported {
+                name: root.name.clone(),
+            });
+        }
         self.git(
             root,
             Some(workspace),
@@ -809,7 +837,7 @@ impl RootsManager {
 /// Build the env for credentialed git operations. Tokens ride in
 /// `GIT_ASKPASS`-style env (via a helper value), keys via `GIT_SSH_COMMAND` —
 /// never on the command line, never logged.
-fn credential_env(
+async fn credential_env(
     root: &SyncableRoot,
     upstream: &GitUpstream,
 ) -> Result<Vec<(String, String)>, RootsError> {
@@ -824,18 +852,7 @@ fn credential_env(
                 name: root.name.clone(),
                 detail: format!("credential env var {token_env} is not set on this host"),
             })?;
-            // `echo` as ASKPASS: git calls it for username and password; the
-            // token works as both for the common providers (x-access-token).
-            env.push(("GIT_ASKPASS".to_string(), "echo".to_string()));
-            env.push(("GIT_CONFIG_COUNT".to_string(), "1".to_string()));
-            env.push((
-                "GIT_CONFIG_KEY_0".to_string(),
-                "credential.helper".to_string(),
-            ));
-            env.push((
-                "GIT_CONFIG_VALUE_0".to_string(),
-                format!("!f() {{ echo username=x-access-token; echo password={token}; }}; f"),
-            ));
+            add_token_env(&mut env, &token);
         }
         Some(RootCredential::SshKeyPath { ssh_key_path }) => {
             env.push((
@@ -848,20 +865,99 @@ fn credential_env(
                 name: root.name.clone(),
                 detail: format!("read credential file {token_path}: {err}"),
             })?;
-            let token = token.trim().to_string();
-            env.push(("GIT_ASKPASS".to_string(), "echo".to_string()));
-            env.push(("GIT_CONFIG_COUNT".to_string(), "1".to_string()));
-            env.push((
-                "GIT_CONFIG_KEY_0".to_string(),
-                "credential.helper".to_string(),
-            ));
-            env.push((
-                "GIT_CONFIG_VALUE_0".to_string(),
-                format!("!f() {{ echo username=x-access-token; echo password={token}; }}; f"),
-            ));
+            add_token_env(&mut env, token.trim());
+        }
+        Some(RootCredential::GitHubAppInstallation {
+            installation_id, ..
+        }) => {
+            let token = github_installation_token(root, *installation_id).await?;
+            add_token_env(&mut env, &token);
         }
     }
     Ok(env)
+}
+
+fn add_token_env(env: &mut Vec<(String, String)>, token: &str) {
+    env.push(("GIT_ASKPASS".to_string(), "echo".to_string()));
+    env.push(("GIT_CONFIG_COUNT".to_string(), "1".to_string()));
+    env.push((
+        "GIT_CONFIG_KEY_0".to_string(),
+        "credential.helper".to_string(),
+    ));
+    env.push((
+        "GIT_CONFIG_VALUE_0".to_string(),
+        format!("!f() {{ echo username=x-access-token; echo password={token}; }}; f"),
+    ));
+}
+
+async fn github_installation_token(
+    root: &SyncableRoot,
+    installation_id: i64,
+) -> Result<String, RootsError> {
+    let app_id = std::env::var("GITHUB_APP_ID").map_err(|_| RootsError::Git {
+        name: root.name.clone(),
+        detail: "GITHUB_APP_ID is not set on this provider".to_string(),
+    })?;
+    let key = std::env::var("GITHUB_APP_PRIVATE_KEY").map_err(|_| RootsError::Git {
+        name: root.name.clone(),
+        detail: "GITHUB_APP_PRIVATE_KEY is not set on this provider".to_string(),
+    })?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| RootsError::Git {
+            name: root.name.clone(),
+            detail: format!("system clock is before Unix epoch: {err}"),
+        })?
+        .as_secs();
+    let claims = GitHubAppClaims {
+        iat: now.saturating_sub(60),
+        exp: now + 9 * 60,
+        iss: app_id,
+    };
+    let key = EncodingKey::from_rsa_pem(key.as_bytes()).map_err(|err| RootsError::Git {
+        name: root.name.clone(),
+        detail: format!("invalid GITHUB_APP_PRIVATE_KEY: {err}"),
+    })?;
+    let jwt =
+        jsonwebtoken::encode(&Header::new(Algorithm::RS256), &claims, &key).map_err(|err| {
+            RootsError::Git {
+                name: root.name.clone(),
+                detail: format!("sign GitHub App JWT: {err}"),
+            }
+        })?;
+    let api =
+        std::env::var("GITHUB_API_URL").unwrap_or_else(|_| "https://api.github.com".to_string());
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/app/installations/{installation_id}/access_tokens",
+            api.trim_end_matches('/')
+        ))
+        .bearer_auth(jwt)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .header(reqwest::header::USER_AGENT, "bear-den-sandbox")
+        .send()
+        .await
+        .map_err(|err| RootsError::Git {
+            name: root.name.clone(),
+            detail: format!("request GitHub installation token: {err}"),
+        })?;
+    if !response.status().is_success() {
+        return Err(RootsError::Git {
+            name: root.name.clone(),
+            detail: format!(
+                "GitHub installation token request returned {}",
+                response.status()
+            ),
+        });
+    }
+    response
+        .json::<GitHubInstallationToken>()
+        .await
+        .map(|response| response.token)
+        .map_err(|err| RootsError::Git {
+            name: root.name.clone(),
+            detail: format!("decode GitHub installation token response: {err}"),
+        })
 }
 
 fn copy_dir_recursive(source: &Path, dest: &Path) -> Result<(), std::io::Error> {
@@ -904,8 +1000,8 @@ mod tests {
         assert!(matches!(path, RootCredential::TokenPath { .. }));
     }
 
-    #[test]
-    fn token_path_credential_reads_file() {
+    #[tokio::test]
+    async fn token_path_credential_reads_file() {
         let tmp = std::env::temp_dir().join(format!(
             "den-sbx-tokenpath-{}",
             uuid::Uuid::new_v4().simple()
@@ -927,7 +1023,7 @@ mod tests {
             allowed_outbound_hosts: Vec::new(),
         };
         let upstream = root.upstream.as_ref().unwrap();
-        let env = credential_env(&root, upstream).unwrap();
+        let env = credential_env(&root, upstream).await.unwrap();
         let helper = env
             .iter()
             .find(|(k, _)| k == "GIT_CONFIG_VALUE_0")
@@ -945,7 +1041,9 @@ mod tests {
             }),
             ..root.clone()
         };
-        let err = credential_env(&missing, missing.upstream.as_ref().unwrap()).unwrap_err();
+        let err = credential_env(&missing, missing.upstream.as_ref().unwrap())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("gone.token"), "{err}");
         let _ = std::fs::remove_dir_all(&tmp);
     }

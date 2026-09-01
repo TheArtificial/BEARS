@@ -447,6 +447,11 @@ services:
             SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-2}
             SANDBOX_DEFAULT_TIMEOUT_SECS: ${SANDBOX_DEFAULT_TIMEOUT_SECS:-900}
             SANDBOX_MAX_LOG_BYTES: ${SANDBOX_MAX_LOG_BYTES:-2097152}
+            # GitHub is the MVP installation-token adapter. Other git hosts
+            # continue to use each surface's generic SSH key or HTTPS token.
+            GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+            GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+            GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
             # One-click image builds from /admin/sandbox build the shipped
             # Dockerfile variants out of this read-only mount.
             SANDBOX_BUILD_CONTEXT_DIR: /opt/bears/sandbox-build

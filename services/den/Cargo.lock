@@ -847,6 +847,7 @@ dependencies = [
  "axum",
  "den-core",
  "http-body-util",
+ "jsonwebtoken",
  "reqwest",
  "serde",
  "serde_json",

@@ -134,23 +134,30 @@ pub fn apply(
     let mut roots = Vec::with_capacity(config.surfaces.len());
     let mut kept_files = Vec::new();
     for surface in &config.surfaces {
-        let credential = match &surface.credential {
-            None => None,
-            Some(ManagedCredential::SshKey { private_key }) => {
-                let file = credentials.join(format!("{}.sshkey", surface.name));
-                write_secret_file(&file, private_key)?;
-                kept_files.push(file.clone());
-                Some(RootCredential::SshKeyPath {
-                    ssh_key_path: file.to_string_lossy().into_owned(),
-                })
-            }
-            Some(ManagedCredential::HttpsToken { token }) => {
-                let file = credentials.join(format!("{}.token", surface.name));
-                write_secret_file(&file, token)?;
-                kept_files.push(file.clone());
-                Some(RootCredential::TokenPath {
-                    token_path: file.to_string_lossy().into_owned(),
-                })
+        let credential = if let Some(app) = &surface.github_app {
+            Some(RootCredential::GitHubAppInstallation {
+                installation_id: app.installation_id,
+                write_enabled: app.write_enabled,
+            })
+        } else {
+            match &surface.credential {
+                None => None,
+                Some(ManagedCredential::SshKey { private_key }) => {
+                    let file = credentials.join(format!("{}.sshkey", surface.name));
+                    write_secret_file(&file, private_key)?;
+                    kept_files.push(file.clone());
+                    Some(RootCredential::SshKeyPath {
+                        ssh_key_path: file.to_string_lossy().into_owned(),
+                    })
+                }
+                Some(ManagedCredential::HttpsToken { token }) => {
+                    let file = credentials.join(format!("{}.token", surface.name));
+                    write_secret_file(&file, token)?;
+                    kept_files.push(file.clone());
+                    Some(RootCredential::TokenPath {
+                        token_path: file.to_string_lossy().into_owned(),
+                    })
+                }
             }
         };
         roots.push(SyncableRoot {
