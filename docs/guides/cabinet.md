@@ -1,8 +1,14 @@
 # Cabinet: shared knowledge
 
 Cabinet is your Den's shared knowledge wiki. People and Bears read and edit the
-same items; every edit publishes a new immutable revision, and the full
+same pages; every edit publishes a new immutable revision, and the full
 revision history is always available. There is one Cabinet per Den.
+
+Cabinet is a **tree of pages** and nothing else — there are no separate folders
+or collections. A page can hold content, child pages, or both. A "Mission" is
+just a page describing a goal, with its plans and references as child pages;
+a Docket job can point at that page when it needs the documentation for its
+work. (Hierarchy arrives in Phase 2; today every page is a root.)
 
 Contract and design: [cabinet-contract.md](../architecture/cabinet-contract.md).
 Plan and phase status: [CABINET_IMPLEMENTATION_PLAN.md](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
@@ -60,9 +66,11 @@ cannot write Cabinet, and Cabinet tools cannot write Bear memory.
 - **Bears:** gated per Bear by the `cabinet_enabled` flag on the Bear record
   (default on, like `work_enabled`). A disabled Bear does not see the Cabinet
   tools and the server independently refuses it access.
-- **Missions and collections** (scoped sharing, review/approval policy) are
-  Phase 2: item requests that name them are refused with a clear policy error
-  today.
+- **Scoped sharing is Phase 2.** Access policy and membership will live on
+  pages and inherit down the tree, narrowing only: put members on a Mission
+  page and its whole subtree becomes private to them, while unrelated pages
+  are untouched. Requests that try to set hierarchy or policy today are
+  refused with a clear policy error.
 
 ## Source links
 
@@ -75,5 +83,7 @@ the bytes behind them.
 
 - Search is substring matching over titles and current content (no semantic
   recall yet; that is Phase 3, via the derived recall index).
-- Attachments (files on items, via artifact refs) are Phase 3.
+- Page hierarchy, sibling ordering, and per-page permissions are Phase 2, so
+  every page is currently a root and every Den user can edit everything.
+- Attachments (files on pages, via artifact refs) are Phase 3.
 - The editor is a plain Markdown textarea; rendered views sanitize HTML.

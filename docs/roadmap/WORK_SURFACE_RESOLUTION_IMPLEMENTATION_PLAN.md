@@ -280,7 +280,7 @@ These should create candidates or increase confidence, but not silently confirm 
 
 Later:
 
-- Cabinet Mission ids,
+- Cabinet Mission page refs (`cabinet_item_…`; Missions have no separate id space),
 - Docket project ids,
 - deployment environment ids,
 - service registry entries.

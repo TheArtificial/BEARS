@@ -7,10 +7,10 @@ This document is the provider-neutral contract for Cabinet: the typed identities
 
 ## Summary
 
-- Cabinet is Den's **single** shared knowledge layer: one Cabinet per Den deployment, partitioned by Missions and collections — not multiple cabinet instances.
+- Cabinet is Den's **single** shared knowledge layer: one Cabinet per Den deployment. It has exactly one structural concept — a **page tree**. Items nest under items; there are no separate collection or Mission containers.
 - Humans and authorized Bears **edit directly** (true wiki). Every write produces an immutable version; revision history is the safety net. Review/approval is a policy hook reserved for Phase 2, not a Phase 1 gate.
 - Den owns the facade, authorization, and policy. Agent tools and human UI both go through the facade; nothing reads or writes the backing store directly.
-- Every operation takes an **explicit actor scope** (user or Bear + stance) and, where relevant, an explicit Mission scope. No special strings, no ambient identity.
+- Every operation takes an **explicit actor scope** (user or Bear + stance). No special strings, no ambient identity.
 - Cabinet items are knowledge records. Artifact refs hold content payloads (ADR-0004). External sources stay external. Derived recall passages are rebuildable projections. These four never merge.
 
 ## Identities
@@ -21,8 +21,6 @@ All Cabinet refs are Den-minted, opaque, and stable for the entity lifetime. Fol
 |--------|-----------|---------|
 | Cabinet item | `cabinet_item_` | `cabinet_item_01f3…` |
 | Item version | `cabinet_version_` | `cabinet_version_9ab0…` |
-| Collection | `cabinet_collection_` | `cabinet_collection_44c1…` |
-| Mission | `mission_` | `mission_7e2d…` |
 | Source link | `cabinet_source_` | `cabinet_source_be55…` |
 | Attachment link | `cabinet_attachment_` | `cabinet_attachment_0c9f…` |
 | Review record | `cabinet_review_` | `cabinet_review_d21a…` |
@@ -30,6 +28,7 @@ All Cabinet refs are Den-minted, opaque, and stable for the entity lifetime. Fol
 Notes:
 
 - The protocol field name for an item ref is `cabinet_ref` (matches ADR-0004 and the existing `cabinet_ref` entity-handle type in `den-memory`).
+- There is no Mission or collection ref. A **Mission is an item** — a page, optionally marked `kind: mission`, whose subtree is the grouping. Anything that needs to name a Mission names its `cabinet_ref`; this is what `den-memory`'s `mission` entity type (handle `cabinet_ref`, Cabinet-owned) already assumes.
 - No ref is any other ref's prefix; parsing is unambiguous.
 - A ref is not an object key, URL, filesystem path, title, or slug. Slugs/titles may exist for humans but are mutable display data, never identity.
 
@@ -44,14 +43,23 @@ The durable knowledge object — a wiki document or typed knowledge record.
 | Field | Requirement |
 |-------|-------------|
 | `cabinet_ref` | required, immutable |
-| `kind` | required; `document` is the only Phase 1 kind; the enum is open for later kinds (`glossary_entry`, `decision`, `reference`, …) |
+| `kind` | required; `document` is the only Phase 1 kind. The enum is open (`mission`, `glossary_entry`, `decision`, `reference`, …) and is a **human-facing label only**: no operation branches on it, and nothing requires `kind: mission` to treat a page as a Mission |
 | `title` | required, mutable display data |
 | `current_version` | required after first write; points at the latest published `cabinet_version_` |
-| `collection_ref` | optional; at most one collection per item |
-| `mission_ref` | optional; at most one Mission per item |
+| `parent_item_ref` | optional (Phase 2); the parent page. Cycles are rejected; depth is capped |
+| `position` | optional (Phase 2); explicit sort order among siblings |
+| `path` | optional (Phase 2); provider-maintained materialized ancestor path. Derived — never client-supplied, never identity |
+| `policy` | optional (Phase 2); see Authorization. Absent means "inherit from the nearest ancestor that sets one" |
+| `user_members` / `bear_members` | optional (Phase 2); when set, access to this page and its subtree requires membership |
 | `created_by` | required actor provenance (see Actor scope) |
 | `created_at` | required |
 | `lifecycle` | required: `active`, `archived`, `deleted` (tombstone) |
+
+A page is the only container Cabinet has. A Mission is a page with a goal
+description that may carry members and policy, and whose child pages (roadmap
+plans, references, notes) are the grouped material. A Docket Job may name that
+page's `cabinet_ref`; Cabinet stores no reference back to Jobs, so work
+management never becomes a Cabinet concept.
 
 ### Item version
 
@@ -71,31 +79,28 @@ An immutable snapshot of item content. Versions are the citation unit and the re
 
 A finalized version is never mutated or deleted while any citation to it may exist. Item deletion tombstones the item; versions remain readable to actors authorized on the item at tombstone time, for citation integrity. Hard purge is an operator/compliance action outside this contract's model-facing operations.
 
-### Collection
+### Page policy
 
-An organizational grouping within the Cabinet, and the policy attachment point below Mission.
-
-| Field | Requirement |
-|-------|-------------|
-| `collection_ref` | required, immutable |
-| `name` | required, mutable |
-| `mission_ref` | optional; a collection may belong to a Mission |
-| `policy` | required policy record (see Authorization) |
-| `created_by`, `created_at` | required provenance |
-
-### Mission scope
-
-A Mission is the shared cross-Bear work-and-knowledge container ([bear-charter-and-cabinet-missions.md](bear-charter-and-cabinet-missions.md)). This contract defines only what Cabinet needs from it:
+Optional per-item access policy (Phase 2). A page without a policy inherits
+the nearest ancestor's; a root page without one falls back to the open-wiki
+default. Inheritance **narrows only** — a descendant may add restrictions and
+can never grant access its ancestors withhold.
 
 | Field | Requirement |
 |-------|-------------|
-| `mission_ref` | required, immutable |
-| `name` | required |
-| `user_members` | required set of user IDs |
-| `bear_members` | required set of Bear IDs |
-| `policy` | required policy record |
+| `bears_may_write` | required; when false, Bear actors get read only on this subtree |
+| `review_required` | required; when true, Bear-authored versions land `pending` instead of publishing (Phase 2) |
+| `allowed_kinds` | optional; restricts the `kind` of pages creatable in this subtree. `None` allows all |
 
-Mission lifecycle and non-Cabinet Mission behavior are out of scope here. If Missions later become a first-class Den entity, that entity must present at least this shape to Cabinet.
+Membership lives on the item (`user_members` / `bear_members`) rather than in
+the policy record: when either set is non-empty on a page, access to that page
+and its whole subtree requires membership. This is how a Mission governs its
+material without widening access to unrelated Cabinet pages.
+
+The effective policy for a page is resolved by walking ancestors. Providers
+should maintain the derived `path` so resolution is a single indexed lookup
+rather than a per-check recursive query; `path` is an implementation aid, never
+identity and never client-supplied.
 
 ### Source link
 
@@ -156,19 +161,19 @@ The Den facade exposes these operations. Signatures are conceptual; transport (t
 
 | Operation | Phase | Authority | Behavior |
 |-----------|-------|-----------|----------|
-| `cabinet_search(scope, query, filters?) → [item summary]` | 1 | read | Metadata/text search over items the actor may read. Filters: `kind`, `collection_ref`, `mission_ref`, `lifecycle`. Results carry `cabinet_ref`, `current_version`, title, kind, scope binding, and updated-at. Unreadable items are absent, not redacted. |
+| `cabinet_search(scope, query, filters?) → [item summary]` | 1 | read | Metadata/text search over items the actor may read. Filters: `kind`, `lifecycle`, and (Phase 2) `under` — restrict to a page's subtree. Results carry `cabinet_ref`, `current_version`, title, kind, parent, and updated-at. Unreadable items are absent, not redacted. |
 | `cabinet_read(scope, cabinet_ref, version_ref?) → item + version` | 1 | read | Returns the item record and the requested version (default `current_version`), including full content, provenance, source links, and (Phase 3) attachment links. |
 | `cabinet_history(scope, cabinet_ref) → [version summary]` | 1 | read | Revision list: `version_ref`, revision, author provenance, timestamp, review state, content hash. |
-| `cabinet_create_item(scope, kind, title, content, collection_ref?, mission_ref?, source_links?) → item + version 1` | 1 | write | Creates the item and its first published version atomically. Scope binding is fixed at creation; rebinding is a Phase 2 organize operation. |
+| `cabinet_create_item(scope, kind, title, content, parent_item_ref?, source_links?) → item + version 1` | 1 | write | Creates the item and its first published version atomically. `parent_item_ref` is Phase 2; reparenting is `cabinet_organize`. |
 | `cabinet_update_item(scope, cabinet_ref, content, base_version, title?) → new version` | 1 | write | Appends a new immutable version and advances `current_version`. If `base_version` ≠ `current_version` at commit, fail with a structured conflict carrying the current version ref — the caller re-reads and reconciles; the facade never merges. |
-| `cabinet_archive_item(scope, cabinet_ref)` / `cabinet_restore_item` | 1 | write | Lifecycle transitions `active ↔ archived`. Reversible; every revision stays readable. |
-| `cabinet_delete_item(scope, cabinet_ref)` | 1 | write, **person actors only** | Tombstones the item (`deleted`): it leaves search, read, and history. Versions are retained per the version-immutability rule so existing citations keep their meaning. A Bear actor is refused regardless of stance — a Bear's most destructive available act is a reversible archive. Hard purge stays an operator/compliance action outside this contract. |
+| `cabinet_archive_item(scope, cabinet_ref)` / `cabinet_restore_item` | 1 | write | Lifecycle transitions `active ↔ archived`. Reversible; every revision stays readable. From Phase 2 archiving **cascades to descendants**, and restoring restores only the named page (its children stay archived until restored explicitly). |
+| `cabinet_delete_item(scope, cabinet_ref)` | 1 | write, **person actors only** | Tombstones the item (`deleted`): it leaves search, read, and history. Versions are retained per the version-immutability rule so existing citations keep their meaning. A Bear actor is refused regardless of stance — a Bear's most destructive available act is a reversible archive. From Phase 2 deletion is **refused while the page has non-deleted children**: subtree removal must be done deliberately, leaf-first, not as one cascading act. Hard purge stays an operator/compliance action outside this contract. |
 | `cabinet_link_source(scope, cabinet_ref, source_kind, locator, role)` / `cabinet_unlink_source` | 1 | write | Manage source links. Adding or removing provenance never publishes a revision and never alters versions. |
-| `cabinet_organize(scope, cabinet_ref, collection_ref?, mission_ref?)` | 2 | write on item + destination | Rebind an item's collection/Mission. Contract-reserved; not exposed in Phase 1. |
+| `cabinet_organize(scope, cabinet_ref, parent_item_ref?, position?)` | 2 | write on the page **and** on the destination parent | Reparent and/or reorder a page. Rejects cycles (a page may not become its own descendant) and depth beyond the cap. Moving a subtree moves its descendants with it, and their effective policy changes to the destination's — so the mover must hold write authority at the destination, not only at the source. A `parent_item_ref` of `null` promotes the page to a root. Contract-reserved; not exposed in Phase 1. |
 | `cabinet_review(scope, cabinet_ref, version_ref, decision, rationale) → review record` | 2 | review | Approve/reject a `pending` version; approval advances `current_version`. Contract-reserved. |
 | `cabinet_link_attachment(scope, cabinet_ref, artifact_ref, role)` / `cabinet_unlink_attachment` | 3 | write + artifact read | Manage attachment links. Requires the actor to hold artifact read authority at link time. Contract-reserved until artifact-ref content transfer lands. |
 
-Error taxonomy (structured, stable): `NotFound` (also returned for unauthorized reads — deny must not confirm existence), `NotAuthorized` (writes only, where existence is already readable), `Conflict` (stale `base_version`), `ValidationError`, `PolicyError` (operation valid but disallowed by collection/Mission/kind policy).
+Error taxonomy (structured, stable): `NotFound` (also returned for unauthorized reads — deny must not confirm existence), `NotAuthorized` (writes only, where existence is already readable), `Conflict` (stale `base_version`), `ValidationError`, `PolicyError` (operation valid but disallowed by the effective page policy — including a cycle, depth-cap, or delete-with-children refusal).
 
 ## Authorization
 
@@ -178,19 +183,23 @@ An authorization decision consumes, in order:
 
 1. **Actor identity** — the explicit `ActorScope`.
 2. **Den membership** — the user's or Bear's standing in this Den ([identity-and-membership.md](identity-and-membership.md)). Non-members get nothing.
-3. **Mission membership** — when the item (or its collection) is bound to a Mission, the actor must be a Mission member for any access. Mission binding narrows access; it never widens access to unbound material.
-4. **Collection/kind policy** — per-collection policy may further restrict: read-only for Bears, write requires review (Phase 2), specific kinds disallowed.
+3. **Page membership** — resolved from the page and its ancestors. When any ancestor (or the page itself) sets `user_members`/`bear_members`, the actor must be a member for any access to that subtree. Membership narrows access; it never widens access to pages outside the subtree.
+4. **Effective page policy** — the nearest ancestor policy, which may further restrict: read-only for Bears, write requires review (Phase 2), specific kinds disallowed. Descendant policy may add restrictions, never remove them.
 5. **Requested authority** — `read`, `write`, or `review`.
+
+Steps 3 and 4 resolve over the ancestor chain, so a page's access is never
+looser than any page above it. Phase 1 implements steps 1–2 only, as a blanket
+capability check.
 
 ### Outcomes
 
 The decision is `allow` or `deny` with a structured, logged reason. Rules:
 
-- **Default for unbound items** (no Mission, no collection): readable and writable by every Den member — the open-wiki default. Deployments wanting stricter defaults set a default collection policy, not a special case.
-- **Mission-bound items**: read and write require Mission membership (user or Bear). This is the plan's Phase 2 exit condition — a Mission governs its knowledge without broadening access to unrelated Cabinet material.
-- **Bears are members, not superusers**: a Bear's access derives from its Mission/collection standing exactly as a user's does. Stance may narrow (e.g. policy may deny `work`-stance writes) but never widens.
-- **Search and read denial is silent**: filtered from search, `NotFound` on read.
-- Every mutating decision (allow or deny) is auditable: actor scope, operation, target refs, policy inputs, outcome.
+- **Default for pages with no policy anywhere above them**: readable and writable by every Den member — the open-wiki default. Deployments wanting a stricter default set a policy on their root pages rather than relying on a special case.
+- **Pages under membership**: read and write require membership (user or Bear) on the governing page. This is the plan's Phase 2 exit condition — a Mission governs its own material without broadening access to unrelated Cabinet pages.
+- **Bears are members, not superusers**: a Bear's access derives from the same ancestor chain a person's does. Stance may narrow (e.g. policy may deny `work`-stance writes) but never widens.
+- **Search and read denial is silent**: filtered from search, `NotFound` on read. A page whose parent is unreadable is itself unreadable, and its existence is not disclosed through the tree.
+- Every mutating decision (allow or deny) is auditable: actor scope, operation, target refs, resolved policy inputs, outcome.
 
 ## Distinctions (what Cabinet is not)
 
@@ -215,9 +224,11 @@ Consequences:
 4. `current_version` only moves forward through `cabinet_update_item` or (Phase 2) an approved review.
 5. Every record carries actor provenance sufficient to answer who wrote this, as whom, from where.
 6. Authorization is evaluated on every operation against current membership and policy — never cached across actors, never bypassed by provider access.
-7. Mission binding narrows access and never widens it; unauthorized existence is not disclosed.
-8. Cabinet stores no artifact bytes and no external-source bytes.
-9. Provider changes must not change refs, operation semantics, authority outcomes, or provenance fields.
+7. A page's effective access is never looser than any of its ancestors': membership and policy narrow down the tree and never widen. Unauthorized existence is not disclosed, through the tree or otherwise.
+8. The page tree is acyclic and depth-capped; `path` is derived and never accepted from a client.
+9. Cabinet stores no artifact bytes and no external-source bytes.
+10. Cabinet holds no work-management state: a Docket Job may name a page's `cabinet_ref`, but Cabinet stores no Job, task, or run identity.
+11. Provider changes must not change refs, operation semantics, authority outcomes, or provenance fields.
 
 ## Contract checks
 
@@ -227,16 +238,18 @@ Phase 0 exits with an assertion-style check suite (Rust tests colocated with the
 - every operation input type fails construction without an actor scope;
 - item, version, source-link, and attachment-link records fail validation when identity, provenance, scope, or authority fields are missing;
 - version construction rejects a missing `base_version` after revision 1 and any mutation of a finalized version;
-- Phase 1 review-state handling rejects `pending` creation.
+- Phase 1 review-state handling rejects `pending` creation;
+- (Phase 2) effective-policy resolution over an ancestor chain narrows monotonically — a descendant policy can never produce a broader outcome than its ancestors — and reparenting rejects cycles and depth-cap violations.
 
 ## Phase applicability
 
 | Contract element | Phase 0 (types + checks) | Phase 1 (facade) | Later |
 |------------------|--------------------------|------------------|-------|
-| Item, version, collection, source link records | defined | implemented | — |
-| Mission scope record | defined | membership-checked when present | Mission management (2) |
-| Search/read/create/update/history/archive/source ops | defined | implemented | — |
-| Organize, review ops + review states beyond `none` | defined | rejected | implemented (2) |
+| Item, version, source link records | defined | implemented | — |
+| Search/read/create/update/history/archive/delete/source ops | defined | implemented | — |
+| Page tree (`parent_item_ref`, `position`, `path`) | defined | rejected | implemented (2) |
+| Page policy + membership, ancestor resolution | defined | blanket capability check only | implemented (2) |
+| Organize (reparent/reorder), review ops + review states beyond `none` | defined | rejected | implemented (2) |
 | Attachment links | defined | rejected | implemented (3) |
 | Recall passage handoff | distinction defined | — | implemented (3) |
 

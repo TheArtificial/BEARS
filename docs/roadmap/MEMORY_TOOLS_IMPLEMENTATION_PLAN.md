@@ -151,7 +151,7 @@ Use the Den-owned **derived Qdrant recall index** ([ADR-0038](../decisions/adr-0
 Planned behavior:
 
 - One unified recall collection per active `embedding_standard` (`bears-embed-v1`), with payload filters for Bear and Cabinet scopes.
-- Add Cabinet Mission recall scopes once Cabinet Missions and Bear↔Mission assignments are defined.
+- Add Cabinet Mission recall scopes once Cabinet page policy/membership lands (Cabinet Phase 2): a Mission is a page and assignment is page membership, so a scope follows the page's subtree.
 - Recall scopes are policy-attached to role agents (ACL by membership + identity scope, [ADR-0015](../decisions/adr-0015-multi-user-memory.md)).
 - Den/curate owns indexing via the `archive_index` reflection lane; role agents do not maintain the shared index.
 - `memory_search` becomes hybrid (vector when Qdrant configured, else `LIKE`), ranked by `recency × relevance × importance`, degrading gracefully ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)).

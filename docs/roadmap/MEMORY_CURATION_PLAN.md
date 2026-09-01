@@ -502,7 +502,7 @@ Detailed phase status, completed work, and next implementation steps are tracked
 6. How should Cabinet proposal permissions differ from `core` proposal permissions?
 7. What bounded compaction/consolidation operations are safe enough for autonomous curate to perform without human approval?
 8. What is the initial recall-scope attachment policy by role?
-9. How should Cabinet Mission recall scopes be scoped and attached once Cabinet Missions and Bear↔Mission assignments are defined?
+9. How should Cabinet Mission recall scopes be scoped and attached? A Mission is a Cabinet page and "assignment" is page membership ([Cabinet contract](../architecture/cabinet-contract.md)), so the open part is whether a recall scope follows a page's subtree and how it is filtered by inherited page policy.
 10. Which `core/` records should be indexed into the recall index, and which should remain canonical-only (e.g. `scratch`, raw `log`)?
 
 ---
