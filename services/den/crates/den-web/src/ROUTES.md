@@ -129,6 +129,9 @@ Shared-knowledge wiki over the `den_service::cabinet` facade (Cabinet Phase 1; c
 - `GET /cabinet/{cabinet_ref}/edit` / `POST /cabinet/{cabinet_ref}/edit` — publish a new revision; a stale base re-renders the form with the conflict and the editor's draft
 - `GET /cabinet/{cabinet_ref}/history` — revision list
 - `POST /cabinet/{cabinet_ref}/archive` · `/restore` — lifecycle transitions
+- `POST /cabinet/{cabinet_ref}/delete` — tombstone the item; **people only** (the facade refuses Bears), revisions retained so existing citations keep resolving
+- `POST /cabinet/{cabinet_ref}/sources` — link provenance (kind, locator, role)
+- `POST /cabinet/{cabinet_ref}/sources/{source_ref}/remove` — unlink provenance
 
 All `/cabinet/*` routes use `login_required!(…)`; every Den user may read and edit (Phase 1 open-wiki default).
 

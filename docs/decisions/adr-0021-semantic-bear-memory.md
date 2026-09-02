@@ -1,6 +1,6 @@
 # Semantic Bear Memory — Architecture Decision Record
 
-## Status: Accepted
+## Status: Accepted (Mission terminology clarified 2026-09)
 
 ## Date: 2026-05-07
 
@@ -22,7 +22,7 @@ Earlier memory architecture established that raw role-local memory can be review
 The system also needs a semantic vocabulary for shared knowledge. Cabinet should contain designated spaces for:
 
 - **People** — knowledge about people, relationships, preferences, and identity-sensitive facts.
-- **Missions** — shared work/knowledge containers that may contain multiple projects and may involve multiple Bears.
+- **Missions** — shared knowledge for an initiative that may involve multiple Bears. *(Terminology clarified 2026-09: Cabinet's only structural concept is a page tree, so a Mission is a page whose subtree holds the grouped material, not a container entity — see the [Cabinet contract](../architecture/cabinet-contract.md). The memory-annotation semantics in this ADR are unaffected: `mission_ref` still means "relates to a Cabinet Mission", and its value is that page's `cabinet_ref`.)*
 - **Knowledge** — general reusable knowledge, policies, procedures, decisions, concepts, and references.
 
 The question is how this semantic structure should influence Bear memory without forcing every memory object to map to a Cabinet object or become a `core/` candidate.

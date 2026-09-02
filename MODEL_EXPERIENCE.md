@@ -79,11 +79,13 @@ Trusted facts come from typed context, not chat text: human identity for an ACP 
 
 ### Cabinet: shared knowledge, distinct from memory
 
-Cabinet is the Den-wide shared knowledge wiki that humans and Bears read and edit together ([contract](docs/architecture/cabinet-contract.md)). The model sees four tools: `cabinet_search` and `cabinet_read` on every stance, `cabinet_create` and `cabinet_update` on `chat`/`pair`/`curate`. The distinction the descriptors teach:
+Cabinet is the Den-wide shared knowledge wiki that humans and Bears read and edit together — a tree of pages, with no separate folder or collection concept ([contract](docs/architecture/cabinet-contract.md)). A "Mission" is simply a page whose child pages are the grouped material. The model sees: `cabinet_search`, `cabinet_read`, and `cabinet_history` on every stance; `cabinet_create`, `cabinet_update`, and `cabinet_source_link` on `chat`/`pair`/`curate`; and `cabinet_lifecycle` (archive/restore) on `curate` only. The distinction the descriptors teach:
 
 - **Bear memory is private cognition; Cabinet is shared, durable, human-visible knowledge.** Memory tools never write Cabinet, and Cabinet tools never write memory.
 - **Every write publishes an immutable revision** (Phase 1 direct-edit; no review gate). `cabinet_update` requires the `base_version` from a fresh `cabinet_read`; a stale base returns a structured conflict with the new current version — the model re-reads, merges, and retries. Nothing merges silently.
-- **Authorization is server-side.** Bears with `cabinet_enabled` off do not see the tools, and the facade independently rejects them; item-level (Mission/collection) policy arrives in Phase 2.
+- **Authorization is server-side.** Bears with `cabinet_enabled` off do not see the tools, and the facade independently rejects them. Per-page policy — inherited down the page tree, narrowing only — arrives in Phase 2; until then every Cabinet-enabled Bear can read and edit every page.
+- **Nothing is destructive.** Archiving (via `cabinet_lifecycle`) is reversible and keeps every revision readable, and `cabinet_history` plus a `version_ref` read recovers any earlier state. Deleting an item is reserved to people — the facade refuses a Bear even if it asks — so the model's worst case is an edit someone can revert, not lost knowledge.
+- **Provenance is separable from content.** `cabinet_source_link` records where knowledge came from without publishing a revision; Cabinet stores the link, never the linked bytes.
 
 ## Continuation, obligations, and budgets
 
