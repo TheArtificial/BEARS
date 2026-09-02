@@ -6057,6 +6057,23 @@ async fn publish_focus_title_update(
     send_session_info_update(session_id, Some(title), updated_at).await
 }
 
+fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
+    let binding = result
+        .get("pair_binding")
+        .ok_or_else(|| anyhow!("Docket response omitted Pair loop binding"))?;
+    if binding.get("status").and_then(Value::as_str) != Some("attached") {
+        return Err(anyhow!(
+            "Docket did not attach Pair loop control: {}",
+            compact_json_for_status(binding)
+        ));
+    }
+    binding
+        .get("loop_run_id")
+        .and_then(Value::as_str)
+        .filter(|run_id| !run_id.trim().is_empty())
+        .ok_or_else(|| anyhow!("Docket attached the task but did not confirm a Pair loop run"))
+}
+
 async fn focus_job_report(
     http: &reqwest::Client,
     config: &Config,
@@ -6078,6 +6095,14 @@ async fn focus_job_report(
     .await
     {
         Ok(result) => {
+            let run_id = match confirmed_focus_run_id(&result) {
+                Ok(run_id) => run_id.to_string(),
+                Err(err) => {
+                    return format!(
+                        "Den ACP /focus did not acquire loop control for job {job_id}: {err:#}\n\nThe task may still be selected, but focus is not active. Retry /focus; an ordinary prompt is not a substitute."
+                    );
+                }
+            };
             if let Err(err) = publish_focus_title_update(
                 http,
                 config,
@@ -6095,7 +6120,7 @@ async fn focus_job_report(
                 }
             }
             format!(
-                "Den ACP focus set\n\n- Job: {job_id}\n- Docket execution: {}",
+                "Den ACP focus acquired\n\n- Job: {job_id}\n- Pair run: {run_id}\n- Docket execution: {}",
                 compact_json_for_status(&result)
             )
         },
@@ -13463,6 +13488,40 @@ mod tests {
             focus_job_id_from_prompt(&format!("/focus {job_id} extra")),
             None
         );
+    }
+
+    #[test]
+    fn focus_requires_confirmed_pair_run() {
+        let acquired = json!({
+            "pair_binding": {
+                "status": "attached",
+                "loop_run_id": "run_123"
+            }
+        });
+        assert_eq!(confirmed_focus_run_id(&acquired).unwrap(), "run_123");
+
+        let split_brain = json!({
+            "pair_binding": {
+                "status": "attached",
+                "current_task_selected": true,
+                "loop_run_id": null
+            }
+        });
+        assert!(confirmed_focus_run_id(&split_brain)
+            .unwrap_err()
+            .to_string()
+            .contains("did not confirm a Pair loop run"));
+
+        let unattached = json!({
+            "pair_binding": {
+                "status": "not_attempted",
+                "reason": "no_authenticated_pair_session"
+            }
+        });
+        assert!(confirmed_focus_run_id(&unattached)
+            .unwrap_err()
+            .to_string()
+            .contains("did not attach Pair loop control"));
     }
 
     #[test]
