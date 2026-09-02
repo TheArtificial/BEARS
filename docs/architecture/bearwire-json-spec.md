@@ -375,6 +375,39 @@ Use when the session is bound to a backing runtime context.
 
 `open_obligations` is optional and diagnostic. When present, it exposes Den-owned liveness state so armatures can report or recover from missed local-tool/permission obligations without inferring state from rendered transcript text.
 
+#### `diagnostic.state_transition`
+
+A persistent, replayable tracing event for a major Den-owned control-plane transition. It records the transition accepted by the authoritative reducer; it is not a second state store, a command acknowledgement, or authority for subsequent execution.
+
+```json
+{
+  "aggregate": "pair_execution",
+  "resource_id": "ses_123",
+  "transition": "start_accepted",
+  "from": "paused",
+  "to": "running",
+  "reason_code": "focus_command",
+  "correlation_id": "cmd_123",
+  "causation_event_id": "evt_000041",
+  "state_version": 18,
+  "refs": {
+    "task_id": "task_123",
+    "execution_run_id": "run_123",
+    "attempt_id": "attempt_123",
+    "fence": 7
+  },
+  "summary": "Pair execution acquired and first slice queued"
+}
+```
+
+Emit this event for major, user-relevant transitions such as execution start/acquisition, pause, resume, steering interruption, obligation wait/clear, reconciliation, terminal settlement, and rejected transitions. Do not emit every internal write or heartbeat. Payloads must be bounded, typed, redacted, and derived from the same transition result that commits authoritative state; free-form `summary` is presentation help, never machine authority.
+
+These events use `scope = "persistent"` and the canonical session replay stream so post-incident views can reconstruct what Den decided without scraping logs or fabricated transcript messages. They are control-plane transcript artifacts, not model-role messages: normal model-history projection excludes them unless a context policy explicitly requests a bounded diagnostic summary.
+
+Den sends authorized subscribers the same event stream regardless of whether a debug panel is open. Debug visibility is client-local presentation state; opening it must not mutate session state or change which transitions Den records. Subscription authorization and resource scope remain Den-side. A future bandwidth-sensitive filtered subscription may omit diagnostics only as an explicit transport optimization with cursor/replay semantics; it must not make recording conditional on a session debug flag. Clients that do not render this event must ignore it as an optional compatibility event.
+
+For inspectability, an initial `session.state` snapshot should include the current authoritative aggregate and version, while subsequent `diagnostic.state_transition` events explain changes. Clients detect a sequence/version gap and reload the snapshot rather than inventing intermediate state.
+
 #### `runtime.objective_orientation`
 
 A non-blocking, advisory runtime-context update. It describes the current conversation objective/orientation for diagnostics and compatible surface projections. It does not create a client obligation, alter run liveness, require a response, or require model continuation.

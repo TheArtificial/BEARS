@@ -65,7 +65,8 @@ use crate::tools::{
         DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE,
         DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_CHECKOUT_PROVIDER,
         DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC, DEN_TASK_LIST_SYNC_PROVIDER,
-        DEN_TASK_REJECT_INTENT, DEN_TASK_SELECT, DEN_TASK_SELECT_PROVIDER, DEN_TASK_UPDATE,
+        DEN_TASK_REJECT_INTENT, DEN_TASK_FOCUS, DEN_TASK_FOCUS_PROVIDER, DEN_TASK_SELECT,
+        DEN_TASK_SELECT_PROVIDER, DEN_TASK_UPDATE,
         DEN_TASK_UPDATE_CURRENT_STATUS, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
         DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ,
         DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
@@ -165,6 +166,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_TASK_FIND => return DEN_TASK_FIND_PROVIDER.to_string(),
         DEN_TASK_UPDATE => return DEN_TASK_UPDATE_PROVIDER.to_string(),
         DEN_TASK_SELECT => return DEN_TASK_SELECT_PROVIDER.to_string(),
+        DEN_TASK_FOCUS => return DEN_TASK_FOCUS_PROVIDER.to_string(),
         DEN_TASK_UPDATE_CURRENT_STATUS => {
             return DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER.to_string()
         }
@@ -768,6 +770,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             json!({"type":"object","properties":{"task_id":{"type":["string","null"],"format":"uuid"}},"additionalProperties":false}),
         ),
         descriptor(
+            DEN_TASK_FOCUS,
+            "Focus current Pair task",
+            "Start or resume Docket loop control for this Pair session's already-selected executable task. This does not select, create, replace, or settle a task. Success means Den acquired execution control and durably queued or started the first loop slice; a typed failure leaves the selection unchanged. Use this when the selected task should proceed without requiring a second user message.",
+            "bear.docket",
+            &["docket.task.write"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{},"additionalProperties":false}),
+        ),
+        descriptor(
             DEN_TASK_UPDATE_CURRENT_STATUS,
             "Update current task status",
             "Update a session-owned Pair task's status/results. Omit job_id and run_id only for a task owned by this Pair session. Never use this for a task returned or claimed by execute_job/reconcile_job_execution: use settle_execution_task with its job_id and task_id; it settles the active execution run without a run_id. Every terminal status (done, blocked, or cancelled) requires a non-empty result_summary; Den records it atomically as the durable task outcome. Use outcome_disposition when the default does not describe the result: done accepts completed, no_change, or delegated; blocked accepts blocked or failed; cancelled accepts only cancelled. For report-only work, result_summary is sufficient and result_refs may be omitted. If the task has a verified primary output, provide result_refs.primary_output {kind: git_commit|den_artifact, artifact_ref, immutable_identity} and result_refs.validation {primary_output_ref, immutable_identity, command, result: passed, execution_provenance}; validation must match the primary output exactly. Do not invent primary-output evidence for work that did not produce it. Does not edit durable task definitions or execute task bodies.",
@@ -1139,6 +1150,7 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         // ACP has no client-owned task-picker UI. The Pair agent selects only on
         // explicit user instruction; task-list visibility is not task authority.
         DEN_TASK_SELECT,
+        DEN_TASK_FOCUS,
         DEN_TASK_UPDATE_CURRENT_STATUS,
         DEN_DOCKET_ENTRY_APPEND,
         DEN_DOCKET_ENTRY_LIST,

@@ -258,6 +258,25 @@ Work run     -> assigned Docket Job              -> work-execution behavior
 - `client_sessions.current_task_id` is the sole Pair selection authority. It may identify a session-local task or a Docket task reference. A valid explicit selection has precedence over any cached task-list or implicit-next-task projection; no cached task list or implicit next task may manufacture it.
 - A Pair session has at most one session-connected root task. **Planning mode is derived solely from that root's `draft` status**; it is not an independent persisted flag. While the root is draft, every descendant is non-executable even if its own status is otherwise ready/pending, Pair must have no execution current task, and no Pair execution run is created. Selecting a draft task or a descendant of a draft ancestor for execution is rejected.
 - An explicit execution current-task selection is Pair's start signal once its root is non-draft. It drives execution focus; a Pair execution run is created or resumed to record the attempt, budget slices, and checkpoint/resume history. The run does not grant execution authority. A non-draft session-connected current task must have that persisted run before execution begins. `RunPaused` requires its persisted run ID; absence of one is execution-initialization failure, not a valid runless pause. A real budget boundary pauses the run while preserving the selected task, so the controller resumes a subsequent slice rather than requiring the user to say "continue." UI navigation focus is client-local and must not mutate this selection.
+- Starting Pair execution is one Den-owned command, not a client-orchestrated sequence of "select, create run, acquire controller, then invoke." The command resolves the persisted selection, creates or resumes its execution run, acquires a fenced Docket attempt, and schedules the first loop slice under one serialized transition. It returns success only when the resulting authoritative projection is executable and scheduled. A failure must leave a typed durable outcome; it must not leave a nominally running run with an inactive controller and no attempt.
+- `/focus` is an edge spelling of that command. It both assigns Docket loop control to the selected executable Pair task and starts the loop; a second "please start" turn is neither required nor a supported part of the protocol. Later ordinary user steering may interrupt that execution control, but it does not clear the persisted current-task selection.
+- Pair execution status is reduced by one authoritative Den-side aggregate from persisted selection, execution run, fenced attempt/lease, scheduler/controller ownership, and any open obligation. Components and clients must not independently infer `running` from only one of those records. Docket lifecycle, session activity, and runtime controller state are inputs to the aggregate, not peer authorities.
+
+The aggregate exposes a small derived state such as `unfocused`, `starting`, `running`, `waiting`, `paused`, `blocked`, or `terminal`, plus a typed reason and the identities/fences from which it was reduced. Impossible combinations are invariant violations, not additional steady states. At minimum:
+
+```text
+PairExecution=running
+  => executable persisted selection
+  && active persisted execution run
+  && current fenced attempt/lease
+  && live or durably queued controller ownership
+
+start command accepted
+  => PairExecution in {running, waiting}
+  || typed durable start failure
+```
+
+Reconciliation may repair an expired lease or settle an abandoned attempt, but it must use the same aggregate and transition service as the normal command. It must not mask a split state by rewriting only the UI projection.
 - A Work run's explicit assigned Job is the sole Work execution boundary. Its optional `executing_task_id` is in-run progress within that Job, never a replacement assignment and never sourced from Pair.
 - Pair task orientation is `freeform` without a resolved current task and task-oriented with one. A Docket-backed Pair task remains task-oriented; it does not acquire Work execution authority. Work derives execution orientation only from its assigned Job.
 
