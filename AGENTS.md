@@ -81,7 +81,7 @@ Use a lowercase underscore description (for example, `add_widget_status`). The p
 
 - A Bear's **charter** is a descriptive property of the Bear: its durable purpose/responsibility boundary. Do not model `charter_id`, `charters[]`, or a separate Charter entity unless explicitly requested.
 - Bear-scoped records should use `bear_id`. Bear-specific knowledge areas are **Domains** under the Bear, not Cabinet Missions.
-- Cabinet **Missions** are shared work/knowledge containers with an n:n relationship to Bears. Use `mission_ref` only for Cabinet Missions.
+- A Cabinet **Mission** is a *page* in Cabinet, not a container entity: its child pages are the grouped material, and page policy/membership decide who may read or edit that subtree. Do not model a Mission id space, collection entity, or Cabinet→Job reference; name a Mission by its `cabinet_ref` ([Cabinet contract](docs/architecture/cabinet-contract.md)). Use `mission_ref` only where a record annotates "relates to a Cabinet Mission", never for Bear Domains.
 - `core/` is canonical shared Bear memory. Role branches (`talk/`, `pair/`, `curate/`, `work/`, `watch/`) are role-local memory.
 - Letta Archives are derived semantic retrieval indexes over canonical sources, not the source of truth. Do not introduce a Bear Den vector store while Letta Archives satisfy retrieval needs.
 

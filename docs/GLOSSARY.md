@@ -75,3 +75,13 @@ stance — not defined by the stance. See ADR-0039.
 Tool-call budgets, failure thresholds, focused-Job
 nudges, and checkpoint nudges are Agent Loop Control
 concerns; see ADR-0050.
+
+**Cabinet Mission**
+a page in Cabinet whose subtree gathers the shared
+knowledge for an initiative. Not a container entity:
+Cabinet's only structural concept is the page tree, so a
+Mission is named by its `cabinet_ref`, its child pages are
+the grouped material, and its page policy/membership govern
+who may read or edit the subtree. A Docket Job may name a
+Mission page; Cabinet stores no Job identity. See the
+Cabinet contract.

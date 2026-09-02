@@ -1,8 +1,14 @@
 # Cabinet: shared knowledge
 
 Cabinet is your Den's shared knowledge wiki. People and Bears read and edit the
-same items; every edit publishes a new immutable revision, and the full
+same pages; every edit publishes a new immutable revision, and the full
 revision history is always available. There is one Cabinet per Den.
+
+Cabinet is a **tree of pages** and nothing else — there are no separate folders
+or collections. A page can hold content, child pages, or both. A "Mission" is
+just a page describing a goal, with its plans and references as child pages;
+a Docket job can point at that page when it needs the documentation for its
+work. (Hierarchy arrives in Phase 2; today every page is a root.)
 
 Contract and design: [cabinet-contract.md](../architecture/cabinet-contract.md).
 Plan and phase status: [CABINET_IMPLEMENTATION_PLAN.md](../roadmap/CABINET_IMPLEMENTATION_PLAN.md).
@@ -22,17 +28,33 @@ Open **`/cabinet`** while logged in.
   ever merged silently and nothing is overwritten.
 - **History** — every revision is immutable and permanently viewable at
   `/cabinet/{item}/history`, with author kind and timestamp.
+- **Sources** — record where an item's knowledge came from (a URL, a book, an
+  artifact, a conversation). Cabinet stores the link, not the linked content,
+  and adding or removing one does not publish a revision.
 - **Archive / restore** — archiving hides an item from default search and
-  blocks edits until restored. Deletion is a tombstone: revision history stays
-  citable. There is no hard delete in the UI.
+  blocks edits until restored. Reversible, and every revision stays readable.
+- **Delete** — tombstones the item: it leaves Cabinet for everyone, while its
+  revisions are retained so anything that already cited them keeps resolving.
+  **Only people can delete.** A Bear that tries is refused by the server, so
+  the most destructive thing a Bear can do to shared knowledge is archive it.
+  Hard purge (removing the retained revisions) is an operator action, not a
+  button here.
 
 ## What Bears can do
 
-Bears use the same knowledge store through four tools: `cabinet_search`,
-`cabinet_read` (all stances), `cabinet_create`, `cabinet_update`
-(`chat`/`pair`/`curate` stances). A Bear's edits go through exactly the same
-facade, versioning, and conflict rules as yours, and show up in history as
-Bear-authored with the acting stance.
+Bears use the same knowledge store through the same facade:
+
+| Tool | Stances | What it does |
+|---|---|---|
+| `cabinet_search`, `cabinet_read`, `cabinet_history` | all | find, read (any revision), and inspect revision history |
+| `cabinet_create`, `cabinet_update` | chat, pair, curate | create an item, publish a revision |
+| `cabinet_source_link` | chat, pair, curate | attach or detach provenance (no revision published) |
+| `cabinet_lifecycle` | curate only | archive or restore an item |
+
+A Bear's edits go through exactly the same facade, versioning, and conflict
+rules as yours, and show up in history as Bear-authored with the acting
+stance. Bears cannot delete: the most destructive act available to one is a
+reversible archive, and only `curate` can do even that.
 
 Cabinet is deliberately separate from a Bear's private memory: memory tools
 cannot write Cabinet, and Cabinet tools cannot write Bear memory.
@@ -44,9 +66,11 @@ cannot write Cabinet, and Cabinet tools cannot write Bear memory.
 - **Bears:** gated per Bear by the `cabinet_enabled` flag on the Bear record
   (default on, like `work_enabled`). A disabled Bear does not see the Cabinet
   tools and the server independently refuses it access.
-- **Missions and collections** (scoped sharing, review/approval policy) are
-  Phase 2: item requests that name them are refused with a clear policy error
-  today.
+- **Scoped sharing is Phase 2.** Access policy and membership will live on
+  pages and inherit down the tree, narrowing only: put members on a Mission
+  page and its whole subtree becomes private to them, while unrelated pages
+  are untouched. Requests that try to set hierarchy or policy today are
+  refused with a clear policy error.
 
 ## Source links
 
@@ -59,5 +83,7 @@ the bytes behind them.
 
 - Search is substring matching over titles and current content (no semantic
   recall yet; that is Phase 3, via the derived recall index).
-- Attachments (files on items, via artifact refs) are Phase 3.
+- Page hierarchy, sibling ordering, and per-page permissions are Phase 2, so
+  every page is currently a root and every Den user can edit everything.
+- Attachments (files on pages, via artifact refs) are Phase 3.
 - The editor is a plain Markdown textarea; rendered views sanitize HTML.
