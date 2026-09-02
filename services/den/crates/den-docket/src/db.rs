@@ -1308,6 +1308,62 @@ pub(super) async fn authorize_execution_attempt(
     row.try_into()
 }
 
+pub(super) async fn get_live_pair_execution_attempt(
+    pool: &PgPool,
+    bear_id: Uuid,
+    task_id: Uuid,
+    session_id: &str,
+    pair_run_id: &str,
+) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
+    sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r"
+        SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+               fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
+               released_at, created_at, updated_at
+        FROM docket_execution_attempts
+        WHERE bear_id = $1 AND task_id = $2 AND owner_kind = 'pair'
+          AND pair_session_id = $3 AND pair_run_id = $4
+          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+        ",
+    )
+    .bind(bear_id)
+    .bind(task_id)
+    .bind(session_id)
+    .bind(pair_run_id)
+    .fetch_optional(pool)
+    .await?
+    .map(TryInto::try_into)
+    .transpose()
+}
+
+pub(super) async fn get_live_pair_execution_attempt_for_session(
+    pool: &PgPool,
+    bear_id: Uuid,
+    task_id: Uuid,
+    session_id: &str,
+) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
+    sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r"
+        SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+               fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
+               released_at, created_at, updated_at
+        FROM docket_execution_attempts
+        WHERE bear_id = $1 AND task_id = $2 AND owner_kind = 'pair'
+          AND pair_session_id = $3
+          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+        ORDER BY created_at DESC
+        LIMIT 1
+        ",
+    )
+    .bind(bear_id)
+    .bind(task_id)
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?
+    .map(TryInto::try_into)
+    .transpose()
+}
+
 pub(super) async fn start_execution_attempt(
     pool: &PgPool,
     start: DocketExecutionAttemptStart,

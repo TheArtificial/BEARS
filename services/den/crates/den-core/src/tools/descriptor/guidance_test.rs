@@ -6,9 +6,10 @@ use crate::{
             DEN_JOB_CREATE_PROVIDER, DEN_JOB_RECONCILE, DEN_JOB_RECONCILE_PROVIDER,
             DEN_JOB_SETTLE_TASK, DEN_JOB_SETTLE_TASK_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
             DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER,
-            DEN_SITUATION_GET_PROVIDER, DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
-            DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_FOCUS_PROVIDER,
-            DEN_TASK_SELECT_PROVIDER, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
+            DEN_SITUATION_GET_PROVIDER, DEN_TASK_CREATE_PROVIDER, DEN_TASK_FOCUS_PROVIDER,
+            DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT_PROVIDER,
+            DEN_TASK_LIST_PROVIDER, DEN_TASK_SELECT_PROVIDER,
+            DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
         },
         descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
     },
@@ -188,8 +189,12 @@ fn focus_current_task_is_pair_only_and_does_not_select() {
         .expect("focus_current_task descriptor");
 
     assert_eq!(descriptor.input_schema["properties"], serde_json::json!({}));
-    assert!(descriptor.description.contains("already-selected executable task"));
-    assert!(descriptor.description.contains("does not select, create, replace, or settle"));
+    assert!(descriptor
+        .description
+        .contains("already-selected executable task"));
+    assert!(descriptor
+        .description
+        .contains("does not select, create, replace, or settle"));
     assert!(builtin_den_tool_descriptors_for_profile(BearProfile::Pair)
         .iter()
         .any(|descriptor| descriptor.provider_name == DEN_TASK_FOCUS_PROVIDER));

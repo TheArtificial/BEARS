@@ -85,6 +85,23 @@ pub trait DocketService: Send + Sync {
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError>;
 
+    /// Loads the exact live Pair authority already bound to a run. Repeated
+    /// focus/start calls must reuse this row rather than minting new authority.
+    async fn get_live_pair_execution_attempt(
+        &self,
+        bear_id: Uuid,
+        task_id: Uuid,
+        session_id: &str,
+        pair_run_id: &str,
+    ) -> Result<Option<DocketExecutionAttemptRow>, DenError>;
+
+    async fn get_live_pair_execution_attempt_for_session(
+        &self,
+        bear_id: Uuid,
+        task_id: Uuid,
+        session_id: &str,
+    ) -> Result<Option<DocketExecutionAttemptRow>, DenError>;
+
     /// Revalidates exact canonical Work authority at a safe boundary. A
     /// pending checkpoint directive denies a new runtime window.
     async fn check_work_boundary(
@@ -262,6 +279,27 @@ impl DocketService for PgDocketService {
         start: DocketExecutionAttemptStart,
     ) -> Result<DocketExecutionAttemptRow, DenError> {
         db::start_execution_attempt(&self.pool, start).await
+    }
+
+    async fn get_live_pair_execution_attempt(
+        &self,
+        bear_id: Uuid,
+        task_id: Uuid,
+        session_id: &str,
+        pair_run_id: &str,
+    ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
+        db::get_live_pair_execution_attempt(&self.pool, bear_id, task_id, session_id, pair_run_id)
+            .await
+    }
+
+    async fn get_live_pair_execution_attempt_for_session(
+        &self,
+        bear_id: Uuid,
+        task_id: Uuid,
+        session_id: &str,
+    ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
+        db::get_live_pair_execution_attempt_for_session(&self.pool, bear_id, task_id, session_id)
+            .await
     }
 
     async fn check_work_boundary(

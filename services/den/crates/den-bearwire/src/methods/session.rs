@@ -1,9 +1,6 @@
 use axum::http::HeaderMap;
 use den_core::DenError;
-use den_docket::{
-    DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptStart,
-    DocketService, PgDocketService,
-};
+use den_docket::{DocketService, PgDocketService};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -881,7 +878,7 @@ pub(crate) async fn start_pair_current_task(
                 },
             )
             .await?;
-            let attempt = start_pair_execution_attempt(
+            let attempt = existing_pair_execution_attempt(
                 &state.sqlx_pool,
                 bear.id,
                 task_id,
@@ -903,7 +900,7 @@ pub(crate) async fn start_pair_current_task(
                 "fence_epoch": attempt.fence_epoch,
             }));
         }
-        let attempt = start_pair_execution_attempt(
+        let attempt = existing_pair_execution_attempt(
             &state.sqlx_pool,
             bear.id,
             task_id,
@@ -919,6 +916,33 @@ pub(crate) async fn start_pair_current_task(
             "session_id": session_id,
             "task_id": task_id,
             "state": run.state,
+            "execution_attempt_id": attempt.id,
+            "fence_epoch": attempt.fence_epoch,
+        }));
+    }
+
+    if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
+        .get_live_pair_execution_attempt_for_session(bear.id, task_id, session_id)
+        .await?
+    {
+        let run_id = match &attempt.owner {
+            den_docket::DocketExecutionAttemptOwner::Pair { pair_run_id, .. } => {
+                pair_run_id.clone()
+            }
+            den_docket::DocketExecutionAttemptOwner::Work { .. } => {
+                return Err(CustomError::ValidationError(
+                    "live Pair execution authority has a non-Pair owner".to_string(),
+                ));
+            }
+        };
+        return Ok(json!({
+            "ok": true,
+            "started": false,
+            "reused": true,
+            "run_id": run_id,
+            "session_id": session_id,
+            "task_id": task_id,
+            "state": attempt.state,
             "execution_attempt_id": attempt.id,
             "fence_epoch": attempt.fence_epoch,
         }));
@@ -970,32 +994,21 @@ pub(crate) async fn start_pair_current_task(
     }))
 }
 
-async fn start_pair_execution_attempt(
+async fn existing_pair_execution_attempt(
     pool: &PgPool,
     bear_id: uuid::Uuid,
     task_id: uuid::Uuid,
     session_id: &str,
     run_id: &str,
 ) -> Result<den_docket::DocketExecutionAttemptRow, CustomError> {
-    let authorization_key = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, run_id.as_bytes());
-    let service = PgDocketService::from_pool(pool);
-    let attempt = service
-        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
-            bear_id,
-            task_id,
-            owner: DocketExecutionAttemptOwner::Pair {
-                session_id: session_id.to_string(),
-                pair_run_id: run_id.to_string(),
-            },
-            authorization_key,
+    PgDocketService::from_pool(pool)
+        .get_live_pair_execution_attempt(bear_id, task_id, session_id, run_id)
+        .await?
+        .ok_or_else(|| {
+            CustomError::ValidationError(
+                "active Pair run has no matching live execution authority".to_string(),
+            )
         })
-        .await?;
-    Ok(service
-        .start_execution_attempt(DocketExecutionAttemptStart {
-            attempt_id: attempt.id,
-            fence_epoch: attempt.fence_epoch,
-        })
-        .await?)
 }
 
 pub(crate) async fn session_current_task_clear_result(
