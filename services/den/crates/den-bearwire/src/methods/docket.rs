@@ -447,13 +447,24 @@ async fn execution_result(
             .await?;
             let loop_start =
                 start_pair_current_task(state, user_id, bear, client_session_id).await?;
+            let loop_run_id = loop_start["run_id"].as_str().ok_or_else(|| {
+                CustomError::System("Pair task start omitted its run id".to_string())
+            })?;
+            let loop_run = den_runtime::turn_runs::get_run(&state.sqlx_pool, loop_run_id)
+                .await?
+                .ok_or_else(|| {
+                    CustomError::System("Pair task start run was not persisted".to_string())
+                })?;
+            let loop_started = pair_loop_state_confirms_start(&loop_run.state);
             pair_binding = json!({
-                "status": "attached",
+                "status": if loop_started { "attached" } else { "attached_not_started" },
                 "task_id": task_id,
                 "client_session_id": client_session_id,
                 "current_task_selected": true,
-                "loop_started": loop_start["started"].clone(),
-                "loop_run_id": loop_start["run_id"].clone(),
+                "loop_started": loop_started,
+                "loop_run_id": loop_run.run_id,
+                "loop_state": loop_run.state,
+                "loop_terminal_reason": loop_run.terminal_reason,
             });
         } else {
             pair_binding = json!({
@@ -465,6 +476,16 @@ async fn execution_result(
         }
     }
     execution_result_payload(outcome, pair_binding)
+}
+
+fn pair_loop_state_confirms_start(state: &str) -> bool {
+    // `accepted` only proves that a row was inserted. The background task must
+    // advance it before /focus may claim loop control; terminal success/block
+    // states also prove that the loop ran, even if it finished very quickly.
+    matches!(
+        state,
+        "running" | "waiting_for_client" | "continuing" | "completed" | "blocked"
+    )
 }
 
 fn execution_result_payload(
@@ -632,6 +653,18 @@ mod tests {
         assert_eq!(status["reason"], "active_task_is_stale");
         assert_eq!(status["resources"]["run_id"], run_id.to_string());
         assert_eq!(status["resources"]["selected_task_id"], task_id.to_string());
+    }
+
+    #[test]
+    fn pair_loop_start_requires_background_progress() {
+        assert!(!pair_loop_state_confirms_start("accepted"));
+        assert!(!pair_loop_state_confirms_start("failed"));
+        assert!(!pair_loop_state_confirms_start("cancelled"));
+        assert!(pair_loop_state_confirms_start("running"));
+        assert!(pair_loop_state_confirms_start("waiting_for_client"));
+        assert!(pair_loop_state_confirms_start("continuing"));
+        assert!(pair_loop_state_confirms_start("completed"));
+        assert!(pair_loop_state_confirms_start("blocked"));
     }
 
     #[test]
