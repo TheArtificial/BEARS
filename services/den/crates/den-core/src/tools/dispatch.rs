@@ -307,13 +307,16 @@ pub async fn invoke_den_tool(
         | DEN_RUN_WRITE_RESULT => Err(DenError::System(format!(
             "Den tool `{tool_name}` is registered and role-authorized but not implemented in this session module"
         ))),
+        _ if has_external_runtime_executor(tool_name) => Err(DenError::System(format!(
+            "Den tool `{tool_name}` is exposed but its external runtime executor did not intercept the invocation"
+        ))),
         _ => Err(DenError::NotFound(format!("unknown Den tool: {tool_name}"))),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::has_known_executor;
+    use super::{has_external_runtime_executor, has_known_executor};
     use crate::tools::descriptor::builtin_den_tool_descriptors_for_pair_acp_surface;
 
     #[test]
@@ -334,5 +337,7 @@ mod tests {
     #[test]
     fn focus_provider_name_has_an_external_executor() {
         assert!(has_known_executor("focus_current_task"));
+        assert!(has_external_runtime_executor("den.task.focus"));
+        assert!(has_external_runtime_executor("focus_current_task"));
     }
 }
