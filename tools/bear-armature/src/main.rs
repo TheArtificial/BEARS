@@ -2960,7 +2960,7 @@ async fn handle_request(
                 )
                 .await
                 {
-                    Ok((mode, context_budget)) => {
+                    Ok((mode, context_budget, den)) => {
                         let response = ResumeSessionResponse::new()
                             .config_options(session_config_options_for_mode(mode))
                             .modes(session_modes_for_mode(mode));
@@ -2971,6 +2971,19 @@ async fn handle_request(
                             .and_then(Value::as_str)
                             .unwrap_or("");
                         if !session_id.is_empty() {
+                            // ACP clients establish the resumed session only after this
+                            // response. Replay afterwards or the client can discard the
+                            // updates as belonging to an unknown session.
+                            if let Some(den) = den.as_ref() {
+                                replay_history_for_den_session(
+                                    http,
+                                    config,
+                                    session_id,
+                                    den,
+                                    "session/resume",
+                                )
+                                .await?;
+                            }
                             send_available_commands_update(session_id).await?;
                             if let Some(context_budget) = context_budget {
                                 send_context_budget_usage_update(session_id, context_budget)
@@ -5029,7 +5042,7 @@ async fn restore_session_from_den(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     params: &Value,
-) -> Result<(&'static str, Option<Value>)> {
+) -> Result<(&'static str, Option<Value>, Option<Value>)> {
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
@@ -5086,18 +5099,13 @@ async fn restore_session_from_den(
         adapter_state.clone(),
         None,
     );
-    if let Some(den) = den.as_ref() {
-        // ACP clients rehydrate an existing session through session/resume.
-        // Project canonical history here, as on session/load, so the restored
-        // client-visible transcript includes prior agent messages.
-        replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
-    }
     Ok((
         den.as_ref()
             .map(infer_mode_from_den_session)
             .unwrap_or(MODE_ASK),
         den.as_ref()
             .and_then(|session| session.get("context_budget").cloned()),
+        den,
     ))
 }
 
@@ -15677,13 +15685,30 @@ mod tests {
             .map(Value::to_string)
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(agent_text.contains("A historical agent answer"), "{output:#?}");
         assert!(
-            output.iter().any(
-                |frame| frame.get("id").and_then(Value::as_str) == Some("resume-1")
-                    && frame.get("result").is_some()
-            ),
+            agent_text.contains("A historical agent answer"),
             "{output:#?}"
+        );
+        let resume_result_index = output
+            .iter()
+            .position(|frame| {
+                frame.get("id").and_then(Value::as_str) == Some("resume-1")
+                    && frame.get("result").is_some()
+            })
+            .expect("session/resume success response: {output:#?}");
+        let first_history_update_index = output
+            .iter()
+            .position(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        .is_some_and(|kind| matches!(kind, "agent_message_chunk" | "tool_call"))
+            })
+            .expect("replayed history update: {output:#?}");
+        assert!(
+            resume_result_index < first_history_update_index,
+            "session/resume must establish the session before history updates: {output:#?}"
         );
         let _ = fs::remove_dir_all(root);
     }
