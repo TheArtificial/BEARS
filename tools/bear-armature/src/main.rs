@@ -5086,11 +5086,11 @@ async fn restore_session_from_den(
         adapter_state.clone(),
         None,
     );
-    if bear_debug_verbose() && den.is_some() {
-        eprintln!(
-            "bear-armature: session/resume session_id={} restored without history replay per ACP resume semantics",
-            session_id
-        );
+    if let Some(den) = den.as_ref() {
+        // ACP clients rehydrate an existing session through session/resume.
+        // Project canonical history here, as on session/load, so the restored
+        // client-visible transcript includes prior agent messages.
+        replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
     }
     Ok((
         den.as_ref()
@@ -15586,7 +15586,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_resume_does_not_replay_history_updates() {
+    async fn session_resume_replays_history_updates() {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -15651,9 +15651,10 @@ mod tests {
             })
             .map(Value::to_string)
             .collect::<Vec<_>>();
-        assert!(
-            tool_frames.is_empty(),
-            "session/resume must not replay historical tool updates: {output:#?}"
+        assert_eq!(
+            tool_frames.len(),
+            2,
+            "session/resume must replay historical tool updates: {output:#?}"
         );
 
         let agent_text = output
@@ -15668,7 +15669,7 @@ mod tests {
             .map(Value::to_string)
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(!agent_text.contains("Used run_command"), "{output:#?}");
+        assert!(agent_text.contains("Used run_command"), "{output:#?}");
         assert!(
             output.iter().any(
                 |frame| frame.get("id").and_then(Value::as_str) == Some("resume-1")
