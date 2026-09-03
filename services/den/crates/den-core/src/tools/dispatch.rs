@@ -191,6 +191,11 @@ pub async fn invoke_den_tool(
     arguments: Value,
     context: DenToolInvocationContext,
 ) -> Result<Value, DenError> {
+    // Provider-facing names are advertised to models, while dispatch arms use
+    // canonical names. Normalize once here so newly advertised aliases cannot
+    // silently fall through as "unknown Den tool".
+    let tool_name = crate::tools::aliases::canonical_builtin_den_tool(tool_name)
+        .unwrap_or(tool_name);
     match prevalidate_tool_arguments(tool_name, &arguments, &context)? {
         ToolPreflight::Proceed => {}
         ToolPreflight::Warning(warning) => {

@@ -12,7 +12,8 @@ use den_core::tools::{
         DEN_DOCKET_ENTRY_APPEND, DEN_DOCKET_ENTRY_LIST, DEN_DOCKET_ENTRY_PROMOTE, DEN_JOB_ARCHIVE,
         DEN_JOB_CANCEL, DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND,
         DEN_JOB_GET, DEN_JOB_LIST, DEN_JOB_RECONCILE, DEN_JOB_SETTLE_TASK, DEN_JOB_UPDATE,
-        DEN_RUNTIME_DIAGNOSTICS_LIST, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
+        DEN_RUNTIME_DIAGNOSTICS_LIST, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_FOCUS,
+        DEN_TASK_FOCUS_PROVIDER, DEN_TASK_LIST,
         DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_REQUEST_HANDOFF,
         DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_SELECT,
         DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
@@ -40,6 +41,30 @@ pub async fn invoke_den_tool(
     arguments: Value,
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
+    if matches!(tool_name, DEN_TASK_FOCUS | DEN_TASK_FOCUS_PROVIDER) {
+        let ctx = DenToolContext::new(pool, config, stores);
+        den_core::tools::dispatch::authorize_den_tool(&ctx, DEN_TASK_FOCUS, &context)
+            .await
+            .map_err(CustomError::from)?;
+        let bear = den_service::bears::db::get_bear(pool, context.bear_id)
+            .await
+            .map_err(CustomError::from)?
+            .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+        let state = den_service::DenState::new(
+            pool.clone(),
+            std::sync::Arc::new(config.clone()),
+            std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config)),
+            stores.clone(),
+        );
+        return den_bearwire::start_pair_current_task(
+            &state,
+            context.user_id,
+            bear,
+            &context.session_id,
+        )
+        .await;
+    }
+
     if tool_name == DEN_WORK_PREPARE_RUST_DEPENDENCIES {
         let arguments: PrepareRustDependenciesArguments = serde_json::from_value(arguments)
             .map_err(|error| CustomError::ValidationError(error.to_string()))?;
