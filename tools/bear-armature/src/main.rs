@@ -5173,16 +5173,18 @@ async fn handle_session_load(
         adapter_state.clone(),
         None,
     );
-    if let Some(den) = den.as_ref() {
-        replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
-        surface_submitted_plan_fallback(session_id, den).await?;
-    }
-
     let mode = den
         .as_ref()
         .map(infer_mode_from_den_session)
         .unwrap_or(MODE_ASK);
     write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
+
+    // ACP clients establish a loaded session only after this response. Replaying
+    // first makes the client discard historical agent/user updates.
+    if let Some(den) = den.as_ref() {
+        replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
+        surface_submitted_plan_fallback(session_id, den).await?;
+    }
     send_available_commands_update(session_id).await?;
     if let Some(context_budget) = den.and_then(|session| session.get("context_budget").cloned()) {
         send_context_budget_usage_update(session_id, context_budget).await?;
@@ -15449,6 +15451,25 @@ mod tests {
         })
         .await;
         result.unwrap();
+
+        let load_response_index = output
+            .iter()
+            .position(|frame| frame.get("id") == Some(&json!("load-1")))
+            .expect("session/load response");
+        let first_agent_update_index = output
+            .iter()
+            .position(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+            })
+            .expect("replayed agent history update");
+        assert!(
+            load_response_index < first_agent_update_index,
+            "ACP session/load must establish the session before replaying history: {output:#?}"
+        );
 
         let user_chunks = output
             .iter()
