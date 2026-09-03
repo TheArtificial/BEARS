@@ -2960,7 +2960,7 @@ async fn handle_request(
                 )
                 .await
                 {
-                    Ok((mode, context_budget, den)) => {
+                    Ok((mode, context_budget, _den)) => {
                         let response = ResumeSessionResponse::new()
                             .config_options(session_config_options_for_mode(mode))
                             .modes(session_modes_for_mode(mode));
@@ -2971,19 +2971,6 @@ async fn handle_request(
                             .and_then(Value::as_str)
                             .unwrap_or("");
                         if !session_id.is_empty() {
-                            // ACP clients establish the resumed session only after this
-                            // response. Replay afterwards or the client can discard the
-                            // updates as belonging to an unknown session.
-                            if let Some(den) = den.as_ref() {
-                                replay_history_for_den_session(
-                                    http,
-                                    config,
-                                    session_id,
-                                    den,
-                                    "session/resume",
-                                )
-                                .await?;
-                            }
                             send_available_commands_update(session_id).await?;
                             if let Some(context_budget) = context_budget {
                                 send_context_budget_usage_update(session_id, context_budget)
@@ -5179,8 +5166,8 @@ async fn handle_session_load(
         .unwrap_or(MODE_ASK);
     write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
 
-    // ACP clients establish a loaded session only after this response. Replaying
-    // first makes the client discard historical agent/user updates.
+    // The ACP client establishes the loaded session from the response. Updates
+    // sent before it are not part of that session and may be discarded.
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
         surface_submitted_plan_fallback(session_id, den).await?;
@@ -15617,7 +15604,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_resume_replays_history_updates() {
+    async fn session_resume_does_not_replay_history_updates() {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -15688,10 +15675,9 @@ mod tests {
             })
             .map(Value::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(
-            tool_frames.len(),
-            2,
-            "session/resume must replay historical tool updates: {output:#?}"
+        assert!(
+            tool_frames.is_empty(),
+            "session/resume must not replay historical tool updates: {output:#?}"
         );
 
         let agent_text = output
@@ -15707,29 +15693,8 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            agent_text.contains("A historical agent answer"),
+            !agent_text.contains("A historical agent answer"),
             "{output:#?}"
-        );
-        let resume_result_index = output
-            .iter()
-            .position(|frame| {
-                frame.get("id").and_then(Value::as_str) == Some("resume-1")
-                    && frame.get("result").is_some()
-            })
-            .expect("session/resume success response: {output:#?}");
-        let first_history_update_index = output
-            .iter()
-            .position(|frame| {
-                frame.get("method").and_then(Value::as_str) == Some("session/update")
-                    && frame
-                        .pointer("/params/update/sessionUpdate")
-                        .and_then(Value::as_str)
-                        .is_some_and(|kind| matches!(kind, "agent_message_chunk" | "tool_call"))
-            })
-            .expect("replayed history update: {output:#?}");
-        assert!(
-            resume_result_index < first_history_update_index,
-            "session/resume must establish the session before history updates: {output:#?}"
         );
         let _ = fs::remove_dir_all(root);
     }

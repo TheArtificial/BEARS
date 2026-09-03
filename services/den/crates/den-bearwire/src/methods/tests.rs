@@ -1192,7 +1192,8 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
 #[sqlx::test(migrations = "../../migrations")]
 async fn native_history_loader_replays_canonical_user_and_assistant_rows(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
-    let (bear_id, _) = create_test_bear(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let canonical = ensure_conversation_for_external_id(
@@ -1266,9 +1267,48 @@ async fn native_history_loader_replays_canonical_user_and_assistant_rows(pool: s
     .await
     .expect("load projected user history");
     assert_eq!(user_history.len(), 2);
+    assert_eq!(
+        user_history
+            .iter()
+            .filter_map(|message| message.to_user_history_record().map(|record| record.role))
+            .collect::<Vec<_>>(),
+        vec!["assistant", "user"]
+    );
     assert!(user_history
         .iter()
         .all(|message| message.visibility == "default"));
+
+    let surface_response = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "conversation.surface_history",
+        json!({
+            "bear_slug": bear_slug,
+            "conversation_id": conversation_id,
+            "limit": 2
+        }),
+    )
+    .await;
+    let surface_messages = surface_response["result"]["surface_events"]
+        .as_array()
+        .expect("surface_events array")
+        .iter()
+        .filter(|event| event.get("kind").and_then(Value::as_str) == Some("message"))
+        .map(|event| {
+            (
+                event.get("role").and_then(Value::as_str),
+                event.get("text").and_then(Value::as_str),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        surface_messages,
+        vec![
+            (Some("user"), Some("first user prompt")),
+            (Some("assistant"), Some("first assistant reply")),
+        ],
+        "surface replay must include canonical assistant messages: {surface_response}"
+    );
 
     let backend = NativeRuntimeConversationBackend::with_pool(pool.clone());
     let binding = RoleRuntimeBinding {
