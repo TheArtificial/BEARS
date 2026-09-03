@@ -4360,32 +4360,13 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
     Ok(serde_json::to_value(response)?)
 }
 
-fn conversation_id_for_history(den_session: &Value) -> Option<String> {
-    fn is_history_conversation_id(value: &str) -> bool {
-        value == "default" || value.starts_with("conv-") || value.starts_with("den-conv-")
-    }
-
-    if let Some(r) = den_session
-        .get("resolved_conversation_id")
+fn history_conversation_id(den_session: &Value) -> Option<String> {
+    den_session
+        .get("history_conversation_id")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        if is_history_conversation_id(r) {
-            return Some(r.to_string());
-        }
-    }
-    if let Some(c) = den_session
-        .get("conversation_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        if is_history_conversation_id(c) {
-            return Some(c.to_string());
-        }
-    }
-    None
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
 }
 
 fn local_session_context_from_params(params: &Value) -> Result<SessionContext> {
@@ -4954,7 +4935,7 @@ async fn replay_history_for_den_session(
     den: &Value,
     lifecycle_method: &str,
 ) -> Result<()> {
-    if let Some(conv) = conversation_id_for_history(den) {
+    if let Some(conv) = history_conversation_id(den) {
         let messages =
             fetch_conversation_surface_history_chronological(http, config, &conv).await?;
         if bear_debug_verbose() {
@@ -18481,32 +18462,24 @@ mod tests {
     }
 
     #[test]
-    fn conversation_id_for_history_prefers_resolved_conv() {
+    fn history_conversation_id_uses_authoritative_den_field() {
         let v = json!({
             "conversation_id": "new-acp-zed-x",
-            "resolved_conversation_id": "conv-abc"
+            "resolved_conversation_id": "not-a-prefix-the-adapter-knows",
+            "history_conversation_id": "canonical-history-id"
         });
-        assert_eq!(conversation_id_for_history(&v).as_deref(), Some("conv-abc"));
+        assert_eq!(
+            history_conversation_id(&v).as_deref(),
+            Some("canonical-history-id")
+        );
     }
 
     #[test]
-    fn conversation_id_for_history_accepts_native_den_conv_ids() {
-        let v = json!({
-            "conversation_id": "new-acp-zed-x",
-            "resolved_conversation_id": "den-conv-abc"
-        });
+    fn history_conversation_id_ignores_missing_or_blank_values() {
+        assert_eq!(history_conversation_id(&json!({})), None);
         assert_eq!(
-            conversation_id_for_history(&v).as_deref(),
-            Some("den-conv-abc")
-        );
-
-        let fallback = json!({
-            "conversation_id": "den-conv-fallback",
-            "resolved_conversation_id": Value::Null
-        });
-        assert_eq!(
-            conversation_id_for_history(&fallback).as_deref(),
-            Some("den-conv-fallback")
+            history_conversation_id(&json!({ "history_conversation_id": "  " })),
+            None
         );
     }
 

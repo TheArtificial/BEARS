@@ -320,6 +320,10 @@ async fn session_state_payload(
         "runtime_session_id": session.runtime_session_id,
         "conversation_id": session.conversation_id,
         "resolved_conversation_id": session.resolved_conversation_id,
+        // The armature must use this field for user-visible history replay. It
+        // is the external ID of the canonical persisted conversation, not the
+        // client-supplied pending identifier.
+        "history_conversation_id": conversation_external_id,
         "client": session.client,
         "cwd": session.cwd,
         "adapter_environment": session.adapter_environment,

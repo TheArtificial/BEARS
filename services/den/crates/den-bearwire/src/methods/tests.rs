@@ -1619,6 +1619,11 @@ async fn session_state_includes_latest_context_budget_for_resolved_conversation(
     let value: Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(
+        value.pointer("/result/session/history_conversation_id").and_then(Value::as_str),
+        Some(resolved_conversation_id.as_str()),
+        "session.state must expose the canonical history conversation ID, not the pending client ID"
+    );
+    assert_eq!(
         value.pointer("/result/session/context_budget").cloned(),
         Some(serde_json::to_value(report).unwrap())
     );
