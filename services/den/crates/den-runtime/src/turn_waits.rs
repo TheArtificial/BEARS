@@ -45,6 +45,11 @@ pub fn resolve_tool_execution_owner(tool_name: &str) -> Result<ToolExecutionOwne
     if let Some(descriptor) =
         den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
     {
+        if !den_core::tools::dispatch::has_known_executor(descriptor.name) {
+            return Err(DenError::ValidationError(format!(
+                "descriptor_resolution_failed: Den tool `{tool_name}` has no registered executor"
+            )));
+        }
         return match descriptor.execution_target {
             "den" => Ok(ToolExecutionOwner::Den),
             other => Err(DenError::ValidationError(format!(

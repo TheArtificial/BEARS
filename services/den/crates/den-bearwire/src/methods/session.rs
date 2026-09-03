@@ -812,7 +812,7 @@ pub(crate) async fn session_current_task_start_result(
 /// Starts the Pair loop for the session's selected task. Docket `/focus` uses
 /// this after selecting its task so task assignment cannot leave loop control
 /// inactive.
-pub(crate) async fn start_pair_current_task(
+pub async fn start_pair_current_task(
     state: &DenState,
     user_id: i32,
     bear: den_service::bears::Bear,

@@ -31,9 +31,9 @@ use crate::tools::{
         DEN_PROMPT_MEMORY_LIST, DEN_PROMPT_MEMORY_PATCH, DEN_PROMPT_MEMORY_UPSERT,
         DEN_RUN_WRITE_RESULT, DEN_SITUATION_GET, DEN_SITUATION_GET_PROVIDER,
         DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
-        DEN_TASK_APPROVE_INTENT, DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_REJECT_INTENT,
-        DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
-        DEN_WEB_SEARCH,
+        DEN_TASK_APPROVE_INTENT, DEN_TASK_FOCUS, DEN_TASK_LISTS_REQUEST_HANDOFF,
+        DEN_TASK_REJECT_INTENT, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ, DEN_USER_GET_CURRENT,
+        DEN_WEB_FETCH, DEN_WEB_SEARCH,
     },
     context::DenToolInvocationContext,
     conversation::ConversationTitleOps,
@@ -64,6 +64,55 @@ pub trait ToolContext:
     + Send
     + Sync
 {
+}
+
+/// Tools deliberately executed by a layer above the native session dispatcher.
+/// Keep this explicit: an exposed descriptor without an owning executor is a
+/// deployment bug, not an invocation-time "unknown tool".
+pub fn has_external_runtime_executor(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        DEN_TASK_FOCUS
+            | "den.task_list.list"
+            | "den.task_list.get_status"
+            | "den.task_list.update"
+            | "den.task_list.request_handoff"
+            | "den.job.create"
+            | "den.job.list"
+            | "den.job.get"
+            | "den.job.update"
+            | "den.job.cancel"
+            | "den.job.archive"
+            | "den.job.execute"
+            | "den.job.reconcile"
+            | "den.job.settle_task"
+            | "den.job.evaluate_criterion"
+            | "den.task.create"
+            | "den.task.list"
+            | "den.task.update"
+            | "den.task.select"
+            | "den.task.update_current_status"
+            | "den.docket_entry.append"
+            | "den.docket_entry.list"
+            | "den.cabinet.search"
+            | "den.cabinet.read"
+            | "den.cabinet.create"
+            | "den.cabinet.update"
+            | "den.cabinet.history"
+            | "den.cabinet.source_link"
+            | "den.runtime_diagnostics.list"
+            | "den.task_list.checkout"
+            | "den.work.dispatch"
+            | "den.work_run.list"
+            | "den.work_run.get"
+            | "den.work_run.cancel"
+            | "den.work.catalog"
+            | "den.task_list.sync"
+    )
+}
+
+pub fn has_known_executor(tool_name: &str) -> bool {
+    has_native_session_executor(tool_name) || has_external_runtime_executor(tool_name)
 }
 
 /// Whether this dispatcher has a concrete native-session execution arm for a
@@ -258,5 +307,26 @@ pub async fn invoke_den_tool(
             "Den tool `{tool_name}` is registered and role-authorized but not implemented in this session module"
         ))),
         _ => Err(DenError::NotFound(format!("unknown Den tool: {tool_name}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_known_executor;
+    use crate::tools::descriptor::builtin_den_tool_descriptors_for_pair_acp_surface;
+
+    #[test]
+    fn pair_acp_surface_never_exposes_an_unknown_tool() {
+        let missing: Vec<_> = builtin_den_tool_descriptors_for_pair_acp_surface()
+            .into_iter()
+            .filter(|descriptor| !has_known_executor(descriptor.name))
+            .map(|descriptor| descriptor.name)
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "Pair ACP tools lack an owning executor: {}",
+            missing.join(", ")
+        );
     }
 }
