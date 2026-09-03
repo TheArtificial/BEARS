@@ -12093,6 +12093,7 @@ mod tests {
                                 "client_session_id": session_id,
                                 "conversation_id": "default",
                                 "resolved_conversation_id": "den-conv-test",
+                                "history_conversation_id": "den-conv-test",
                                 "cwd": "/workspace",
                                 "current_mode": "ask",
                                 "conversation_title": conversation_title.clone(),
@@ -12122,6 +12123,7 @@ mod tests {
                                 "acp_session_id": "session-1",
                                 "conversation_id": "default",
                                 "resolved_conversation_id": "den-conv-test",
+                                "history_conversation_id": "den-conv-test",
                                 "cwd": "/workspace",
                                 "updated_at": "2026-07-07T00:00:00Z",
                                 "current_mode": "ask",
@@ -15595,6 +15597,12 @@ mod tests {
         }
         let (api_url, _paths) = start_bearwire_test_server_with_history(vec![
             json!({
+                "id": "answer-resume-history",
+                "kind": "message",
+                "role": "assistant",
+                "text": "A historical agent answer"
+            }),
+            json!({
                 "id": "call-resume-history",
                 "kind": "tool_call",
                 "role": "assistant",
@@ -15669,7 +15677,7 @@ mod tests {
             .map(Value::to_string)
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(agent_text.contains("Used run_command"), "{output:#?}");
+        assert!(agent_text.contains("A historical agent answer"), "{output:#?}");
         assert!(
             output.iter().any(
                 |frame| frame.get("id").and_then(Value::as_str) == Some("resume-1")
