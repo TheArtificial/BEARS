@@ -336,6 +336,8 @@ mod tests {
             merged.iter().map(|tool| tool.name.as_str()).collect();
 
         assert!(names.contains(DEN_TASK_SELECT_PROVIDER));
+        assert!(names.contains(DEN_TASK_FOCUS_PROVIDER));
+        assert!(is_work_tool_provider_name(DEN_TASK_FOCUS_PROVIDER));
         assert!(names.contains(DEN_JOB_RECONCILE_PROVIDER));
         assert!(names.contains(DEN_JOB_SETTLE_TASK_PROVIDER));
         assert!(names.contains(DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER));
