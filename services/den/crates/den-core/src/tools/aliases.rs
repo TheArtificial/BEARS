@@ -1,6 +1,3 @@
-use std::collections::HashSet;
-use std::sync::OnceLock;
-
 use crate::tools::descriptor::builtin_den_tool_descriptors;
 
 use crate::tools::constants::{
@@ -47,20 +44,34 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
     }
 }
 
-/// True when `name` is the canonical name of a builtin Den tool.
+pub fn canonical_builtin_den_tool(name: &str) -> Option<&'static str> {
+    builtin_den_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.name == name || descriptor.provider_name == name)
+        .map(|descriptor| descriptor.name)
+}
+
+/// True when `name` is the canonical or provider name of a builtin Den tool.
 ///
 /// Derived from [`builtin_den_tool_descriptors`] rather than a hand-kept list:
 /// the invocation gate on `/internal/den-tools/invoke` is the only consumer, and
 /// a list maintained beside the descriptor table drifts from it silently — every
 /// missed entry 404s a tool the dispatcher can actually run.
 pub fn is_builtin_den_tool(name: &str) -> bool {
-    static CANONICAL_NAMES: OnceLock<HashSet<&'static str>> = OnceLock::new();
-    CANONICAL_NAMES
-        .get_or_init(|| {
-            builtin_den_tool_descriptors()
-                .into_iter()
-                .map(|descriptor| descriptor.name)
-                .collect()
-        })
-        .contains(name)
+    canonical_builtin_den_tool(name).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::constants::{DEN_TASK_FOCUS, DEN_TASK_FOCUS_PROVIDER};
+
+    #[test]
+    fn advertised_provider_names_resolve_to_their_canonical_tool() {
+        assert_eq!(
+            canonical_builtin_den_tool(DEN_TASK_FOCUS_PROVIDER),
+            Some(DEN_TASK_FOCUS)
+        );
+        assert!(is_builtin_den_tool(DEN_TASK_FOCUS_PROVIDER));
+    }
 }
