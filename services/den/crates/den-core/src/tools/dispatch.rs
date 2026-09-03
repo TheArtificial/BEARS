@@ -73,6 +73,7 @@ pub fn has_external_runtime_executor(tool_name: &str) -> bool {
     matches!(
         tool_name,
         DEN_TASK_FOCUS
+            | "focus_current_task"
             | "den.task_list.list"
             | "den.task_list.get_status"
             | "den.task_list.update"
@@ -328,5 +329,10 @@ mod tests {
             "Pair ACP tools lack an owning executor: {}",
             missing.join(", ")
         );
+    }
+
+    #[test]
+    fn focus_provider_name_has_an_external_executor() {
+        assert!(has_known_executor("focus_current_task"));
     }
 }
