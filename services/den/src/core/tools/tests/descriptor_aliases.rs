@@ -231,13 +231,14 @@ fn all_descriptors_are_known_tools() {
 }
 
 #[test]
-fn builtin_tool_gate_accepts_canonical_names_only() {
-    // `/internal/den-tools/invoke` dispatches on canonical names, so provider
-    // names and legacy aliases must not pass the gate.
+fn builtin_tool_gate_accepts_advertised_names() {
+    // Models invoke provider names, while execution uses canonical names. Both
+    // advertised forms must pass the internal gate; unadvertised legacy aliases
+    // and unknown names must not.
     assert!(is_builtin_den_tool(DEN_JOB_RECONCILE));
     assert!(is_builtin_den_tool(DEN_JOB_SETTLE_TASK));
-    assert!(!is_builtin_den_tool(DEN_JOB_RECONCILE_PROVIDER));
-    assert!(!is_builtin_den_tool(DEN_JOB_SETTLE_TASK_PROVIDER));
+    assert!(is_builtin_den_tool(DEN_JOB_RECONCILE_PROVIDER));
+    assert!(is_builtin_den_tool(DEN_JOB_SETTLE_TASK_PROVIDER));
     assert!(!is_builtin_den_tool(DEN_MEMORY_TREE_LEGACY_PROVIDER));
     assert!(!is_builtin_den_tool("den.job.does_not_exist"));
 }

@@ -516,6 +516,7 @@ mod native_session_routing_tests {
             let routed = workflow::is_workflow_tool(descriptor.name)
                 || crate::core::tools::cabinet_tools::is_cabinet_tool(descriptor.name)
                 || den_core::tools::dispatch::has_native_session_executor(descriptor.name)
+                || descriptor.name == DEN_TASK_FOCUS
                 || descriptor.name == DEN_TASK_LISTS_REQUEST_HANDOFF;
             assert!(
                 routed,
