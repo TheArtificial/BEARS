@@ -478,12 +478,17 @@ async fn conversation_history_like_result(
         return Ok(response);
     };
 
+    let projection = if records_key == "surface_events" {
+        persistence::ConversationHistoryProjection::UserHistory
+    } else {
+        persistence::ConversationHistoryProjection::ModelTranscript
+    };
     let rows = persistence::list_projected_messages_page(
         &state.sqlx_pool,
         conversation.id,
         before_sequence_no,
         limit,
-        persistence::ConversationHistoryProjection::ModelTranscript,
+        projection,
     )
     .await?;
     let has_more = rows.len() >= limit as usize;
