@@ -5235,10 +5235,6 @@ async fn handle_session_load(
         .as_ref()
         .map(infer_mode_from_den_session)
         .unwrap_or(MODE_ASK);
-    write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
-
-    // The ACP client establishes the loaded session from the response. Updates
-    // sent before it are not part of that session and may be discarded.
     if let Some(den) = den.as_ref() {
         replay_history_for_den_session(http, config, session_id, den, "session/load").await?;
         surface_submitted_plan_fallback(session_id, den).await?;
@@ -5247,6 +5243,7 @@ async fn handle_session_load(
     if let Some(context_budget) = den.and_then(|session| session.get("context_budget").cloned()) {
         send_context_budget_usage_update(session_id, context_budget).await?;
     }
+    write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
     Ok(())
 }
 
@@ -15552,8 +15549,8 @@ mod tests {
             "replayed ACP agent chunk must preserve its BearWire message identity: {output:#?}"
         );
         assert!(
-            load_response_index < agent_update_index,
-            "session/load must respond before replaying the BearWire agent message: {output:#?}"
+            agent_update_index < load_response_index,
+            "ACP session/load must replay the BearWire agent message before responding: {output:#?}"
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -15621,8 +15618,8 @@ mod tests {
             })
             .expect("replayed agent history update");
         assert!(
-            load_response_index < first_agent_update_index,
-            "ACP session/load must establish the session before replaying history: {output:#?}"
+            first_agent_update_index < load_response_index,
+            "ACP session/load must replay history before responding: {output:#?}"
         );
 
         let user_chunks = output
