@@ -1190,6 +1190,66 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn surface_history_projects_persisted_assistant_message(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let conversation = ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(user_id),
+        &conversation_id,
+        Some(&session_id),
+        None,
+    )
+    .await
+    .expect("ensure conversation");
+    append_message(
+        &pool,
+        conversation.id,
+        &ConversationMessageWrite {
+            message_type: ConversationMessageType::Assistant,
+            role: Some(ConversationMessageRole::Assistant),
+            visibility: ConversationMessageVisibility::Default,
+            content_text: "persisted agent message".to_string(),
+            content_json: json!({}),
+            provider_message_id: Some("persisted-agent-message".to_string()),
+            source_event_id: None,
+            created_at: None,
+        },
+    )
+    .await
+    .expect("persist assistant message");
+
+    let response = rpc_value(
+        test_state(pool),
+        &token,
+        "conversation.surface_history",
+        json!({
+            "bear_slug": bear_slug,
+            "conversation_id": conversation_id,
+            "limit": 20
+        }),
+    )
+    .await;
+
+    assert!(
+        response["result"]["surface_events"]
+            .as_array()
+            .expect("surface_events array")
+            .iter()
+            .any(
+                |event| event.get("kind").and_then(Value::as_str) == Some("message")
+                    && event.get("role").and_then(Value::as_str) == Some("assistant")
+                    && event.get("text").and_then(Value::as_str) == Some("persisted agent message"),
+            ),
+        "BearWire surface history must project the persisted assistant row: {response}"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn native_history_loader_replays_canonical_user_and_assistant_rows(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

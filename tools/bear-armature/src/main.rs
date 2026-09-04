@@ -15392,6 +15392,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_load_sends_bearwire_assistant_message_as_acp_agent_chunk() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_history(vec![json!({
+            "id": "persisted-agent-message",
+            "kind": "message",
+            "role": "assistant",
+            "text": "agent message received over BearWire"
+        })])
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("load-bearwire-agent-message");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "load-agent-history",
+                    "method": "session/load",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let load_response_index = output
+            .iter()
+            .position(|frame| frame.get("id") == Some(&json!("load-agent-history")))
+            .expect("session/load response");
+        let agent_update_index = output
+            .iter()
+            .position(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+                    && frame
+                        .to_string()
+                        .contains("agent message received over BearWire")
+            })
+            .unwrap_or_else(|| panic!("missing ACP agent message chunk: {output:#?}"));
+        assert!(
+            load_response_index < agent_update_index,
+            "session/load must respond before replaying the BearWire agent message: {output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn session_load_replays_user_history_as_acp_user_chunks() {
         let _guard = ENV_LOCK
             .lock()
