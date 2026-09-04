@@ -2362,6 +2362,9 @@ impl Stream for SessionTrackingStream {
                 // owns rendering/classifying that terminal state because it observes client-side
                 // tool results as well; do not invent assistant text here. With no prose there
                 // is no assistant step to persist or final-answer gate to resolve.
+                // Streamed assistant text must still land in canonical conversation
+                // history; live ACP chunks are ephemeral and session/load reads this store.
+                self.persist_assistant_tool_step();
                 self.finished = true;
                 Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                     RuntimeSemanticEvent::TurnCompleted { turn: None },
@@ -3589,6 +3592,64 @@ mod tests {
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
         ));
         assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn turn_completion_with_assistant_text_records_the_step_on_the_session() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::iter(vec![
+                Ok(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::AssistantTextDelta {
+                        text: "The capital is Paris.".to_string(),
+                    },
+                )),
+                Ok(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::TurnCompleted { turn: None },
+                )),
+            ])),
+            &session,
+            store.clone(),
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+
+        let delta = stream.next().await.expect("delta").expect("ok");
+        assert!(matches!(
+            delta,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { .. })
+        ));
+        let completed = stream.next().await.expect("completion").expect("ok");
+        assert!(matches!(
+            completed,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
+        ));
+        assert!(stream.next().await.is_none());
+
+        let stored = store
+            .get(&session.session_key)
+            .expect("session remains in store");
+        assert!(
+            stored.messages.iter().any(|message| {
+                message.role == "assistant"
+                    && message.content.as_deref() == Some("The capital is Paris.")
+            }),
+            "TurnCompleted must persist streamed assistant text for session/load: {:?}",
+            stored.messages
+        );
     }
 
     #[test]

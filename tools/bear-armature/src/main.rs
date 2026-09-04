@@ -4705,18 +4705,8 @@ fn history_replay_text_update_kind(message: &ReloadHistoryMessage) -> Option<&'s
     }
     match message.role.as_str() {
         "user" => Some("user"),
-        "assistant" => Some("agent"),
+        "assistant" | "agent" => Some("agent"),
         _ => None,
-    }
-}
-
-// ponytail: namespace persisted Den IDs so user/agent/tool rows that share a
-// provider_message_id cannot collide as ACP messageId. Upgrade: mint durable
-// ACP-owned IDs at persist time and stop prefixing.
-fn replay_acp_message_id(kind: &str, persisted: Option<&str>) -> String {
-    match persisted.map(str::trim).filter(|id| !id.is_empty()) {
-        Some(id) => format!("{kind}:{id}"),
-        None => format!("{kind}:{}", Uuid::new_v4()),
     }
 }
 
@@ -4724,14 +4714,26 @@ fn reload_history_message_from_value(mut m: Value) -> Result<Option<ReloadHistor
     if m.get("kind").is_none() {
         m["kind"] = json!("message");
     }
-    let kind = m.get("kind").and_then(Value::as_str).unwrap_or("message");
-    if matches!(kind, "message" | "") {
-        let text = m.get("text").and_then(Value::as_str).unwrap_or("");
+    let kind = m
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("message")
+        .to_string();
+    if matches!(kind.as_str(), "message" | "") {
+        let text = m
+            .get("text")
+            .and_then(Value::as_str)
+            .or_else(|| m.get("content").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string();
         if text.trim().is_empty() {
             return Ok(None);
         }
+        if m.get("text").is_none() {
+            m["text"] = json!(text);
+        }
     }
-    if matches!(kind, "reasoning_delta" | "reasoning")
+    if matches!(kind.as_str(), "reasoning_delta" | "reasoning")
         && m.get("text").is_none()
         && m.get("delta").is_some()
     {
@@ -4949,7 +4951,14 @@ async fn replay_history_for_den_session(
         let messages =
             fetch_conversation_surface_history_chronological(http, config, &conv).await?;
         let fetched = messages.len();
+        let surface_inventory = messages
+            .iter()
+            .take(12)
+            .map(|message| format!("{}:{}", message.kind, message.role))
+            .collect::<Vec<_>>()
+            .join(",");
         let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+        let mut first_agent_sample = None::<String>;
         // Tool results intentionally do not duplicate request arguments in canonical history.
         // Keep them only for this replay pass so terminal ACP updates preserve the request card.
         let mut tool_requests = std::collections::HashMap::<String, ToolRequestPresentation>::new();
@@ -5023,15 +5032,19 @@ async fn replay_history_for_den_session(
                     // ACP session/load replays the visible transcript to the client. This is
                     // client-side rendering only; Den owns model-context replay from canonical
                     // conversation storage, so these chunks are not sent back to the model.
-                    Some(kind @ ("user" | "agent")) => {
-                        *counts.entry(kind).or_default() += 1;
-                        send_identified_message_chunk(
-                            session_id,
-                            kind,
-                            &replay_acp_message_id(kind, message.id.as_deref()),
-                            &message.text,
-                        )
-                        .await?;
+                    Some("user") => {
+                        *counts.entry("user").or_default() += 1;
+                        send_user_message_chunk(session_id, &message.text).await?;
+                    }
+                    Some("agent") => {
+                        *counts.entry("agent").or_default() += 1;
+                        if first_agent_sample.is_none() {
+                            first_agent_sample = Some(truncate_for_log(&message.text, 120));
+                        }
+                        // Same unidentified chunk shape as live/diagnostic agent updates.
+                        // This client renders those; agent chunks with messageId do not appear
+                        // in the rehydrated thread.
+                        send_agent_message_chunk(session_id, &message.text).await?;
                     }
                     _ => *counts.entry("ignored").or_default() += 1,
                 },
@@ -5055,7 +5068,7 @@ async fn replay_history_for_den_session(
         send_agent_message_chunk(
             session_id,
             &format!(
-                "[history diagnostics] {} conversation={} fetched={} projected user={} agent={} tool_call={} tool_result={} reasoning={} session_info={} ignored={}",
+                "[history diagnostics] {} conversation={} fetched={} projected user={} agent={} tool_call={} tool_result={} reasoning={} session_info={} ignored={} surface={} agent_sample={}",
                 lifecycle_method,
                 conv,
                 fetched,
@@ -5065,7 +5078,9 @@ async fn replay_history_for_den_session(
                 counts.get("tool_result").copied().unwrap_or_default(),
                 counts.get("reasoning").copied().unwrap_or_default(),
                 counts.get("session_info").copied().unwrap_or_default(),
-                counts.get("ignored").copied().unwrap_or_default()
+                counts.get("ignored").copied().unwrap_or_default(),
+                surface_inventory,
+                first_agent_sample.as_deref().unwrap_or("<none>")
             ),
         )
         .await?;
@@ -11745,31 +11760,6 @@ fn text_chunk_update(kind: &str, text: &str) -> Result<Value> {
     Ok(serde_json::to_value(update)?)
 }
 
-fn identified_text_chunk_update(kind: &str, message_id: &str, text: &str) -> Result<Value> {
-    let mut update = text_chunk_update(kind, text)?;
-    update
-        .as_object_mut()
-        .ok_or_else(|| anyhow!("ACP text chunk did not serialize as an object"))?
-        .insert("messageId".to_string(), Value::String(message_id.to_string()));
-    Ok(update)
-}
-
-async fn send_identified_message_chunk(
-    session_id: &str,
-    kind: &str,
-    message_id: &str,
-    text: &str,
-) -> Result<()> {
-    write_notification(
-        "session/update",
-        json!({
-            "sessionId": session_id,
-            "update": identified_text_chunk_update(kind, message_id, text)?,
-        }),
-    )
-    .await
-}
-
 async fn send_user_message_chunk(session_id: &str, text: &str) -> Result<()> {
     write_notification(
         "session/update",
@@ -12722,24 +12712,23 @@ mod tests {
             history_replay_text_update_kind(&ReloadHistoryMessage::text("2", "assistant", "reply")),
             Some("agent")
         );
+        assert_eq!(
+            history_replay_text_update_kind(&ReloadHistoryMessage::text("3", "agent", "reply")),
+            Some("agent")
+        );
     }
 
     #[test]
-    fn replay_acp_message_ids_are_role_namespaced() {
-        assert_eq!(
-            replay_acp_message_id("user", Some("turn-1")),
-            "user:turn-1"
-        );
-        assert_eq!(
-            replay_acp_message_id("agent", Some("turn-1")),
-            "agent:turn-1"
-        );
-        assert_ne!(
-            replay_acp_message_id("user", Some("turn-1")),
-            replay_acp_message_id("agent", Some("turn-1"))
-        );
-        assert!(replay_acp_message_id("agent", None).starts_with("agent:"));
-        assert!(replay_acp_message_id("user", Some("  ")).starts_with("user:"));
+    fn reload_history_accepts_content_alias_for_message_text() {
+        let message = reload_history_message_from_value(json!({
+            "kind": "message",
+            "role": "assistant",
+            "content": "reply stored as content"
+        }))
+        .expect("content alias should parse")
+        .expect("content alias should not be dropped");
+        assert_eq!(message.text, "reply stored as content");
+        assert_eq!(history_replay_text_update_kind(&message), Some("agent"));
     }
 
     #[test]
@@ -15553,12 +15542,11 @@ mod tests {
                         .contains("agent message received over BearWire")
             })
             .unwrap_or_else(|| panic!("missing ACP agent message chunk: {output:#?}"));
-        assert_eq!(
+        assert!(
             output[agent_update_index]
                 .pointer("/params/update/messageId")
-                .and_then(Value::as_str),
-            Some("agent:persisted-agent-message"),
-            "replayed ACP agent chunks must carry a role-namespaced messageId: {output:#?}"
+                .is_none(),
+            "replayed ACP agent chunks must match the live/diagnostic chunk shape: {output:#?}"
         );
         assert!(
             agent_update_index < load_response_index,
@@ -15649,8 +15637,7 @@ mod tests {
             user_chunks
                 .iter()
                 .any(|frame| frame
-                    .contains("old instruction that must not be replayed as fresh input")
-                    && frame.contains("user:old-user-prompt")),
+                    .contains("old instruction that must not be replayed as fresh input")),
             "session/load should replay historical user messages to the ACP client: {output:#?}"
         );
         let agent_chunks = output
@@ -15667,8 +15654,7 @@ mod tests {
         assert!(
             agent_chunks
                 .iter()
-                .any(|chunk| chunk.contains("old answer can be replayed as agent history")
-                    && chunk.contains("agent:old-assistant-answer")),
+                .any(|chunk| chunk.contains("old answer can be replayed as agent history")),
             "assistant history should still be replayed: {output:#?}"
         );
         let _ = fs::remove_dir_all(root);

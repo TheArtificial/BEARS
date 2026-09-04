@@ -13,7 +13,7 @@ use bearwire_protocol::{
 use den_http::errors::CustomError;
 use den_runtime::{
     bearwire_events,
-    work_activity::{WorkActivityEntry, WorkActivityKind},
+    work_activity::{project_work_activity, WorkActivityEntry, WorkActivityKind},
 };
 use den_service::{
     artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
@@ -604,7 +604,7 @@ async fn conversation_history_like_result(
             .is_some();
             if is_work_session {
                 messages.extend(
-                    den_runtime::work_activity::project_work_activity(surface_event_rows)
+                    project_work_activity(surface_event_rows)
                         .into_iter()
                         .filter_map(work_activity_surface_event)
                         .map(|event| json!(event)),
