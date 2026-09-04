@@ -2046,11 +2046,12 @@ pub(super) async fn execute_job(
     pool: &PgPool,
     request: DocketJobExecuteRequest,
 ) -> Result<DocketJobExecuteOutcome, DenError> {
-    // Repair pre-existing terminal evidence/run-state skew before deriving the
-    // scheduler projection used to claim the next task.
+    // A Bear may explicitly cancel an orphaned run and then resume its plan.
+    // Task state is run-scoped, so a fresh run restores unfinished work without
+    // rewriting durable task definitions or settlements.
     let mut reconciliation = pool.begin().await?;
     let run_id = sqlx::query_scalar!(
-        "SELECT current_run_id FROM bear_jobs WHERE id = $1",
+        "SELECT current_run_id FROM bear_jobs WHERE id = $1 FOR UPDATE",
         request.job_id
     )
     .fetch_one(&mut *reconciliation)
@@ -2058,6 +2059,29 @@ pub(super) async fn execute_job(
     .ok_or_else(|| {
         DenError::ValidationError(format!("Docket job has no current run: {}", request.job_id))
     })?;
+    let state = sqlx::query_scalar!("SELECT state FROM bear_job_runs WHERE id = $1", run_id)
+        .fetch_one(&mut *reconciliation)
+        .await?;
+    let run_id = if state == "cancelled" {
+        let resumed_run_id: Uuid = sqlx::query_scalar!(
+            "INSERT INTO bear_job_runs (job_id, trigger, state) VALUES ($1, 'manual', 'dispatched') RETURNING id",
+            request.job_id
+        )
+        .fetch_one(&mut *reconciliation)
+        .await?;
+        sqlx::query!(
+            "UPDATE bear_jobs SET current_run_id = $2, updated_at = NOW() WHERE id = $1",
+            request.job_id,
+            resumed_run_id
+        )
+        .execute(&mut *reconciliation)
+        .await?;
+        resumed_run_id
+    } else {
+        run_id
+    };
+    // Repair pre-existing terminal evidence/run-state skew before deriving the
+    // scheduler projection used to claim the next task.
     reconcile_job_status(&mut reconciliation, request.job_id, run_id).await?;
     reconciliation.commit().await?;
     let Some(projection) = get_job(pool, request.bear_id, request.job_id).await? else {

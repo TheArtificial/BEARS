@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_job_runs (job_id, trigger, state) VALUES ($1, 'manual', 'dispatched') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "392f41e314d20bbf015a2d12d86b130dc9e6e0a0a9311361214592c8dada2263"
+}

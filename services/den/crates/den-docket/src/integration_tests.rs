@@ -566,6 +566,34 @@ async fn bear_can_cancel_orphaned_docket_run_and_release_its_pair_claim() {
     .expect("read released Pair execution claim");
     assert!(claim_released);
 
+    let resumed = service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: created.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: None,
+            source_conversation_id: None,
+            source_client_session_id: None,
+        })
+        .await
+        .expect("same Bear resumes after cancelling orphaned Docket run");
+    assert_ne!(
+        resumed.job.job.current_run_id, created.job.current_run_id,
+        "resuming must use a fresh run rather than revive cancelled evidence"
+    );
+    assert_eq!(resumed.job.job.status, "ready");
+    assert_eq!(
+        resumed
+            .job
+            .current_run
+            .as_ref()
+            .map(|run| run.state.as_str()),
+        Some("running")
+    );
+    assert_eq!(resumed.selected_task_id, Some(created.tasks[0].id));
+
     let other_bear = seed_user_and_bear(&pool, "other-bear-cannot-cancel")
         .await
         .1;
