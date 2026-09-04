@@ -4,7 +4,8 @@ use den_core::{
         DEN_CABINET_CREATE_PROVIDER, DEN_CABINET_HISTORY_PROVIDER, DEN_CABINET_LIFECYCLE_PROVIDER,
         DEN_CABINET_READ_PROVIDER, DEN_CABINET_SEARCH_PROVIDER, DEN_CABINET_SOURCE_LINK_PROVIDER,
         DEN_CABINET_UPDATE_PROVIDER, DEN_JOB_ARCHIVE_PROVIDER, DEN_JOB_CANCEL_PROVIDER,
-        DEN_JOB_CREATE_PROVIDER, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE_PROVIDER,
+        DEN_JOB_CANCEL_RUN_PROVIDER, DEN_JOB_CREATE_PROVIDER, DEN_JOB_EVALUATE_CRITERION_PROVIDER,
+        DEN_JOB_EXECUTE_PROVIDER,
         DEN_JOB_GET_PROVIDER, DEN_JOB_LIST_PROVIDER, DEN_JOB_RECONCILE_PROVIDER,
         DEN_JOB_SETTLE_TASK_PROVIDER, DEN_JOB_UPDATE_PROVIDER,
         DEN_RUNTIME_DIAGNOSTICS_LIST_PROVIDER, DEN_TASK_CREATE_PROVIDER, DEN_TASK_FOCUS_PROVIDER,
@@ -66,6 +67,7 @@ pub fn is_work_tool_provider_name(name: &str) -> bool {
             | DEN_JOB_GET_PROVIDER
             | DEN_JOB_UPDATE_PROVIDER
             | DEN_JOB_CANCEL_PROVIDER
+            | DEN_JOB_CANCEL_RUN_PROVIDER
             | DEN_JOB_ARCHIVE_PROVIDER
             | DEN_JOB_EXECUTE_PROVIDER
             | DEN_JOB_RECONCILE_PROVIDER
@@ -515,6 +517,7 @@ mod tests {
         assert!(names.contains(&"create_job"));
         assert!(names.contains(&"update_job"));
         assert!(names.contains(&"cancel_job"));
+        assert!(names.contains(&"cancel_job_run"));
         assert!(names.contains(&"archive_job"));
         assert!(names.contains(&"execute_job"));
         assert!(names.contains(&"create_task"));
