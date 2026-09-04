@@ -7,6 +7,7 @@ use den_docket::{
     DocketSessionTaskSettlement, DocketTaskListFilter, DocketTaskStatus, PgDocketService,
 };
 use serde_json::{json, Value};
+use std::time::Duration;
 use uuid::Uuid;
 
 use bearwire_protocol::methods::{
@@ -466,11 +467,7 @@ async fn execution_result(
             let loop_run_id = loop_start["run_id"].as_str().ok_or_else(|| {
                 CustomError::System("Pair task start omitted its run id".to_string())
             })?;
-            let loop_run = den_runtime::turn_runs::get_run(&state.sqlx_pool, loop_run_id)
-                .await?
-                .ok_or_else(|| {
-                    CustomError::System("Pair task start run was not persisted".to_string())
-                })?;
+            let loop_run = wait_for_pair_loop_start(&state.sqlx_pool, loop_run_id).await?;
             let loop_started = pair_loop_state_confirms_start(&loop_run.state);
             pair_binding = json!({
                 "status": if loop_started { "attached" } else { "attached_not_started" },
@@ -502,6 +499,35 @@ fn pair_loop_state_confirms_start(state: &str) -> bool {
         state,
         "running" | "waiting_for_client" | "continuing" | "completed" | "blocked"
     )
+}
+
+async fn wait_for_pair_loop_start(
+    pool: &sqlx::PgPool,
+    run_id: &str,
+) -> Result<den_runtime::turn_runs::TurnRunRow, CustomError> {
+    // ponytail: poll durable state instead of adding an in-process readiness
+    // channel. This also observes starts owned by another Den process; replace
+    // with an event subscription only if startup latency becomes material.
+    const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
+    const POLL_INTERVAL: Duration = Duration::from_millis(20);
+    let deadline = tokio::time::Instant::now() + STARTUP_TIMEOUT;
+    loop {
+        let run = den_runtime::turn_runs::get_run(pool, run_id)
+            .await?
+            .ok_or_else(|| {
+                CustomError::System("Pair task start run was not persisted".to_string())
+            })?;
+        if pair_loop_state_confirms_start(&run.state) || run.state != "accepted" {
+            return Ok(run);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(CustomError::System(format!(
+                "Pair task loop did not start within {}ms for run {run_id}",
+                STARTUP_TIMEOUT.as_millis()
+            )));
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
 }
 
 fn execution_result_payload(
