@@ -15891,8 +15891,19 @@ mod tests {
             })
             .map(Value::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(agent_frames.len(), 1, "{output:#?}");
-        assert!(agent_frames[0].contains("visible answer"), "{output:#?}");
+        assert_eq!(agent_frames.len(), 2, "{output:#?}");
+        assert!(
+            agent_frames
+                .iter()
+                .any(|frame| frame.contains("visible answer")),
+            "{output:#?}"
+        );
+        assert!(
+            agent_frames
+                .iter()
+                .any(|frame| frame.contains("[history diagnostics]")),
+            "{output:#?}"
+        );
         assert!(
             !agent_frames
                 .iter()

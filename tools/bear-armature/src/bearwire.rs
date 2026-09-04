@@ -3182,7 +3182,7 @@ mod tests {
 
         let message = bearwire_run_failed_user_message(&event);
 
-        assert_eq!(message, "BEARS run failed: BearWire run failed");
+        assert_eq!(message, "**Den**: Run failed: BearWire run failed");
     }
 
     #[test]
