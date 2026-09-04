@@ -4938,29 +4938,30 @@ async fn replay_history_for_den_session(
     if let Some(conv) = history_conversation_id(den) {
         let messages =
             fetch_conversation_surface_history_chronological(http, config, &conv).await?;
-        if bear_debug_verbose() {
-            eprintln!(
-                "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
-                lifecycle_method,
-                session_id,
-                messages.len(),
-                conv
-            );
-        }
+        let fetched = messages.len();
+        let mut counts = std::collections::BTreeMap::<&str, usize>::new();
         // Tool results intentionally do not duplicate request arguments in canonical history.
         // Keep them only for this replay pass so terminal ACP updates preserve the request card.
         let mut tool_requests = std::collections::HashMap::<String, ToolRequestPresentation>::new();
         for message in history_replay_chunks_with_boundaries(messages) {
             match message.kind.as_str() {
                 "tool_call" | "tool_result" => {
+                    let category = if message.kind == "tool_call" {
+                        "tool_call"
+                    } else {
+                        "tool_result"
+                    };
                     let Some(tool_call_id) =
                         message.tool_call_id.as_deref().or(message.id.as_deref())
                     else {
+                        *counts.entry("ignored").or_default() += 1;
                         continue;
                     };
                     let Some(tool_name) = message.tool_name.as_deref() else {
+                        *counts.entry("ignored").or_default() += 1;
                         continue;
                     };
+                    *counts.entry(category).or_default() += 1;
                     let request =
                         replay_tool_request(&mut tool_requests, &message, tool_call_id, tool_name);
                     send_tool_call_update(
@@ -4989,36 +4990,86 @@ async fn replay_history_for_den_session(
                 }
                 "session_info_update" => {
                     if message.title.is_some() || message.title_updated_at.is_some() {
+                        *counts.entry("session_info").or_default() += 1;
                         send_session_info_update(
                             session_id,
                             message.title.clone(),
                             message.title_updated_at.clone(),
                         )
                         .await?;
+                    } else {
+                        *counts.entry("ignored").or_default() += 1;
                     }
                 }
                 "reasoning_delta" | "reasoning" => {
                     if !matches!(message.replay_policy.as_deref(), Some("none")) {
+                        *counts.entry("reasoning").or_default() += 1;
                         send_agent_thought_chunk(session_id, &message.text).await?;
+                    } else {
+                        *counts.entry("ignored").or_default() += 1;
                     }
                 }
                 _ => match history_replay_text_update_kind(&message) {
                     // ACP session/load replays the visible transcript to the client. This is
                     // client-side rendering only; Den owns model-context replay from canonical
                     // conversation storage, so these chunks are not sent back to the model.
-                    Some("user") => send_user_message_chunk(session_id, &message.text).await?,
-                    Some("agent") => send_agent_message_chunk(session_id, &message.text).await?,
-                    _ => {}
+                    Some("user") => {
+                        *counts.entry("user").or_default() += 1;
+                        send_user_message_chunk(session_id, &message.text).await?;
+                    }
+                    Some("agent") => {
+                        *counts.entry("agent").or_default() += 1;
+                        send_agent_message_chunk(session_id, &message.text).await?;
+                    }
+                    _ => *counts.entry("ignored").or_default() += 1,
                 },
             }
         }
+        eprintln!(
+            "bear-armature: {} session_id={} conversation_id={} history fetched={} projected user={} agent={} tool_call={} tool_result={} reasoning={} session_info={} ignored={}",
+            lifecycle_method,
+            session_id,
+            conv,
+            fetched,
+            counts.get("user").copied().unwrap_or_default(),
+            counts.get("agent").copied().unwrap_or_default(),
+            counts.get("tool_call").copied().unwrap_or_default(),
+            counts.get("tool_result").copied().unwrap_or_default(),
+            counts.get("reasoning").copied().unwrap_or_default(),
+            counts.get("session_info").copied().unwrap_or_default(),
+            counts.get("ignored").copied().unwrap_or_default()
+        );
+        // ponytail: temporary user-visible diagnostics; remove after deployment parity is verified.
+        send_agent_message_chunk(
+            session_id,
+            &format!(
+                "[history diagnostics] {} conversation={} fetched={} projected user={} agent={} tool_call={} tool_result={} reasoning={} session_info={} ignored={}",
+                lifecycle_method,
+                conv,
+                fetched,
+                counts.get("user").copied().unwrap_or_default(),
+                counts.get("agent").copied().unwrap_or_default(),
+                counts.get("tool_call").copied().unwrap_or_default(),
+                counts.get("tool_result").copied().unwrap_or_default(),
+                counts.get("reasoning").copied().unwrap_or_default(),
+                counts.get("session_info").copied().unwrap_or_default(),
+                counts.get("ignored").copied().unwrap_or_default()
+            ),
+        )
+        .await?;
     } else {
-        if bear_debug_verbose() {
-            eprintln!(
-                "bear-armature: {} session_id={} has no conv-/den-conv-/default history yet (pending new- thread); skipping replay",
-                lifecycle_method, session_id
-            );
-        }
+        eprintln!(
+            "bear-armature: {} session_id={} has no history_conversation_id; projected history counts are all zero",
+            lifecycle_method, session_id
+        );
+        send_agent_message_chunk(
+            session_id,
+            &format!(
+                "[history diagnostics] {} has no history_conversation_id; projected history counts are all zero",
+                lifecycle_method
+            ),
+        )
+        .await?;
     }
     Ok(())
 }

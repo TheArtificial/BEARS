@@ -721,6 +721,39 @@ async fn conversation_history_like_result(
         });
     }
 
+    if records_key == "surface_events" {
+        let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+        for event in &messages {
+            let category = match event.get("kind").and_then(Value::as_str) {
+                Some("message") => match event.get("role").and_then(Value::as_str) {
+                    Some("user") => "user",
+                    Some("assistant") => "assistant",
+                    Some("system") => "system",
+                    _ => "other",
+                },
+                Some("tool_call") => "tool_call",
+                Some("tool_result") => "tool_result",
+                Some("reasoning_delta") | Some("reasoning") => "reasoning",
+                Some("session_info_update") => "session_info",
+                _ => "other",
+            };
+            *counts.entry(category).or_default() += 1;
+        }
+        tracing::info!(
+            conversation_id,
+            total = messages.len(),
+            user = counts.get("user").copied().unwrap_or_default(),
+            assistant = counts.get("assistant").copied().unwrap_or_default(),
+            system = counts.get("system").copied().unwrap_or_default(),
+            tool_call = counts.get("tool_call").copied().unwrap_or_default(),
+            tool_result = counts.get("tool_result").copied().unwrap_or_default(),
+            reasoning = counts.get("reasoning").copied().unwrap_or_default(),
+            session_info = counts.get("session_info").copied().unwrap_or_default(),
+            other = counts.get("other").copied().unwrap_or_default(),
+            "projected conversation surface history"
+        );
+    }
+
     let mut response = json!({
         "kind": response_kind,
         "conversation_id": conversation_id,
