@@ -21,11 +21,11 @@
     {% if show_archived %}<p><a href="/bear/{{ bear_slug }}/jobs{% if show_completed %}?completed=show{% endif %}">Hide archived jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/jobs?archived=show{% if show_completed %}&completed=show{% endif %}">Show archived jobs</a></p>{% endif %}
     {% if jobs %}
     <table>
-        <thead><tr><th>Job</th><th>Status</th><th>Work surface</th><th>Runs</th></tr></thead>
+        <thead><tr><th>Job</th><th>Status</th><th>Work surface</th><th>Docket run</th><th>Sandbox runs</th></tr></thead>
         <tbody>{% for job in jobs %}
             <tr>
                 <td><a href="/bear/{{ job.bear_slug }}/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a></td>
-                <td>{% if job.status == "completed" %}✅ completed{% elif job.status == "blocked" %}🚫 blocked{% elif job.status == "running" %}🔄 running{% elif job.status == "cancelled" %}🚫 cancelled{% else %}⏳ {{ job.status }}{% endif %}</td><td>{{ job.work_surface_ref or "—" }}</td><td>{{ job.run_count }}</td>
+                <td>{% if job.status == "completed" %}✅ completed{% elif job.status == "blocked" %}🚫 blocked{% elif job.status == "running" %}🔄 running{% elif job.status == "cancelled" %}🚫 cancelled{% else %}⏳ {{ job.status }}{% endif %}</td><td>{{ job.work_surface_ref or "—" }}</td><td>{% if job.has_docket_run %}<code class="entity-reference-id">{{ job.docket_run_id }}</code> ({{ job.docket_run_state }}){% else %}—{% endif %}</td><td>{{ job.run_count }}</td>
             </tr>
         {% endfor %}</tbody>
     </table>

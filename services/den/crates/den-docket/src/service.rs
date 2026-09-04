@@ -68,6 +68,14 @@ pub trait DocketService: Send + Sync {
         request: DocketJobExecuteRequest,
     ) -> Result<DocketJobExecuteOutcome, DenError>;
 
+    /// Cancels the current Docket run in the owning Bear scope. This is
+    /// deliberately separate from sandbox work-run cancellation.
+    async fn cancel_job_run(
+        &self,
+        bear_id: Uuid,
+        job_id: Uuid,
+    ) -> Result<DocketJobProjection, DenError>;
+
     /// Settles the session's claimed job task and returns successor control.
     /// Ordinary Pair/session tasks must continue to use their own settlement API.
     async fn settle_execution_task(
@@ -258,6 +266,14 @@ impl DocketService for PgDocketService {
         request: DocketJobExecuteRequest,
     ) -> Result<DocketJobExecuteOutcome, DenError> {
         db::reconcile_execution(&self.pool, request).await
+    }
+
+    async fn cancel_job_run(
+        &self,
+        bear_id: Uuid,
+        job_id: Uuid,
+    ) -> Result<DocketJobProjection, DenError> {
+        db::cancel_job_run(&self.pool, bear_id, job_id).await
     }
 
     async fn settle_execution_task(

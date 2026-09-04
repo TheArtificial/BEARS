@@ -7,7 +7,8 @@ use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketEntryCreate, DocketEntryKind, DocketEntryListFilter, DocketEntryPromotion,
-    DocketEntryScope, DocketExecutionTaskSettlement, DocketJobCreate, DocketJobCriterionInput,
+    DocketEntryScope, DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner,
+    DocketExecutionTaskSettlement, DocketJobCreate, DocketJobCriterionInput,
     DocketJobExecuteRequest, DocketJobOverlapResolution, DocketService,
     DocketSessionTaskSettlement, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
@@ -441,7 +442,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
 }
 
 #[tokio::test]
-async fn pair_task_attachment_is_exclusive_and_released_on_settlement() {
+async fn pair_task_attachment_is_reassignable_within_a_bear_and_released_on_settlement() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket integration test; database unavailable");
         return;
@@ -477,13 +478,16 @@ async fn pair_task_attachment_is_exclusive_and_released_on_settlement() {
         .expect("project first Pair session")
         .iter()
         .any(|task| task.task.id == task_id));
-    assert!(
-        service
-            .attach_task_to_pair_session(bear_id, task_id, second_session)
-            .await
-            .is_err(),
-        "active attachment must not leak across Pair sessions"
-    );
+    service
+        .attach_task_to_pair_session(bear_id, task_id, second_session)
+        .await
+        .expect("same Bear can recover a durable task from another Pair session");
+    assert!(service
+        .list_pair_session_tasks(bear_id, second_session)
+        .await
+        .expect("project recovered Pair session")
+        .iter()
+        .any(|task| task.task.id == task_id));
 
     service
         .settle_session_task(DocketSessionTaskSettlement {
@@ -506,6 +510,69 @@ async fn pair_task_attachment_is_exclusive_and_released_on_settlement() {
         .expect("project released Pair session")
         .iter()
         .all(|task| task.task.id != task_id));
+}
+
+#[tokio::test]
+async fn bear_can_cancel_orphaned_docket_run_and_release_its_pair_claim() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket integration test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "cancel-orphaned-run").await;
+    let service = PgDocketService::from_pool(&pool);
+    let created = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create durable job");
+
+    let session_id = format!("defunct-pair-session-{}", Uuid::new_v4());
+    service
+        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+            bear_id,
+            task_id: created.tasks[0].id,
+            owner: DocketExecutionAttemptOwner::Pair {
+                session_id: session_id.clone(),
+                pair_run_id: "defunct-pair-run".to_string(),
+            },
+            authorization_key: Uuid::new_v4(),
+        })
+        .await
+        .expect("create original Pair execution claim");
+    let live_attempt = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM docket_execution_attempts WHERE bear_id = $1 AND pair_session_id = $2 AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')) AS \"exists!: bool\"",
+        bear_id,
+        &session_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read original Pair execution claim");
+    assert!(live_attempt);
+
+    let cancelled = service
+        .cancel_job_run(bear_id, created.job.id)
+        .await
+        .expect("same Bear cancels orphaned Docket run");
+    assert_eq!(
+        cancelled.current_run.as_ref().map(|run| run.state.as_str()),
+        Some("cancelled")
+    );
+    let claim_released = sqlx::query_scalar!(
+        "SELECT NOT EXISTS(SELECT 1 FROM docket_execution_attempts WHERE bear_id = $1 AND pair_session_id = $2 AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')) AS \"released!: bool\"",
+        bear_id,
+        &session_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read released Pair execution claim");
+    assert!(claim_released);
+
+    let other_bear = seed_user_and_bear(&pool, "other-bear-cannot-cancel")
+        .await
+        .1;
+    assert!(service
+        .cancel_job_run(other_bear, created.job.id)
+        .await
+        .is_err());
 }
 
 #[tokio::test]

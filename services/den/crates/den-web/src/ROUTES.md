@@ -143,6 +143,7 @@ All `/cabinet/*` routes use `login_required!(…)`; every Den user may read and 
 - `GET /bear/{bear_slug}/jobs/{job_id}` — job detail: editable goal/surface/commit policy/branch, task tree with statuses, job dispatch, duplication, run history with publish outcomes
 - `POST /bear/{bear_slug}/jobs/{job_id}/edit` — update job-level settings; task-tree editing remains separate/deferred
 - `POST /bear/{bear_slug}/jobs/{job_id}/duplicate` — copy job intent/settings/criteria/task hierarchy into a fresh ready job; run state and publish branch are reset
+- `POST /bear/{bear_slug}/jobs/{job_id}/cancel` — cancel the active Bear-owned Docket lifecycle run and release any stale Pair execution claim; this works even if its original Pair session is defunct and is distinct from sandbox work-run cancellation
 - `POST /bear/{bear_slug}/jobs/{job_id}/complete` — after all tasks finish, accept remaining criteria as a human decision and close the job/current run
 - `POST /bear/{bear_slug}/jobs/{job_id}/extend` — add a fresh work-assigned task with concrete criteria to the current run and return the job to ready
 - `POST /bear/{bear_slug}/jobs/{job_id}/tasks/{task_id}/retry` — retry a blocked current-run task after the operator supplies an audit reason

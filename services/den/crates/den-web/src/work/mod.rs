@@ -203,6 +203,7 @@ pub fn docket_router() -> Router<AppState> {
         .route("/jobs/{job_id}/edit", post(edit_job))
         .route("/jobs/{job_id}/duplicate", post(duplicate_job))
         .route("/jobs/{job_id}/complete", post(complete_job))
+        .route("/jobs/{job_id}/cancel", post(cancel_job_run))
         .route("/jobs/{job_id}/archive", post(archive_job))
         .route("/jobs/{job_id}/tasks", post(add_top_level_task))
         .route("/jobs/{job_id}/dispatch", post(dispatch_job))
@@ -649,6 +650,10 @@ async fn index(
             "goal": job.goal,
             "status": job.status,
             "work_surface_id": job.work_surface_id,
+            "docket_run_id": job.current_run_id.map(|id| uuid_hex_prefix(id, DISPLAY_ID_HEX_LEN)),
+            "docket_run_state": job.status,
+            // ponytail: lifecycle runs and sandbox attempts are separate rows.
+            "has_docket_run": job.current_run_id.is_some(),
             "run_count": run_count,
         }));
     }
@@ -1567,6 +1572,8 @@ async fn job_detail(
             job_full_id => job_id.to_string(),
             job_title => entity_ref(job_id, "Job", &projection.job.goal, Some(&projection.job.status))["title"],
             status => projection.job.status,
+            docket_run_state => projection.current_run.as_ref().map(|run| run.state.clone()),
+            docket_run_id => projection.current_run.as_ref().map(|run| uuid_hex_prefix(run.id, DISPLAY_ID_HEX_LEN)),
             work_surface_id => projection.job.work_surface_id.map(route_id),
             selected_work_surface_id => selected_work_surface_id,
             work_surface_name => selected_work_surface.map(|surface| surface.name.clone()),
@@ -2096,6 +2103,19 @@ async fn steer_run(
         route_id(run.id)
     ))
     .into_response())
+}
+
+async fn cancel_job_run(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((bear_slug, job_ref)): Path<(String, String)>,
+) -> Result<Response, CustomError> {
+    let bear = bear_context(&state, &auth_session, &bear_slug).await?;
+    let job_id = resolve_job_prefix(state.sqlx_pool(), bear.id, &job_ref).await?;
+    PgDocketService::from_pool(state.sqlx_pool())
+        .cancel_job_run(bear.id, job_id)
+        .await?;
+    Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
 async fn cancel_run(

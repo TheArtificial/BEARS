@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE docket_execution_attempts attempt\n        SET state = 'released', released_at = COALESCE(released_at, NOW()), updated_at = NOW()\n        FROM bear_tasks task\n        WHERE attempt.task_id = task.id\n          AND task.job_id = $1\n          AND attempt.state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7ee53a2ec5d9f4e7b0a1a078dd655799395e733d8d8057ea5acd7fea725cbc2d"
+}

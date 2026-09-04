@@ -247,6 +247,16 @@ pub struct DocketJobsExecuteRequest {
     pub source_client_session_id: Option<String>,
 }
 
+/// Cancels the current Docket lifecycle run. This is not sandbox work-run
+/// cancellation and intentionally needs no Pair-session identifier.
+#[derive(Debug, Deserialize)]
+pub struct DocketJobsCancelRunRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub job_id: String,
+}
+
 /// Settles the Docket task currently claimed by an execution session and
 /// returns the scheduler's successor control result.
 #[derive(Debug, Deserialize)]

@@ -1980,6 +1980,68 @@ pub(super) async fn settle_execution_task(
     execute_job(pool, execution).await
 }
 
+/// End the active Docket lifecycle run without conflating it with a sandbox
+/// work run. Bear scope, rather than a Pair-session attachment, authorizes it.
+pub(super) async fn cancel_job_run(
+    pool: &PgPool,
+    bear_id: Uuid,
+    job_id: Uuid,
+) -> Result<DocketJobProjection, DenError> {
+    let mut tx = pool.begin().await?;
+    let run_id = sqlx::query_scalar!(
+        "SELECT current_run_id FROM bear_jobs WHERE id = $1 AND bear_id = $2 FOR UPDATE",
+        job_id,
+        bear_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten()
+    .ok_or_else(|| DenError::NotFound(format!("Docket job not found: {job_id}")))?;
+    let changed = sqlx::query!(
+        r#"
+        UPDATE bear_job_runs
+        SET state = 'cancelled', finished_at = COALESCE(finished_at, NOW()), updated_at = NOW()
+        WHERE id = $1 AND state IN ('dispatched', 'running', 'blocked')
+        "#,
+        run_id,
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        return Err(DenError::ValidationError(
+            "Docket job run is already terminal; refresh before cancelling again".into(),
+        ));
+    }
+    // A Docket run is Bear-owned, so cancelling it must also release any
+    // Pair-owned execution claim it left behind. Otherwise a defunct Pair
+    // session can keep the next Bear session from claiming the durable task.
+    sqlx::query!(
+        r#"
+        UPDATE docket_execution_attempts attempt
+        SET state = 'released', released_at = COALESCE(released_at, NOW()), updated_at = NOW()
+        FROM bear_tasks task
+        WHERE attempt.task_id = task.id
+          AND task.job_id = $1
+          AND attempt.state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+        "#,
+        job_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, payload) VALUES ($1, $2, 'run_finished', 'system', '{\"state\":\"cancelled\"}'::jsonb)",
+        job_id,
+        run_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    get_job(pool, bear_id, job_id)
+        .await?
+        .ok_or_else(|| DenError::NotFound(format!("Docket job not found: {job_id}")))
+}
+
 pub(super) async fn execute_job(
     pool: &PgPool,
     request: DocketJobExecuteRequest,
@@ -2509,8 +2571,6 @@ pub(super) async fn attach_task_to_pair_session(
         WHERE id = $2 AND bear_id = $1 AND job_id IS NOT NULL AND settled_by_entry_id IS NULL
         ON CONFLICT (task_id) DO UPDATE
         SET session_id = EXCLUDED.session_id, attached_at = NOW(), released_at = NULL
-        WHERE bear_pair_task_attachments.released_at IS NOT NULL
-           OR bear_pair_task_attachments.session_id = EXCLUDED.session_id
         ",
     )
     .bind(bear_id)

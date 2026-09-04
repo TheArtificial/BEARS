@@ -6,6 +6,7 @@
 <h2>{{ goal }}</h2>
 <p>
     Bear <a href="/bear/{{ bear_slug | urlencode }}">{{ bear_name }}</a> · status <strong>{{ status }}</strong>
+    {% if docket_run_state %} · Docket run <code>{{ docket_run_id }}</code> <strong>{{ docket_run_state }}</strong>{% endif %}
     {% if work_surface_name %} · work surface <a href="/work/surfaces/{{ work_surface_id }}">{{ work_surface_name }}</a>{% endif %}
     · source change policy <strong>{{ commit_policy_label }}</strong>
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
@@ -48,6 +49,12 @@
 {% if status not in ["completed", "cancelled", "archived"] %}
 <section>
     <h2>Job lifecycle</h2>
+    {% if docket_run_state in ["dispatched", "running", "blocked"] %}
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/cancel">
+        <button type="submit">Cancel Docket run</button>
+        <small>Ends this job's Docket lifecycle run; it is separate from cancelling a sandbox work run.</small>
+    </form>
+    {% endif %}
     {% if tasks_complete %}
     <form method="post" action="/bear/{{ bear_slug }}/jobs/{{ job_id }}/complete">
         <button type="submit">Mark job completed</button>

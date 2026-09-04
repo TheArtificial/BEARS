@@ -1714,6 +1714,30 @@ pub(crate) async fn set_job_lifecycle(
     }))
 }
 
+pub(crate) async fn cancel_job_run(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
+        return Err(CustomError::ValidationError(format!(
+            "cancel_job_run is available to chat and pair stances, not {}",
+            role.as_str()
+        )));
+    }
+    let args: DocketJobLifecycleArguments = serde_json::from_value(arguments)?;
+    let job = PgDocketService::from_pool(pool)
+        .cancel_job_run(context.bear_id, args.job_id)
+        .await?;
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "job": job,
+        "note": "cancelled the active Docket run; the job remains available for recovery or a later run",
+    }))
+}
+
 pub(crate) async fn execute_job(
     pool: &PgPool,
     context: &DenToolInvocationContext,

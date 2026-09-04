@@ -33,15 +33,15 @@ use crate::tools::{
         DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER, DEN_ENTITY_WRITE_ACCESS_RULE,
         DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER, DEN_ENTITY_WRITE_ANCHOR,
         DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_JOB_ARCHIVE, DEN_JOB_ARCHIVE_PROVIDER,
-        DEN_JOB_CANCEL, DEN_JOB_CANCEL_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
-        DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
-        DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_FIND, DEN_JOB_FIND_PROVIDER, DEN_JOB_GET,
-        DEN_JOB_GET_PROVIDER, DEN_JOB_LIST, DEN_JOB_LIST_PROVIDER, DEN_JOB_RECONCILE,
-        DEN_JOB_RECONCILE_PROVIDER, DEN_JOB_SETTLE_TASK, DEN_JOB_SETTLE_TASK_PROVIDER,
-        DEN_JOB_UPDATE, DEN_JOB_UPDATE_PROVIDER, DEN_MEMORY_APPLY_CORE_UPDATE,
-        DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
-        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER, DEN_MEMORY_LIST_PROPOSALS,
-        DEN_MEMORY_LIST_PROPOSALS_PROVIDER, DEN_MEMORY_MARK_LIFECYCLE,
+        DEN_JOB_CANCEL, DEN_JOB_CANCEL_PROVIDER, DEN_JOB_CANCEL_RUN, DEN_JOB_CANCEL_RUN_PROVIDER,
+        DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER, DEN_JOB_EVALUATE_CRITERION,
+        DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE, DEN_JOB_EXECUTE_PROVIDER,
+        DEN_JOB_FIND, DEN_JOB_FIND_PROVIDER, DEN_JOB_GET, DEN_JOB_GET_PROVIDER, DEN_JOB_LIST,
+        DEN_JOB_LIST_PROVIDER, DEN_JOB_RECONCILE, DEN_JOB_RECONCILE_PROVIDER, DEN_JOB_SETTLE_TASK,
+        DEN_JOB_SETTLE_TASK_PROVIDER, DEN_JOB_UPDATE, DEN_JOB_UPDATE_PROVIDER,
+        DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER,
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER,
+        DEN_MEMORY_LIST_PROPOSALS, DEN_MEMORY_LIST_PROPOSALS_PROVIDER, DEN_MEMORY_MARK_LIFECYCLE,
         DEN_MEMORY_MARK_LIFECYCLE_PROVIDER, DEN_MEMORY_ORIENT_WORK_SURFACE,
         DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER, DEN_MEMORY_READ, DEN_MEMORY_READ_PROPOSAL,
         DEN_MEMORY_READ_PROPOSAL_PROVIDER, DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_REQUEST_REVIEW,
@@ -155,6 +155,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_JOB_FIND => return DEN_JOB_FIND_PROVIDER.to_string(),
         DEN_JOB_UPDATE => return DEN_JOB_UPDATE_PROVIDER.to_string(),
         DEN_JOB_CANCEL => return DEN_JOB_CANCEL_PROVIDER.to_string(),
+        DEN_JOB_CANCEL_RUN => return DEN_JOB_CANCEL_RUN_PROVIDER.to_string(),
         DEN_JOB_ARCHIVE => return DEN_JOB_ARCHIVE_PROVIDER.to_string(),
         DEN_JOB_EXECUTE => return DEN_JOB_EXECUTE_PROVIDER.to_string(),
         DEN_JOB_RECONCILE => return DEN_JOB_RECONCILE_PROVIDER.to_string(),
@@ -679,6 +680,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
+            DEN_JOB_CANCEL_RUN,
+            "Cancel active Docket run",
+            "Cancel the active Docket lifecycle run for a job without cancelling the job itself. This releases stale Pair execution claims so another session for the owning Bear can recover the task. It does not cancel a sandbox work run.",
+            "bear.docket",
+            &["docket.job.write"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
+        ),
+        descriptor(
             DEN_JOB_ARCHIVE,
             "Archive Docket job",
             "Archive a Docket job and remove it from the default active-job list. This is terminal; use only when the user requests archival or the job is no longer active.",
@@ -1138,6 +1148,7 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_JOB_GET,
         DEN_JOB_UPDATE,
         DEN_JOB_CANCEL,
+        DEN_JOB_CANCEL_RUN,
         DEN_JOB_ARCHIVE,
         DEN_JOB_EXECUTE,
         DEN_JOB_RECONCILE,
@@ -1261,6 +1272,7 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
         }),
         DEN_JOB_CREATE
         | DEN_JOB_UPDATE
+        | DEN_JOB_CANCEL_RUN
         | DEN_JOB_EXECUTE
         | DEN_JOB_EVALUATE_CRITERION
         | DEN_TASK_CREATE

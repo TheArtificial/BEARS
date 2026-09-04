@@ -10,8 +10,9 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use bearwire_protocol::methods::{
-    DocketJobDiagnosticsRequest, DocketJobsExecuteRequest, DocketJobsListRequest,
-    DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest, RuntimeDiagnosticsListRequest,
+    DocketJobDiagnosticsRequest, DocketJobsCancelRunRequest, DocketJobsExecuteRequest,
+    DocketJobsListRequest, DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest,
+    RuntimeDiagnosticsListRequest,
 };
 use den_http::errors::CustomError;
 use den_runtime::current_task::select_pair_current_task;
@@ -203,6 +204,21 @@ fn work_run_diagnostic(run: &work_runs::WorkRunRow) -> Value {
         "started_at": run.started_at.map(|value| value.to_string()),
         "finished_at": run.finished_at.map(|value| value.to_string()),
     })
+}
+
+pub async fn docket_jobs_cancel_run_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let request: DocketJobsCancelRunRequest = parse_params(params)?;
+    let job_id = Uuid::parse_str(&request.job_id)
+        .map_err(|err| CustomError::ValidationError(format!("invalid job_id: {err}")))?;
+    let (_, bear) = authenticated_bear(state, headers, params).await?;
+    let job = PgDocketService::from_pool(&state.sqlx_pool)
+        .cancel_job_run(bear.id, job_id)
+        .await?;
+    Ok(json!({ "job": job }))
 }
 
 pub async fn docket_jobs_execute_result(

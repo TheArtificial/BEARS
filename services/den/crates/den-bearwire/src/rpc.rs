@@ -143,6 +143,11 @@ pub(crate) async fn rpc(
             methods::docket::docket_job_diagnostics_result(&state, &headers, &request.params).await,
             "BearWire docket.jobs.diagnostics failed",
         ),
+        "docket.jobs.cancel_run" => method_response(
+            request.id,
+            methods::docket::docket_jobs_cancel_run_result(&state, &headers, &request.params).await,
+            "BearWire docket.jobs.cancel_run failed",
+        ),
         "docket.jobs.execute" => method_response(
             request.id,
             methods::docket::docket_jobs_execute_result(&state, &headers, &request.params).await,

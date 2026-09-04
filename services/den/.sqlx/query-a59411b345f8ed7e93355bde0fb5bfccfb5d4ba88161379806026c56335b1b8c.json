@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, payload) VALUES ($1, $2, 'run_finished', 'system', '{\"state\":\"cancelled\"}'::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a59411b345f8ed7e93355bde0fb5bfccfb5d4ba88161379806026c56335b1b8c"
+}
