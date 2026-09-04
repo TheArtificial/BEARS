@@ -4710,6 +4710,16 @@ fn history_replay_text_update_kind(message: &ReloadHistoryMessage) -> Option<&'s
     }
 }
 
+// ponytail: namespace persisted Den IDs so user/agent/tool rows that share a
+// provider_message_id cannot collide as ACP messageId. Upgrade: mint durable
+// ACP-owned IDs at persist time and stop prefixing.
+fn replay_acp_message_id(kind: &str, persisted: Option<&str>) -> String {
+    match persisted.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => format!("{kind}:{id}"),
+        None => format!("{kind}:{}", Uuid::new_v4()),
+    }
+}
+
 fn reload_history_message_from_value(mut m: Value) -> Result<Option<ReloadHistoryMessage>> {
     if m.get("kind").is_none() {
         m["kind"] = json!("message");
@@ -5013,27 +5023,15 @@ async fn replay_history_for_den_session(
                     // ACP session/load replays the visible transcript to the client. This is
                     // client-side rendering only; Den owns model-context replay from canonical
                     // conversation storage, so these chunks are not sent back to the model.
-                    Some("user") => {
-                        *counts.entry("user").or_default() += 1;
-                        if let Some(message_id) = message.id.as_deref() {
-                            send_identified_message_chunk(
-                                session_id,
-                                "user",
-                                message_id,
-                                &message.text,
-                            )
-                            .await?;
-                        } else {
-                            send_user_message_chunk(session_id, &message.text).await?;
-                        }
-                    }
-                    Some("agent") => {
-                        *counts.entry("agent").or_default() += 1;
-                        // ponytail: replay agent text using the same minimal ACP chunk shape as
-                        // live/diagnostic messages. Some clients suppress rehydrated agent chunks
-                        // carrying persisted provider message IDs; revisit when ACP defines a
-                        // separate, interoperable historical-message identity contract.
-                        send_agent_message_chunk(session_id, &message.text).await?;
+                    Some(kind @ ("user" | "agent")) => {
+                        *counts.entry(kind).or_default() += 1;
+                        send_identified_message_chunk(
+                            session_id,
+                            kind,
+                            &replay_acp_message_id(kind, message.id.as_deref()),
+                            &message.text,
+                        )
+                        .await?;
                     }
                     _ => *counts.entry("ignored").or_default() += 1,
                 },
@@ -12727,6 +12725,24 @@ mod tests {
     }
 
     #[test]
+    fn replay_acp_message_ids_are_role_namespaced() {
+        assert_eq!(
+            replay_acp_message_id("user", Some("turn-1")),
+            "user:turn-1"
+        );
+        assert_eq!(
+            replay_acp_message_id("agent", Some("turn-1")),
+            "agent:turn-1"
+        );
+        assert_ne!(
+            replay_acp_message_id("user", Some("turn-1")),
+            replay_acp_message_id("agent", Some("turn-1"))
+        );
+        assert!(replay_acp_message_id("agent", None).starts_with("agent:"));
+        assert!(replay_acp_message_id("user", Some("  ")).starts_with("user:"));
+    }
+
+    #[test]
     fn sparse_surface_tool_history_is_rejected_before_replay() {
         let err = reload_history_message_from_value(json!({
             "kind": "tool_result",
@@ -15537,11 +15553,12 @@ mod tests {
                         .contains("agent message received over BearWire")
             })
             .unwrap_or_else(|| panic!("missing ACP agent message chunk: {output:#?}"));
-        assert!(
+        assert_eq!(
             output[agent_update_index]
                 .pointer("/params/update/messageId")
-                .is_none(),
-            "replayed ACP agent chunks must use the same minimal shape as visible live agent chunks: {output:#?}"
+                .and_then(Value::as_str),
+            Some("agent:persisted-agent-message"),
+            "replayed ACP agent chunks must carry a role-namespaced messageId: {output:#?}"
         );
         assert!(
             agent_update_index < load_response_index,
@@ -15632,7 +15649,8 @@ mod tests {
             user_chunks
                 .iter()
                 .any(|frame| frame
-                    .contains("old instruction that must not be replayed as fresh input")),
+                    .contains("old instruction that must not be replayed as fresh input")
+                    && frame.contains("user:old-user-prompt")),
             "session/load should replay historical user messages to the ACP client: {output:#?}"
         );
         let agent_chunks = output
@@ -15649,7 +15667,8 @@ mod tests {
         assert!(
             agent_chunks
                 .iter()
-                .any(|chunk| chunk.contains("old answer can be replayed as agent history")),
+                .any(|chunk| chunk.contains("old answer can be replayed as agent history")
+                    && chunk.contains("agent:old-assistant-answer")),
             "assistant history should still be replayed: {output:#?}"
         );
         let _ = fs::remove_dir_all(root);
