@@ -5029,17 +5029,11 @@ async fn replay_history_for_den_session(
                     }
                     Some("agent") => {
                         *counts.entry("agent").or_default() += 1;
-                        if let Some(message_id) = message.id.as_deref() {
-                            send_identified_message_chunk(
-                                session_id,
-                                "agent",
-                                message_id,
-                                &message.text,
-                            )
-                            .await?;
-                        } else {
-                            send_agent_message_chunk(session_id, &message.text).await?;
-                        }
+                        // ponytail: replay agent text using the same minimal ACP chunk shape as
+                        // live/diagnostic messages. Some clients suppress rehydrated agent chunks
+                        // carrying persisted provider message IDs; revisit when ACP defines a
+                        // separate, interoperable historical-message identity contract.
+                        send_agent_message_chunk(session_id, &message.text).await?;
                     }
                     _ => *counts.entry("ignored").or_default() += 1,
                 },
@@ -15544,12 +15538,11 @@ mod tests {
                         .contains("agent message received over BearWire")
             })
             .unwrap_or_else(|| panic!("missing ACP agent message chunk: {output:#?}"));
-        assert_eq!(
+        assert!(
             output[agent_update_index]
                 .pointer("/params/update/messageId")
-                .and_then(Value::as_str),
-            Some("persisted-agent-message"),
-            "replayed ACP agent chunk must preserve its BearWire message identity: {output:#?}"
+                .is_none(),
+            "replayed ACP agent chunks must use the same minimal shape as visible live agent chunks: {output:#?}"
         );
         assert!(
             load_response_index < agent_update_index,
