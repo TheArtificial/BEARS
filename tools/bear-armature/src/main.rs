@@ -5015,11 +5015,31 @@ async fn replay_history_for_den_session(
                     // conversation storage, so these chunks are not sent back to the model.
                     Some("user") => {
                         *counts.entry("user").or_default() += 1;
-                        send_user_message_chunk(session_id, &message.text).await?;
+                        if let Some(message_id) = message.id.as_deref() {
+                            send_identified_message_chunk(
+                                session_id,
+                                "user",
+                                message_id,
+                                &message.text,
+                            )
+                            .await?;
+                        } else {
+                            send_user_message_chunk(session_id, &message.text).await?;
+                        }
                     }
                     Some("agent") => {
                         *counts.entry("agent").or_default() += 1;
-                        send_agent_message_chunk(session_id, &message.text).await?;
+                        if let Some(message_id) = message.id.as_deref() {
+                            send_identified_message_chunk(
+                                session_id,
+                                "agent",
+                                message_id,
+                                &message.text,
+                            )
+                            .await?;
+                        } else {
+                            send_agent_message_chunk(session_id, &message.text).await?;
+                        }
                     }
                     _ => *counts.entry("ignored").or_default() += 1,
                 },
@@ -11734,6 +11754,31 @@ fn text_chunk_update(kind: &str, text: &str) -> Result<Value> {
     Ok(serde_json::to_value(update)?)
 }
 
+fn identified_text_chunk_update(kind: &str, message_id: &str, text: &str) -> Result<Value> {
+    let mut update = text_chunk_update(kind, text)?;
+    update
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("ACP text chunk did not serialize as an object"))?
+        .insert("messageId".to_string(), Value::String(message_id.to_string()));
+    Ok(update)
+}
+
+async fn send_identified_message_chunk(
+    session_id: &str,
+    kind: &str,
+    message_id: &str,
+    text: &str,
+) -> Result<()> {
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": identified_text_chunk_update(kind, message_id, text)?,
+        }),
+    )
+    .await
+}
+
 async fn send_user_message_chunk(session_id: &str, text: &str) -> Result<()> {
     write_notification(
         "session/update",
@@ -15499,6 +15544,13 @@ mod tests {
                         .contains("agent message received over BearWire")
             })
             .unwrap_or_else(|| panic!("missing ACP agent message chunk: {output:#?}"));
+        assert_eq!(
+            output[agent_update_index]
+                .pointer("/params/update/messageId")
+                .and_then(Value::as_str),
+            Some("persisted-agent-message"),
+            "replayed ACP agent chunk must preserve its BearWire message identity: {output:#?}"
+        );
         assert!(
             load_response_index < agent_update_index,
             "session/load must respond before replaying the BearWire agent message: {output:#?}"
