@@ -456,6 +456,38 @@ pub fn runtime_event_history_marker(
                 kind, text, detail, ..
             },
         ) => runtime_progress_history_marker(bear_name, kind, text.as_deref(), detail.as_ref()),
+        den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::ToolCallFinished {
+                tool_call_id,
+                tool_name,
+                status,
+                summary,
+                error_message,
+            },
+        ) if *status != den_protocol::ToolCallFinishStatus::Ok => {
+            let detail = error_message
+                .as_deref()
+                .or(summary.as_deref())
+                .map(str::trim)
+                .filter(|detail| !detail.is_empty())
+                .unwrap_or("No error detail was provided.");
+            Some(RuntimeHistoryMarkerProjection {
+                kind: "tool_call_failed".to_string(),
+                text: format_den_status(format!(
+                    "Tool `{tool_name}` finished with status `{}`: {}",
+                    status.as_str(),
+                    log_sample(detail)
+                )),
+                metadata: json!({
+                    "kind": "tool_call_failed",
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "status": status.as_str(),
+                    "summary": summary,
+                    "error_message": error_message,
+                }),
+            })
+        }
         _ => None,
     }
 }
@@ -568,6 +600,49 @@ mod tests {
             .contains("Operational note from Den"));
         assert_eq!(projection.content["kind"], "turn_budget_exhausted");
         assert_eq!(projection.content["retryable"], false);
+    }
+
+    #[test]
+    fn failed_tool_call_is_projected_with_actionable_detail() {
+        let marker = runtime_event_history_marker(
+            "Builder Bear",
+            &den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::ToolCallFinished {
+                    tool_call_id: "call-1".to_string(),
+                    tool_name: "fs_edit_file".to_string(),
+                    status: den_protocol::ToolCallFinishStatus::Error,
+                    summary: Some("edit rejected".to_string()),
+                    error_message: Some("old_text did not match the current file".to_string()),
+                },
+            ),
+        )
+        .expect("failed tool call should be transcript-visible");
+
+        assert_eq!(marker.kind, "tool_call_failed");
+        assert!(marker.text.contains("fs_edit_file"));
+        assert!(marker
+            .text
+            .contains("old_text did not match the current file"));
+        assert_eq!(marker.metadata["tool_call_id"], "call-1");
+        assert_eq!(marker.metadata["status"], "error");
+    }
+
+    #[test]
+    fn successful_tool_call_does_not_add_failure_marker() {
+        let marker = runtime_event_history_marker(
+            "Builder Bear",
+            &den_protocol::RuntimeStreamEvent::Semantic(
+                den_protocol::RuntimeSemanticEvent::ToolCallFinished {
+                    tool_call_id: "call-1".to_string(),
+                    tool_name: "fs_edit_file".to_string(),
+                    status: den_protocol::ToolCallFinishStatus::Ok,
+                    summary: Some("updated file".to_string()),
+                    error_message: None,
+                },
+            ),
+        );
+
+        assert!(marker.is_none());
     }
 
     #[test]

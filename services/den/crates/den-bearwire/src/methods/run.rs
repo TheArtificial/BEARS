@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    fmt,
-    path::Path,
-    time::Instant,
-};
+use std::{collections::BTreeMap, fmt, path::Path, time::Instant};
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
@@ -847,33 +842,6 @@ fn initial_stream_eof_is_recoverable(
     // wait, cancellation, or Docket-authorized successor already supplies the next
     // durable control boundary.
     !terminal_or_wait_seen && !cancellation_seen && !docket_continuation_requested
-}
-
-fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent) -> bool {
-    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-    // A transcript-visible assistant delta proves the selected task turn began,
-    // but not that an autonomous continuation exists. Docket separately promotes
-    // only persisted obligations/continuations to `continuation_established`.
-    // Status/provider activity alone remains insufficient.
-    matches!(
-        event,
-        RuntimeStreamEvent::Semantic(
-            RuntimeSemanticEvent::AssistantTextDelta { .. }
-                | RuntimeSemanticEvent::ToolCallRequested { .. }
-                | RuntimeSemanticEvent::RunPaused { .. }
-                | RuntimeSemanticEvent::BoundedSlice { .. }
-        )
-    )
-}
-
-fn eager_prefix_boundary(event: &den_protocol::RuntimeStreamEvent) -> &'static str {
-    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-    match event {
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { .. }) => {
-            "transcript_visible_assistant_output"
-        }
-        _ => "actionable_native_event",
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2376,6 +2344,32 @@ async fn run_start_with_recovery_source(
     } else {
         None
     };
+    let launch_claim_id = if let Some(attempt) = attempt.as_ref() {
+        turn_runs::queue_docket_pair_launch(
+            &state.sqlx_pool,
+            &session_run_id,
+            attempt.id,
+            attempt.fence_epoch,
+        )
+        .await?;
+        let claim_id = Uuid::new_v4();
+        turn_runs::claim_docket_pair_launch(
+            &state.sqlx_pool,
+            &session_run_id,
+            attempt.id,
+            attempt.fence_epoch,
+            claim_id,
+        )
+        .await?
+        .ok_or_else(|| {
+            CustomError::ValidationError(
+                "Docket Pair launch is already claimed by another controller".to_string(),
+            )
+        })?;
+        Some(claim_id)
+    } else {
+        None
+    };
     let mut accepted = BearWireEvent::ephemeral(
         "run.accepted",
         json!({
@@ -2417,6 +2411,7 @@ async fn run_start_with_recovery_source(
     let read_only_runtime_context_for_task = read_only_runtime_context.clone();
     let run_id_for_task = session_run_id.clone();
     let client_tools_for_task = client_tools.clone();
+    let launch_claim_id_for_task = launch_claim_id;
     let api_style_for_task = resolved_model.api_style;
     let supports_reasoning_effort_for_task = resolved_model.supports_reasoning_effort;
     // /focus is allowed to block until this durable startup boundary completes.
@@ -2462,17 +2457,41 @@ async fn run_start_with_recovery_source(
     )
     .await;
 
-    // A successful focus must mean the native task turn produced a semantic
-    // runtime event, not merely that its delivery stream was constructed.
-    // Return the exact first qualifying event to the synchronous /focus caller.
-    // This is response-safe metadata (not model/tool content) and makes a later
-    // focus report auditable without relying on a timing-sensitive run snapshot.
-    let (eager_prefix_tx, eager_prefix_rx) =
-        tokio::sync::oneshot::channel::<Result<Value, String>>();
     let run_for_task = run.clone();
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
-        let mut eager_prefix_tx = Some(eager_prefix_tx);
+        if let Some(claim_id) = launch_claim_id_for_task {
+            match turn_runs::mark_docket_pair_launch_started(&pool, &run_id_for_task, claim_id)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    // The lease may have expired and been claimed by another Den
+                    // controller. This stale controller must not terminalize the
+                    // shared run or overwrite the newer owner's outcome.
+                    tracing::warn!(
+                        session_id = %session_for_task,
+                        run_id = %run_id_for_task,
+                        claim_id = %claim_id,
+                        "Docket Pair launch claim was lost before native controller startup"
+                    );
+                    return;
+                }
+                Err(error) => {
+                    // No model work has started. Leave the claimed launch intact so
+                    // it becomes recoverable when its lease expires; marking the run
+                    // failed here would destroy that durable recovery path.
+                    tracing::error!(
+                        error = %error,
+                        session_id = %session_for_task,
+                        run_id = %run_id_for_task,
+                        claim_id = %claim_id,
+                        "failed to persist Docket Pair launch startup"
+                    );
+                    return;
+                }
+            }
+        }
         // A focused Docket task is autonomous work. Do not acknowledge `/focus`
         // merely because Tokio accepted a spawn: wait until the continuation has
         // reached native stream startup, which proves it consumed the task turn.
@@ -2583,7 +2602,6 @@ async fn run_start_with_recovery_source(
                 // ponytail: capped category map because the native enum is finite; expand
                 // this only if event kinds become dynamically extensible.
                 let mut runtime_event_kinds = BTreeMap::<&'static str, usize>::new();
-                let mut candidate_boundary_kinds = BTreeMap::<&'static str, usize>::new();
                 let idle_watchdog_timeout = crate::methods::client::continuation_watchdog_timeout();
                 let handshake_timeout = den_runtime::agent_loop::native_llm_handshake_timeout();
                 let first_event_watchdog_timeout =
@@ -2601,9 +2619,6 @@ async fn run_start_with_recovery_source(
                         changed = cancel_rx.changed() => {
                             if changed.is_ok() && *cancel_rx.borrow() {
                                 cancellation_seen = true;
-                                if let Some(tx) = eager_prefix_tx.take() {
-                                    let _ = tx.send(Err("Docket task turn was cancelled before its first runtime event".to_string()));
-                                }
                                 tracing::info!(
                                     session_id = %session_for_task,
                                     run_id = %run_id_for_task,
@@ -2617,12 +2632,6 @@ async fn run_start_with_recovery_source(
                             let item = match timed {
                                 Ok(item) => item,
                                 Err(_) => {
-                                    if let Some(tx) = eager_prefix_tx.take() {
-                                        let _ = tx.send(Err(format!(
-                                            "Docket task turn produced no runtime event within {}ms",
-                                            watchdog_timeout.as_millis()
-                                        )));
-                                    }
                                     persist_run_failed(
                                         &pool,
                                         &session_for_task,
@@ -2658,9 +2667,6 @@ async fn run_start_with_recovery_source(
                                     assistant_content_seen |= runtime_event_has_assistant_content(&runtime_event);
                                     let event_kind = runtime_event_kind(&runtime_event);
                                     *runtime_event_kinds.entry(event_kind).or_default() += 1;
-                                    if runtime_event_satisfies_eager_prefix(&runtime_event) {
-                                        *candidate_boundary_kinds.entry(event_kind).or_default() += 1;
-                                    }
                                     last_event_kind = Some(event_kind);
                                     match runtime_stream_boundary(&runtime_event) {
                                         RuntimeStreamBoundary::Terminal => terminal_event_seen = true,
@@ -2698,20 +2704,6 @@ async fn run_start_with_recovery_source(
                                     if runtime_event_is_terminal_or_wait(&runtime_event) {
                                         terminal_or_wait_seen = true;
                                     }
-                                    // Provider/status events prove transport progress, but not that
-                                    // the Docket task turn entered an actionable loop boundary. Keep
-                                    // waiting until any qualifying native event, not only the first
-                                    // non-provider event (which is commonly a status update).
-                                    if eager_prefix_tx.is_some()
-                                        && runtime_event_satisfies_eager_prefix(&runtime_event)
-                                    {
-                                        if let Some(tx) = eager_prefix_tx.take() {
-                                            let _ = tx.send(Ok(json!({
-                                                "event_kind": runtime_event_kind(&runtime_event),
-                                                "boundary": eager_prefix_boundary(&runtime_event),
-                                            })));
-                                        }
-                                    }
                                     if !first_event_seen {
                                         first_event_seen = true;
                                         persist_run_progress(
@@ -2744,11 +2736,6 @@ async fn run_start_with_recovery_source(
                                     .await;
                                 }
                                 Err(err) => {
-                                    if let Some(tx) = eager_prefix_tx.take() {
-                                        let _ = tx.send(Err(format!(
-                                            "Docket task turn stream failed before its first runtime event: {err}"
-                                        )));
-                                    }
                                     persist_run_failed(
                                         &pool,
                                         &session_for_task,
@@ -2766,35 +2753,6 @@ async fn run_start_with_recovery_source(
                         }
                     }
                 }
-                // Every startup path must resolve the focus waiter. In particular, a
-                // terminal failure before an actionable event used to fall through here
-                // and drop the sender, which made `/focus` ambiguous.
-                if let Some(tx) = eager_prefix_tx.take() {
-                    let diagnostics = json!({
-                        "events_seen": runtime_event_count,
-                        "provider_activity_seen": provider_activity_seen,
-                        "assistant_content_seen": assistant_content_seen,
-                        "event_kinds": runtime_event_kinds,
-                        "candidate_boundary_kinds": candidate_boundary_kinds,
-                        "terminal_event_seen": terminal_event_seen,
-                        "client_wait_seen": wait_event_seen,
-                        "last_event_kind": last_event_kind,
-                    });
-                    let detail = if terminal_event_seen {
-                        format!(
-                            "Docket task turn ended before reaching an actionable runtime boundary; startup_diagnostics={diagnostics}",
-                        )
-                    } else if cancellation_seen {
-                        format!(
-                            "Docket task turn was cancelled before reaching an actionable runtime boundary; startup_diagnostics={diagnostics}",
-                        )
-                    } else {
-                        format!(
-                            "Docket task turn stream ended before reaching an actionable runtime boundary; startup_diagnostics={diagnostics}",
-                        )
-                    };
-                    let _ = tx.send(Err(detail));
-                }
                 if !docket_continuation_requested
                     && initial_stream_eof_is_recoverable(
                         terminal_or_wait_seen,
@@ -2802,14 +2760,6 @@ async fn run_start_with_recovery_source(
                         docket_continuation_requested,
                     )
                 {
-                    if !first_event_seen {
-                        if let Some(tx) = eager_prefix_tx.take() {
-                            let _ = tx.send(Err(
-                                "Docket task turn stream ended before its first runtime event"
-                                    .to_string(),
-                            ));
-                        }
-                    }
                     // An EOF only ends this delivery stream. Do not settle the run or its
                     // obligations: a later client retry can reconcile from persisted events.
                     let _ = turn_runs::transition_run(
@@ -2934,9 +2884,6 @@ async fn run_start_with_recovery_source(
                 }
             }
             Err(err) => {
-                if let Some(tx) = eager_prefix_tx.take() {
-                    let _ = tx.send(Err(format!("Docket task turn could not start: {err}")));
-                }
                 persist_run_failed(
                     &pool,
                     &session_for_task,
@@ -2951,11 +2898,6 @@ async fn run_start_with_recovery_source(
             }
         }
     });
-
-    // The canonical startup boundary is the durable running attempt plus the
-    // launched native-run task above. Runtime events are later outcomes of that
-    // attempt; /focus must not wait for or reinterpret them as authorization.
-    drop(eager_prefix_rx);
 
     Ok(json!({
         "ok": true,
@@ -3520,39 +3462,6 @@ mod tests {
         assert!(!runtime_event_has_assistant_content(
             &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
                 text: "working".to_string(),
-            })
-        ));
-    }
-
-    #[test]
-    fn eager_prefix_accepts_transcript_visible_turn_start_but_not_status() {
-        use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-
-        assert!(!runtime_event_satisfies_eager_prefix(
-            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
-                text: "connecting".to_string(),
-            })
-        ));
-        let assistant_text =
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
-                text: "working".to_string(),
-            });
-        assert!(runtime_event_satisfies_eager_prefix(&assistant_text));
-        assert_eq!(
-            eager_prefix_boundary(&assistant_text),
-            "transcript_visible_assistant_output"
-        );
-        assert!(runtime_event_satisfies_eager_prefix(
-            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
-                tool_call_id: "call-1".to_string(),
-                tool_name: "functions.fs_read_text_file".to_string(),
-                title: None,
-                kind: None,
-                arguments: serde_json::json!({}),
-                approval_required: false,
-                approval_request_id: None,
-                approval_reason: None,
-                run_id: None,
             })
         ));
     }

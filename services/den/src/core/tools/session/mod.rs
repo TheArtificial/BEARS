@@ -62,7 +62,12 @@ pub async fn invoke_den_tool(
             bear,
             &context.session_id,
         )
-        .await;
+        .await
+        .and_then(|result| {
+            serde_json::to_value(result).map_err(|error| {
+                CustomError::System(format!("serialize Pair task start failed: {error}"))
+            })
+        });
     }
 
     if tool_name == DEN_WORK_PREPARE_RUST_DEPENDENCIES {

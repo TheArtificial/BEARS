@@ -9,27 +9,23 @@ use den_docket::{
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use bearwire_protocol::{
-    methods::{
-        DocketJobDiagnosticsRequest, DocketJobsCancelRunRequest, DocketJobsExecuteRequest,
-        DocketJobsListRequest, DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest,
-        RuntimeDiagnosticsListRequest,
-    },
-    wire::BearWireEvent,
+use bearwire_protocol::methods::{
+    DocketJobDiagnosticsRequest, DocketJobsCancelRunRequest, DocketJobsExecuteRequest,
+    DocketJobsListRequest, DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest,
+    RuntimeDiagnosticsListRequest,
 };
 use den_http::errors::CustomError;
 use den_runtime::runtime_exception_events::{
     self, RuntimeExceptionEventFilter, RuntimeExceptionSeverity,
 };
-use den_runtime::{bearwire_events, current_task::select_pair_current_task};
 use den_service::{
     artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
     client_sessions, DenState,
 };
 
 use crate::auth::authenticated_bear;
+use crate::methods::pair_execution::start_or_reconcile_docket_pair_execution;
 use crate::methods::parse_params;
-use crate::methods::session::start_pair_current_task;
 
 pub async fn docket_jobs_list_result(
     state: &DenState,
@@ -445,89 +441,22 @@ async fn execution_result(
         if let (Some(client_session_id), Some(task_id)) =
             (client_session_id, outcome.control.task.selected_task_id)
         {
-            let session = client_sessions::find_for_user_bear_session_id(
-                &state.sqlx_pool,
+            let execution = start_or_reconcile_docket_pair_execution(
+                state,
                 user_id,
-                bear.id,
+                bear.clone(),
                 client_session_id,
-            )
-            .await?
-            .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
-            PgDocketService::from_pool(&state.sqlx_pool)
-                .attach_task_to_pair_session(bear.id, task_id, session.id)
-                .await?;
-            select_pair_current_task(
-                &state.sqlx_pool,
-                user_id,
-                bear.id,
-                client_session_id,
-                Some(task_id),
-            )
-            .await?;
-            let loop_start =
-                start_pair_current_task(state, user_id, bear.clone(), client_session_id).await?;
-            let loop_run_id = loop_start["run_id"].as_str().ok_or_else(|| {
-                CustomError::System("Pair task start omitted its run id".to_string())
-            })?;
-            // start_pair_current_task persists `running` before it returns, so
-            // /focus has a synchronous startup boundary rather than an async
-            // polling race with the detached model-stream continuation.
-            let loop_run = den_runtime::turn_runs::get_run(&state.sqlx_pool, loop_run_id)
-                .await?
-                .ok_or_else(|| {
-                    CustomError::System("Pair task start run was not persisted".to_string())
-                })?;
-            let attempt_id = loop_start
-                .get("execution_attempt_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    CustomError::System(
-                        "Pair task start omitted its execution attempt id".to_string(),
-                    )
-                })?;
-            let attempt_state = loop_start
-                .get("execution_attempt_state")
-                .and_then(Value::as_str);
-            let launch_state = loop_start.get("launch_state").and_then(Value::as_str);
-            let attempt_is_running = attempt_state == Some("running");
-            let native_run_is_live = matches!(launch_state, Some("started" | "already_running"));
-            if !attempt_is_running || !native_run_is_live {
-                return Err(CustomError::System(format!(
-                    "Pair task start did not establish a running canonical attempt and live native run (attempt_state={}, launch_state={})",
-                    attempt_state.unwrap_or("missing"),
-                    launch_state.unwrap_or("missing")
-                )));
-            }
-            let mut focus_event = BearWireEvent::ephemeral(
-                "docket.execution.started",
-                json!({
-                    "attempt_id": attempt_id,
-                    "task_id": task_id,
-                    "run_id": loop_run.run_id,
-                    "attempt_state": attempt_state,
-                    "launch_state": launch_state,
-                }),
-            );
-            focus_event.bear_id = Some(bear.id.to_string());
-            focus_event.human_id = Some(user_id.to_string());
-            focus_event.session_id = Some(client_session_id.to_string());
-            focus_event.run_id = Some(loop_run.run_id.clone());
-            bearwire_events::append_bearwire_event(
-                &state.sqlx_pool,
-                client_session_id,
-                Some(bear.id),
-                Some(user_id),
-                focus_event,
+                task_id,
             )
             .await?;
             pair_binding = json!({
                 "control": {
                     "kind": "docket",
                     "state": "running",
-                    "attempt_id": attempt_id,
-                    "attempt_state": attempt_state,
-                    "launch_state": launch_state,
-                    "fence_epoch": loop_start.get("fence_epoch").cloned().unwrap_or(Value::Null),
+                    "attempt_id": execution.attempt_id,
+                    "attempt_state": execution.attempt_state,
+                    "launch_state": execution.launch_state,
+                    "fence_epoch": execution.fence_epoch,
                 },
                 "task": {
                     "id": task_id,
@@ -535,9 +464,8 @@ async fn execution_result(
                 },
                 "session_id": client_session_id,
                 "run": {
-                    "id": loop_run.run_id,
-                    "state": loop_run.state,
-                    "terminal_reason": loop_run.terminal_reason,
+                    "id": execution.run_id,
+                    "state": execution.run_state,
                 },
             });
         } else {

@@ -15,7 +15,6 @@ use bearwire_protocol::{
 };
 use den_http::errors::CustomError;
 use den_runtime::{
-    agent_loop::{LedgerEvidenceRef, LoopControlDecisionKind, LoopControlLedgerInput},
     bearwire_events,
     conversation_review::{
         ConversationReview, ConversationReviewFinding, ConversationReviewFindingDetail,
@@ -807,7 +806,25 @@ pub(crate) async fn session_current_task_start_result(
             "Pair task controls are disabled".to_string(),
         ));
     }
-    start_pair_current_task(state, user_id, bear, &request.session_id).await
+    Ok(serde_json::to_value(
+        start_pair_current_task(state, user_id, bear, &request.session_id).await?,
+    )
+    .map_err(|err| CustomError::System(format!("serialize Pair task start failed: {err}")))?)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PairTaskStartResult {
+    pub ok: bool,
+    pub started: bool,
+    pub reused: bool,
+    pub run_id: String,
+    pub session_id: String,
+    pub task_id: uuid::Uuid,
+    pub state: String,
+    pub execution_attempt_id: uuid::Uuid,
+    pub execution_attempt_state: String,
+    pub launch_state: String,
+    pub fence_epoch: i64,
 }
 
 /// Starts the Pair loop for the session's selected task. Docket `/focus` uses
@@ -818,7 +835,7 @@ pub async fn start_pair_current_task(
     user_id: i32,
     bear: den_service::bears::Bear,
     session_id: &str,
-) -> Result<Value, CustomError> {
+) -> Result<PairTaskStartResult, CustomError> {
     let session = client_sessions::find_for_user_bear_session_id(
         &state.sqlx_pool,
         user_id,
@@ -845,65 +862,15 @@ pub async fn start_pair_current_task(
         .await?
         .filter(|run| run.bear_id == bear.id && run.user_id == user_id)
     {
-        if run.state == "continuing" {
-            // A continuing run has no live stream after process loss. Return the
-            // same durable run to retryable state; creating a successor here
-            // would violate the one-active-run-per-session invariant.
-            let recovered = den_runtime::turn_runs::begin_claimed_run_continuation(
-                &state.sqlx_pool,
-                &run.run_id,
-            )
-            .await?
-            .ok_or_else(|| {
-                CustomError::ValidationError(
-                    "continuation recovery was claimed concurrently".to_string(),
-                )
-            })?;
-            den_runtime::agent_loop::record_loop_control_decision(
-                &state.sqlx_pool,
-                LoopControlLedgerInput {
-                    run_id: recovered.run_id.clone(),
-                    turn_step_id: None,
-                    conversation_message_id: None,
-                    decision_id: format!("budget-slice-recovery:{}", recovered.run_id),
-                    decision_kind: LoopControlDecisionKind::BudgetSliceRecovery,
-                    control_level: "standard".to_string(),
-                    reason: Some("process_abandoned_continuation".to_string()),
-                    orientation_kind: Some("task_oriented".to_string()),
-                    checkpoint_id: None,
-                    related_task_list_id: None,
-                    related_task_item_id: Some(task_id.to_string()),
-                    related_docket_job_id: None,
-                    related_docket_task_id: Some(task_id),
-                    evidence_refs: vec![LedgerEvidenceRef {
-                        kind: "turn_run_state".to_string(),
-                        id: "continuing_to_running".to_string(),
-                    }],
-                    decision: json!({ "action": "recover", "same_run": true }),
-                },
-            )
-            .await?;
-            let attempt = existing_pair_execution_attempt(
-                &state.sqlx_pool,
-                bear.id,
-                task_id,
-                session_id,
-                &recovered.run_id,
-            )
-            .await?;
-            return Ok(json!({
-                "ok": true,
-                "started": false,
-                "recovered": true,
-                "reused": true,
-                "recovered_run_id": recovered.run_id,
-                "run_id": recovered.run_id,
-                "session_id": session_id,
-                "task_id": task_id,
-                "state": recovered.state,
-                "execution_attempt_id": attempt.id,
-                "fence_epoch": attempt.fence_epoch,
-            }));
+        let controller_is_live = state
+            .turn_cancellations
+            .active_for_session(session_id)
+            .is_some_and(|active| active.run_ids.iter().any(|id| id == &run.run_id));
+        if !controller_is_live {
+            return Err(CustomError::ValidationError(format!(
+                "Pair run {} is durably active but has no live native controller; reconcile execution before retrying",
+                run.run_id
+            )));
         }
         let attempt = existing_pair_execution_attempt(
             &state.sqlx_pool,
@@ -913,19 +880,19 @@ pub async fn start_pair_current_task(
             &run.run_id,
         )
         .await?;
-        return Ok(json!({
-            "ok": true,
-            "started": false,
-            "reused": true,
-            "run_id": run.run_id,
-            "session_id": session_id,
-            "task_id": task_id,
-            "state": run.state,
-            "execution_attempt_id": attempt.id,
-            "execution_attempt_state": attempt.state,
-            "launch_state": "already_running",
-            "fence_epoch": attempt.fence_epoch,
-        }));
+        return Ok(PairTaskStartResult {
+            ok: true,
+            started: false,
+            reused: true,
+            run_id: run.run_id,
+            session_id: session_id.to_string(),
+            task_id,
+            state: run.state,
+            execution_attempt_id: attempt.id,
+            execution_attempt_state: "running".to_string(),
+            launch_state: "already_running".to_string(),
+            fence_epoch: attempt.fence_epoch,
+        });
     }
 
     if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
@@ -942,30 +909,29 @@ pub async fn start_pair_current_task(
                 ));
             }
         };
-        let run_is_live = den_runtime::turn_runs::get_run(&state.sqlx_pool, &run_id)
+        let run = den_runtime::turn_runs::get_run(&state.sqlx_pool, &run_id)
             .await?
-            .is_some_and(|run| {
-                run.bear_id == bear.id
-                    && run.user_id == user_id
-                    && matches!(
-                        run.state.as_str(),
-                        "accepted" | "running" | "waiting_for_client" | "continuing"
-                    )
+            .filter(|run| run.bear_id == bear.id && run.user_id == user_id);
+        let controller_is_live = state
+            .turn_cancellations
+            .active_for_session(session_id)
+            .is_some_and(|active| active.run_ids.iter().any(|id| id == &run_id));
+        if run.is_some_and(|run| {
+            controller_is_live && matches!(run.state.as_str(), "running" | "waiting_for_client")
+        }) {
+            return Ok(PairTaskStartResult {
+                ok: true,
+                started: false,
+                reused: true,
+                run_id,
+                session_id: session_id.to_string(),
+                task_id,
+                state: "running".to_string(),
+                execution_attempt_id: attempt.id,
+                execution_attempt_state: "running".to_string(),
+                launch_state: "already_running".to_string(),
+                fence_epoch: attempt.fence_epoch,
             });
-        if run_is_live {
-            return Ok(json!({
-                "ok": true,
-                "started": false,
-                "reused": true,
-                "run_id": run_id,
-                "session_id": session_id,
-                "task_id": task_id,
-                "state": attempt.state,
-                "execution_attempt_id": attempt.id,
-                "execution_attempt_state": attempt.state,
-                "launch_state": "already_running",
-                "fence_epoch": attempt.fence_epoch,
-            }));
         }
         PgDocketService::from_pool(&state.sqlx_pool)
             .release_execution_attempt(DocketExecutionAttemptRelease {
@@ -1004,36 +970,50 @@ pub async fn start_pair_current_task(
     let task_session_id = request.session_id.clone();
     let result =
         super::run::run_start_for_pair_task(state, request, user_id, bear.clone(), task_id).await?;
-    let run_id = result["run_id"].as_str().ok_or_else(|| {
-        CustomError::ValidationError("run.start returned a non-string run_id".to_string())
-    })?;
-    let initial_turn_started = result["initial_turn_started"].as_bool().unwrap_or(false);
-    let initial_turn_evidence = result["initial_turn_evidence"].clone();
-    // A missing native event only means that this synchronous observation window
-    // ended. It is not an error and, crucially, not proof of Docket control.
-    // The caller returns a structured requested/not-established result until a
-    // durable, correlated continuation exists.
-    let initial_turn_confirmed = initial_turn_started && initial_turn_evidence.is_object();
-    let execution_attempt_id = result["execution_attempt_id"].clone();
-    let execution_attempt_state = result["execution_attempt_state"].clone();
-    let launch_state = result["launch_state"].clone();
-    let fence_epoch = result["fence_epoch"].clone();
-    Ok(json!({
-        "ok": true,
-        "started": true,
-        "reused": false,
-        "run_id": run_id,
-        "session_id": task_session_id,
-        "task_id": task_id,
-        "state": result["state"].clone(),
-        "launch_state": launch_state,
-        "initial_turn_started": initial_turn_confirmed,
-        "initial_turn_evidence": initial_turn_evidence,
-        "event_sequence": result["event_sequence"].clone(),
-        "execution_attempt_id": execution_attempt_id,
-        "execution_attempt_state": execution_attempt_state,
-        "fence_epoch": fence_epoch,
-    }))
+    let run_id = result["run_id"]
+        .as_str()
+        .ok_or_else(|| {
+            CustomError::ValidationError("run.start returned a non-string run_id".to_string())
+        })?
+        .to_string();
+    let execution_attempt_id = result["execution_attempt_id"]
+        .as_str()
+        .ok_or_else(|| CustomError::System("run.start omitted execution_attempt_id".to_string()))
+        .and_then(|value| {
+            uuid::Uuid::parse_str(value).map_err(|err| {
+                CustomError::System(format!("run.start returned invalid attempt id: {err}"))
+            })
+        })?;
+    let execution_attempt_state = result["execution_attempt_state"]
+        .as_str()
+        .ok_or_else(|| {
+            CustomError::System("run.start omitted execution_attempt_state".to_string())
+        })?
+        .to_string();
+    let launch_state = result["launch_state"]
+        .as_str()
+        .ok_or_else(|| CustomError::System("run.start omitted launch_state".to_string()))?
+        .to_string();
+    let fence_epoch = result["fence_epoch"]
+        .as_i64()
+        .ok_or_else(|| CustomError::System("run.start omitted fence_epoch".to_string()))?;
+    let state = result["state"]
+        .as_str()
+        .ok_or_else(|| CustomError::System("run.start omitted state".to_string()))?
+        .to_string();
+    Ok(PairTaskStartResult {
+        ok: true,
+        started: true,
+        reused: false,
+        run_id,
+        session_id: task_session_id,
+        task_id,
+        state,
+        execution_attempt_id,
+        execution_attempt_state,
+        launch_state,
+        fence_epoch,
+    })
 }
 
 async fn existing_pair_execution_attempt(
