@@ -520,8 +520,35 @@ pub(crate) async fn handle_prompt(
     .await
     .context("BearWire run.start failed")?;
 
+    follow_run(
+        http,
+        config,
+        adapter_state,
+        shared_state,
+        response,
+        session_id,
+        run_result,
+        turn_token,
+    )
+    .await
+}
+
+/// Project an already-started Den run into the current ACP prompt until Den
+/// reaches a canonical prompt boundary. `/focus` uses this after the deep Den
+/// command has selected and launched Docket-owned execution.
+pub(crate) async fn follow_run(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    response: crate::PromptResponseGuard,
+    session_id: &str,
+    run_result: Value,
+    turn_token: Uuid,
+) -> Result<()> {
     let run_id = run_result
         .get("run_id")
+        .or_else(|| run_result.pointer("/pair_binding/run/id"))
         .and_then(Value::as_str)
         .unwrap_or("<unknown>");
     let mut after = run_result

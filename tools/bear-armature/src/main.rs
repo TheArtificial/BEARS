@@ -3039,7 +3039,7 @@ async fn handle_request(
                     let http = http.clone();
                     let config = runtime.config.clone();
                     let shared_state = shared_state.clone();
-                    let prompt_state = AdapterState {
+                    let mut prompt_state = AdapterState {
                         client_capabilities: shared_state.client_capabilities.lock().await.clone(),
                         session_contexts: shared_state.session_contexts.lock().await.clone(),
                         transport: shared_state.transport.clone(),
@@ -3048,7 +3048,7 @@ async fn handle_request(
                         if let Err(err) = handle_local_slash_prompt(
                             Some(&http),
                             config.as_ref(),
-                            &prompt_state,
+                            &mut prompt_state,
                             &shared_state,
                             id.clone(),
                             request.params,
@@ -5390,7 +5390,7 @@ async fn write_prompt_end_turn_response(response_id: Value) -> Result<()> {
 async fn handle_local_slash_prompt(
     http: Option<&reqwest::Client>,
     config: Option<&Config>,
-    adapter_state: &AdapterState,
+    adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     response_id: Value,
     params: Value,
@@ -5403,6 +5403,7 @@ async fn handle_local_slash_prompt(
     let prompt = prompt_text_from_params(&params)?;
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
     send_user_message_chunk(session_id, &display_prompt).await?;
+    let mut launched = None;
     let report = if command == LocalSlashCommand::Debug {
         debug_report(debug_argument_from_prompt(&prompt))
     } else if command == LocalSlashCommand::Focus {
@@ -5413,6 +5414,7 @@ async fn handle_local_slash_prompt(
             shared_state,
             session_id,
             &prompt,
+            &mut launched,
         )
         .await
     } else {
@@ -5427,7 +5429,53 @@ async fn handle_local_slash_prompt(
         .await
     };
     send_agent_message_chunk(session_id, &report).await?;
-    write_prompt_end_turn_response(response_id).await
+    if let (Some(http), Some(config), Some(run_result)) = (http, config, launched) {
+        let response = PromptResponseGuard::new(response_id);
+        let turn_token = Uuid::new_v4();
+        let conversation_id_for_turn = prompt_conversation_id_from_params(&params);
+        let previous = register_prompt_turn_for_session(
+            shared_state,
+            session_id,
+            turn_token,
+            conversation_id_for_turn.clone(),
+            response.clone(),
+        )
+        .await;
+        if let Some(previous) = previous {
+            if let Some(previous_id) = previous.response.claim() {
+                write_prompt_end_turn_response(previous_id).await?;
+            }
+            tracing::info!(
+                session_id,
+                previous_turn = %previous.token,
+                turn_token = %turn_token,
+                conversation_id = ?conversation_id_for_turn,
+                "focused Docket execution superseded the previous ACP projection turn"
+            );
+        }
+
+        let result = bearwire::follow_run(
+            http,
+            config,
+            adapter_state,
+            shared_state,
+            response,
+            session_id,
+            run_result,
+            turn_token,
+        )
+        .await;
+        let mut active = shared_state.active_prompts.lock().await;
+        if active
+            .get(session_id)
+            .is_some_and(|turn| turn.token == turn_token)
+        {
+            active.remove(session_id);
+        }
+        result
+    } else {
+        write_prompt_end_turn_response(response_id).await
+    }
 }
 
 async fn handle_prompt(
@@ -6112,6 +6160,7 @@ async fn focus_job_report(
     shared_state: &AdapterSharedState,
     session_id: &str,
     job_id: String,
+    launched: &mut Option<Value>,
 ) -> String {
     match bearwire::rpc_call(
         http,
@@ -6150,11 +6199,11 @@ async fn focus_job_report(
                     );
                 }
             }
-            format!(
-                "Docket execution started\n\n- Job: {job_id}\n- Pair run: {run_id}\n- Pair binding: {}\n- Docket execution: {}",
-                compact_json_for_status(result.get("pair_binding").unwrap_or(&Value::Null)),
-                compact_json_for_status(&result)
-            )
+            let report = format!(
+                "Docket execution started\n\n- Job: {job_id}\n- Pair run: {run_id}"
+            );
+            *launched = Some(result);
+            report
         },
         Err(err) => format!(
             "Den ACP /focus could not start focus for job {job_id}: {err:#}\n\nRetry after reconnecting if this session was opened before the latest Den/armature deploy."
@@ -6169,6 +6218,7 @@ async fn focus_report(
     shared_state: &AdapterSharedState,
     session_id: &str,
     prompt: &str,
+    launched: &mut Option<Value>,
 ) -> String {
     match focus_prompt_target(prompt) {
         FocusPromptTarget::JobId(job_id) => {
@@ -6182,6 +6232,7 @@ async fn focus_report(
                 shared_state,
                 session_id,
                 job_id,
+                launched,
             )
             .await
         }
@@ -6203,6 +6254,7 @@ async fn focus_report(
                         shared_state,
                         session_id,
                         job.id.clone(),
+                        launched,
                     )
                     .await,
                     [] => format!(
@@ -6234,6 +6286,7 @@ async fn focus_report(
                         shared_state,
                         session_id,
                         job.id.clone(),
+                        launched,
                     )
                     .await,
                     [] => "Den ACP /focus found no non-completed Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
@@ -6269,6 +6322,7 @@ async fn focus_report(
                             shared_state,
                             session_id,
                             job_id.clone(),
+                            launched,
                         )
                         .await,
                         [] => format!(
