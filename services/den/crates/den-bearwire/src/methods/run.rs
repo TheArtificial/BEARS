@@ -2399,57 +2399,54 @@ async fn run_start_with_recovery_source(
     let client_tools_for_task = client_tools.clone();
     let api_style_for_task = resolved_model.api_style;
     let supports_reasoning_effort_for_task = resolved_model.supports_reasoning_effort;
+    // /focus is allowed to block until this durable startup boundary completes.
+    // Persist the exact run as running before its asynchronous stream continuation
+    // is spawned, so focus observes a runnable run rather than an accepted row.
+    let run_started_at = Instant::now();
+    persist_run_progress(
+        &state.sqlx_pool,
+        &session_id_string,
+        &session_run_id,
+        bear.id,
+        user_id,
+        run_started_at,
+        "run_background_started",
+        "Starting Pair stance run…",
+        json!({ "request_id": request_id }),
+    )
+    .await;
+    turn_runs::transition_run(
+        &state.sqlx_pool,
+        &session_run_id,
+        turn_runs::TurnRunState::Running,
+        None,
+    )
+    .await?;
+    let mut started = BearWireEvent::ephemeral(
+        "run.started",
+        json!({
+            "run_id": session_run_id,
+            "session_id": session_id_string,
+        }),
+    );
+    started.bear_id = Some(bear.id.to_string());
+    started.human_id = Some(user_id.to_string());
+    started.session_id = Some(session_id_string.clone());
+    started.run_id = Some(session_run_id.clone());
+    let _ = bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        &session_id_string,
+        Some(bear.id),
+        Some(user_id),
+        started,
+    )
+    .await;
+
     let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<()>();
     let run_for_task = run.clone();
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
         let mut eager_prefix_tx = Some(eager_prefix_tx);
-        let run_started_at = Instant::now();
-        persist_run_progress(
-            &pool,
-            &session_for_task,
-            &run_id_for_task,
-            bear_id,
-            user_id,
-            run_started_at,
-            "run_background_started",
-            "Starting Pair stance run…",
-            json!({
-                "request_id": request_id,
-                "conversation_id": conversation_for_task.clone(),
-                "upstream_target": upstream_target_for_task.clone(),
-                "client": client.clone(),
-                "cwd": cwd.clone(),
-                "client_tool_count": client_tools_for_task.as_array().map(|items| items.len()).unwrap_or(0),
-            }),
-        )
-        .await;
-        let _ = turn_runs::transition_run(
-            &pool,
-            &run_id_for_task,
-            turn_runs::TurnRunState::Running,
-            None,
-        )
-        .await;
-        let mut started = BearWireEvent::ephemeral(
-            "run.started",
-            json!({
-                "run_id": run_id_for_task.clone(),
-                "session_id": session_for_task.clone(),
-            }),
-        );
-        started.bear_id = Some(bear_id.to_string());
-        started.human_id = Some(user_id.to_string());
-        started.session_id = Some(session_for_task.clone());
-        started.run_id = Some(run_id_for_task.clone());
-        let _ = bearwire_events::append_bearwire_event(
-            &pool,
-            &session_for_task,
-            Some(bear_id),
-            Some(user_id),
-            started,
-        )
-        .await;
         persist_run_progress(
             &pool,
             &session_for_task,
