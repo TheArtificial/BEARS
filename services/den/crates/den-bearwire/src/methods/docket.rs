@@ -484,8 +484,22 @@ async fn execution_result(
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             if !initial_turn_started {
+                let detail = loop_start
+                    .get("initial_turn_start_error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("startup signal did not confirm a runtime event");
+                settle_active_run_for_session(
+                    state,
+                    client_session_id,
+                    bear.id,
+                    user_id,
+                    "docket_focus_initial_turn_failed",
+                    None,
+                    None,
+                )
+                .await?;
                 return Err(CustomError::ValidationError(format!(
-                    "Pair task loop did not begin its initial task turn for run {}; retry /focus",
+                    "Pair task loop did not begin its initial task turn for run {}: {detail}",
                     loop_run.run_id
                 )));
             }

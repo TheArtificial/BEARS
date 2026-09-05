@@ -2592,7 +2592,10 @@ async fn run_start_with_recovery_source(
                                 Ok(item) => item,
                                 Err(_) => {
                                     if let Some(tx) = eager_prefix_tx.take() {
-                                        let _ = tx.send(Ok(()));
+                                        let _ = tx.send(Err(format!(
+                                            "Docket task turn produced no runtime event within {}ms",
+                                            watchdog_timeout.as_millis()
+                                        )));
                                     }
                                     persist_run_failed(
                                         &pool,
@@ -2709,7 +2712,9 @@ async fn run_start_with_recovery_source(
                                 }
                                 Err(err) => {
                                     if let Some(tx) = eager_prefix_tx.take() {
-                                        let _ = tx.send(Ok(()));
+                                        let _ = tx.send(Err(format!(
+                                            "Docket task turn stream failed before its first runtime event: {err}"
+                                        )));
                                     }
                                     persist_run_failed(
                                         &pool,
@@ -2735,8 +2740,13 @@ async fn run_start_with_recovery_source(
                         docket_continuation_requested,
                     )
                 {
-                    if let Some(tx) = eager_prefix_tx.take() {
-                        let _ = tx.send(Ok(()));
+                    if !first_event_seen {
+                        if let Some(tx) = eager_prefix_tx.take() {
+                            let _ = tx.send(Err(
+                                "Docket task turn stream ended before its first runtime event"
+                                    .to_string(),
+                            ));
+                        }
                     }
                     // An EOF only ends this delivery stream. Do not settle the run or its
                     // obligations: a later client retry can reconcile from persisted events.
@@ -2863,7 +2873,7 @@ async fn run_start_with_recovery_source(
             }
             Err(err) => {
                 if let Some(tx) = eager_prefix_tx.take() {
-                    let _ = tx.send(Ok(()));
+                    let _ = tx.send(Err(format!("Docket task turn could not start: {err}")));
                 }
                 persist_run_failed(
                     &pool,
@@ -2883,10 +2893,23 @@ async fn run_start_with_recovery_source(
     // Starting a selected Docket task is autonomous work, not merely a durable
     // focus claim. The one-shot resolves only after native runtime startup has
     // accepted the task turn, or closes on an explicit startup failure.
-    let eager_prefix_started = matches!(
-        tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx).await,
-        Ok(Ok(Ok(())))
-    );
+    let initial_turn_start =
+        tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx).await;
+    let (eager_prefix_started, initial_turn_start_error) = match initial_turn_start {
+        Ok(Ok(Ok(()))) => (true, None),
+        Ok(Ok(Err(error))) => (false, Some(error)),
+        Ok(Err(_)) => (
+            false,
+            Some("Docket task startup signal was dropped".to_string()),
+        ),
+        Err(_) => (
+            false,
+            Some(format!(
+                "Docket task turn did not produce a runtime event within {}ms",
+                BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT.as_millis()
+            )),
+        ),
+    };
     if !eager_prefix_started {
         tracing::info!(
             session_id = %session_id,
@@ -2904,6 +2927,7 @@ async fn run_start_with_recovery_source(
         "event_sequence": accepted.sequence_no,
         "state": run.state,
         "initial_turn_started": eager_prefix_started,
+        "initial_turn_start_error": initial_turn_start_error,
         "execution_attempt_id": attempt.as_ref().map(|attempt| attempt.id),
         "fence_epoch": attempt.as_ref().map(|attempt| attempt.fence_epoch),
     }))
