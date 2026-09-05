@@ -2445,7 +2445,9 @@ async fn run_start_with_recovery_source(
     )
     .await;
 
-    let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<()>();
+    // A successful focus must mean the native task turn produced a semantic
+    // runtime event, not merely that its delivery stream was constructed.
+    let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
     let run_for_task = run.clone();
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
@@ -2531,11 +2533,6 @@ async fn run_start_with_recovery_source(
 
         match stream_result {
             Ok(mut stream) => {
-                // The focused task turn is now inside the native runtime. This
-                // is the startup boundary that `/focus` reports to ACP.
-                if let Some(tx) = eager_prefix_tx.take() {
-                    let _ = tx.send(());
-                }
                 persist_run_progress(
                     &pool,
                     &session_for_task,
@@ -2579,7 +2576,7 @@ async fn run_start_with_recovery_source(
                             if changed.is_ok() && *cancel_rx.borrow() {
                                 cancellation_seen = true;
                                 if let Some(tx) = eager_prefix_tx.take() {
-                                    let _ = tx.send(());
+                                    let _ = tx.send(Err("Docket task turn was cancelled before its first runtime event".to_string()));
                                 }
                                 tracing::info!(
                                     session_id = %session_for_task,
@@ -2595,7 +2592,7 @@ async fn run_start_with_recovery_source(
                                 Ok(item) => item,
                                 Err(_) => {
                                     if let Some(tx) = eager_prefix_tx.take() {
-                                        let _ = tx.send(());
+                                        let _ = tx.send(Ok(()));
                                     }
                                     persist_run_failed(
                                         &pool,
@@ -2628,6 +2625,11 @@ async fn run_start_with_recovery_source(
                                     provider_activity_seen = true;
                                 }
                                 Ok(runtime_event) => {
+                                    if !first_event_seen {
+                                        if let Some(tx) = eager_prefix_tx.take() {
+                                            let _ = tx.send(Ok(()));
+                                        }
+                                    }
                                     runtime_event_count += 1;
                                     assistant_content_seen |= runtime_event_has_assistant_content(&runtime_event);
                                     last_event_kind = Some(runtime_event_kind(&runtime_event));
@@ -2671,7 +2673,7 @@ async fn run_start_with_recovery_source(
                                         && runtime_event_satisfies_eager_prefix(&runtime_event)
                                     {
                                         if let Some(tx) = eager_prefix_tx.take() {
-                                            let _ = tx.send(());
+                                            let _ = tx.send(Ok(()));
                                         }
                                     }
                                     if !first_event_seen {
@@ -2707,7 +2709,7 @@ async fn run_start_with_recovery_source(
                                 }
                                 Err(err) => {
                                     if let Some(tx) = eager_prefix_tx.take() {
-                                        let _ = tx.send(());
+                                        let _ = tx.send(Ok(()));
                                     }
                                     persist_run_failed(
                                         &pool,
@@ -2734,7 +2736,7 @@ async fn run_start_with_recovery_source(
                     )
                 {
                     if let Some(tx) = eager_prefix_tx.take() {
-                        let _ = tx.send(());
+                        let _ = tx.send(Ok(()));
                     }
                     // An EOF only ends this delivery stream. Do not settle the run or its
                     // obligations: a later client retry can reconcile from persisted events.
@@ -2861,7 +2863,7 @@ async fn run_start_with_recovery_source(
             }
             Err(err) => {
                 if let Some(tx) = eager_prefix_tx.take() {
-                    let _ = tx.send(());
+                    let _ = tx.send(Ok(()));
                 }
                 persist_run_failed(
                     &pool,
@@ -2881,10 +2883,10 @@ async fn run_start_with_recovery_source(
     // Starting a selected Docket task is autonomous work, not merely a durable
     // focus claim. The one-shot resolves only after native runtime startup has
     // accepted the task turn, or closes on an explicit startup failure.
-    let eager_prefix_started =
-        tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx)
-            .await
-            .is_ok_and(|result| result.is_ok());
+    let eager_prefix_started = matches!(
+        tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx).await,
+        Ok(Ok(Ok(())))
+    );
     if !eager_prefix_started {
         tracing::info!(
             session_id = %session_id,
