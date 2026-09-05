@@ -6078,9 +6078,12 @@ fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
     let binding = result
         .get("pair_binding")
         .ok_or_else(|| anyhow!("Docket response omitted Pair loop binding"))?;
-    if binding.get("status").and_then(Value::as_str) != Some("attached") {
+    if binding.get("status").and_then(Value::as_str) != Some("started")
+        || binding.get("loop_started").and_then(Value::as_bool) != Some(true)
+        || binding.get("initial_turn_started").and_then(Value::as_bool) != Some(true)
+    {
         return Err(anyhow!(
-            "Docket did not attach Pair loop control: {}",
+            "Docket did not start Pair loop control: {}",
             compact_json_for_status(binding)
         ));
     }
@@ -13530,15 +13533,32 @@ mod tests {
     fn focus_requires_confirmed_pair_run() {
         let acquired = json!({
             "pair_binding": {
-                "status": "attached",
+                "status": "started",
+                "loop_started": true,
+                "initial_turn_started": true,
                 "loop_run_id": "run_123"
             }
         });
         assert_eq!(confirmed_focus_run_id(&acquired).unwrap(), "run_123");
 
+        let not_started = json!({
+            "pair_binding": {
+                "status": "started",
+                "loop_started": true,
+                "initial_turn_started": false,
+                "loop_run_id": "run_123"
+            }
+        });
+        assert!(confirmed_focus_run_id(&not_started)
+            .unwrap_err()
+            .to_string()
+            .contains("did not start Pair loop control"));
+
         let split_brain = json!({
             "pair_binding": {
-                "status": "attached",
+                "status": "started",
+                "loop_started": true,
+                "initial_turn_started": true,
                 "current_task_selected": true,
                 "loop_run_id": null
             }
@@ -13557,7 +13577,7 @@ mod tests {
         assert!(confirmed_focus_run_id(&unattached)
             .unwrap_err()
             .to_string()
-            .contains("did not attach Pair loop control"));
+            .contains("did not start Pair loop control"));
     }
 
     #[test]
