@@ -955,6 +955,9 @@ pub async fn start_pair_current_task(
         json!(format!("Start working on the selected task: {title}")),
     );
     start_params.insert("client".to_string(), json!(session.client));
+    // Docket control is an explicit execution handoff. Its synthetic Pair turn must
+    // receive the same mutation/execution tool surface as an interactive Write turn.
+    start_params.insert("requested_mode".to_string(), json!("write"));
     start_params.insert(
         "conversation_id".to_string(),
         json!(session.conversation_id),
