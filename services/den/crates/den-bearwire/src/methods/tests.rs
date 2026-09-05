@@ -3199,6 +3199,14 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
     .await;
     assert_eq!(first["result"]["started"], true, "{first}");
     assert_eq!(first["result"]["reused"], false, "{first}");
+    assert_eq!(
+        first["result"]["execution_attempt_state"], "running",
+        "new starts must return canonical attempt state: {first}"
+    );
+    assert_eq!(
+        first["result"]["launch_state"], "started",
+        "new starts must report native launch: {first}"
+    );
     let execution_attempt_id = first["result"]["execution_attempt_id"]
         .as_str()
         .expect("Pair start returns canonical execution attempt id");

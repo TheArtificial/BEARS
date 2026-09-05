@@ -1015,6 +1015,8 @@ pub async fn start_pair_current_task(
     // durable, correlated continuation exists.
     let initial_turn_confirmed = initial_turn_started && initial_turn_evidence.is_object();
     let execution_attempt_id = result["execution_attempt_id"].clone();
+    let execution_attempt_state = result["execution_attempt_state"].clone();
+    let launch_state = result["launch_state"].clone();
     let fence_epoch = result["fence_epoch"].clone();
     Ok(json!({
         "ok": true,
@@ -1024,10 +1026,12 @@ pub async fn start_pair_current_task(
         "session_id": task_session_id,
         "task_id": task_id,
         "state": result["state"].clone(),
+        "launch_state": launch_state,
         "initial_turn_started": initial_turn_confirmed,
         "initial_turn_evidence": initial_turn_evidence,
         "event_sequence": result["event_sequence"].clone(),
         "execution_attempt_id": execution_attempt_id,
+        "execution_attempt_state": execution_attempt_state,
         "fence_epoch": fence_epoch,
     }))
 }
