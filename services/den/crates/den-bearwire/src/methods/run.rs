@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt,
     path::Path,
     time::{Duration, Instant},
@@ -2562,6 +2563,11 @@ async fn run_start_with_recovery_source(
                 let mut terminal_event_seen = false;
                 let mut wait_event_seen = false;
                 let mut last_event_kind: Option<&'static str> = None;
+                // Counts only event categories; never payload text or tool arguments.
+                // ponytail: capped category map because the native enum is finite; expand
+                // this only if event kinds become dynamically extensible.
+                let mut runtime_event_kinds = BTreeMap::<&'static str, usize>::new();
+                let mut candidate_boundary_kinds = BTreeMap::<&'static str, usize>::new();
                 let idle_watchdog_timeout = crate::methods::client::continuation_watchdog_timeout();
                 let handshake_timeout = den_runtime::agent_loop::native_llm_handshake_timeout();
                 let first_event_watchdog_timeout =
@@ -2634,7 +2640,12 @@ async fn run_start_with_recovery_source(
                                 Ok(runtime_event) => {
                                     runtime_event_count += 1;
                                     assistant_content_seen |= runtime_event_has_assistant_content(&runtime_event);
-                                    last_event_kind = Some(runtime_event_kind(&runtime_event));
+                                    let event_kind = runtime_event_kind(&runtime_event);
+                                    *runtime_event_kinds.entry(event_kind).or_default() += 1;
+                                    if runtime_event_satisfies_eager_prefix(&runtime_event) {
+                                        *candidate_boundary_kinds.entry(event_kind).or_default() += 1;
+                                    }
+                                    last_event_kind = Some(event_kind);
                                     match runtime_stream_boundary(&runtime_event) {
                                         RuntimeStreamBoundary::Terminal => terminal_event_seen = true,
                                         RuntimeStreamBoundary::ClientWait => wait_event_seen = true,
@@ -2743,17 +2754,27 @@ async fn run_start_with_recovery_source(
                 // terminal failure before an actionable event used to fall through here
                 // and drop the sender, which made `/focus` ambiguous.
                 if let Some(tx) = eager_prefix_tx.take() {
+                    let diagnostics = json!({
+                        "events_seen": runtime_event_count,
+                        "provider_activity_seen": provider_activity_seen,
+                        "assistant_content_seen": assistant_content_seen,
+                        "event_kinds": runtime_event_kinds,
+                        "candidate_boundary_kinds": candidate_boundary_kinds,
+                        "terminal_event_seen": terminal_event_seen,
+                        "client_wait_seen": wait_event_seen,
+                        "last_event_kind": last_event_kind,
+                    });
                     let detail = if terminal_event_seen {
                         format!(
-                            "Docket task turn ended before reaching an actionable runtime boundary (events={runtime_event_count}, provider_activity={provider_activity_seen}, last_event={})",
-                            last_event_kind.unwrap_or("none")
+                            "Docket task turn ended before reaching an actionable runtime boundary; startup_diagnostics={diagnostics}",
                         )
                     } else if cancellation_seen {
-                        "Docket task turn was cancelled before reaching an actionable runtime boundary".to_string()
+                        format!(
+                            "Docket task turn was cancelled before reaching an actionable runtime boundary; startup_diagnostics={diagnostics}",
+                        )
                     } else {
                         format!(
-                            "Docket task turn stream ended before reaching an actionable runtime boundary (events={runtime_event_count}, provider_activity={provider_activity_seen}, last_event={})",
-                            last_event_kind.unwrap_or("none")
+                            "Docket task turn stream ended before reaching an actionable runtime boundary; startup_diagnostics={diagnostics}",
                         )
                     };
                     let _ = tx.send(Err(detail));
