@@ -1003,6 +1003,15 @@ pub async fn start_pair_current_task(
     let run_id = result["run_id"].as_str().ok_or_else(|| {
         CustomError::ValidationError("run.start returned a non-string run_id".to_string())
     })?;
+    let initial_turn_started = result["initial_turn_started"].as_bool().unwrap_or(false);
+    if !initial_turn_started {
+        let detail = result["initial_turn_start_error"]
+            .as_str()
+            .unwrap_or("Docket task startup did not reach its required runtime boundary");
+        return Err(CustomError::ValidationError(format!(
+            "Pair task loop did not begin its initial task turn for run {run_id}: {detail}"
+        )));
+    }
     let execution_attempt_id = result["execution_attempt_id"].clone();
     let fence_epoch = result["fence_epoch"].clone();
     Ok(json!({
@@ -1013,7 +1022,7 @@ pub async fn start_pair_current_task(
         "session_id": task_session_id,
         "task_id": task_id,
         "state": result["state"].clone(),
-        "initial_turn_started": result["initial_turn_started"].clone(),
+        "initial_turn_started": initial_turn_started,
         "event_sequence": result["event_sequence"].clone(),
         "execution_attempt_id": execution_attempt_id,
         "fence_epoch": fence_epoch,

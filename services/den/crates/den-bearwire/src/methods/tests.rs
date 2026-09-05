@@ -411,7 +411,15 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
     let mut config = den_core::config::Config::test_stub();
     config.den_secret_encryption_key = "bearwire-test-encryption-key".to_string();
-    config.llm_api_url = start_mock_openai_sse_server();
+    // Focus performs an internal preparation request before the task-oriented
+    // runtime turn. Keep the mock available for both requests so this test
+    // verifies the latter rather than mistaking preparation EOF for a started loop.
+    config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+    ]);
     config.default_llm_model = "openai/bearwire-test-model".to_string();
     seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
@@ -485,8 +493,8 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     .await;
     let task_id = attached["result"]["pair_binding"]["task_id"]
         .as_str()
-        .expect("attached task id");
-    assert_eq!(attached["result"]["pair_binding"]["status"], "attached");
+        .unwrap_or_else(|| panic!("focus execution failed: {attached}"));
+    assert_eq!(attached["result"]["pair_binding"]["status"], "started");
     assert_eq!(
         attached["result"]["pair_binding"]["current_task_selected"],
         true

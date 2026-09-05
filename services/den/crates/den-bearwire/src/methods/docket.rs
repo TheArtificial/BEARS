@@ -553,7 +553,7 @@ async fn execution_result(
             )
             .await?;
             pair_binding = json!({
-                "status": if loop_started { "attached" } else { "attached_not_started" },
+                "status": if loop_started { "started" } else { "attached_not_started" },
                 "task_id": task_id,
                 "client_session_id": client_session_id,
                 "current_task_selected": true,

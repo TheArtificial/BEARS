@@ -851,16 +851,17 @@ fn initial_stream_eof_is_recoverable(
 
 fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent) -> bool {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    // A bounded slice is the native loop's explicit control boundary: it proves
+    // the Docket-originated turn was accepted even when it yields before text
+    // or a tool call. Status/provider activity alone remains insufficient.
     matches!(
         event,
         RuntimeStreamEvent::Semantic(
             RuntimeSemanticEvent::AssistantTextDelta { .. }
                 | RuntimeSemanticEvent::ToolCallRequested { .. }
                 | RuntimeSemanticEvent::RunPaused { .. }
+                | RuntimeSemanticEvent::BoundedSlice { .. }
                 | RuntimeSemanticEvent::TurnCompleted { .. }
-                | RuntimeSemanticEvent::TurnFailed { .. }
-                | RuntimeSemanticEvent::TurnCancelled { .. }
-                | RuntimeSemanticEvent::Error { .. }
         )
     )
 }
@@ -2628,11 +2629,6 @@ async fn run_start_with_recovery_source(
                                     provider_activity_seen = true;
                                 }
                                 Ok(runtime_event) => {
-                                    if !first_event_seen {
-                                        if let Some(tx) = eager_prefix_tx.take() {
-                                            let _ = tx.send(Ok(()));
-                                        }
-                                    }
                                     runtime_event_count += 1;
                                     assistant_content_seen |= runtime_event_has_assistant_content(&runtime_event);
                                     last_event_kind = Some(runtime_event_kind(&runtime_event));
@@ -2672,7 +2668,11 @@ async fn run_start_with_recovery_source(
                                     if runtime_event_is_terminal_or_wait(&runtime_event) {
                                         terminal_or_wait_seen = true;
                                     }
-                                    if !first_event_seen
+                                    // Provider/status events prove transport progress, but not that
+                                    // the Docket task turn entered an actionable loop boundary. Keep
+                                    // waiting until any qualifying native event, not only the first
+                                    // non-provider event (which is commonly a status update).
+                                    if eager_prefix_tx.is_some()
                                         && runtime_event_satisfies_eager_prefix(&runtime_event)
                                     {
                                         if let Some(tx) = eager_prefix_tx.take() {
@@ -2732,6 +2732,25 @@ async fn run_start_with_recovery_source(
                             }
                         }
                     }
+                }
+                // Every startup path must resolve the focus waiter. In particular, a
+                // terminal failure before an actionable event used to fall through here
+                // and drop the sender, which made `/focus` ambiguous.
+                if let Some(tx) = eager_prefix_tx.take() {
+                    let detail = if terminal_event_seen {
+                        format!(
+                            "Docket task turn ended before reaching an actionable runtime boundary (events={runtime_event_count}, provider_activity={provider_activity_seen}, last_event={})",
+                            last_event_kind.unwrap_or("none")
+                        )
+                    } else if cancellation_seen {
+                        "Docket task turn was cancelled before reaching an actionable runtime boundary".to_string()
+                    } else {
+                        format!(
+                            "Docket task turn stream ended before reaching an actionable runtime boundary (events={runtime_event_count}, provider_activity={provider_activity_seen}, last_event={})",
+                            last_event_kind.unwrap_or("none")
+                        )
+                    };
+                    let _ = tx.send(Err(detail));
                 }
                 if !docket_continuation_requested
                     && initial_stream_eof_is_recoverable(
@@ -3481,6 +3500,22 @@ mod tests {
         ));
         assert!(!runtime_event_has_assistant_content(
             &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
+                text: "working".to_string(),
+            })
+        ));
+    }
+
+    #[test]
+    fn eager_prefix_requires_an_actionable_native_boundary() {
+        use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+
+        assert!(!runtime_event_satisfies_eager_prefix(
+            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
+                text: "connecting".to_string(),
+            })
+        ));
+        assert!(runtime_event_satisfies_eager_prefix(
+            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
                 text: "working".to_string(),
             })
         ));
