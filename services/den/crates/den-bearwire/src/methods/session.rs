@@ -1,8 +1,9 @@
 use axum::http::HeaderMap;
 use den_core::DenError;
-use den_docket::{DocketService, PgDocketService};
+use den_docket::{DocketExecutionAttemptRelease, DocketService, PgDocketService};
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use bearwire_protocol::{
     methods::{
@@ -939,17 +940,37 @@ pub async fn start_pair_current_task(
                 ));
             }
         };
-        return Ok(json!({
-            "ok": true,
-            "started": false,
-            "reused": true,
-            "run_id": run_id,
-            "session_id": session_id,
-            "task_id": task_id,
-            "state": attempt.state,
-            "execution_attempt_id": attempt.id,
-            "fence_epoch": attempt.fence_epoch,
-        }));
+        let run_is_live = den_runtime::turn_runs::get_run(&state.sqlx_pool, &run_id)
+            .await?
+            .is_some_and(|run| {
+                run.bear_id == bear.id
+                    && run.user_id == user_id
+                    && matches!(
+                        run.state.as_str(),
+                        "accepted" | "running" | "waiting_for_client" | "continuing"
+                    )
+            });
+        if run_is_live {
+            return Ok(json!({
+                "ok": true,
+                "started": false,
+                "reused": true,
+                "run_id": run_id,
+                "session_id": session_id,
+                "task_id": task_id,
+                "state": attempt.state,
+                "execution_attempt_id": attempt.id,
+                "fence_epoch": attempt.fence_epoch,
+            }));
+        }
+        PgDocketService::from_pool(&state.sqlx_pool)
+            .release_execution_attempt(DocketExecutionAttemptRelease {
+                attempt_id: attempt.id,
+                fence_epoch: attempt.fence_epoch,
+                recovery_key: Uuid::new_v4(),
+                recovery_reason: "stale_pair_execution_attempt_terminal_or_missing_run".to_string(),
+            })
+            .await?;
     }
 
     // ponytail: this delegates to the established run.start lifecycle so task-start
