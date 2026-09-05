@@ -495,6 +495,17 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     assert!(attached["result"]["pair_binding"]["loop_run_id"]
         .as_str()
         .is_some_and(|run_id| !run_id.is_empty()));
+    let loop_run_id = attached["result"]["pair_binding"]["loop_run_id"]
+        .as_str()
+        .expect("Pair loop run id");
+    let live_attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
+    )
+    .bind(loop_run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load live Pair execution authority");
+    assert_eq!(live_attempts, 1);
     let attached_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM bear_pair_task_attachments WHERE task_id = $1 AND released_at IS NULL",
     )

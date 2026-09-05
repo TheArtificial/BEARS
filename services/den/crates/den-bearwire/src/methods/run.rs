@@ -1570,7 +1570,7 @@ pub(crate) async fn persist_run_failed(
 }
 
 #[derive(Debug, Clone)]
-struct SettledRunLifecycle {
+pub(crate) struct SettledRunLifecycle {
     run: Option<turn_runs::TurnRunRow>,
     stream_run_ids: Vec<String>,
     cancelled_stream: bool,
@@ -1585,7 +1585,7 @@ impl SettledRunLifecycle {
     }
 }
 
-async fn settle_active_run_for_session(
+pub(crate) async fn settle_active_run_for_session(
     state: &DenState,
     session_id: &str,
     bear_id: uuid::Uuid,

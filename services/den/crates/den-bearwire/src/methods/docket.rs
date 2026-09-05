@@ -27,6 +27,7 @@ use den_service::{
 
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
+use crate::methods::run::settle_active_run_for_session;
 use crate::methods::session::start_pair_current_task;
 
 pub async fn docket_jobs_list_result(
@@ -463,12 +464,41 @@ async fn execution_result(
             )
             .await?;
             let loop_start =
-                start_pair_current_task(state, user_id, bear, client_session_id).await?;
+                start_pair_current_task(state, user_id, bear.clone(), client_session_id).await?;
             let loop_run_id = loop_start["run_id"].as_str().ok_or_else(|| {
                 CustomError::System("Pair task start omitted its run id".to_string())
             })?;
             let loop_run = wait_for_pair_loop_start(&state.sqlx_pool, loop_run_id).await?;
             let loop_started = pair_loop_state_confirms_start(&loop_run.state);
+            if pair_loop_state_requires_authority(&loop_run.state)
+                && PgDocketService::from_pool(&state.sqlx_pool)
+                    .get_live_pair_execution_attempt(
+                        bear.id,
+                        task_id,
+                        client_session_id,
+                        &loop_run.run_id,
+                    )
+                    .await?
+                    .is_none()
+            {
+                // A `running` turn row alone is not a live Pair loop: process
+                // loss can leave it behind after its Docket fence is released.
+                // Settle it so a retry can create a properly authorized loop.
+                settle_active_run_for_session(
+                    state,
+                    client_session_id,
+                    bear.id,
+                    user_id,
+                    "missing_pair_execution_authority",
+                    None,
+                    None,
+                )
+                .await?;
+                return Err(CustomError::ValidationError(format!(
+                    "Pair task loop lost execution authority for run {}; retry /focus",
+                    loop_run.run_id
+                )));
+            }
             pair_binding = json!({
                 "status": if loop_started { "attached" } else { "attached_not_started" },
                 "task_id": task_id,
@@ -499,6 +529,10 @@ fn pair_loop_state_confirms_start(state: &str) -> bool {
         state,
         "running" | "waiting_for_client" | "continuing" | "completed" | "blocked"
     )
+}
+
+fn pair_loop_state_requires_authority(state: &str) -> bool {
+    matches!(state, "running" | "waiting_for_client" | "continuing")
 }
 
 async fn wait_for_pair_loop_start(
