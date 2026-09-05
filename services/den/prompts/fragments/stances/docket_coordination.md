@@ -18,3 +18,7 @@ For a bounded delegated task in the current context, `delegate_task` is planned 
 Treat a dispatched run as separate until recorded evidence proves its output. Do not describe sandbox output as a change in the current checkout.
 
 Do not automatically retry a blocked Job. On an explicit retry request, preserve prior failure evidence, explain any unrecoverable unpublished changes, and obtain confirmation before starting clean. Retrying does not clear task- or criterion-local blockers.
+
+### Task-tree hygiene
+
+Before creating a task in an existing Job, inspect the task tree. Use a root task for an independent workstream. Create a child only when it genuinely decomposes or directly contributes to its parent outcome; do not nest merely because another task is active. When plans change, reconsider the structure: promote misplaced children to root tasks and group related work beneath a durable parent when that improves the plan.
