@@ -850,14 +850,13 @@ impl SessionTrackingStream {
                     session.turn_budget_state = evaluation.next_state.clone();
                 });
                 if let Some(reason) = evaluation.stop_reason {
-                    if profile == BearProfile::Pair && reason.resumes_pair_execution_automatically()
-                    {
+                    if profile == BearProfile::Pair && reason.allows_automatic_execution_resume() {
                         let reason_code = reason.persistence_reason();
                         store.update(&session_key, |session| {
                             session.turn_budget_state = Default::default();
                         });
-                        // The native runtime observes the budget boundary; Docket decides
-                        // whether a successor Pair attempt is authorized.
+                        // The native runtime observes the budget boundary; the execution
+                        // controller decides whether a successor attempt is authorized.
                         return Ok(Box::pin(stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
                             RuntimeSemanticEvent::BoundedSlice {
                                 reason: reason_code.to_string(),
@@ -1142,9 +1141,8 @@ impl SessionTrackingStream {
         }
     }
 
-    /// Installs the runtime-owned checkpoint gate and, for Work only, records an
-    /// audit-only artifact. Pair checkpoints deliberately remain in-memory unless
-    /// an explicit recovery policy adds durable retention.
+    /// Installs the runtime-owned checkpoint gate and records an audit-only artifact
+    /// only for profiles whose checkpoint retention policy requests one.
     fn install_pending_checkpoint_request(
         &self,
         request: RuntimeCheckpointRequest,
@@ -1782,7 +1780,7 @@ impl SessionTrackingStream {
             None => {
                 self.pending_pause_persistence = Some(Box::pin(async {
                     Err(DenError::System(
-                        "active Pair execution cannot pause without a persisted run ID".to_string(),
+                        "active task execution cannot pause without a persisted run ID".to_string(),
                     ))
                 }));
                 return;
@@ -1926,7 +1924,7 @@ impl SessionTrackingStream {
             .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
         let run_id = session.run_id.ok_or_else(|| {
             DenError::System(
-                "active Pair execution cannot continue without a persisted run ID".to_string(),
+                "active task execution cannot continue without a persisted run ID".to_string(),
             )
         })?;
         let task_list = session.cached_activity_plan_projection;

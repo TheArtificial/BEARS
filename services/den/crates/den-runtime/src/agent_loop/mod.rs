@@ -68,7 +68,7 @@ pub use checkpoints::{
 };
 pub use context::{
     assemble_agent_messages, load_transcript_grouping_rows, load_transcript_messages,
-    prune_messages_for_native_chat, repair_tool_call_message_chain,
+    prune_messages_for_native_conversation, repair_tool_call_message_chain,
 };
 pub use control::{
     agent_loop_control_profile_fingerprint, evaluate_checkpoint_trigger,

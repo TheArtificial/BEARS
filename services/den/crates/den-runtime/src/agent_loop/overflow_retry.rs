@@ -110,10 +110,8 @@ async fn rebuild_messages_after_overflow_compaction(
     let messages = repair_tool_call_message_chain(messages);
     let messages = if cutoff.is_some() {
         messages
-    } else if profile == BearProfile::Pair {
-        crate::agent_loop::context::prune_messages_for_native_pair(messages)
-    } else if profile == BearProfile::Chat {
-        crate::agent_loop::context::prune_messages_for_native_chat(messages)
+    } else if matches!(profile, BearProfile::Pair | BearProfile::Chat) {
+        crate::agent_loop::context::prune_messages_for_native_conversation(messages)
     } else {
         messages
     };

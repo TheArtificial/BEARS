@@ -441,17 +441,12 @@ pub async fn load_transcript_messages_after_seq(
     Ok(reconstruct_transcript_messages(rows))
 }
 
-/// Cap transcript tail sent to native browser chat turns (system prefix + recent turns).
-pub fn prune_messages_for_native_chat(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
-    prune_messages_for_native_pair(messages)
+/// Cap the transcript tail sent to native conversational turns.
+pub fn prune_messages_for_native_conversation(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    prune_messages_for_native_conversation_with_diagnostics(messages).messages
 }
 
-/// Cap transcript tail sent to native pair LLM turns (system prefix + recent turns).
-pub fn prune_messages_for_native_pair(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
-    prune_messages_for_native_pair_with_diagnostics(messages).messages
-}
-
-pub fn prune_messages_for_native_pair_with_diagnostics(
+pub fn prune_messages_for_native_conversation_with_diagnostics(
     messages: Vec<ChatMessage>,
 ) -> PrunedTranscriptMessages {
     const MAX_TAIL_MESSAGES: usize = 64;
@@ -618,7 +613,7 @@ mod tests {
     }
 
     #[test]
-    fn prune_messages_for_native_pair_keeps_system_and_recent_tail() {
+    fn prune_messages_for_native_conversation_keeps_system_and_recent_tail() {
         let mut messages = vec![ChatMessage {
             role: "system".to_string(),
             content: Some("system".to_string()),
@@ -639,7 +634,7 @@ mod tests {
                 tool_calls: None,
             });
         }
-        let pruned = prune_messages_for_native_pair(messages);
+        let pruned = prune_messages_for_native_conversation(messages);
         assert_eq!(pruned.first().map(|m| m.role.as_str()), Some("system"));
         assert_eq!(pruned.len(), 41);
         assert_eq!(
@@ -649,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn prune_messages_for_native_pair_reports_fallback_diagnostics() {
+    fn prune_messages_for_native_conversation_reports_fallback_diagnostics() {
         let mut messages = vec![ChatMessage {
             role: "system".to_string(),
             content: Some("system".to_string()),
@@ -671,7 +666,7 @@ mod tests {
             });
         }
 
-        let pruned = prune_messages_for_native_pair_with_diagnostics(messages);
+        let pruned = prune_messages_for_native_conversation_with_diagnostics(messages);
 
         assert!(pruned.diagnostics.pruned_message_count > 0);
         assert!(pruned.diagnostics.pruned_character_count > 0);
@@ -682,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn prune_messages_for_native_pair_keeps_recent_tool_heavy_history() {
+    fn prune_messages_for_native_conversation_keeps_recent_tool_heavy_history() {
         let mut messages = vec![ChatMessage {
             role: "system".to_string(),
             content: Some("system".to_string()),
@@ -733,7 +728,7 @@ mod tests {
             tool_calls: None,
         });
 
-        let pruned = prune_messages_for_native_pair(messages);
+        let pruned = prune_messages_for_native_conversation(messages);
         assert!(pruned.iter().any(|message| {
             message
                 .tool_calls
@@ -750,7 +745,7 @@ mod tests {
     }
 
     #[test]
-    fn prune_messages_for_native_pair_keeps_recent_dialogue_before_tool_heavy_tail() {
+    fn prune_messages_for_native_conversation_keeps_recent_dialogue_before_tool_heavy_tail() {
         let mut messages = vec![ChatMessage {
             role: "system".to_string(),
             content: Some("system".to_string()),
@@ -797,7 +792,7 @@ mod tests {
             });
         }
 
-        let pruned = prune_messages_for_native_pair(messages);
+        let pruned = prune_messages_for_native_conversation(messages);
 
         assert!(pruned
             .iter()

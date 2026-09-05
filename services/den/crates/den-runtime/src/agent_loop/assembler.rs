@@ -20,7 +20,7 @@ use den_core::tools::work_surface::WorkSurfaceSessionHints;
 use super::{
     context::{
         load_transcript_messages, load_transcript_messages_after_seq,
-        prune_messages_for_native_pair_with_diagnostics, repair_tool_call_message_chain,
+        prune_messages_for_native_conversation_with_diagnostics, repair_tool_call_message_chain,
     },
     key_memory_projection::{
         project_key_memory, render_key_memory_projection_block, KeyMemoryProjectionCacheKey,
@@ -673,7 +673,7 @@ pub async fn assemble_native_turn_for_bear(
     let messages = if ctx.native_runtime && compaction_active && transcript_cutoff.is_some() {
         messages
     } else if ctx.native_runtime && matches!(ctx.profile, BearProfile::Pair | BearProfile::Chat) {
-        let pruned = prune_messages_for_native_pair_with_diagnostics(messages);
+        let pruned = prune_messages_for_native_conversation_with_diagnostics(messages);
         budget_components.transcript_fallback_pruned_chars =
             pruned.diagnostics.pruned_character_count;
         budget_components.transcript_fallback_pruned_messages =

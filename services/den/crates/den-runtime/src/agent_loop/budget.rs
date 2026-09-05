@@ -247,7 +247,7 @@ impl TurnBudgetWarning {
 impl TurnBudgetStopReason {
     /// Returns whether this is a technical execution-slice boundary rather than a
     /// safety/real-world gate that should require intervention.
-    pub const fn resumes_pair_execution_automatically(&self) -> bool {
+    pub const fn allows_automatic_execution_resume(&self) -> bool {
         matches!(
             self,
             Self::WallClockLimit { .. }
@@ -970,29 +970,29 @@ mod tests {
     }
 
     #[test]
-    fn technical_slice_limits_resume_pair_execution_but_safety_gates_do_not() {
+    fn technical_slice_limits_allow_automatic_resume_but_safety_gates_do_not() {
         assert!(TurnBudgetStopReason::WallClockLimit {
             elapsed_ms: 60_000,
             limit_ms: 60_000,
         }
-        .resumes_pair_execution_automatically());
+        .allows_automatic_execution_resume());
         assert!(TurnBudgetStopReason::TotalToolCallLimit {
             count: 20,
             limit: 20,
         }
-        .resumes_pair_execution_automatically());
+        .allows_automatic_execution_resume());
         assert!(!TurnBudgetStopReason::ConsecutiveToolFailures {
             count: 3,
             limit: 3,
             tool_name: None,
         }
-        .resumes_pair_execution_automatically());
+        .allows_automatic_execution_resume());
         assert!(!TurnBudgetStopReason::RuleOfKo {
             repeats: 3,
             limit: 3,
             tool_name: None,
         }
-        .resumes_pair_execution_automatically());
+        .allows_automatic_execution_resume());
     }
 
     #[test]
@@ -1005,7 +1005,7 @@ mod tests {
             context_window: Some(100),
         };
 
-        assert!(!reason.resumes_pair_execution_automatically());
+        assert!(!reason.allows_automatic_execution_resume());
     }
 
     #[test]
