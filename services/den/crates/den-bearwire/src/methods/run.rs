@@ -2870,15 +2870,21 @@ async fn run_start_with_recovery_source(
         }
     });
 
-    if tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx)
-        .await
-        .is_err()
-    {
+    // Starting a selected Docket task is autonomous work, not merely a durable
+    // focus claim. Drive the initial turn far enough to prove the spawned loop
+    // consumed its task prompt before reporting `/focus` success. The existing
+    // one-shot is resolved by the first semantic runtime event or every startup
+    // failure path, so this needs no separate readiness protocol.
+    let eager_prefix_started =
+        tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx)
+            .await
+            .is_ok();
+    if !eager_prefix_started {
         tracing::info!(
             session_id = %session_id,
             run_id = %run_id,
             timeout_ms = BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT.as_millis(),
-            "BearWire eager prefix drive timed out before first semantic runtime event"
+            "BearWire initial Docket task turn did not reach a semantic runtime event before focus returned"
         );
     }
 
@@ -2889,6 +2895,7 @@ async fn run_start_with_recovery_source(
         "session_id": session_id,
         "event_sequence": accepted.sequence_no,
         "state": run.state,
+        "initial_turn_started": eager_prefix_started,
         "execution_attempt_id": attempt.as_ref().map(|attempt| attempt.id),
         "fence_epoch": attempt.as_ref().map(|attempt| attempt.fence_epoch),
     }))

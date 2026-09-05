@@ -476,6 +476,16 @@ async fn execution_result(
                     CustomError::System("Pair task start run was not persisted".to_string())
                 })?;
             let loop_started = pair_loop_state_confirms_start(&loop_run.state);
+            let initial_turn_started = loop_start
+                .get("initial_turn_started")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if !initial_turn_started {
+                return Err(CustomError::ValidationError(format!(
+                    "Pair task loop did not begin its initial task turn for run {}; retry /focus",
+                    loop_run.run_id
+                )));
+            }
             if pair_loop_state_requires_authority(&loop_run.state)
                 && PgDocketService::from_pool(&state.sqlx_pool)
                     .get_live_pair_execution_attempt(
@@ -511,6 +521,7 @@ async fn execution_result(
                 "client_session_id": client_session_id,
                 "current_task_selected": true,
                 "loop_started": loop_started,
+                "initial_turn_started": initial_turn_started,
                 "loop_run_id": loop_run.run_id,
                 "loop_state": loop_run.state,
                 "loop_terminal_reason": loop_run.terminal_reason,

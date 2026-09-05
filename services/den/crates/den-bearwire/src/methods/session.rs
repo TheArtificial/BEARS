@@ -1013,6 +1013,7 @@ pub async fn start_pair_current_task(
         "session_id": task_session_id,
         "task_id": task_id,
         "state": result["state"].clone(),
+        "initial_turn_started": result["initial_turn_started"].clone(),
         "event_sequence": result["event_sequence"].clone(),
         "execution_attempt_id": execution_attempt_id,
         "fence_epoch": fence_epoch,
