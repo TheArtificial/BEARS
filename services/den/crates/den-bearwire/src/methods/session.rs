@@ -1005,20 +1005,11 @@ pub async fn start_pair_current_task(
     })?;
     let initial_turn_started = result["initial_turn_started"].as_bool().unwrap_or(false);
     let initial_turn_evidence = result["initial_turn_evidence"].clone();
+    // A missing native event only means that this synchronous observation window
+    // ended. It is not an error and, crucially, not proof of Docket control.
+    // The caller returns a structured requested/not-established result until a
+    // durable, correlated continuation exists.
     let initial_turn_confirmed = initial_turn_started && initial_turn_evidence.is_object();
-    if !initial_turn_confirmed {
-        let detail =
-            result["initial_turn_start_error"]
-                .as_str()
-                .unwrap_or(if initial_turn_started {
-                    "Docket task startup omitted actionable-boundary evidence"
-                } else {
-                    "Docket task startup did not reach its required runtime boundary"
-                });
-        return Err(CustomError::ValidationError(format!(
-            "Pair task loop did not begin its initial task turn for run {run_id}: {detail}"
-        )));
-    }
     let execution_attempt_id = result["execution_attempt_id"].clone();
     let fence_epoch = result["fence_epoch"].clone();
     Ok(json!({

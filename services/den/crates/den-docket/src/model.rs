@@ -1675,6 +1675,118 @@ pub struct DocketExecutionControl {
     pub reason: Option<DocketExecutionReason>,
 }
 
+/// The only result that may be rendered as active Docket execution control.
+/// Bindings submit observations; Docket publishes this correlated, durable result.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketExecutionControlState {
+    Requested,
+    BoundaryObserved,
+    ContinuationEstablished,
+    TerminalSettled,
+    NotEstablished,
+    Blocked,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DocketExecutionControlReference {
+    pub kind: String,
+    pub id: String,
+    pub persisted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DocketExecutionControlResult {
+    pub attempt_id: Uuid,
+    pub state: DocketExecutionControlState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<Uuid>,
+    pub job_run_id: Uuid,
+    pub task_id: Uuid,
+    pub binding: DocketExecutionControlReference,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boundary: Option<DocketExecutionControlReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<DocketExecutionControlReference>,
+    pub authority_verified: bool,
+}
+
+impl DocketExecutionControlResult {
+    /// Construct the sole active-control state. Keeping this constructor narrow
+    /// prevents callers from accidentally promoting transient runtime activity.
+    pub fn continuation_established(
+        attempt_id: Uuid,
+        job_id: Option<Uuid>,
+        job_run_id: Uuid,
+        task_id: Uuid,
+        binding: DocketExecutionControlReference,
+        boundary: DocketExecutionControlReference,
+        continuation: DocketExecutionControlReference,
+    ) -> Self {
+        assert!(
+            boundary.persisted,
+            "established control needs a persisted boundary"
+        );
+        assert!(
+            continuation.persisted,
+            "established control needs a persisted continuation"
+        );
+        Self {
+            attempt_id,
+            state: DocketExecutionControlState::ContinuationEstablished,
+            reason: None,
+            job_id,
+            job_run_id,
+            task_id,
+            binding,
+            boundary: Some(boundary),
+            continuation: Some(continuation),
+            authority_verified: true,
+        }
+    }
+
+    pub fn not_established(
+        attempt_id: Uuid,
+        job_id: Option<Uuid>,
+        job_run_id: Uuid,
+        task_id: Uuid,
+        binding: DocketExecutionControlReference,
+        reason: impl Into<String>,
+        boundary: Option<DocketExecutionControlReference>,
+        authority_verified: bool,
+    ) -> Self {
+        Self {
+            attempt_id,
+            state: DocketExecutionControlState::NotEstablished,
+            reason: Some(reason.into()),
+            job_id,
+            job_run_id,
+            task_id,
+            binding,
+            boundary,
+            continuation: None,
+            authority_verified,
+        }
+    }
+
+    pub fn is_established(&self) -> bool {
+        self.state == DocketExecutionControlState::ContinuationEstablished
+            && self.authority_verified
+            && self
+                .boundary
+                .as_ref()
+                .is_some_and(|reference| reference.persisted)
+            && self
+                .continuation
+                .as_ref()
+                .is_some_and(|reference| reference.persisted)
+    }
+}
+
 impl DocketExecutionControl {
     /// Converts the scheduler's authoritative execution result into the compact
     /// gate consumed by executors. This intentionally derives from the same

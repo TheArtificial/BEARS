@@ -2,8 +2,8 @@ use uuid::Uuid;
 
 use crate::{
     model::DocketExecutionTaskControl, DocketExecutionBinding, DocketExecutionControl,
-    DocketExecutionDisposition, DocketExecutionGate, DocketExecutionNextAction,
-    DocketExecutionReason,
+    DocketExecutionControlReference, DocketExecutionControlResult, DocketExecutionControlState,
+    DocketExecutionGate, DocketExecutionNextAction, DocketExecutionReason,
 };
 
 fn control(
@@ -46,17 +46,24 @@ fn execution_control_gate_allows_the_persisted_task_claim() {
 }
 
 #[test]
-fn execution_control_gate_rejects_stale_task_claims() {
-    assert_eq!(
-        control(
-            DocketExecutionNextAction::ReconcileExecution,
-            Some(DocketExecutionReason::ActiveTaskIsStale),
-            Some(Uuid::new_v4()),
-        )
-        .gate(),
-        DocketExecutionGate::Rejected {
-            reason: DocketExecutionReason::ActiveTaskIsStale,
-            disposition: DocketExecutionDisposition::Reconcile,
-        }
+fn established_control_requires_persisted_boundary_continuation_and_authority() {
+    let reference = |kind: &str| DocketExecutionControlReference {
+        kind: kind.to_owned(),
+        id: Uuid::new_v4().to_string(),
+        persisted: true,
+    };
+    let established = DocketExecutionControlResult::continuation_established(
+        Uuid::new_v4(),
+        Some(Uuid::new_v4()),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        reference("pair_session"),
+        reference("tool_wait"),
+        reference("waiting_for_tool"),
     );
+    assert_eq!(
+        established.state,
+        DocketExecutionControlState::ContinuationEstablished
+    );
+    assert!(established.is_established());
 }

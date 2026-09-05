@@ -630,19 +630,7 @@ async fn conversation_history_like_result(
                     }
 
                     if row.event_type == "docket.focus" {
-                        let task_title = row
-                            .event
-                            .data
-                            .get("task_title")
-                            .and_then(Value::as_str)
-                            .unwrap_or("selected task");
-                        let text = match row.event.data.get("status").and_then(Value::as_str) {
-                            Some("started") => format!(
-                                "Docket focus acquired; autonomous task loop started: {task_title}"
-                            ),
-                            Some("failed") => format!("Docket focus did not start: {task_title}"),
-                            _ => format!("Docket focus acquired: {task_title}"),
-                        };
+                        let text = docket_focus_lifecycle_text(&row.event.data);
                         let event_id = row
                             .event
                             .event_id
@@ -792,9 +780,69 @@ async fn conversation_history_like_result(
     Ok(response)
 }
 
+fn docket_focus_lifecycle_text(data: &Value) -> String {
+    let control = data.get("execution_control");
+    let state = control
+        .and_then(|control| control.get("state"))
+        .and_then(Value::as_str)
+        .unwrap_or("not_established");
+    let attempt = control
+        .and_then(|control| control.get("attempt_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let task_id = control
+        .and_then(|control| control.get("task_id"))
+        .and_then(Value::as_str)
+        .or_else(|| data.get("task_id").and_then(Value::as_str))
+        .unwrap_or("unknown");
+    let reason = control
+        .and_then(|control| control.get("reason"))
+        .and_then(Value::as_str);
+    match state {
+        "continuation_established" => format!(
+            "Docket task-loop control established\n\n- Attempt: {attempt}\n- Task: {task_id}"
+        ),
+        "requested" => format!(
+            "Docket focus request accepted; task-loop control is not yet established.\n\n- Attempt: {attempt}\n- Current state: requested"
+        ),
+        "terminal_settled" => format!(
+            "Docket task turn settled; task-loop control is not active.\n\n- Attempt: {attempt}\n- Task: {task_id}"
+        ),
+        _ => format!(
+            "Docket focus did not establish task-loop control.\n\n- Attempt: {attempt}\n- Task: {task_id}\n- Reason: {}",
+            reason.unwrap_or(state),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn docket_focus_text_only_claims_control_for_durable_continuation() {
+        let established = json!({
+            "execution_control": {
+                "state": "continuation_established",
+                "attempt_id": "attempt-1",
+                "task_id": "task-1",
+            }
+        });
+        let pending = json!({
+            "execution_control": {
+                "state": "not_established",
+                "attempt_id": "attempt-2",
+                "task_id": "task-2",
+                "reason": "turn_ended_before_durable_continuation",
+            }
+        });
+        assert_eq!(
+            docket_focus_lifecycle_text(&established),
+            "Docket task-loop control established\n\n- Attempt: attempt-1\n- Task: task-1"
+        );
+        assert!(docket_focus_lifecycle_text(&pending)
+            .starts_with("Docket focus did not establish task-loop control."));
+    }
 
     #[test]
     fn work_activity_surface_events_preserve_safe_activity_details() {
