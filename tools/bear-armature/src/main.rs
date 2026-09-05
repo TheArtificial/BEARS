@@ -4951,14 +4951,7 @@ async fn replay_history_for_den_session(
         let messages =
             fetch_conversation_surface_history_chronological(http, config, &conv).await?;
         let fetched = messages.len();
-        let surface_inventory = messages
-            .iter()
-            .take(12)
-            .map(|message| format!("{}:{}", message.kind, message.role))
-            .collect::<Vec<_>>()
-            .join(",");
         let mut counts = std::collections::BTreeMap::<&str, usize>::new();
-        let mut first_agent_sample = None::<String>;
         // Tool results intentionally do not duplicate request arguments in canonical history.
         // Keep them only for this replay pass so terminal ACP updates preserve the request card.
         let mut tool_requests = std::collections::HashMap::<String, ToolRequestPresentation>::new();
@@ -5038,12 +5031,9 @@ async fn replay_history_for_den_session(
                     }
                     Some("agent") => {
                         *counts.entry("agent").or_default() += 1;
-                        if first_agent_sample.is_none() {
-                            first_agent_sample = Some(truncate_for_log(&message.text, 120));
-                        }
-                        // Same unidentified chunk shape as live/diagnostic agent updates.
-                        // This client renders those; agent chunks with messageId do not appear
-                        // in the rehydrated thread.
+                        // Same unidentified chunk shape as live agent updates. This client
+                        // renders those; agent chunks with messageId do not appear in the
+                        // rehydrated thread.
                         send_agent_message_chunk(session_id, &message.text).await?;
                     }
                     _ => *counts.entry("ignored").or_default() += 1,
@@ -5064,39 +5054,11 @@ async fn replay_history_for_den_session(
             counts.get("session_info").copied().unwrap_or_default(),
             counts.get("ignored").copied().unwrap_or_default()
         );
-        // ponytail: temporary user-visible diagnostics; remove after deployment parity is verified.
-        send_agent_message_chunk(
-            session_id,
-            &format!(
-                "[history diagnostics] {} conversation={} fetched={} projected user={} agent={} tool_call={} tool_result={} reasoning={} session_info={} ignored={} surface={} agent_sample={}",
-                lifecycle_method,
-                conv,
-                fetched,
-                counts.get("user").copied().unwrap_or_default(),
-                counts.get("agent").copied().unwrap_or_default(),
-                counts.get("tool_call").copied().unwrap_or_default(),
-                counts.get("tool_result").copied().unwrap_or_default(),
-                counts.get("reasoning").copied().unwrap_or_default(),
-                counts.get("session_info").copied().unwrap_or_default(),
-                counts.get("ignored").copied().unwrap_or_default(),
-                surface_inventory,
-                first_agent_sample.as_deref().unwrap_or("<none>")
-            ),
-        )
-        .await?;
     } else {
         eprintln!(
             "bear-armature: {} session_id={} has no history_conversation_id; projected history counts are all zero",
             lifecycle_method, session_id
         );
-        send_agent_message_chunk(
-            session_id,
-            &format!(
-                "[history diagnostics] {} has no history_conversation_id; projected history counts are all zero",
-                lifecycle_method
-            ),
-        )
-        .await?;
     }
     Ok(())
 }
@@ -15940,17 +15902,11 @@ mod tests {
             })
             .map(Value::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(agent_frames.len(), 2, "{output:#?}");
+        assert_eq!(agent_frames.len(), 1, "{output:#?}");
         assert!(
             agent_frames
                 .iter()
                 .any(|frame| frame.contains("visible answer")),
-            "{output:#?}"
-        );
-        assert!(
-            agent_frames
-                .iter()
-                .any(|frame| frame.contains("[history diagnostics]")),
             "{output:#?}"
         );
         assert!(
