@@ -54,7 +54,10 @@ use den_service::{
 use crate::auth::authenticated_bear;
 use crate::methods::{parse_params, DEFAULT_CLIENT};
 
-const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
+// A focused Docket task must reach the native turn stream before `/focus` claims
+// that autonomous work has started. This is intentionally bounded so an unavailable
+// provider does not leave the ACP request open indefinitely.
+const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// BearWire-owned, durable subset of a normal start request. Reject unknown
 /// fields on recovery so a future runtime-only field cannot become durable by
@@ -2447,13 +2450,10 @@ async fn run_start_with_recovery_source(
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
         let mut eager_prefix_tx = Some(eager_prefix_tx);
-        // `/focus` promises that the Docket-originated turn was claimed by
-        // the Pair loop, not that a remote model has produced its first token.
-        // Signal as soon as this continuation begins; provider/context latency
-        // must not make focus acquisition fail or require a follow-up user turn.
-        if let Some(tx) = eager_prefix_tx.take() {
-            let _ = tx.send(());
-        }
+        // A focused Docket task is autonomous work. Do not acknowledge `/focus`
+        // merely because Tokio accepted a spawn: wait until the continuation has
+        // reached native stream startup, which proves it consumed the task turn.
+        // The model's first output remains asynchronous.
         persist_run_progress(
             &pool,
             &session_for_task,
@@ -2461,13 +2461,9 @@ async fn run_start_with_recovery_source(
             bear_id,
             user_id,
             run_started_at,
-            "native_context_assembling",
-            "Preparing Pair stance context and tool surface…",
-            json!({
-                "request_id": request_id,
-                "client_tool_count": client_tools_for_task.as_array().map(|items| items.len()).unwrap_or(0),
-                "prompt_chars": prompt_for_task.chars().count(),
-            }),
+            "docket_task_turn_starting",
+            "Starting Docket-controlled task turn…",
+            json!({ "request_id": request_id }),
         )
         .await;
         let native_start = Instant::now();
@@ -2535,6 +2531,11 @@ async fn run_start_with_recovery_source(
 
         match stream_result {
             Ok(mut stream) => {
+                // The focused task turn is now inside the native runtime. This
+                // is the startup boundary that `/focus` reports to ACP.
+                if let Some(tx) = eager_prefix_tx.take() {
+                    let _ = tx.send(());
+                }
                 persist_run_progress(
                     &pool,
                     &session_for_task,
@@ -2878,14 +2879,12 @@ async fn run_start_with_recovery_source(
     });
 
     // Starting a selected Docket task is autonomous work, not merely a durable
-    // focus claim. Drive the initial turn far enough to prove the spawned loop
-    // consumed its task prompt before reporting `/focus` success. The existing
-    // one-shot is resolved by the first semantic runtime event or every startup
-    // failure path, so this needs no separate readiness protocol.
+    // focus claim. The one-shot resolves only after native runtime startup has
+    // accepted the task turn, or closes on an explicit startup failure.
     let eager_prefix_started =
         tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx)
             .await
-            .is_ok();
+            .is_ok_and(|result| result.is_ok());
     if !eager_prefix_started {
         tracing::info!(
             session_id = %session_id,
