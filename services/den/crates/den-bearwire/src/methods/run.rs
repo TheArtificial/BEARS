@@ -851,14 +851,14 @@ fn initial_stream_eof_is_recoverable(
 
 fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent) -> bool {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-    // A terminal completion only proves the turn ended. `/focus` must wait for
-    // a non-terminal boundary that demonstrates task-directed work can proceed.
+    // Text proves only that the model emitted prose; it can be a superficial
+    // acknowledgement before the task loop stops. `/focus` needs a durable
+    // control boundary that requires the loop to remain actionable.
     // Status/provider activity alone remains insufficient.
     matches!(
         event,
         RuntimeStreamEvent::Semantic(
-            RuntimeSemanticEvent::AssistantTextDelta { .. }
-                | RuntimeSemanticEvent::ToolCallRequested { .. }
+            RuntimeSemanticEvent::ToolCallRequested { .. }
                 | RuntimeSemanticEvent::RunPaused { .. }
                 | RuntimeSemanticEvent::BoundedSlice { .. }
         )
@@ -3524,9 +3524,22 @@ mod tests {
                 text: "connecting".to_string(),
             })
         ));
-        assert!(runtime_event_satisfies_eager_prefix(
+        assert!(!runtime_event_satisfies_eager_prefix(
             &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
                 text: "working".to_string(),
+            })
+        ));
+        assert!(runtime_event_satisfies_eager_prefix(
+            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-1".to_string(),
+                tool_name: "functions.fs_read_text_file".to_string(),
+                title: None,
+                kind: None,
+                arguments: serde_json::json!({}),
+                approval_required: false,
+                approval_request_id: None,
+                approval_reason: None,
+                run_id: None,
             })
         ));
     }
