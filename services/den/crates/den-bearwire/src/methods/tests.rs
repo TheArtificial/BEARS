@@ -492,6 +492,10 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         true
     );
     assert_eq!(attached["result"]["pair_binding"]["loop_started"], true);
+    assert_eq!(
+        attached["result"]["pair_binding"]["initial_turn_started"], true,
+        "focus returns only after the internal Docket-originated turn is claimed"
+    );
     assert!(attached["result"]["pair_binding"]["loop_run_id"]
         .as_str()
         .is_some_and(|run_id| !run_id.is_empty()));

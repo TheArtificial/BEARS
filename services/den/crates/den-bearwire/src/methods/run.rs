@@ -2447,6 +2447,13 @@ async fn run_start_with_recovery_source(
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
         let mut eager_prefix_tx = Some(eager_prefix_tx);
+        // `/focus` promises that the Docket-originated turn was claimed by
+        // the Pair loop, not that a remote model has produced its first token.
+        // Signal as soon as this continuation begins; provider/context latency
+        // must not make focus acquisition fail or require a follow-up user turn.
+        if let Some(tx) = eager_prefix_tx.take() {
+            let _ = tx.send(());
+        }
         persist_run_progress(
             &pool,
             &session_for_task,
