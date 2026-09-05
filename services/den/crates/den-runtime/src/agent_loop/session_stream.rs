@@ -900,6 +900,28 @@ impl SessionTrackingStream {
                     std::slice::from_ref(&observation),
                     false,
                 );
+                if checkpoint_evaluation.trigger.is_some() {
+                    let task_context = resolve_runtime_task_context(
+                        &pool,
+                        RuntimeTaskResolveRequest {
+                            bear_id,
+                            profile,
+                            user_id,
+                            conversation_id: conversation_id.clone(),
+                            client_session_id: client_session_id.clone(),
+                            cached_activity_plan_projection: session
+                                .cached_activity_plan_projection
+                                .clone(),
+                        },
+                    )
+                    .await?;
+                    session.cached_activity_plan_projection =
+                        task_context.cached_activity_plan_projection.clone();
+                    store.update(&session_key, |stored_session| {
+                        stored_session.cached_activity_plan_projection =
+                            task_context.cached_activity_plan_projection.clone();
+                    });
+                }
                 let checkpoint_request = Self::checkpoint_request_for_tool_observation(
                     &session,
                     &observation,
@@ -2922,6 +2944,46 @@ mod tests {
                 .is_err(),
             "a failure checkpoint cannot be bypassed with another tool call"
         );
+    }
+
+    #[test]
+    fn checkpoint_request_uses_refreshed_selected_child_projection() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let mut projection = pending_task_list_projection();
+        projection.current_item = Some(den_docket::TaskListItem {
+            id: "selected-child".to_string(),
+            title: "Continue on selected child".to_string(),
+            summary: None,
+            status: den_docket::TaskListItemStatus::Pending,
+            blocked_reason: None,
+            source_ref: den_docket::TaskListSourceRef::local(Vec::new()),
+            sync_state: den_docket::TaskListSyncState::Clean,
+        });
+        session.cached_activity_plan_projection = Some(projection);
+        let observation = crate::agent_loop::ToolContinuationObservation {
+            tool_name: "memory_read".to_string(),
+            signature: "memory_read:{path=control.rs}".to_string(),
+            class: crate::agent_loop::ToolBudgetClass::Read,
+            failed: true,
+            grounding_probe_signal: None,
+        };
+        let request = SessionTrackingStream::checkpoint_request_for_tool_observation(
+            &session,
+            &observation,
+            Some(crate::agent_loop::CheckpointTrigger {
+                reason: crate::agent_loop::CheckpointReason::ConsecutiveFailure,
+                message: "test checkpoint".to_string(),
+            }),
+        )
+        .expect("checkpoint request");
+
+        let task = request.task_context.expect("selected task context");
+        assert_eq!(task.active_item_id.as_deref(), Some("selected-child"));
+        assert_eq!(
+            task.active_item_title.as_deref(),
+            Some("Continue on selected child")
+        );
+        assert_eq!(task.docket_task_id.as_deref(), Some("selected-child"));
     }
 
     #[tokio::test]
