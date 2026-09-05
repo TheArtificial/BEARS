@@ -619,20 +619,27 @@ async fn pair_execution_control_result(
             id: pair_run_id.to_owned(),
             persisted: false,
         });
-    let attempt = sqlx::query_as::<_, (Uuid, i64)>(
-        "SELECT id, fence_epoch FROM docket_execution_attempts
-         WHERE id = $1 AND bear_id = $2 AND task_id = $3
-           AND owner_kind = 'pair' AND pair_session_id = $4
-           AND pair_run_id = $5::uuid AND state IN ('authorized', 'running', 'paused')",
+    let attempt = sqlx::query!(
+        r#"
+        SELECT id, fence_epoch
+        FROM docket_execution_attempts
+        WHERE id = $1
+          AND bear_id = $2
+          AND task_id = $3
+          AND owner_kind = 'pair'
+          AND pair_session_id = $4
+          AND pair_run_id = $5
+          AND state IN ('authorized', 'running', 'paused')
+        "#,
+        attempt_id,
+        bear_id,
+        task_id,
+        session_id,
+        pair_run_id,
     )
-    .bind(attempt_id)
-    .bind(bear_id)
-    .bind(task_id)
-    .bind(session_id)
-    .bind(pair_run_id)
     .fetch_optional(pool)
     .await?;
-    let Some((_attempt_id, _fence_epoch)) = attempt else {
+    let Some(_attempt) = attempt else {
         return Ok(DocketExecutionControlResult::not_established(
             attempt_id,
             Some(job_id),

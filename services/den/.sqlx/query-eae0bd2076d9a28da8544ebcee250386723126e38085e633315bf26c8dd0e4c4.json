@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, fence_epoch\n        FROM docket_execution_attempts\n        WHERE id = $1\n          AND bear_id = $2\n          AND task_id = $3\n          AND owner_kind = 'pair'\n          AND pair_session_id = $4\n          AND pair_run_id = $5\n          AND state IN ('authorized', 'running', 'paused')\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "fence_epoch",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "eae0bd2076d9a28da8544ebcee250386723126e38085e633315bf26c8dd0e4c4"
+}

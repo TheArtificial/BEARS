@@ -1775,18 +1775,24 @@ async fn report_pair_bounded_outcome(
     run_id: &str,
     outcome: DocketPairBoundedOutcome,
 ) -> Option<DocketPairContinuationDecision> {
-    let row = sqlx::query_as::<_, (Uuid, i64)>(
-        "SELECT id, fence_epoch FROM docket_execution_attempts
-         WHERE owner_kind = 'pair' AND pair_session_id = $1 AND pair_run_id = $2::uuid
-           AND state = 'running'",
+    let row = sqlx::query!(
+        r#"
+        SELECT id, fence_epoch
+        FROM docket_execution_attempts
+        WHERE owner_kind = 'pair'
+          AND pair_session_id = $1
+          AND pair_run_id = $2
+          AND state = 'running'
+        "#,
+        session_id,
+        run_id,
     )
-    .bind(session_id)
-    .bind(run_id)
     .fetch_optional(pool)
     .await;
-    let Ok(Some((attempt_id, fence_epoch))) = row else {
+    let Ok(Some(row)) = row else {
         return None;
     };
+    let (attempt_id, fence_epoch) = (row.id, row.fence_epoch);
     match PgDocketService::from_pool(pool)
         .report_pair_bounded_outcome(DocketPairBoundedOutcomeReport {
             attempt_id,
