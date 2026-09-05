@@ -483,6 +483,10 @@ async fn execution_result(
                 .get("initial_turn_started")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let initial_turn_evidence = loop_start
+                .get("initial_turn_evidence")
+                .cloned()
+                .unwrap_or(Value::Null);
             if !initial_turn_started {
                 let detail = loop_start
                     .get("initial_turn_start_error")
@@ -564,6 +568,7 @@ async fn execution_result(
                 "session_id": client_session_id,
                 "initial_turn": {
                     "state": if initial_turn_started { "confirmed" } else { "not_confirmed" },
+                    "evidence": initial_turn_evidence,
                 },
                 "run": {
                     "id": loop_run.run_id,

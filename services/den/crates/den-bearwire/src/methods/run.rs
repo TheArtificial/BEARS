@@ -851,9 +851,9 @@ fn initial_stream_eof_is_recoverable(
 
 fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent) -> bool {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-    // A bounded slice is the native loop's explicit control boundary: it proves
-    // the Docket-originated turn was accepted even when it yields before text
-    // or a tool call. Status/provider activity alone remains insufficient.
+    // A terminal completion only proves the turn ended. `/focus` must wait for
+    // a non-terminal boundary that demonstrates task-directed work can proceed.
+    // Status/provider activity alone remains insufficient.
     matches!(
         event,
         RuntimeStreamEvent::Semantic(
@@ -861,7 +861,6 @@ fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent
                 | RuntimeSemanticEvent::ToolCallRequested { .. }
                 | RuntimeSemanticEvent::RunPaused { .. }
                 | RuntimeSemanticEvent::BoundedSlice { .. }
-                | RuntimeSemanticEvent::TurnCompleted { .. }
         )
     )
 }
@@ -2448,7 +2447,11 @@ async fn run_start_with_recovery_source(
 
     // A successful focus must mean the native task turn produced a semantic
     // runtime event, not merely that its delivery stream was constructed.
-    let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    // Return the exact first qualifying event to the synchronous /focus caller.
+    // This is response-safe metadata (not model/tool content) and makes a later
+    // focus report auditable without relying on a timing-sensitive run snapshot.
+    let (eager_prefix_tx, eager_prefix_rx) =
+        tokio::sync::oneshot::channel::<Result<Value, String>>();
     let run_for_task = run.clone();
     tokio::spawn(async move {
         let _cancel_handle = cancel_handle;
@@ -2676,7 +2679,10 @@ async fn run_start_with_recovery_source(
                                         && runtime_event_satisfies_eager_prefix(&runtime_event)
                                     {
                                         if let Some(tx) = eager_prefix_tx.take() {
-                                            let _ = tx.send(Ok(()));
+                                            let _ = tx.send(Ok(json!({
+                                                "event_kind": runtime_event_kind(&runtime_event),
+                                                "boundary": "actionable_native_event",
+                                            })));
                                         }
                                     }
                                     if !first_event_seen {
@@ -2914,21 +2920,24 @@ async fn run_start_with_recovery_source(
     // accepted the task turn, or closes on an explicit startup failure.
     let initial_turn_start =
         tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx).await;
-    let (eager_prefix_started, initial_turn_start_error) = match initial_turn_start {
-        Ok(Ok(Ok(()))) => (true, None),
-        Ok(Ok(Err(error))) => (false, Some(error)),
-        Ok(Err(_)) => (
-            false,
-            Some("Docket task startup signal was dropped".to_string()),
-        ),
-        Err(_) => (
-            false,
-            Some(format!(
-                "Docket task turn did not produce a runtime event within {}ms",
-                BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT.as_millis()
-            )),
-        ),
-    };
+    let (eager_prefix_started, initial_turn_start_error, initial_turn_evidence) =
+        match initial_turn_start {
+            Ok(Ok(Ok(evidence))) => (true, None, Some(evidence)),
+            Ok(Ok(Err(error))) => (false, Some(error), None),
+            Ok(Err(_)) => (
+                false,
+                Some("Docket task startup signal was dropped".to_string()),
+                None,
+            ),
+            Err(_) => (
+                false,
+                Some(format!(
+                    "Docket task turn did not produce a runtime event within {}ms",
+                    BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT.as_millis()
+                )),
+                None,
+            ),
+        };
     if !eager_prefix_started {
         tracing::info!(
             session_id = %session_id,
@@ -2947,6 +2956,7 @@ async fn run_start_with_recovery_source(
         "state": run.state,
         "initial_turn_started": eager_prefix_started,
         "initial_turn_start_error": initial_turn_start_error,
+        "initial_turn_evidence": initial_turn_evidence,
         "execution_attempt_id": attempt.as_ref().map(|attempt| attempt.id),
         "fence_epoch": attempt.as_ref().map(|attempt| attempt.fence_epoch),
     }))

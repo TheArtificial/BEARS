@@ -6084,18 +6084,38 @@ fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
     let initial_turn = binding
         .get("initial_turn")
         .ok_or_else(|| anyhow!("Docket response omitted initial task-turn state"))?;
+    let evidence = initial_turn
+        .get("evidence")
+        .ok_or_else(|| anyhow!("Docket response omitted initial task-turn evidence"))?;
     if control.get("kind").and_then(Value::as_str) != Some("docket")
         || control.get("state").and_then(Value::as_str) != Some("active")
         || initial_turn.get("state").and_then(Value::as_str) != Some("confirmed")
+        || evidence.get("boundary").and_then(Value::as_str) != Some("actionable_native_event")
+        || evidence
+            .get("event_kind")
+            .and_then(Value::as_str)
+            .filter(|kind| !kind.trim().is_empty())
+            .is_none()
     {
         return Err(anyhow!(
-            "Docket did not start Pair loop control: {}",
+            "Docket did not prove an actionable Pair task-loop boundary: {}",
             compact_json_for_status(binding)
         ));
     }
-    binding
+    let run = binding
         .get("run")
-        .and_then(|run| run.get("id"))
+        .ok_or_else(|| anyhow!("Docket control is active but omitted Pair loop run state"))?;
+    let run_state = run
+        .get("state")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("Docket control is active but omitted Pair loop run state"))?;
+    if !matches!(run_state, "running" | "waiting_for_client" | "continuing") {
+        return Err(anyhow!(
+            "Docket task turn reached a startup boundary but Pair loop is not live (run_state={run_state}): {}",
+            compact_json_for_status(binding)
+        ));
+    }
+    run.get("id")
         .and_then(Value::as_str)
         .filter(|run_id| !run_id.trim().is_empty())
         .ok_or_else(|| anyhow!("Docket control is active but did not confirm a Pair loop run"))
@@ -6147,7 +6167,8 @@ async fn focus_job_report(
                 }
             }
             format!(
-                "Den ACP focus acquired\n\n- Job: {job_id}\n- Pair run: {run_id}\n- Docket execution: {}",
+                "Den ACP focus acquired; Docket task loop is live\n\n- Job: {job_id}\n- Pair run: {run_id}\n- Pair binding: {}\n- Docket execution: {}",
+                compact_json_for_status(result.get("pair_binding").unwrap_or(&Value::Null)),
                 compact_json_for_status(&result)
             )
         },
@@ -13541,8 +13562,14 @@ mod tests {
         let acquired = json!({
             "pair_binding": {
                 "control": { "kind": "docket", "state": "active" },
-                "initial_turn": { "state": "confirmed" },
-                "run": { "id": "run_123" }
+                "initial_turn": {
+                    "state": "confirmed",
+                    "evidence": {
+                        "boundary": "actionable_native_event",
+                        "event_kind": "assistant_text_delta"
+                    }
+                },
+                "run": { "id": "run_123", "state": "running" }
             }
         });
         assert_eq!(confirmed_focus_run_id(&acquired).unwrap(), "run_123");
@@ -13551,18 +13578,42 @@ mod tests {
             "pair_binding": {
                 "control": { "kind": "docket", "state": "active" },
                 "initial_turn": { "state": "not_confirmed" },
-                "run": { "id": "run_123" }
+                "run": { "id": "run_123", "state": "running" }
             }
         });
         assert!(confirmed_focus_run_id(&not_started)
             .unwrap_err()
             .to_string()
-            .contains("did not start Pair loop control"));
+            .contains("omitted initial task-turn evidence"));
+
+        let completed = json!({
+            "pair_binding": {
+                "control": { "kind": "docket", "state": "active" },
+                "initial_turn": {
+                    "state": "confirmed",
+                    "evidence": {
+                        "boundary": "actionable_native_event",
+                        "event_kind": "assistant_text_delta"
+                    }
+                },
+                "run": { "id": "run_123", "state": "completed" }
+            }
+        });
+        assert!(confirmed_focus_run_id(&completed)
+            .unwrap_err()
+            .to_string()
+            .contains("Pair loop is not live"));
 
         let split_brain = json!({
             "pair_binding": {
                 "control": { "kind": "docket", "state": "active" },
-                "initial_turn": { "state": "confirmed" },
+                "initial_turn": {
+                    "state": "confirmed",
+                    "evidence": {
+                        "boundary": "actionable_native_event",
+                        "event_kind": "assistant_text_delta"
+                    }
+                },
                 "task": { "selected": true },
                 "run": { "id": null }
             }
@@ -13570,7 +13621,7 @@ mod tests {
         assert!(confirmed_focus_run_id(&split_brain)
             .unwrap_err()
             .to_string()
-            .contains("active but did not confirm a Pair loop run"));
+            .contains("omitted Pair loop run state"));
 
         let unattached = json!({
             "pair_binding": {
@@ -13585,7 +13636,7 @@ mod tests {
         assert!(confirmed_focus_run_id(&unattached)
             .unwrap_err()
             .to_string()
-            .contains("did not start Pair loop control"));
+            .contains("omitted initial task-turn evidence"));
     }
 
     #[test]
