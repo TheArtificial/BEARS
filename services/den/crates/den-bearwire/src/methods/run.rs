@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fmt,
     path::Path,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use axum::http::HeaderMap;
@@ -58,7 +58,6 @@ use crate::methods::{parse_params, DEFAULT_CLIENT};
 // A focused Docket task must reach the native turn stream before `/focus` claims
 // that autonomous work has started. This is intentionally bounded so an unavailable
 // provider does not leave the ACP request open indefinitely.
-const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// BearWire-owned, durable subset of a normal start request. Reject unknown
 /// fields on recovery so a future runtime-only field cannot become durable by
@@ -2953,37 +2952,10 @@ async fn run_start_with_recovery_source(
         }
     });
 
-    // Starting a selected Docket task is autonomous work, not merely a durable
-    // focus claim. The one-shot resolves only after native runtime startup has
-    // accepted the task turn, or closes on an explicit startup failure.
-    let initial_turn_start =
-        tokio::time::timeout(BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT, eager_prefix_rx).await;
-    let (eager_prefix_started, initial_turn_start_error, initial_turn_evidence) =
-        match initial_turn_start {
-            Ok(Ok(Ok(evidence))) => (true, None, Some(evidence)),
-            Ok(Ok(Err(error))) => (false, Some(error), None),
-            Ok(Err(_)) => (
-                false,
-                Some("Docket task startup signal was dropped".to_string()),
-                None,
-            ),
-            Err(_) => (
-                false,
-                Some(format!(
-                    "Docket task turn did not produce a runtime event within {}ms",
-                    BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT.as_millis()
-                )),
-                None,
-            ),
-        };
-    if !eager_prefix_started {
-        tracing::info!(
-            session_id = %session_id,
-            run_id = %run_id,
-            timeout_ms = BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT.as_millis(),
-            "BearWire initial Docket task turn did not reach a semantic runtime event before focus returned"
-        );
-    }
+    // The canonical startup boundary is the durable running attempt plus the
+    // launched native-run task above. Runtime events are later outcomes of that
+    // attempt; /focus must not wait for or reinterpret them as authorization.
+    drop(eager_prefix_rx);
 
     Ok(json!({
         "ok": true,
@@ -2991,11 +2963,10 @@ async fn run_start_with_recovery_source(
         "run_id": run_id,
         "session_id": session_id,
         "event_sequence": accepted.sequence_no,
-        "state": run.state,
-        "initial_turn_started": eager_prefix_started,
-        "initial_turn_start_error": initial_turn_start_error,
-        "initial_turn_evidence": initial_turn_evidence,
+        "state": "running",
+        "launch_state": "started",
         "execution_attempt_id": attempt.as_ref().map(|attempt| attempt.id),
+        "execution_attempt_state": attempt.as_ref().map(|_| "running"),
         "fence_epoch": attempt.as_ref().map(|attempt| attempt.fence_epoch),
     }))
 }

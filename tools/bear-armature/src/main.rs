@@ -6077,31 +6077,31 @@ async fn publish_focus_title_update(
 fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
     let binding = result
         .get("pair_binding")
-        .ok_or_else(|| anyhow!("Docket response omitted Pair focus result"))?;
-    let focus = binding
-        .get("focus")
-        .ok_or_else(|| anyhow!("Docket response omitted authoritative focus state"))?;
-    if focus.get("state").and_then(Value::as_str) != Some("continuation_established") {
-        return Err(anyhow!(
-            "Docket did not establish durable task-loop control: {}",
-            compact_json_for_status(binding)
-        ));
-    }
+        .ok_or_else(|| anyhow!("Docket response omitted Pair execution result"))?;
     let control = binding
-        .get("execution_control")
-        .ok_or_else(|| anyhow!("Docket focus omitted execution-control evidence"))?;
-    if control.get("state").and_then(Value::as_str) != Some("continuation_established") {
+        .get("control")
+        .ok_or_else(|| anyhow!("Docket response omitted canonical attempt state"))?;
+    if control.get("kind").and_then(Value::as_str) != Some("docket")
+        || control.get("state").and_then(Value::as_str) != Some("running")
+        || control.get("attempt_state").and_then(Value::as_str) != Some("running")
+        || control.get("launch_state").and_then(Value::as_str) != Some("started")
+    {
         return Err(anyhow!(
-            "Docket focus state was inconsistent with execution control: {}",
+            "Docket did not start a running canonical attempt and native Pair run: {}",
             compact_json_for_status(binding)
         ));
     }
+    control
+        .get("attempt_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| anyhow!("Docket execution result omitted its canonical attempt id"))?;
     binding
         .get("run")
         .and_then(|run| run.get("id"))
         .and_then(Value::as_str)
         .filter(|run_id| !run_id.trim().is_empty())
-        .ok_or_else(|| anyhow!("Docket established control but did not identify its Pair run"))
+        .ok_or_else(|| anyhow!("Docket execution result omitted its Pair run id"))
 }
 
 async fn focus_job_report(
@@ -6129,7 +6129,7 @@ async fn focus_job_report(
                 Ok(run_id) => run_id.to_string(),
                 Err(err) => {
                     return format!(
-                        "Den ACP /focus did not acquire loop control for job {job_id}: {err:#}\n\nThe task may still be selected, but focus is not active. Retry /focus; an ordinary prompt is not a substitute."
+                        "Den ACP /focus did not start Docket execution for job {job_id}: {err:#}\n\nThe task may still be selected, but no running attempt was confirmed. Retry /focus; an ordinary prompt is not a substitute."
                     );
                 }
             };
@@ -6150,7 +6150,7 @@ async fn focus_job_report(
                 }
             }
             format!(
-                "Docket task-loop control established\n\n- Job: {job_id}\n- Pair run: {run_id}\n- Pair binding: {}\n- Docket execution: {}",
+                "Docket execution started\n\n- Job: {job_id}\n- Pair run: {run_id}\n- Pair binding: {}\n- Docket execution: {}",
                 compact_json_for_status(result.get("pair_binding").unwrap_or(&Value::Null)),
                 compact_json_for_status(&result)
             )
@@ -13541,66 +13541,50 @@ mod tests {
     }
 
     #[test]
-    fn focus_requires_confirmed_pair_run() {
-        let acquired = json!({
+    fn focus_requires_running_canonical_attempt_and_started_native_run() {
+        let started = json!({
             "pair_binding": {
-                "focus": { "state": "continuation_established" },
-                "execution_control": { "state": "continuation_established" },
+                "control": {
+                    "kind": "docket",
+                    "state": "running",
+                    "attempt_id": "11111111-1111-1111-1111-111111111111",
+                    "attempt_state": "running",
+                    "launch_state": "started"
+                },
                 "run": { "id": "run_123" }
             }
         });
-        assert_eq!(confirmed_focus_run_id(&acquired).unwrap(), "run_123");
+        assert_eq!(confirmed_focus_run_id(&started).unwrap(), "run_123");
 
-        let text_only_completed = json!({
-            "pair_binding": {
-                "focus": { "state": "turn_completed" },
-                "execution_control": {
-                    "state": "not_established",
-                    "reason": "turn_ended_before_durable_continuation"
+        for invalid in [
+            json!({ "pair_binding": { "run": { "id": "run_123" } } }),
+            json!({ "pair_binding": {
+                "control": {
+                    "kind": "docket", "state": "running",
+                    "attempt_id": "11111111-1111-1111-1111-111111111111",
+                    "attempt_state": "authorized", "launch_state": "started"
                 },
-                "initial_turn": {
-                    "state": "confirmed",
-                    "evidence": { "boundary": "transcript_visible_assistant_output" }
-                },
-                "run": { "id": "run_123", "state": "completed" }
-            }
-        });
-        assert!(confirmed_focus_run_id(&text_only_completed)
-            .unwrap_err()
-            .to_string()
-            .contains("did not establish durable task-loop control"));
-
-        let inconsistent = json!({
-            "pair_binding": {
-                "focus": { "state": "continuation_established" },
-                "execution_control": { "state": "not_established" },
                 "run": { "id": "run_123" }
-            }
-        });
-        assert!(confirmed_focus_run_id(&inconsistent)
-            .unwrap_err()
-            .to_string()
-            .contains("inconsistent with execution control"));
-
-        let split_brain = json!({
-            "pair_binding": {
-                "focus": { "state": "continuation_established" },
-                "execution_control": { "state": "continuation_established" },
+            }}),
+            json!({ "pair_binding": {
+                "control": {
+                    "kind": "docket", "state": "running",
+                    "attempt_id": "11111111-1111-1111-1111-111111111111",
+                    "attempt_state": "running", "launch_state": "missing"
+                },
+                "run": { "id": "run_123" }
+            }}),
+            json!({ "pair_binding": {
+                "control": {
+                    "kind": "docket", "state": "running",
+                    "attempt_id": "11111111-1111-1111-1111-111111111111",
+                    "attempt_state": "running", "launch_state": "started"
+                },
                 "run": { "id": null }
-            }
-        });
-        assert!(confirmed_focus_run_id(&split_brain)
-            .unwrap_err()
-            .to_string()
-            .contains("did not identify its Pair run"));
-
-        let unattached = json!({
-            "pair_binding": { "focus": { "state": "not_started" } }
-        });
-        assert!(confirmed_focus_run_id(&unattached)
-            .unwrap_err()
-            .to_string()
-            .contains("did not establish durable task-loop control"));
+            }}),
+        ] {
+            assert!(confirmed_focus_run_id(&invalid).is_err());
+        }
     }
 
     #[test]

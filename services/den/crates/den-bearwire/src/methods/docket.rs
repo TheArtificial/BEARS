@@ -2,8 +2,7 @@ use axum::http::HeaderMap;
 use den_core::BearProfile;
 use den_docket::{
     work_runs::{self, WorkRunListFilter},
-    DocketExecutionControl, DocketExecutionControlReference, DocketExecutionControlResult,
-    DocketExecutionControlState, DocketExecutionNextAction, DocketExecutionTaskSettlement,
+    DocketExecutionControl, DocketExecutionNextAction, DocketExecutionTaskSettlement,
     DocketJobExecuteRequest, DocketJobListFilter, DocketOutcomeDisposition, DocketService,
     DocketSessionTaskSettlement, DocketTaskListFilter, DocketTaskStatus, PgDocketService,
 };
@@ -478,10 +477,6 @@ async fn execution_result(
                 .ok_or_else(|| {
                     CustomError::System("Pair task start run was not persisted".to_string())
                 })?;
-            let initial_turn_evidence = loop_start
-                .get("initial_turn_evidence")
-                .cloned()
-                .unwrap_or(Value::Null);
             let attempt_id = loop_start
                 .get("execution_attempt_id")
                 .and_then(Value::as_str)
@@ -489,33 +484,26 @@ async fn execution_result(
                     CustomError::System(
                         "Pair task start omitted its execution attempt id".to_string(),
                     )
-                })
-                .and_then(|id| {
-                    Uuid::parse_str(id).map_err(|error| {
-                        CustomError::System(format!(
-                            "Pair task start returned an invalid execution attempt id: {error}"
-                        ))
-                    })
                 })?;
-            let execution_control = pair_execution_control_result(
-                &state.sqlx_pool,
-                bear.id,
-                attempt_id,
-                outcome.job.job.id,
-                outcome.control.run_id,
-                task_id,
-                client_session_id,
-                &loop_run.run_id,
-                &initial_turn_evidence,
-            )
-            .await?;
+            let attempt_state = loop_start
+                .get("execution_attempt_state")
+                .and_then(Value::as_str);
+            let launch_state = loop_start.get("launch_state").and_then(Value::as_str);
+            if attempt_state != Some("running") || launch_state != Some("started") {
+                return Err(CustomError::System(format!(
+                    "Pair task start did not establish a running canonical attempt and native launch (attempt_state={}, launch_state={})",
+                    attempt_state.unwrap_or("missing"),
+                    launch_state.unwrap_or("missing")
+                )));
+            }
             let mut focus_event = BearWireEvent::ephemeral(
-                "docket.focus",
+                "docket.execution.started",
                 json!({
-                    "execution_control_state": execution_control.state,
-                    "attempt_id": execution_control.attempt_id,
+                    "attempt_id": attempt_id,
                     "task_id": task_id,
                     "run_id": loop_run.run_id,
+                    "attempt_state": attempt_state,
+                    "launch_state": launch_state,
                 }),
             );
             focus_event.bear_id = Some(bear.id.to_string());
@@ -530,44 +518,20 @@ async fn execution_result(
                 focus_event,
             )
             .await?;
-            let continuation_established = matches!(
-                execution_control.state,
-                DocketExecutionControlState::ContinuationEstablished
-            );
-            let terminal = loop_run.terminal_reason.is_some()
-                || matches!(
-                    loop_run.state.as_str(),
-                    "completed" | "failed" | "cancelled"
-                );
-            let focus_state = if continuation_established {
-                "continuation_established"
-            } else if terminal {
-                "turn_completed"
-            } else if initial_turn_evidence.is_object() {
-                "turn_started"
-            } else {
-                "not_started"
-            };
             pair_binding = json!({
-                "focus": {
-                    "state": focus_state,
-                    "reason": if continuation_established { Value::Null } else { json!(execution_control.reason.clone()) },
+                "control": {
+                    "kind": "docket",
+                    "state": "running",
+                    "attempt_id": attempt_id,
+                    "attempt_state": attempt_state,
+                    "launch_state": launch_state,
+                    "fence_epoch": loop_start.get("fence_epoch").cloned().unwrap_or(Value::Null),
                 },
-                "execution_control": execution_control,
                 "task": {
                     "id": task_id,
                     "selected": true,
                 },
                 "session_id": client_session_id,
-                "initial_turn": {
-                    "state": if initial_turn_evidence.is_object() { "confirmed" } else { "not_confirmed" },
-                    "evidence": initial_turn_evidence,
-                },
-                "terminal_summary": {
-                    "state": if terminal { loop_run.state.as_str() } else { "non_terminal" },
-                    "terminal_reason": loop_run.terminal_reason,
-                    "continuation_persisted": continuation_established,
-                },
                 "run": {
                     "id": loop_run.run_id,
                     "state": loop_run.state,
@@ -590,105 +554,6 @@ async fn execution_result(
         }
     }
     execution_result_payload(outcome, pair_binding)
-}
-
-/// Promote a Pair candidate only when its next action is already durable and
-/// still belongs to the exact Docket attempt. Native event text and turn-run
-/// state intentionally do not participate in this decision.
-async fn pair_execution_control_result(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    attempt_id: Uuid,
-    job_id: Uuid,
-    job_run_id: Uuid,
-    task_id: Uuid,
-    session_id: &str,
-    pair_run_id: &str,
-    candidate: &Value,
-) -> Result<DocketExecutionControlResult, CustomError> {
-    let binding = DocketExecutionControlReference {
-        kind: "pair_session".to_owned(),
-        id: session_id.to_owned(),
-        persisted: true,
-    };
-    let candidate_boundary = candidate
-        .get("event_kind")
-        .and_then(Value::as_str)
-        .map(|kind| DocketExecutionControlReference {
-            kind: kind.to_owned(),
-            id: pair_run_id.to_owned(),
-            persisted: false,
-        });
-    let attempt = sqlx::query!(
-        r#"
-        SELECT id, fence_epoch
-        FROM docket_execution_attempts
-        WHERE id = $1
-          AND bear_id = $2
-          AND task_id = $3
-          AND owner_kind = 'pair'
-          AND pair_session_id = $4
-          AND pair_run_id = $5
-          AND state IN ('authorized', 'running', 'paused')
-        "#,
-        attempt_id,
-        bear_id,
-        task_id,
-        session_id,
-        pair_run_id,
-    )
-    .fetch_optional(pool)
-    .await?;
-    let Some(_attempt) = attempt else {
-        return Ok(DocketExecutionControlResult::not_established(
-            attempt_id,
-            Some(job_id),
-            job_run_id,
-            task_id,
-            binding,
-            "attempt_authority_not_live_or_mismatched",
-            candidate_boundary,
-            false,
-        ));
-    };
-    let obligation = sqlx::query_as::<_, (Uuid, String, String)>(
-        "SELECT id, kind, expected_responder_action FROM turn_obligations
-         WHERE run_id = $1 AND session_id = $2 AND state = 'waiting_for_client'
-         ORDER BY created_at DESC, id DESC LIMIT 1",
-    )
-    .bind(pair_run_id)
-    .bind(session_id)
-    .fetch_optional(pool)
-    .await?;
-    let Some((obligation_id, kind, action)) = obligation else {
-        return Ok(DocketExecutionControlResult::not_established(
-            attempt_id,
-            Some(job_id),
-            job_run_id,
-            task_id,
-            binding,
-            "candidate_boundary_not_yet_durably_committed",
-            candidate_boundary,
-            true,
-        ));
-    };
-    Ok(DocketExecutionControlResult::continuation_established(
-        attempt_id,
-        Some(job_id),
-        job_run_id,
-        task_id,
-        binding,
-        DocketExecutionControlReference {
-            kind: "tool_wait".to_owned(),
-            id: obligation_id.to_string(),
-            persisted: true,
-        },
-        DocketExecutionControlReference {
-            kind: format!("waiting_for_{action}"),
-            id: format!("{kind}:{obligation_id}"),
-            persisted: true,
-        },
-    ))
 }
 
 fn execution_result_payload(
@@ -856,29 +721,6 @@ mod tests {
         assert_eq!(status["reason"], "active_task_is_stale");
         assert_eq!(status["resources"]["run_id"], run_id.to_string());
         assert_eq!(status["resources"]["selected_task_id"], task_id.to_string());
-    }
-
-    #[test]
-    fn pair_focus_never_derives_control_from_a_run_state() {
-        let result = DocketExecutionControlResult::not_established(
-            Uuid::from_u128(1),
-            Some(Uuid::from_u128(2)),
-            Uuid::from_u128(3),
-            Uuid::from_u128(4),
-            DocketExecutionControlReference {
-                kind: "pair_session".to_owned(),
-                id: "session".to_owned(),
-                persisted: true,
-            },
-            "turn_ended_before_durable_continuation",
-            None,
-            false,
-        );
-        assert!(!result.is_established());
-        assert_eq!(
-            serde_json::to_value(result).unwrap()["state"],
-            "not_established"
-        );
     }
 
     #[test]
