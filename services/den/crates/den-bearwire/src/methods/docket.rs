@@ -9,16 +9,19 @@ use den_docket::{
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use bearwire_protocol::methods::{
-    DocketJobDiagnosticsRequest, DocketJobsCancelRunRequest, DocketJobsExecuteRequest,
-    DocketJobsListRequest, DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest,
-    RuntimeDiagnosticsListRequest,
+use bearwire_protocol::{
+    methods::{
+        DocketJobDiagnosticsRequest, DocketJobsCancelRunRequest, DocketJobsExecuteRequest,
+        DocketJobsListRequest, DocketJobsSettleTaskRequest, DocketSessionTasksSettleRequest,
+        RuntimeDiagnosticsListRequest,
+    },
+    wire::BearWireEvent,
 };
 use den_http::errors::CustomError;
-use den_runtime::current_task::select_pair_current_task;
 use den_runtime::runtime_exception_events::{
     self, RuntimeExceptionEventFilter, RuntimeExceptionSeverity,
 };
+use den_runtime::{bearwire_events, current_task::select_pair_current_task};
 use den_service::{
     artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
     client_sessions, DenState,
@@ -515,6 +518,26 @@ async fn execution_result(
                     loop_run.run_id
                 )));
             }
+            let mut focus_event = BearWireEvent::ephemeral(
+                "docket.focus",
+                json!({
+                    "status": "started",
+                    "task_id": task_id,
+                    "run_id": loop_run.run_id,
+                }),
+            );
+            focus_event.bear_id = Some(bear.id.to_string());
+            focus_event.human_id = Some(user_id.to_string());
+            focus_event.session_id = Some(client_session_id.to_string());
+            focus_event.run_id = Some(loop_run.run_id.clone());
+            bearwire_events::append_bearwire_event(
+                &state.sqlx_pool,
+                client_session_id,
+                Some(bear.id),
+                Some(user_id),
+                focus_event,
+            )
+            .await?;
             pair_binding = json!({
                 "status": if loop_started { "attached" } else { "attached_not_started" },
                 "task_id": task_id,

@@ -629,6 +629,34 @@ async fn conversation_history_like_result(
                         continue;
                     }
 
+                    if row.event_type == "docket.focus" {
+                        let task_title = row
+                            .event
+                            .data
+                            .get("task_title")
+                            .and_then(Value::as_str)
+                            .unwrap_or("selected task");
+                        let text = match row.event.data.get("status").and_then(Value::as_str) {
+                            Some("started") => format!(
+                                "Docket focus acquired; autonomous task loop started: {task_title}"
+                            ),
+                            Some("failed") => format!("Docket focus did not start: {task_title}"),
+                            _ => format!("Docket focus acquired: {task_title}"),
+                        };
+                        let event_id = row
+                            .event
+                            .event_id
+                            .unwrap_or_else(|| format!("bearwire:{}", row.id));
+                        messages.push(json!(SurfaceHistoryEvent::Message {
+                            id: Some(event_id),
+                            role: "system".to_string(),
+                            text,
+                            resources: Vec::<SurfaceResourceRef>::new(),
+                            created_at: Some(row.created_at.to_string()),
+                        }));
+                        continue;
+                    }
+
                     if row.event_type == "session_info_update" {
                         let title = row
                             .event
