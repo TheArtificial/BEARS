@@ -2304,30 +2304,6 @@ async fn run_start_with_recovery_source(
 
     let run_id = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple()))?;
     let session_run_id = run_id.to_string();
-    let attempt = if let Some(task_id) = pair_task_id {
-        let service = PgDocketService::from_pool(&state.sqlx_pool);
-        let attempt = service
-            .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
-                bear_id: bear.id,
-                task_id,
-                owner: DocketExecutionAttemptOwner::Pair {
-                    session_id: session_id.clone(),
-                    pair_run_id: session_run_id.clone(),
-                },
-                authorization_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_run_id.as_bytes()),
-            })
-            .await?;
-        Some(
-            service
-                .start_execution_attempt(DocketExecutionAttemptStart {
-                    attempt_id: attempt.id,
-                    fence_epoch: attempt.fence_epoch,
-                })
-                .await?,
-        )
-    } else {
-        None
-    };
     let session_id = ClientSessionId::new(session_id.clone())?;
     let session_id_string = session_id.to_string();
     let superseded = settle_active_run_for_session(
@@ -2356,6 +2332,30 @@ async fn run_start_with_recovery_source(
     let run =
         turn_runs::create_run_with_ids(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id)
             .await?;
+    let attempt = if let Some(task_id) = pair_task_id {
+        let service = PgDocketService::from_pool(&state.sqlx_pool);
+        let attempt = service
+            .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+                bear_id: bear.id,
+                task_id,
+                owner: DocketExecutionAttemptOwner::Pair {
+                    session_id: session_id.to_string(),
+                    pair_run_id: session_run_id.clone(),
+                },
+                authorization_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_run_id.as_bytes()),
+            })
+            .await?;
+        Some(
+            service
+                .start_execution_attempt(DocketExecutionAttemptStart {
+                    attempt_id: attempt.id,
+                    fence_epoch: attempt.fence_epoch,
+                })
+                .await?,
+        )
+    } else {
+        None
+    };
     let mut accepted = BearWireEvent::ephemeral(
         "run.accepted",
         json!({
