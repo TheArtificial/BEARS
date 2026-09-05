@@ -3228,6 +3228,14 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
     .await;
     assert_eq!(second["result"]["started"], false, "{second}");
     assert_eq!(second["result"]["reused"], true, "{second}");
+    assert_eq!(
+        second["result"]["execution_attempt_state"], "running",
+        "reused starts must return canonical attempt state: {second}"
+    );
+    assert_eq!(
+        second["result"]["launch_state"], "already_running",
+        "reused starts must report a live native run: {second}"
+    );
     assert_eq!(second["result"]["run_id"], first["result"]["run_id"]);
     assert_eq!(
         second["result"]["execution_attempt_id"], first["result"]["execution_attempt_id"],

@@ -6081,10 +6081,11 @@ fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
     let control = binding
         .get("control")
         .ok_or_else(|| anyhow!("Docket response omitted canonical attempt state"))?;
+    let launch_state = control.get("launch_state").and_then(Value::as_str);
     if control.get("kind").and_then(Value::as_str) != Some("docket")
         || control.get("state").and_then(Value::as_str) != Some("running")
         || control.get("attempt_state").and_then(Value::as_str) != Some("running")
-        || control.get("launch_state").and_then(Value::as_str) != Some("started")
+        || !matches!(launch_state, Some("started" | "already_running"))
     {
         return Err(anyhow!(
             "Docket did not start a running canonical attempt and native Pair run: {}",
@@ -13555,6 +13556,20 @@ mod tests {
             }
         });
         assert_eq!(confirmed_focus_run_id(&started).unwrap(), "run_123");
+
+        let already_running = json!({
+            "pair_binding": {
+                "control": {
+                    "kind": "docket",
+                    "state": "running",
+                    "attempt_id": "11111111-1111-1111-1111-111111111111",
+                    "attempt_state": "running",
+                    "launch_state": "already_running"
+                },
+                "run": { "id": "run_123" }
+            }
+        });
+        assert_eq!(confirmed_focus_run_id(&already_running).unwrap(), "run_123");
 
         for invalid in [
             json!({ "pair_binding": { "run": { "id": "run_123" } } }),

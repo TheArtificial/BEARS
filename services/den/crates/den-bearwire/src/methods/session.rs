@@ -922,6 +922,8 @@ pub async fn start_pair_current_task(
             "task_id": task_id,
             "state": run.state,
             "execution_attempt_id": attempt.id,
+            "execution_attempt_state": attempt.state,
+            "launch_state": "already_running",
             "fence_epoch": attempt.fence_epoch,
         }));
     }
@@ -960,6 +962,8 @@ pub async fn start_pair_current_task(
                 "task_id": task_id,
                 "state": attempt.state,
                 "execution_attempt_id": attempt.id,
+                "execution_attempt_state": attempt.state,
+                "launch_state": "already_running",
                 "fence_epoch": attempt.fence_epoch,
             }));
         }

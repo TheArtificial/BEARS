@@ -489,9 +489,11 @@ async fn execution_result(
                 .get("execution_attempt_state")
                 .and_then(Value::as_str);
             let launch_state = loop_start.get("launch_state").and_then(Value::as_str);
-            if attempt_state != Some("running") || launch_state != Some("started") {
+            let attempt_is_running = attempt_state == Some("running");
+            let native_run_is_live = matches!(launch_state, Some("started" | "already_running"));
+            if !attempt_is_running || !native_run_is_live {
                 return Err(CustomError::System(format!(
-                    "Pair task start did not establish a running canonical attempt and native launch (attempt_state={}, launch_state={})",
+                    "Pair task start did not establish a running canonical attempt and live native run (attempt_state={}, launch_state={})",
                     attempt_state.unwrap_or("missing"),
                     launch_state.unwrap_or("missing")
                 )));
