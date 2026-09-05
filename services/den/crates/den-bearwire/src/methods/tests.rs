@@ -507,6 +507,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         attached["result"]["pair_binding"]["initial_turn"]["state"],
         "confirmed"
     );
+    assert!(attached["result"]["pair_binding"]["initial_turn"]["evidence"].is_object());
     assert!(attached["result"]["pair_binding"]["run"]["id"]
         .as_str()
         .is_some_and(|run_id| !run_id.is_empty()));

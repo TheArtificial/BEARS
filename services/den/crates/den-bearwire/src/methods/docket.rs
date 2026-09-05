@@ -487,11 +487,19 @@ async fn execution_result(
                 .get("initial_turn_evidence")
                 .cloned()
                 .unwrap_or(Value::Null);
-            if !initial_turn_started {
+            // A startup flag without the stream-observed boundary is not proof
+            // of loop control. Keep this invariant local to the producer: ACP
+            // must never receive `confirmed` with null evidence.
+            let initial_turn_confirmed = initial_turn_started && initial_turn_evidence.is_object();
+            if !initial_turn_confirmed {
                 let detail = loop_start
                     .get("initial_turn_start_error")
                     .and_then(Value::as_str)
-                    .unwrap_or("startup signal did not confirm a runtime event");
+                    .unwrap_or(if initial_turn_started {
+                        "startup signal omitted actionable-boundary evidence"
+                    } else {
+                        "startup signal did not confirm a runtime event"
+                    });
                 settle_active_run_for_session(
                     state,
                     client_session_id,
@@ -567,7 +575,7 @@ async fn execution_result(
                 },
                 "session_id": client_session_id,
                 "initial_turn": {
-                    "state": if initial_turn_started { "confirmed" } else { "not_confirmed" },
+                    "state": if initial_turn_confirmed { "confirmed" } else { "not_confirmed" },
                     "evidence": initial_turn_evidence,
                 },
                 "run": {
