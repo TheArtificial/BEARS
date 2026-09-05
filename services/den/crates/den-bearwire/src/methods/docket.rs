@@ -3,9 +3,9 @@ use den_core::BearProfile;
 use den_docket::{
     work_runs::{self, WorkRunListFilter},
     DocketExecutionControl, DocketExecutionControlReference, DocketExecutionControlResult,
-    DocketExecutionNextAction, DocketExecutionTaskSettlement, DocketJobExecuteRequest,
-    DocketJobListFilter, DocketOutcomeDisposition, DocketService, DocketSessionTaskSettlement,
-    DocketTaskListFilter, DocketTaskStatus, PgDocketService,
+    DocketExecutionControlState, DocketExecutionNextAction, DocketExecutionTaskSettlement,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketOutcomeDisposition, DocketService,
+    DocketSessionTaskSettlement, DocketTaskListFilter, DocketTaskStatus, PgDocketService,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -530,7 +530,29 @@ async fn execution_result(
                 focus_event,
             )
             .await?;
+            let continuation_established = matches!(
+                execution_control.state,
+                DocketExecutionControlState::ContinuationEstablished
+            );
+            let terminal = loop_run.terminal_reason.is_some()
+                || matches!(
+                    loop_run.state.as_str(),
+                    "completed" | "failed" | "cancelled"
+                );
+            let focus_state = if continuation_established {
+                "continuation_established"
+            } else if terminal {
+                "turn_completed"
+            } else if initial_turn_evidence.is_object() {
+                "turn_started"
+            } else {
+                "not_started"
+            };
             pair_binding = json!({
+                "focus": {
+                    "state": focus_state,
+                    "reason": if continuation_established { Value::Null } else { json!(execution_control.reason.clone()) },
+                },
                 "execution_control": execution_control,
                 "task": {
                     "id": task_id,
@@ -538,8 +560,13 @@ async fn execution_result(
                 },
                 "session_id": client_session_id,
                 "initial_turn": {
-                    "state": "candidate_observed",
+                    "state": if initial_turn_evidence.is_object() { "confirmed" } else { "not_confirmed" },
                     "evidence": initial_turn_evidence,
+                },
+                "terminal_summary": {
+                    "state": if terminal { loop_run.state.as_str() } else { "non_terminal" },
+                    "terminal_reason": loop_run.terminal_reason,
+                    "continuation_persisted": continuation_established,
                 },
                 "run": {
                     "id": loop_run.run_id,

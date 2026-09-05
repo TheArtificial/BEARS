@@ -852,18 +852,29 @@ fn initial_stream_eof_is_recoverable(
 
 fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent) -> bool {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-    // Text proves only that the model emitted prose; it can be a superficial
-    // acknowledgement before the task loop stops. `/focus` needs a durable
-    // control boundary that requires the loop to remain actionable.
+    // A transcript-visible assistant delta proves the selected task turn began,
+    // but not that an autonomous continuation exists. Docket separately promotes
+    // only persisted obligations/continuations to `continuation_established`.
     // Status/provider activity alone remains insufficient.
     matches!(
         event,
         RuntimeStreamEvent::Semantic(
-            RuntimeSemanticEvent::ToolCallRequested { .. }
+            RuntimeSemanticEvent::AssistantTextDelta { .. }
+                | RuntimeSemanticEvent::ToolCallRequested { .. }
                 | RuntimeSemanticEvent::RunPaused { .. }
                 | RuntimeSemanticEvent::BoundedSlice { .. }
         )
     )
+}
+
+fn eager_prefix_boundary(event: &den_protocol::RuntimeStreamEvent) -> &'static str {
+    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    match event {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { .. }) => {
+            "transcript_visible_assistant_output"
+        }
+        _ => "actionable_native_event",
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2692,7 +2703,7 @@ async fn run_start_with_recovery_source(
                                         if let Some(tx) = eager_prefix_tx.take() {
                                             let _ = tx.send(Ok(json!({
                                                 "event_kind": runtime_event_kind(&runtime_event),
-                                                "boundary": "actionable_native_event",
+                                                "boundary": eager_prefix_boundary(&runtime_event),
                                             })));
                                         }
                                     }
@@ -3537,7 +3548,7 @@ mod tests {
     }
 
     #[test]
-    fn eager_prefix_requires_an_actionable_native_boundary() {
+    fn eager_prefix_accepts_transcript_visible_turn_start_but_not_status() {
         use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
         assert!(!runtime_event_satisfies_eager_prefix(
@@ -3545,11 +3556,15 @@ mod tests {
                 text: "connecting".to_string(),
             })
         ));
-        assert!(!runtime_event_satisfies_eager_prefix(
-            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
+        let assistant_text =
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
                 text: "working".to_string(),
-            })
-        ));
+            });
+        assert!(runtime_event_satisfies_eager_prefix(&assistant_text));
+        assert_eq!(
+            eager_prefix_boundary(&assistant_text),
+            "transcript_visible_assistant_output"
+        );
         assert!(runtime_event_satisfies_eager_prefix(
             &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
                 tool_call_id: "call-1".to_string(),

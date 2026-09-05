@@ -6077,48 +6077,31 @@ async fn publish_focus_title_update(
 fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
     let binding = result
         .get("pair_binding")
-        .ok_or_else(|| anyhow!("Docket response omitted Pair loop binding"))?;
+        .ok_or_else(|| anyhow!("Docket response omitted Pair focus result"))?;
+    let focus = binding
+        .get("focus")
+        .ok_or_else(|| anyhow!("Docket response omitted authoritative focus state"))?;
+    if focus.get("state").and_then(Value::as_str) != Some("continuation_established") {
+        return Err(anyhow!(
+            "Docket did not establish durable task-loop control: {}",
+            compact_json_for_status(binding)
+        ));
+    }
     let control = binding
-        .get("control")
-        .ok_or_else(|| anyhow!("Docket response omitted Pair loop control"))?;
-    let initial_turn = binding
-        .get("initial_turn")
-        .ok_or_else(|| anyhow!("Docket response omitted initial task-turn state"))?;
-    let evidence = initial_turn
-        .get("evidence")
-        .ok_or_else(|| anyhow!("Docket response omitted initial task-turn evidence"))?;
-    if control.get("kind").and_then(Value::as_str) != Some("docket")
-        || control.get("state").and_then(Value::as_str) != Some("active")
-        || initial_turn.get("state").and_then(Value::as_str) != Some("confirmed")
-        || evidence.get("boundary").and_then(Value::as_str) != Some("actionable_native_event")
-        || evidence
-            .get("event_kind")
-            .and_then(Value::as_str)
-            .filter(|kind| !kind.trim().is_empty())
-            .is_none()
-    {
+        .get("execution_control")
+        .ok_or_else(|| anyhow!("Docket focus omitted execution-control evidence"))?;
+    if control.get("state").and_then(Value::as_str) != Some("continuation_established") {
         return Err(anyhow!(
-            "Docket did not prove an actionable Pair task-loop boundary: {}",
+            "Docket focus state was inconsistent with execution control: {}",
             compact_json_for_status(binding)
         ));
     }
-    let run = binding
+    binding
         .get("run")
-        .ok_or_else(|| anyhow!("Docket control is active but omitted Pair loop run state"))?;
-    let run_state = run
-        .get("state")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("Docket control is active but omitted Pair loop run state"))?;
-    if !matches!(run_state, "running" | "waiting_for_client" | "continuing") {
-        return Err(anyhow!(
-            "Docket task turn reached a startup boundary but Pair loop is not live (run_state={run_state}): {}",
-            compact_json_for_status(binding)
-        ));
-    }
-    run.get("id")
+        .and_then(|run| run.get("id"))
         .and_then(Value::as_str)
         .filter(|run_id| !run_id.trim().is_empty())
-        .ok_or_else(|| anyhow!("Docket control is active but did not confirm a Pair loop run"))
+        .ok_or_else(|| anyhow!("Docket established control but did not identify its Pair run"))
 }
 
 async fn focus_job_report(
@@ -6167,7 +6150,7 @@ async fn focus_job_report(
                 }
             }
             format!(
-                "Den ACP focus acquired; Docket task loop is live\n\n- Job: {job_id}\n- Pair run: {run_id}\n- Pair binding: {}\n- Docket execution: {}",
+                "Docket task-loop control established\n\n- Job: {job_id}\n- Pair run: {run_id}\n- Pair binding: {}\n- Docket execution: {}",
                 compact_json_for_status(result.get("pair_binding").unwrap_or(&Value::Null)),
                 compact_json_for_status(&result)
             )
@@ -13561,82 +13544,63 @@ mod tests {
     fn focus_requires_confirmed_pair_run() {
         let acquired = json!({
             "pair_binding": {
-                "control": { "kind": "docket", "state": "active" },
-                "initial_turn": {
-                    "state": "confirmed",
-                    "evidence": {
-                        "boundary": "actionable_native_event",
-                        "event_kind": "assistant_text_delta"
-                    }
-                },
-                "run": { "id": "run_123", "state": "running" }
+                "focus": { "state": "continuation_established" },
+                "execution_control": { "state": "continuation_established" },
+                "run": { "id": "run_123" }
             }
         });
         assert_eq!(confirmed_focus_run_id(&acquired).unwrap(), "run_123");
 
-        let not_started = json!({
+        let text_only_completed = json!({
             "pair_binding": {
-                "control": { "kind": "docket", "state": "active" },
-                "initial_turn": { "state": "not_confirmed" },
-                "run": { "id": "run_123", "state": "running" }
-            }
-        });
-        assert!(confirmed_focus_run_id(&not_started)
-            .unwrap_err()
-            .to_string()
-            .contains("omitted initial task-turn evidence"));
-
-        let completed = json!({
-            "pair_binding": {
-                "control": { "kind": "docket", "state": "active" },
+                "focus": { "state": "turn_completed" },
+                "execution_control": {
+                    "state": "not_established",
+                    "reason": "turn_ended_before_durable_continuation"
+                },
                 "initial_turn": {
                     "state": "confirmed",
-                    "evidence": {
-                        "boundary": "actionable_native_event",
-                        "event_kind": "assistant_text_delta"
-                    }
+                    "evidence": { "boundary": "transcript_visible_assistant_output" }
                 },
                 "run": { "id": "run_123", "state": "completed" }
             }
         });
-        assert!(confirmed_focus_run_id(&completed)
+        assert!(confirmed_focus_run_id(&text_only_completed)
             .unwrap_err()
             .to_string()
-            .contains("Pair loop is not live"));
+            .contains("did not establish durable task-loop control"));
+
+        let inconsistent = json!({
+            "pair_binding": {
+                "focus": { "state": "continuation_established" },
+                "execution_control": { "state": "not_established" },
+                "run": { "id": "run_123" }
+            }
+        });
+        assert!(confirmed_focus_run_id(&inconsistent)
+            .unwrap_err()
+            .to_string()
+            .contains("inconsistent with execution control"));
 
         let split_brain = json!({
             "pair_binding": {
-                "control": { "kind": "docket", "state": "active" },
-                "initial_turn": {
-                    "state": "confirmed",
-                    "evidence": {
-                        "boundary": "actionable_native_event",
-                        "event_kind": "assistant_text_delta"
-                    }
-                },
-                "task": { "selected": true },
+                "focus": { "state": "continuation_established" },
+                "execution_control": { "state": "continuation_established" },
                 "run": { "id": null }
             }
         });
         assert!(confirmed_focus_run_id(&split_brain)
             .unwrap_err()
             .to_string()
-            .contains("omitted Pair loop run state"));
+            .contains("did not identify its Pair run"));
 
         let unattached = json!({
-            "pair_binding": {
-                "control": {
-                    "kind": "docket",
-                    "state": "not_started",
-                    "reason": "no_authenticated_pair_session"
-                },
-                "initial_turn": { "state": "not_confirmed" }
-            }
+            "pair_binding": { "focus": { "state": "not_started" } }
         });
         assert!(confirmed_focus_run_id(&unattached)
             .unwrap_err()
             .to_string()
-            .contains("omitted initial task-turn evidence"));
+            .contains("did not establish durable task-loop control"));
     }
 
     #[test]
