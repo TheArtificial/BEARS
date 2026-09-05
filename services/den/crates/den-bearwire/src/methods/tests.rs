@@ -491,23 +491,26 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         json!({ "bear_slug": bear_slug, "job_id": job.job.id, "session_id": session_id }),
     )
     .await;
-    let task_id = attached["result"]["pair_binding"]["task_id"]
+    let task_id = attached["result"]["pair_binding"]["task"]["id"]
         .as_str()
         .unwrap_or_else(|| panic!("focus execution failed: {attached}"));
-    assert_eq!(attached["result"]["pair_binding"]["status"], "started");
     assert_eq!(
-        attached["result"]["pair_binding"]["current_task_selected"],
-        true
+        attached["result"]["pair_binding"]["control"]["kind"],
+        "docket"
     );
-    assert_eq!(attached["result"]["pair_binding"]["loop_started"], true);
     assert_eq!(
-        attached["result"]["pair_binding"]["initial_turn_started"], true,
-        "focus returns only after the internal Docket-originated turn is claimed"
+        attached["result"]["pair_binding"]["control"]["state"],
+        "active"
     );
-    assert!(attached["result"]["pair_binding"]["loop_run_id"]
+    assert_eq!(attached["result"]["pair_binding"]["task"]["selected"], true);
+    assert_eq!(
+        attached["result"]["pair_binding"]["initial_turn"]["state"],
+        "confirmed"
+    );
+    assert!(attached["result"]["pair_binding"]["run"]["id"]
         .as_str()
         .is_some_and(|run_id| !run_id.is_empty()));
-    let loop_run_id = attached["result"]["pair_binding"]["loop_run_id"]
+    let loop_run_id = attached["result"]["pair_binding"]["run"]["id"]
         .as_str()
         .expect("Pair loop run id");
     let live_attempts: i64 = sqlx::query_scalar(

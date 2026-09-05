@@ -553,22 +553,36 @@ async fn execution_result(
             )
             .await?;
             pair_binding = json!({
-                "status": if loop_started { "started" } else { "attached_not_started" },
-                "task_id": task_id,
-                "client_session_id": client_session_id,
-                "current_task_selected": true,
-                "loop_started": loop_started,
-                "initial_turn_started": initial_turn_started,
-                "loop_run_id": loop_run.run_id,
-                "loop_state": loop_run.state,
-                "loop_terminal_reason": loop_run.terminal_reason,
+                "control": {
+                    "kind": "docket",
+                    "state": if loop_started { "active" } else { "not_started" },
+                },
+                "task": {
+                    "id": task_id,
+                    "selected": true,
+                },
+                "session_id": client_session_id,
+                "initial_turn": {
+                    "state": if initial_turn_started { "confirmed" } else { "not_confirmed" },
+                },
+                "run": {
+                    "id": loop_run.run_id,
+                    "state": loop_run.state,
+                    "terminal_reason": loop_run.terminal_reason,
+                },
             });
         } else {
             pair_binding = json!({
-                "status": "not_attempted",
-                "reason": "no_authenticated_pair_session",
-                "task_id": outcome.control.task.selected_task_id,
-                "current_task_selected": false,
+                "control": {
+                    "kind": "docket",
+                    "state": "not_started",
+                    "reason": "no_authenticated_pair_session",
+                },
+                "task": {
+                    "id": outcome.control.task.selected_task_id,
+                    "selected": false,
+                },
+                "initial_turn": { "state": "not_confirmed" },
             });
         }
     }

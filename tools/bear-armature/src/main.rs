@@ -6078,9 +6078,15 @@ fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
     let binding = result
         .get("pair_binding")
         .ok_or_else(|| anyhow!("Docket response omitted Pair loop binding"))?;
-    if binding.get("status").and_then(Value::as_str) != Some("started")
-        || binding.get("loop_started").and_then(Value::as_bool) != Some(true)
-        || binding.get("initial_turn_started").and_then(Value::as_bool) != Some(true)
+    let control = binding
+        .get("control")
+        .ok_or_else(|| anyhow!("Docket response omitted Pair loop control"))?;
+    let initial_turn = binding
+        .get("initial_turn")
+        .ok_or_else(|| anyhow!("Docket response omitted initial task-turn state"))?;
+    if control.get("kind").and_then(Value::as_str) != Some("docket")
+        || control.get("state").and_then(Value::as_str) != Some("active")
+        || initial_turn.get("state").and_then(Value::as_str) != Some("confirmed")
     {
         return Err(anyhow!(
             "Docket did not start Pair loop control: {}",
@@ -6088,10 +6094,11 @@ fn confirmed_focus_run_id(result: &Value) -> Result<&str> {
         ));
     }
     binding
-        .get("loop_run_id")
+        .get("run")
+        .and_then(|run| run.get("id"))
         .and_then(Value::as_str)
         .filter(|run_id| !run_id.trim().is_empty())
-        .ok_or_else(|| anyhow!("Docket attached the task but did not confirm a Pair loop run"))
+        .ok_or_else(|| anyhow!("Docket control is active but did not confirm a Pair loop run"))
 }
 
 async fn focus_job_report(
@@ -13533,20 +13540,18 @@ mod tests {
     fn focus_requires_confirmed_pair_run() {
         let acquired = json!({
             "pair_binding": {
-                "status": "started",
-                "loop_started": true,
-                "initial_turn_started": true,
-                "loop_run_id": "run_123"
+                "control": { "kind": "docket", "state": "active" },
+                "initial_turn": { "state": "confirmed" },
+                "run": { "id": "run_123" }
             }
         });
         assert_eq!(confirmed_focus_run_id(&acquired).unwrap(), "run_123");
 
         let not_started = json!({
             "pair_binding": {
-                "status": "started",
-                "loop_started": true,
-                "initial_turn_started": false,
-                "loop_run_id": "run_123"
+                "control": { "kind": "docket", "state": "active" },
+                "initial_turn": { "state": "not_confirmed" },
+                "run": { "id": "run_123" }
             }
         });
         assert!(confirmed_focus_run_id(&not_started)
@@ -13556,22 +13561,25 @@ mod tests {
 
         let split_brain = json!({
             "pair_binding": {
-                "status": "started",
-                "loop_started": true,
-                "initial_turn_started": true,
-                "current_task_selected": true,
-                "loop_run_id": null
+                "control": { "kind": "docket", "state": "active" },
+                "initial_turn": { "state": "confirmed" },
+                "task": { "selected": true },
+                "run": { "id": null }
             }
         });
         assert!(confirmed_focus_run_id(&split_brain)
             .unwrap_err()
             .to_string()
-            .contains("did not confirm a Pair loop run"));
+            .contains("active but did not confirm a Pair loop run"));
 
         let unattached = json!({
             "pair_binding": {
-                "status": "not_attempted",
-                "reason": "no_authenticated_pair_session"
+                "control": {
+                    "kind": "docket",
+                    "state": "not_started",
+                    "reason": "no_authenticated_pair_session"
+                },
+                "initial_turn": { "state": "not_confirmed" }
             }
         });
         assert!(confirmed_focus_run_id(&unattached)
