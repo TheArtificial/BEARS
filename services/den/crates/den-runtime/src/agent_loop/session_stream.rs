@@ -113,6 +113,14 @@ type PausePersistenceFuture =
 type FinalGateMessagePersistenceFuture =
     Pin<Box<dyn Future<Output = Result<Option<Uuid>, DenError>> + Send>>;
 
+fn superseded_continuation_stream() -> RuntimeEventStream {
+    Box::pin(stream::once(async {
+        Ok(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::TurnCancelled { turn: None },
+        ))
+    }))
+}
+
 fn render_final_gate_continuation_guidance(next_task: &str) -> Result<String, DenError> {
     // Keep reusable final-gate steering in the fragment registry; this helper is
     // only the structured-state adapter for loop-control code.
@@ -956,7 +964,9 @@ impl SessionTrackingStream {
                         active_run_id = ?active_run.as_ref().map(|run| run.run_id.as_str()),
                         "stopping server-side continuation for superseded run"
                     );
-                    return Ok(Box::pin(stream::empty()) as RuntimeEventStream);
+                    // A fenced continuation is an explicit cancellation, not transport EOF.
+                    // Returning EOF makes the stream driver fabricate an orphaned tool result.
+                    return Ok(superseded_continuation_stream());
                 }
                 tracing::warn!(
                     event = "native_server_tool_continuation",
@@ -2918,6 +2928,17 @@ mod tests {
             session.profile,
             NativeToolDispatchMode::DeferToClient,
         )
+    }
+
+    #[tokio::test]
+    async fn superseded_continuation_is_cancelled_not_eof() {
+        let events = superseded_continuation_stream().collect::<Vec<_>>().await;
+        assert!(matches!(
+            events.as_slice(),
+            [Ok(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::TurnCancelled { turn: None }
+            ))]
+        ));
     }
 
     #[tokio::test]

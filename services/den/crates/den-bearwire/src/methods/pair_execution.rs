@@ -44,7 +44,50 @@ pub async fn start_or_reconcile_docket_pair_execution(
     client_session_id: &str,
     task_id: Uuid,
 ) -> Result<DocketPairExecution, CustomError> {
-    let lock_key = format!("docket-pair-execution:{}:{client_session_id}", bear.id);
+    with_execution_lock(state, bear.id, client_session_id, || async {
+        start_or_reconcile_locked(state, user_id, bear, client_session_id, task_id).await
+    })
+    .await
+}
+
+/// Starts focused execution for the session's already-selected task. This keeps the
+/// Pair-facing focus RPC on the same serialized command boundary as Docket `/focus`.
+pub async fn start_selected_docket_pair_execution(
+    state: &DenState,
+    user_id: i32,
+    bear: Bear,
+    client_session_id: &str,
+) -> Result<DocketPairExecution, CustomError> {
+    with_execution_lock(state, bear.id, client_session_id, || async {
+        let session = client_sessions::find_for_user_bear_session_id(
+            &state.sqlx_pool,
+            user_id,
+            bear.id,
+            client_session_id,
+        )
+        .await?
+        .ok_or_else(|| CustomError::NotFound("client session not found".to_string()))?;
+        let task_id = session.current_task_id.ok_or_else(|| {
+            CustomError::ValidationError(
+                "no current Pair task is selected for this session".to_string(),
+            )
+        })?;
+        start_or_reconcile_locked(state, user_id, bear, client_session_id, task_id).await
+    })
+    .await
+}
+
+async fn with_execution_lock<T, F, Fut>(
+    state: &DenState,
+    bear_id: Uuid,
+    client_session_id: &str,
+    operation: F,
+) -> Result<T, CustomError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T, CustomError>>,
+{
+    let lock_key = format!("docket-pair-execution:{bear_id}:{client_session_id}");
     let mut lock_transaction = state.sqlx_pool.begin().await?;
     sqlx::query!(
         r#"SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) AS "locked!""#,
@@ -52,18 +95,12 @@ pub async fn start_or_reconcile_docket_pair_execution(
     )
     .fetch_one(&mut *lock_transaction)
     .await?;
-
-    // All Den entry points use this command, so this session-scoped lock serializes
-    // attach/select/reconcile/start without coupling control to Pair, ACP, or Armature.
     // ponytail: PostgreSQL advisory locking is global per database; if command volume
     // becomes material, replace it with a persisted command queue/lease.
-    let result = start_or_reconcile_locked(state, user_id, bear, client_session_id, task_id).await;
-    // The transaction only scopes the advisory lock. Committing releases it, while a
-    // cancellation/error drops the transaction and releases it by rollback.
+    let result = operation().await;
     let release_result = lock_transaction.commit().await;
-
     match (result, release_result) {
-        (Ok(execution), Ok(())) => Ok(execution),
+        (Ok(value), Ok(())) => Ok(value),
         (Err(err), _) => Err(err),
         (Ok(_), Err(err)) => Err(CustomError::System(format!(
             "release Docket Pair execution command lock failed: {err}"

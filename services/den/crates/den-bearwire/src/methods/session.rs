@@ -825,7 +825,13 @@ pub(crate) async fn session_current_task_start_result(
         }
     }
     Ok(serde_json::to_value(
-        start_pair_current_task(state, user_id, bear, &request.session_id).await?,
+        super::pair_execution::start_selected_docket_pair_execution(
+            state,
+            user_id,
+            bear,
+            &request.session_id,
+        )
+        .await?,
     )
     .map_err(|err| CustomError::System(format!("serialize Pair task start failed: {err}")))?)
 }
