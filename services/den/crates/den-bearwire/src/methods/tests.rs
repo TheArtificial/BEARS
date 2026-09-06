@@ -21,10 +21,10 @@ use den_docket::{
         checkout_work_run_for_session, claim_next_work_run, enqueue_work_job,
         record_work_run_provisioned, WorkExecutionTarget, WorkJobEnqueue, WorkRunProvisioned,
     },
-    DocketCommitPolicy, DocketCriterionKind, DocketEffortHint, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobOverlapResolution, DocketService, DocketTaskCreate,
-    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService,
-    RoutingStrategy, TaskListVisibility,
+    DocketCommitPolicy, DocketCriterionKind, DocketEffortHint, DocketExecutionAttemptRelease,
+    DocketJobCreate, DocketJobCriterionInput, DocketJobOverlapResolution, DocketService,
+    DocketTaskCreate, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope,
+    PgDocketService, RoutingStrategy, TaskListVisibility,
 };
 use den_http::armature_tokens;
 use den_protocol::{
@@ -3230,7 +3230,9 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn current_task_start_recovers_orphaned_controller_without_settling_task(pool: sqlx::PgPool) {
+async fn current_task_start_recovers_orphaned_controller_without_execution_authority(
+    pool: sqlx::PgPool,
+) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let token = create_token_for_bear(&pool, user_id, bear_id).await;
@@ -3269,6 +3271,20 @@ async fn current_task_start_recovers_orphaned_controller_without_settling_task(p
         .as_str()
         .unwrap()
         .to_string();
+
+    // Simulate a lost execution lease: the host run remains active, but its
+    // canonical Docket authority has already been released.
+    PgDocketService::from_pool(&pool)
+        .release_execution_attempt(DocketExecutionAttemptRelease {
+            attempt_id: Uuid::parse_str(&first_attempt_id).expect("attempt UUID"),
+            fence_epoch: first["result"]["fence_epoch"]
+                .as_i64()
+                .expect("fence epoch"),
+            recovery_key: Uuid::new_v4(),
+            recovery_reason: "test_lost_execution_authority".to_string(),
+        })
+        .await
+        .expect("release execution authority");
 
     // A rebuilt service has durable run state but no in-memory controller registry.
     let recovered = rpc_value(

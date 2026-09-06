@@ -1045,9 +1045,9 @@ async fn reconcile_orphaned_task_run(
     session_id: &str,
     run_id: &str,
 ) -> Result<(), CustomError> {
-    let attempt =
-        existing_pair_execution_attempt(&state.sqlx_pool, bear_id, task_id, session_id, run_id)
-            .await?;
+    let attempt = PgDocketService::from_pool(&state.sqlx_pool)
+        .get_live_pair_execution_attempt(bear_id, task_id, session_id, run_id)
+        .await?;
     let mut event = BearWireEvent::ephemeral(
         "run.failed",
         json!({
@@ -1077,14 +1077,16 @@ async fn reconcile_orphaned_task_run(
             "execution run {run_id} changed while orphan recovery was in progress; retry focus"
         ))
     })?;
-    PgDocketService::from_pool(&state.sqlx_pool)
-        .release_execution_attempt(DocketExecutionAttemptRelease {
-            attempt_id: attempt.id,
-            fence_epoch: attempt.fence_epoch,
-            recovery_key: Uuid::new_v4(),
-            recovery_reason: "orphaned_execution_controller".to_string(),
-        })
-        .await?;
+    if let Some(attempt) = attempt {
+        PgDocketService::from_pool(&state.sqlx_pool)
+            .release_execution_attempt(DocketExecutionAttemptRelease {
+                attempt_id: attempt.id,
+                fence_epoch: attempt.fence_epoch,
+                recovery_key: Uuid::new_v4(),
+                recovery_reason: "orphaned_execution_controller".to_string(),
+            })
+            .await?;
+    }
     Ok(())
 }
 
