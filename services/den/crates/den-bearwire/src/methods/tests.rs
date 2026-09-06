@@ -228,6 +228,63 @@ async fn upsert_test_session(
     .expect("upsert BearWire test session");
 }
 
+async fn wait_for_resolved_conversation_id(
+    pool: &sqlx::PgPool,
+    user_id: i32,
+    bear_slug: &str,
+    session_id: &str,
+) -> String {
+    for _ in 0..50 {
+        let session =
+            client_sessions::find_for_user_bear_session(pool, user_id, bear_slug, session_id)
+                .await
+                .expect("load session")
+                .expect("session exists");
+        if let Some(resolved) = session.resolved_conversation_id {
+            return resolved;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("run.start did not resolve conversation within one second");
+}
+
+async fn wait_for_user_message(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+    prompt: &str,
+) {
+    for _ in 0..50 {
+        let exists: bool = sqlx::query_scalar(
+            r"
+            SELECT EXISTS(
+                SELECT 1
+                FROM conversation_messages
+                WHERE conversation_id = (
+                    SELECT id FROM conversations
+                    WHERE bear_id = $1 AND external_conversation_id = $2
+                    LIMIT 1
+                )
+                AND message_type = 'user'
+                AND role = 'user'
+                AND content_text LIKE $3
+            )
+            ",
+        )
+        .bind(bear_id)
+        .bind(conversation_id)
+        .bind(format!("{prompt}%"))
+        .fetch_one(pool)
+        .await
+        .expect("check persisted user message");
+        if exists {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("run.start did not persist the user message within one second");
+}
+
 async fn create_session_task(
     pool: &sqlx::PgPool,
     user_id: i32,
@@ -464,22 +521,40 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
             supersedes_job_id: None,
             overlap_resolution: DocketJobOverlapResolution::Reject,
             criteria: vec![],
-            tasks: vec![DocketTaskInput {
-                client_key: None,
-                parent_client_key: None,
-                parent_task_id: None,
-                sibling_order: Some(0),
-                kind: DocketTaskKind::Execution,
-                scope: DocketTaskScope::Template,
-                title: "Verify binding".to_string(),
-                body: "Verify Pair binding response".to_string(),
-                completion_criteria: vec!["Binding is reported".to_string()],
-                difficulty: Some(DocketTaskDifficulty::Trivial),
-                effort_hint: Some(DocketEffortHint::Low),
-                routing_strategy: RoutingStrategy::Auto,
-                expected_context_size: None,
-                result_rollup_policy: None,
-            }],
+            tasks: vec![
+                DocketTaskInput {
+                    client_key: None,
+                    parent_client_key: None,
+                    parent_task_id: None,
+                    sibling_order: Some(0),
+                    kind: DocketTaskKind::Execution,
+                    scope: DocketTaskScope::Template,
+                    title: "Verify binding".to_string(),
+                    body: "Verify Pair binding response".to_string(),
+                    completion_criteria: vec!["Binding is reported".to_string()],
+                    difficulty: Some(DocketTaskDifficulty::Trivial),
+                    effort_hint: Some(DocketEffortHint::Low),
+                    routing_strategy: RoutingStrategy::Auto,
+                    expected_context_size: None,
+                    result_rollup_policy: None,
+                },
+                DocketTaskInput {
+                    client_key: None,
+                    parent_client_key: None,
+                    parent_task_id: None,
+                    sibling_order: Some(1),
+                    kind: DocketTaskKind::Execution,
+                    scope: DocketTaskScope::Template,
+                    title: "Continue after settlement".to_string(),
+                    body: "Verify successor task control".to_string(),
+                    completion_criteria: vec!["Successor is selected".to_string()],
+                    difficulty: Some(DocketTaskDifficulty::Trivial),
+                    effort_hint: Some(DocketEffortHint::Low),
+                    routing_strategy: RoutingStrategy::Auto,
+                    expected_context_size: None,
+                    result_rollup_policy: None,
+                },
+            ],
         })
         .await
         .expect("create Docket job");
@@ -500,14 +575,9 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     );
     assert_eq!(
         attached["result"]["pair_binding"]["control"]["state"],
-        "active"
+        "running"
     );
     assert_eq!(attached["result"]["pair_binding"]["task"]["selected"], true);
-    assert_eq!(
-        attached["result"]["pair_binding"]["initial_turn"]["state"],
-        "confirmed"
-    );
-    assert!(attached["result"]["pair_binding"]["initial_turn"]["evidence"].is_object());
     assert!(attached["result"]["pair_binding"]["run"]["id"]
         .as_str()
         .is_some_and(|run_id| !run_id.is_empty()));
@@ -530,6 +600,40 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     .await
     .expect("load Pair attachment");
     assert_eq!(attached_count, 1);
+
+    let settled = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "docket.jobs.settle_task",
+        json!({
+            "bear_slug": bear_slug,
+            "job_id": job.job.id,
+            "task_id": task_id,
+            "status": "done",
+            "outcome_disposition": "completed",
+            "result_summary": "First task completed",
+            "session_id": session_id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        settled["result"]["outcome"]["control"]["next_action"], "work_current_task",
+        "{settled}"
+    );
+    let successor_id = settled["result"]["outcome"]["control"]["task"]["current_task_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("settlement did not select a successor: {settled}"));
+    assert_ne!(successor_id, task_id);
+    let session =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
+            .await
+            .expect("load client session")
+            .expect("client session exists");
+    assert_eq!(
+        session.current_task_id,
+        Some(Uuid::parse_str(successor_id).expect("parse successor task id")),
+        "settlement must advance session focus before final-answer gating"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -894,15 +998,8 @@ async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
         .unwrap();
     let value: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["result"]["ok"], true, "{value}");
-    let session =
-        client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
-            .await
-            .expect("load session")
-            .expect("session exists");
-    let resolved = session
-        .resolved_conversation_id
-        .as_deref()
-        .expect("run.start should resolve conversation");
+    let resolved = wait_for_resolved_conversation_id(&pool, user_id, &bear_slug, &session_id).await;
+    wait_for_user_message(&pool, bear_id, &resolved, prompt).await;
     let (count,): (i64,) = sqlx::query_as(
         r"
         SELECT COUNT(*)
@@ -984,15 +1081,8 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
     let value: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(value["result"]["ok"], true, "{value}");
 
-    let session =
-        client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
-            .await
-            .expect("load session")
-            .expect("session exists");
-    let resolved = session
-        .resolved_conversation_id
-        .as_deref()
-        .expect("run.start should resolve conversation");
+    let resolved = wait_for_resolved_conversation_id(&pool, user_id, &bear_slug, &session_id).await;
+    wait_for_user_message(&pool, bear_id, &resolved, prompt).await;
 
     let row = sqlx::query(
         r"
@@ -1010,7 +1100,7 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
         ",
     )
     .bind(bear_id)
-    .bind(resolved)
+    .bind(&resolved)
     .fetch_one(&pool)
     .await
     .expect("load persisted user prompt row");
@@ -1143,16 +1233,7 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
         .expect("first run_id")
         .to_string();
 
-    let session =
-        client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
-            .await
-            .expect("load session")
-            .expect("session exists");
-    let resolved = session
-        .resolved_conversation_id
-        .as_deref()
-        .expect("first run.start should resolve conversation")
-        .to_string();
+    let resolved = wait_for_resolved_conversation_id(&pool, user_id, &bear_slug, &session_id).await;
 
     let mut first_turn_ready = false;
     for _ in 0..50 {
@@ -3149,6 +3230,87 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn current_task_start_recovers_orphaned_controller_without_settling_task(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let task_id = create_session_task(&pool, user_id, bear_id, &session_id, "Recover task").await;
+
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+    ]);
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config.clone());
+
+    let selected = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.select",
+        json!({ "bear_slug": bear_slug, "session_id": session_id, "task_id": task_id }),
+    )
+    .await;
+    assert_eq!(selected["result"]["current_task_id"], task_id.to_string());
+    let first = rpc_value(
+        state,
+        &token,
+        "session.current_task.start",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(first["result"]["started"], true, "{first}");
+    let first_run_id = first["result"]["run_id"].as_str().unwrap().to_string();
+    let first_attempt_id = first["result"]["execution_attempt_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // A rebuilt service has durable run state but no in-memory controller registry.
+    let recovered = rpc_value(
+        test_state_with_config(pool.clone(), config),
+        &token,
+        "session.current_task.start",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(recovered["result"]["started"], true, "{recovered}");
+    assert_ne!(recovered["result"]["run_id"], first_run_id);
+    assert_ne!(
+        recovered["result"]["execution_attempt_id"],
+        first_attempt_id
+    );
+
+    let old_run: (String, Option<String>) =
+        sqlx::query_as("SELECT state, terminal_reason FROM turn_runs WHERE run_id = $1")
+            .bind(&first_run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load recovered run");
+    assert_eq!(old_run.0, "failed");
+    assert_eq!(old_run.1.as_deref(), Some("orphaned_execution_controller"));
+    let old_attempt_state: String =
+        sqlx::query_scalar("SELECT state FROM docket_execution_attempts WHERE id = $1::uuid")
+            .bind(&first_attempt_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load released attempt");
+    assert_eq!(old_attempt_state, "released");
+    let selected_task: Option<Uuid> = sqlx::query_scalar(
+        "SELECT current_task_id FROM client_sessions WHERE client_session_id = $1",
+    )
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load preserved task selection");
+    assert_eq!(selected_task, Some(task_id));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
@@ -3158,7 +3320,12 @@ async fn current_task_start_requires_selection_and_reuses_active_run(pool: sqlx:
 
     let mut config = den_core::config::Config::test_stub();
     config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
-    config.llm_api_url = start_mock_openai_sse_server();
+    config.llm_api_url = start_mock_openai_sse_server_asserting_body(vec![
+        "fs_edit_file".to_string(),
+        "create_task".to_string(),
+        "update_task".to_string(),
+        "select_current_task".to_string(),
+    ]);
     config.default_llm_model = "openai/bearwire-test-model".to_string();
     seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);

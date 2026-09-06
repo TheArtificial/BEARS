@@ -25,6 +25,7 @@ use den_core::{
     },
     DenError,
 };
+use den_docket::DocketPairBoundedOutcome;
 use den_http::{errors::CustomError, web_policy};
 use den_protocol::{
     RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
@@ -53,7 +54,8 @@ use den_service::{
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
 use crate::methods::run::{
-    fail_run_lifecycle, persist_run_progress, persist_runtime_event_as_bearwire, RunFailureReason,
+    docket_bounded_slice_continuation, fail_run_lifecycle, persist_run_progress,
+    persist_runtime_event_as_bearwire, report_pair_bounded_outcome, RunFailureReason,
 };
 
 fn deserialize_tool_result_status<'de, D>(deserializer: D) -> Result<ToolResultStatus, D::Error>
@@ -798,10 +800,38 @@ pub(crate) fn spawn_continuation_task(
                                     ContinuationStreamBoundary::ClientWait => {
                                         wait_event_seen = true;
                                     }
-                                    // A bounded slice is only actionable through the
-                                    // Docket-owned Pair scheduler, never the client tool loop.
                                     ContinuationStreamBoundary::BoundedSlice => {
-                                        wait_event_seen = true;
+                                        if let Some(continuation) =
+                                            docket_bounded_slice_continuation(
+                                                report_pair_bounded_outcome(
+                                                    &pool,
+                                                    &run.session_id,
+                                                    &run.run_id,
+                                                    DocketPairBoundedOutcome::Progress,
+                                                )
+                                                .await,
+                                            )
+                                        {
+                                            let _ = turn_runs::transition_run(
+                                                &pool,
+                                                &run.run_id,
+                                                turn_runs::TurnRunState::Continuing,
+                                                Some("docket_bounded_slice"),
+                                            )
+                                            .await;
+                                            spawn_continuation_task(
+                                                &livestream_state,
+                                                run.clone(),
+                                                binding.binding_id.clone(),
+                                                conversation_id.clone(),
+                                                continuation,
+                                            );
+                                            // This worker hands control to the newly spawned
+                                            // continuation; do not retry or fail this stream EOF.
+                                            wait_event_seen = true;
+                                        } else {
+                                            wait_event_seen = true;
+                                        }
                                     }
                                     ContinuationStreamBoundary::Continue => {}
                                 }

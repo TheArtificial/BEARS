@@ -288,6 +288,7 @@ pub async fn docket_jobs_settle_task_result(
         .transpose()?;
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
+    let attempt_session_id = pair_attempt_session_id(&request);
     let outcome = service
         .settle_execution_task(DocketExecutionTaskSettlement {
             execution: DocketJobExecuteRequest {
@@ -298,7 +299,7 @@ pub async fn docket_jobs_settle_task_result(
                 actor_agent_id: None,
                 // Pair attempts are keyed by the Armature client session; both
                 // protocol spellings identify it at this boundary.
-                session_id: pair_attempt_session_id(&request),
+                session_id: attempt_session_id.clone(),
                 source_conversation_id: request.conversation_id,
                 source_client_session_id: request.source_client_session_id,
             },
@@ -309,6 +310,13 @@ pub async fn docket_jobs_settle_task_result(
             result_summary: request.result_summary,
         })
         .await?;
+    if let (Some(session_id), Some(task_id)) = (
+        attempt_session_id,
+        successor_task_selection(&outcome.control),
+    ) {
+        client_sessions::set_current_task(&state.sqlx_pool, user_id, bear.id, &session_id, task_id)
+            .await?;
+    }
     execution_result_payload(
         outcome,
         json!({
@@ -511,6 +519,20 @@ fn execution_result_payload(
     }))
 }
 
+fn successor_task_selection(control: &DocketExecutionControl) -> Option<Option<Uuid>> {
+    match control.next_action {
+        DocketExecutionNextAction::WorkCurrentTask => control
+            .task
+            .current_task_id
+            .or(control.task.claimed_task_id)
+            .or(control.task.selected_task_id)
+            .map(Some),
+        DocketExecutionNextAction::JobCompleted => Some(None),
+        DocketExecutionNextAction::ReconcileExecution
+        | DocketExecutionNextAction::RecoverBlockedRun => None,
+    }
+}
+
 fn execution_status(control: &DocketExecutionControl) -> Value {
     let message = match control.next_action {
         DocketExecutionNextAction::WorkCurrentTask => "Docket selected the current task.",
@@ -622,6 +644,30 @@ mod tests {
             pair_attempt_session_id(&request).as_deref(),
             Some("acp-session")
         );
+    }
+
+    #[test]
+    fn successor_task_advances_focus_and_clears_only_at_completion() {
+        let successor_id = Uuid::new_v4();
+        let mut control = DocketExecutionControl {
+            run_id: Uuid::new_v4(),
+            run_state: "running".to_owned(),
+            task: DocketExecutionTaskControl {
+                selected_task_id: Some(successor_id),
+                focused_task_id: None,
+                claimed_task_id: Some(successor_id),
+                current_task_id: Some(successor_id),
+            },
+            next_action: DocketExecutionNextAction::WorkCurrentTask,
+            retryable: true,
+            reason: None,
+        };
+
+        assert_eq!(successor_task_selection(&control), Some(Some(successor_id)));
+        control.next_action = DocketExecutionNextAction::JobCompleted;
+        assert_eq!(successor_task_selection(&control), Some(None));
+        control.next_action = DocketExecutionNextAction::ReconcileExecution;
+        assert_eq!(successor_task_selection(&control), None);
     }
 
     #[test]

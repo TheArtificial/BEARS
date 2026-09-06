@@ -3514,6 +3514,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validated_checkpoint_edit_continues_without_task_follow_through_block() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.pending_checkpoint_request = Some(task_checkpoint_request("ckpt-continue-edit"));
+        let mut stream = test_tracking_stream_with_session(&session);
+        let arguments: serde_json::Value = serde_json::from_str(&checkpoint_response_json(
+            "ckpt-continue-edit",
+            serde_json::json!("edit"),
+            serde_json::Value::Null,
+        ))
+        .expect("checkpoint response json");
+
+        let event = stream.handle_checkpoint_tool_call("call-checkpoint".to_string(), arguments);
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished { .. })
+        ));
+        assert!(stream.pending_checkpoint_request().is_none());
+        assert!(stream.pending_checkpoint_task_action().is_none());
+        assert!(stream
+            .block_or_recover_if_checkpoint_task_action_pending("tool_call:fs_edit_file")
+            .is_ok());
+    }
+
+    #[tokio::test]
     async fn checkpoint_task_state_change_without_task_context_does_not_require_follow_through() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         session.pending_checkpoint_request = Some(checkpoint_request("ckpt-no-task-context"));

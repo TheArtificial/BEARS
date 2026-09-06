@@ -24,7 +24,7 @@ use den_runtime::{
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
     runtime::task_context::{resolve_runtime_task_context, RuntimeTaskResolveRequest},
-    turn_obligations,
+    turn_obligations, turn_runs,
 };
 use den_service::{
     bears::{db as bears_db, BearProfile},
@@ -806,6 +806,25 @@ pub(crate) async fn session_current_task_start_result(
             "Pair task controls are disabled".to_string(),
         ));
     }
+    if let Some(run) =
+        den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, &request.session_id)
+            .await?
+            .filter(|run| run.bear_id == bear.id && run.user_id == user_id)
+    {
+        if den_runtime::turn_runs::technical_budget_recovery_snapshot(&state.sqlx_pool, &run.run_id)
+            .await?
+            .is_some()
+        {
+            let mut recovered = super::run::run_recover_result(
+                state,
+                headers,
+                &json!({ "bear_slug": bear.slug, "run_id": run.run_id }),
+            )
+            .await?;
+            recovered["recovered"] = json!(true);
+            return Ok(recovered);
+        }
+    }
     Ok(serde_json::to_value(
         start_pair_current_task(state, user_id, bear, &request.session_id).await?,
     )
@@ -867,32 +886,31 @@ pub async fn start_pair_current_task(
             .active_for_session(session_id)
             .is_some_and(|active| active.run_ids.iter().any(|id| id == &run.run_id));
         if !controller_is_live {
-            return Err(CustomError::ValidationError(format!(
-                "Pair run {} is durably active but has no live native controller; reconcile execution before retrying",
-                run.run_id
-            )));
+            reconcile_orphaned_task_run(state, user_id, bear.id, task_id, session_id, &run.run_id)
+                .await?;
+        } else {
+            let attempt = existing_pair_execution_attempt(
+                &state.sqlx_pool,
+                bear.id,
+                task_id,
+                session_id,
+                &run.run_id,
+            )
+            .await?;
+            return Ok(PairTaskStartResult {
+                ok: true,
+                started: false,
+                reused: true,
+                run_id: run.run_id,
+                session_id: session_id.to_string(),
+                task_id,
+                state: run.state,
+                execution_attempt_id: attempt.id,
+                execution_attempt_state: "running".to_string(),
+                launch_state: "already_running".to_string(),
+                fence_epoch: attempt.fence_epoch,
+            });
         }
-        let attempt = existing_pair_execution_attempt(
-            &state.sqlx_pool,
-            bear.id,
-            task_id,
-            session_id,
-            &run.run_id,
-        )
-        .await?;
-        return Ok(PairTaskStartResult {
-            ok: true,
-            started: false,
-            reused: true,
-            run_id: run.run_id,
-            session_id: session_id.to_string(),
-            task_id,
-            state: run.state,
-            execution_attempt_id: attempt.id,
-            execution_attempt_state: "running".to_string(),
-            launch_state: "already_running".to_string(),
-            fence_epoch: attempt.fence_epoch,
-        });
     }
 
     if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
@@ -1017,6 +1035,57 @@ pub async fn start_pair_current_task(
         launch_state,
         fence_epoch,
     })
+}
+
+async fn reconcile_orphaned_task_run(
+    state: &DenState,
+    user_id: i32,
+    bear_id: uuid::Uuid,
+    task_id: uuid::Uuid,
+    session_id: &str,
+    run_id: &str,
+) -> Result<(), CustomError> {
+    let attempt =
+        existing_pair_execution_attempt(&state.sqlx_pool, bear_id, task_id, session_id, run_id)
+            .await?;
+    let mut event = BearWireEvent::ephemeral(
+        "run.failed",
+        json!({
+            "run_id": run_id,
+            "message": "Focused execution host stopped before reaching a terminal boundary.",
+            "user_message": "The interrupted execution was recovered; retrying the selected task.",
+            "reason": "orphaned_execution_controller",
+        }),
+    );
+    event.bear_id = Some(bear_id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.to_string());
+    event.run_id = Some(run_id.to_string());
+    turn_runs::finish_run_with_bearwire_event(
+        &state.sqlx_pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        turn_runs::TurnRunState::Failed,
+        Some("orphaned_execution_controller"),
+        event,
+    )
+    .await?
+    .ok_or_else(|| {
+        CustomError::ValidationError(format!(
+            "execution run {run_id} changed while orphan recovery was in progress; retry focus"
+        ))
+    })?;
+    PgDocketService::from_pool(&state.sqlx_pool)
+        .release_execution_attempt(DocketExecutionAttemptRelease {
+            attempt_id: attempt.id,
+            fence_epoch: attempt.fence_epoch,
+            recovery_key: Uuid::new_v4(),
+            recovery_reason: "orphaned_execution_controller".to_string(),
+        })
+        .await?;
+    Ok(())
 }
 
 async fn existing_pair_execution_attempt(

@@ -1732,11 +1732,14 @@ fn runtime_event_is_terminal(event: &den_protocol::RuntimeStreamEvent) -> bool {
     )
 }
 
-fn docket_bounded_slice_continues(decision: DocketPairContinuationDecision) -> bool {
-    decision == DocketPairContinuationDecision::Continue
+pub(crate) fn docket_bounded_slice_continuation(
+    decision: Option<DocketPairContinuationDecision>,
+) -> Option<RuntimeContinuation> {
+    (decision == Some(DocketPairContinuationDecision::Continue))
+        .then_some(RuntimeContinuation::DocketBoundedSlice)
 }
 
-async fn report_pair_bounded_outcome(
+pub(crate) async fn report_pair_bounded_outcome(
     pool: &sqlx::PgPool,
     session_id: &str,
     run_id: &str,
@@ -2110,6 +2113,27 @@ pub(crate) async fn run_recover_result(
                 "continuation recovery was claimed concurrently".to_string(),
             )
         })?;
+    den_runtime::agent_loop::record_loop_control_decision(
+        &state.sqlx_pool,
+        den_runtime::agent_loop::LoopControlLedgerInput {
+            run_id: request.run_id.clone(),
+            turn_step_id: None,
+            conversation_message_id: None,
+            decision_id: format!("budget-slice-recovery:{}", request.run_id),
+            decision_kind: den_runtime::agent_loop::LoopControlDecisionKind::BudgetSliceRecovery,
+            control_level: "standard".to_string(),
+            reason: Some(row.reason),
+            orientation_kind: None,
+            checkpoint_id: None,
+            related_task_list_id: None,
+            related_task_item_id: Some(task_id.to_string()),
+            related_docket_job_id: None,
+            related_docket_task_id: Some(task_id),
+            evidence_refs: Vec::new(),
+            decision: json!({ "same_run": true }),
+        },
+    )
+    .await?;
     Ok(json!({
         "ok": true,
         "recovered_run_id": request.run_id,
@@ -2672,14 +2696,16 @@ async fn run_start_with_recovery_source(
                                         RuntimeStreamBoundary::Terminal => terminal_event_seen = true,
                                         RuntimeStreamBoundary::ClientWait => wait_event_seen = true,
                                         RuntimeStreamBoundary::BoundedSlice => {
-                                            if report_pair_bounded_outcome(
-                                                &pool,
-                                                &session_for_task,
-                                                &run_id_for_task,
-                                                DocketPairBoundedOutcome::Progress,
-                                            )
-                                            .await
-                                            .is_some_and(docket_bounded_slice_continues)
+                                            if let Some(continuation) =
+                                                docket_bounded_slice_continuation(
+                                                    report_pair_bounded_outcome(
+                                                        &pool,
+                                                        &session_for_task,
+                                                        &run_id_for_task,
+                                                        DocketPairBoundedOutcome::Progress,
+                                                    )
+                                                    .await,
+                                                )
                                             {
                                                 let _ = turn_runs::transition_run(
                                                     &pool,
@@ -2693,7 +2719,7 @@ async fn run_start_with_recovery_source(
                                                     run_for_task.clone(),
                                                     binding.binding_id.clone(),
                                                     conversation_for_task.clone(),
-                                                    RuntimeContinuation::DocketBoundedSlice,
+                                                    continuation,
                                                 );
                                                 docket_continuation_requested = true;
                                                 break;
@@ -3219,16 +3245,20 @@ mod tests {
     }
 
     #[test]
-    fn docket_bounded_slice_continues_only_on_continue() {
-        assert!(docket_bounded_slice_continues(
-            DocketPairContinuationDecision::Continue
-        ));
-        assert!(!docket_bounded_slice_continues(
-            DocketPairContinuationDecision::AwaitUser
-        ));
-        assert!(!docket_bounded_slice_continues(
-            DocketPairContinuationDecision::Stop
-        ));
+    fn docket_bounded_slice_hands_off_only_on_continue() {
+        assert_eq!(
+            docket_bounded_slice_continuation(Some(DocketPairContinuationDecision::Continue)),
+            Some(RuntimeContinuation::DocketBoundedSlice)
+        );
+        assert_eq!(
+            docket_bounded_slice_continuation(Some(DocketPairContinuationDecision::AwaitUser)),
+            None
+        );
+        assert_eq!(
+            docket_bounded_slice_continuation(Some(DocketPairContinuationDecision::Stop)),
+            None
+        );
+        assert_eq!(docket_bounded_slice_continuation(None), None);
     }
 
     #[test]

@@ -700,6 +700,14 @@ fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
                 "checkpoint_id": { "type": "string" },
                 "active_objective": { "type": "string" },
                 "summary": { "type": "string", "description": "Short prose synthesis of learned facts, uncertainty, and rationale. Keep it concise." },
+                "learned": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "remaining_uncertainty": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
                 "more_exploration_justified": { "type": "boolean" },
                 "next_action": {
                     "type": "string",
@@ -748,6 +756,10 @@ fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
                         "required": ["kind", "id"],
                         "additionalProperties": false
                     }
+                },
+                "confidence": {
+                    "type": ["string", "null"],
+                    "enum": ["low", "medium", "high", null]
                 }
             },
             "required": ["checkpoint_id", "active_objective", "more_exploration_justified", "next_action"],
@@ -1094,6 +1106,34 @@ mod tests {
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, RUNTIME_CHECKPOINT_TOOL_NAME);
+    }
+
+    #[test]
+    fn checkpoint_tool_schema_accepts_every_runtime_response_field() {
+        let schema = checkpoint_tool_definition().parameters;
+        let properties = schema["properties"].as_object().unwrap();
+        let response = crate::agent_loop::RuntimeCheckpointResponse {
+            checkpoint_id: "ckpt-1".to_string(),
+            active_objective: "Fix checkpoint schema".to_string(),
+            summary: Some("Mismatch located".to_string()),
+            learned: vec!["The tool schema omitted typed response fields.".to_string()],
+            remaining_uncertainty: Vec::new(),
+            more_exploration_justified: false,
+            next_action: crate::agent_loop::CheckpointNextAction::Edit,
+            task_state_change_needed: None,
+            evidence_refs: Vec::new(),
+            confidence: Some(crate::agent_loop::CheckpointConfidence::High),
+        };
+        let production_payload = serde_json::to_value(&response).unwrap();
+        for field in production_payload.as_object().unwrap().keys() {
+            assert!(
+                properties.contains_key(field),
+                "runtime response field `{field}` is rejected by the checkpoint tool schema"
+            );
+        }
+
+        serde_json::from_value::<crate::agent_loop::RuntimeCheckpointResponse>(production_payload)
+            .unwrap();
     }
 
     #[test]
