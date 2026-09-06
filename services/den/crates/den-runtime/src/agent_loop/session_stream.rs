@@ -902,28 +902,29 @@ impl SessionTrackingStream {
                     std::slice::from_ref(&observation),
                     false,
                 );
-                if checkpoint_evaluation.trigger.is_some() {
-                    let task_context = resolve_runtime_task_context(
-                        &pool,
-                        RuntimeTaskResolveRequest {
-                            bear_id,
-                            profile,
-                            user_id,
-                            conversation_id: conversation_id.clone(),
-                            client_session_id: client_session_id.clone(),
-                            cached_activity_plan_projection: session
-                                .cached_activity_plan_projection
-                                .clone(),
-                        },
-                    )
-                    .await?;
-                    session.cached_activity_plan_projection =
+                // A settlement tool can atomically select a successor. Refresh
+                // durable selection before every continuation, not just before a
+                // checkpoint, so the successor remains the controlled objective.
+                let task_context = resolve_runtime_task_context(
+                    &pool,
+                    RuntimeTaskResolveRequest {
+                        bear_id,
+                        profile,
+                        user_id,
+                        conversation_id: conversation_id.clone(),
+                        client_session_id: client_session_id.clone(),
+                        cached_activity_plan_projection: session
+                            .cached_activity_plan_projection
+                            .clone(),
+                    },
+                )
+                .await?;
+                session.cached_activity_plan_projection =
+                    task_context.cached_activity_plan_projection.clone();
+                store.update(&session_key, |stored_session| {
+                    stored_session.cached_activity_plan_projection =
                         task_context.cached_activity_plan_projection.clone();
-                    store.update(&session_key, |stored_session| {
-                        stored_session.cached_activity_plan_projection =
-                            task_context.cached_activity_plan_projection.clone();
-                    });
-                }
+                });
                 let checkpoint_request = Self::checkpoint_request_for_tool_observation(
                     &session,
                     &observation,
