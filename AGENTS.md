@@ -1,5 +1,17 @@
 # Agent Guide
 
+## Core Policies
+
+SQL operations are performed through SQLx macros, for compile-time validation
+
+Model-facing instructions and prompts are abstracted through the context compilation system. Armature should not be instruction, only providing tool results and error details. Words "baked in" to Den should be found in Markdown files in Den's `prompts/` directory.
+
+We respect the Rust Way and use strong types. Only at the very edges should string comparisions ever drive logic.
+
+Modules should not be large and monolithic. Use submodules liberally.
+
+Substantial tests should be kept in distinct modules. Only the most trivial regression checks should live in normal code files.
+
 ## Stack
 
 Three application services run via `docker-compose.yaml` (native runtime):
