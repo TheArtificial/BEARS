@@ -32,6 +32,8 @@ fn is_optional_runtime_metadata_event(event_type: &str) -> bool {
             | "session.state"
             | "run.accepted"
             | "run.started"
+            | "docket.execution.started"
+            | "docket.execution.ended"
             | "runtime.objective_orientation"
     )
 }
@@ -2582,10 +2584,14 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn objective_orientation_is_optional_runtime_metadata() {
+    fn docket_transitions_are_optional_runtime_metadata() {
         assert!(is_optional_runtime_metadata_event(
             "runtime.objective_orientation"
         ));
+        assert!(is_optional_runtime_metadata_event(
+            "docket.execution.started"
+        ));
+        assert!(is_optional_runtime_metadata_event("docket.execution.ended"));
         assert!(!is_optional_runtime_metadata_event("runtime.unknown"));
     }
 
