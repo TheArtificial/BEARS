@@ -124,6 +124,14 @@ pub trait DocketService: Send + Sync {
         session_id: &str,
     ) -> Result<Option<DocketExecutionAttemptRow>, DenError>;
 
+    /// Loads any live Pair authority for this task, regardless of session.
+    /// Callers must verify a foreign host is truly orphaned before releasing it.
+    async fn get_live_pair_execution_attempt_for_task(
+        &self,
+        bear_id: Uuid,
+        task_id: Uuid,
+    ) -> Result<Option<DocketExecutionAttemptRow>, DenError>;
+
     /// Revalidates exact canonical Work authority at a safe boundary. A
     /// pending checkpoint directive denies a new runtime window.
     async fn check_work_boundary(
@@ -343,6 +351,14 @@ impl DocketService for PgDocketService {
         session_id: &str,
     ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
         db::get_live_pair_execution_attempt_for_session(&self.pool, bear_id, session_id).await
+    }
+
+    async fn get_live_pair_execution_attempt_for_task(
+        &self,
+        bear_id: Uuid,
+        task_id: Uuid,
+    ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
+        db::get_live_pair_execution_attempt_for_task(&self.pool, bear_id, task_id).await
     }
 
     async fn check_work_boundary(

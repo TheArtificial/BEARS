@@ -66,6 +66,29 @@ async fn focused_acquisition_reuses_binding_and_reattaches_host() {
         .await;
     assert!(conflict.is_err(), "binding cannot silently switch tasks");
 
+    let conflicting_task_owner = service
+        .acquire_focused_execution(DocketFocusedExecutionAcquire {
+            bear_id,
+            task_id: job.tasks[0].id,
+            binding: DocketFocusedExecutionBinding {
+                kind: DocketExecutionBindingKind::ClientSession,
+                id: format!("other-pair-{}", Uuid::new_v4()),
+            },
+            host: DocketExecutionHost {
+                kind: DocketExecutionHostKind::Pair,
+                run_id: "other-run".to_string(),
+            },
+            acquisition_key: Uuid::new_v4(),
+        })
+        .await
+        .expect_err("another binding cannot acquire a task with live authority");
+    assert!(
+        conflicting_task_owner
+            .to_string()
+            .contains("already owned by binding"),
+        "task ownership conflict must not leak a database unique-index error: {conflicting_task_owner}"
+    );
+
     let released = service
         .release_execution_attempt(DocketExecutionAttemptRelease {
             attempt_id: attached.id,

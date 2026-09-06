@@ -1270,15 +1270,18 @@ pub(super) async fn acquire_focused_execution(
     let host_kind = acquire.host.kind.as_str();
     let mut tx = pool.begin().await?;
 
-    // The transaction-scoped lock makes acquisition deterministic even before an
-    // insert reaches the partial unique index and avoids surfacing uniqueness races.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(format!(
-            "{}:{binding_kind}:{}",
-            acquire.bear_id, acquire.binding.id
-        ))
-        .execute(&mut *tx)
-        .await?;
+    // The task-level partial unique index is the authority invariant, so acquire
+    // its lock first. The binding lock then makes same-session replay deterministic.
+    // Without both, different bindings can pass their own lookup and race at INSERT.
+    for lock_key in [
+        format!("{}:task:{}", acquire.bear_id, acquire.task_id),
+        format!("{}:{binding_kind}:{}", acquire.bear_id, acquire.binding.id),
+    ] {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(lock_key)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     let existing = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
@@ -1339,6 +1342,28 @@ pub(super) async fn acquire_focused_execution(
         }
         tx.commit().await?;
         return Ok(existing);
+    }
+
+    // The task lock above makes this task-wide check deterministic. Do not let
+    // a second binding translate a normal ownership conflict into a raw unique
+    // constraint failure from the partial live-attempt index.
+    let task_owner = sqlx::query_scalar!(
+        r#"
+        SELECT binding_id
+        FROM docket_execution_attempts
+        WHERE bear_id = $1 AND task_id = $2
+          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+        LIMIT 1
+        "#,
+        acquire.bear_id,
+        acquire.task_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(binding_id) = task_owner {
+        return Err(DenError::ValidationError(format!(
+            "focused execution task is already owned by binding {binding_id}"
+        )));
     }
 
     let (owner_kind, pair_session_id, pair_run_id, work_run_id) =
@@ -1554,6 +1579,32 @@ pub(super) async fn get_live_pair_execution_attempt_for_session(
     )
     .bind(bear_id)
     .bind(session_id)
+    .fetch_optional(pool)
+    .await?
+    .map(TryInto::try_into)
+    .transpose()
+}
+
+pub(super) async fn get_live_pair_execution_attempt_for_task(
+    pool: &PgPool,
+    bear_id: Uuid,
+    task_id: Uuid,
+) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
+    sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r"
+        SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+               owner_kind, pair_session_id, pair_run_id, work_run_id,
+               fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
+               released_at, created_at, updated_at
+        FROM docket_execution_attempts
+        WHERE bear_id = $1 AND task_id = $2 AND owner_kind = 'pair'
+          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+        ORDER BY created_at DESC
+        LIMIT 1
+        ",
+    )
+    .bind(bear_id)
+    .bind(task_id)
     .fetch_optional(pool)
     .await?
     .map(TryInto::try_into)

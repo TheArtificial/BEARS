@@ -962,6 +962,44 @@ pub async fn start_pair_current_task(
             .await?;
     }
 
+    if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
+        .get_live_pair_execution_attempt_for_task(bear.id, task_id)
+        .await?
+        .filter(|attempt| {
+            !matches!(
+                &attempt.owner,
+                den_docket::DocketExecutionAttemptOwner::Pair { session_id: owner_session_id, .. }
+                    if owner_session_id == session_id
+            )
+        })
+    {
+        // ponytail: a foreign attempt is released only after its durable host run
+        // is terminal or absent. Live foreign controllers remain authoritative.
+        let run_id = match &attempt.owner {
+            den_docket::DocketExecutionAttemptOwner::Pair { pair_run_id, .. } => pair_run_id,
+            den_docket::DocketExecutionAttemptOwner::Work { .. } => {
+                unreachable!("query filters Pair owner")
+            }
+        };
+        let foreign_run_is_live = den_runtime::turn_runs::get_run(&state.sqlx_pool, run_id)
+            .await?
+            .is_some_and(|run| matches!(run.state.as_str(), "running" | "waiting_for_client"));
+        if foreign_run_is_live {
+            return Err(CustomError::ValidationError(
+                "focused task is already controlled by a live Pair session".to_string(),
+            ));
+        }
+        PgDocketService::from_pool(&state.sqlx_pool)
+            .release_execution_attempt(DocketExecutionAttemptRelease {
+                attempt_id: attempt.id,
+                fence_epoch: attempt.fence_epoch,
+                recovery_key: Uuid::new_v4(),
+                recovery_reason: "stale_foreign_pair_execution_attempt_terminal_or_missing_run"
+                    .to_string(),
+            })
+            .await?;
+    }
+
     // ponytail: this delegates to the established run.start lifecycle so task-start
     // cannot drift from Pair stream/event behavior. Concurrent starts can still race
     // between the active-run read and run.start; make run creation session-unique if

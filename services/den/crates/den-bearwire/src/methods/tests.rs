@@ -3387,6 +3387,68 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn current_task_start_releases_orphaned_foreign_task_authority(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let foreign_session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &foreign_session_id).await;
+    let task_id =
+        create_session_task(&pool, user_id, bear_id, &session_id, "Recover foreign task").await;
+    let foreign_attempt = PgDocketService::from_pool(&pool)
+        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+            bear_id,
+            task_id,
+            owner: DocketExecutionAttemptOwner::Pair {
+                session_id: foreign_session_id,
+                pair_run_id: format!("run_{}", Uuid::new_v4().simple()),
+            },
+            authorization_key: Uuid::new_v4(),
+        })
+        .await
+        .expect("authorize orphaned foreign authority");
+
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    config.llm_api_url =
+        start_mock_openai_sse_server_asserting_requests(vec![MockLlmRequestAssertion::requiring(
+            Vec::new(),
+        )]);
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+
+    rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.select",
+        json!({ "bear_slug": bear_slug, "session_id": session_id, "task_id": task_id }),
+    )
+    .await;
+    let started = rpc_value(
+        state,
+        &token,
+        "session.current_task.start",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(started["result"]["started"], true, "{started}");
+    assert_ne!(
+        started["result"]["execution_attempt_id"],
+        foreign_attempt.id.to_string()
+    );
+    let foreign_state: String =
+        sqlx::query_scalar("SELECT state FROM docket_execution_attempts WHERE id = $1")
+            .bind(foreign_attempt.id)
+            .fetch_one(&pool)
+            .await
+            .expect("load orphaned foreign attempt");
+    assert_eq!(foreign_state, "released");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn current_task_start_releases_stale_session_authority_for_previous_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
