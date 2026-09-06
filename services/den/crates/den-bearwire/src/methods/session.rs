@@ -876,6 +876,7 @@ pub async fn start_pair_current_task(
     )
     .await?;
 
+    let mut recovered_run_id = None;
     if let Some(run) = den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, session_id)
         .await?
         .filter(|run| run.bear_id == bear.id && run.user_id == user_id)
@@ -887,6 +888,7 @@ pub async fn start_pair_current_task(
         if !controller_is_live {
             reconcile_orphaned_task_run(state, user_id, bear.id, task_id, session_id, &run.run_id)
                 .await?;
+            recovered_run_id = Some(run.run_id);
         } else {
             let attempt = existing_pair_execution_attempt(
                 &state.sqlx_pool,
@@ -1017,10 +1019,35 @@ pub async fn start_pair_current_task(
     let fence_epoch = result["fence_epoch"]
         .as_i64()
         .ok_or_else(|| CustomError::System("run.start omitted fence_epoch".to_string()))?;
-    let state = result["state"]
+    let run_state = result["state"]
         .as_str()
         .ok_or_else(|| CustomError::System("run.start omitted state".to_string()))?
         .to_string();
+    if let Some(recovered_run_id) = recovered_run_id {
+        let mut handoff = BearWireEvent::ephemeral(
+            "run.recovered",
+            json!({
+                "run_id": recovered_run_id,
+                "replacement_run_id": run_id,
+                "execution_attempt_id": execution_attempt_id,
+                "task_id": task_id,
+                "reason": "orphaned_execution_controller",
+                "task_selection_preserved": true,
+            }),
+        );
+        handoff.bear_id = Some(bear.id.to_string());
+        handoff.human_id = Some(user_id.to_string());
+        handoff.session_id = Some(task_session_id.clone());
+        handoff.run_id = Some(recovered_run_id);
+        den_runtime::bearwire_events::append_bearwire_event(
+            &state.sqlx_pool,
+            &task_session_id,
+            Some(bear.id),
+            Some(user_id),
+            handoff,
+        )
+        .await?;
+    }
     Ok(PairTaskStartResult {
         ok: true,
         started: true,
@@ -1028,7 +1055,7 @@ pub async fn start_pair_current_task(
         run_id,
         session_id: task_session_id,
         task_id,
-        state,
+        state: run_state,
         execution_attempt_id,
         execution_attempt_state,
         launch_state,
@@ -1048,12 +1075,14 @@ async fn reconcile_orphaned_task_run(
         .get_live_pair_execution_attempt(bear_id, task_id, session_id, run_id)
         .await?;
     let mut event = BearWireEvent::ephemeral(
-        "run.failed",
+        "run.recovering",
         json!({
             "run_id": run_id,
             "message": "Focused execution host stopped before reaching a terminal boundary.",
-            "user_message": "The interrupted execution was recovered; retrying the selected task.",
             "reason": "orphaned_execution_controller",
+            "replacement": "pending",
+            "task_id": task_id,
+            "task_selection_preserved": true,
         }),
     );
     event.bear_id = Some(bear_id.to_string());

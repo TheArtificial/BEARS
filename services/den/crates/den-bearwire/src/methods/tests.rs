@@ -3354,6 +3354,36 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
     .await
     .expect("load preserved task selection");
     assert_eq!(selected_task, Some(task_id));
+
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 50)
+        .await
+        .expect("list recovery events");
+    let recovering = events
+        .iter()
+        .find(|row| {
+            row.event_type == "run.recovering"
+                && row.event.run_id.as_deref() == Some(first_run_id.as_str())
+        })
+        .expect("old host run projects a non-terminal recovery handoff");
+    assert_eq!(recovering.event.data["replacement"], "pending");
+    assert_eq!(recovering.event.data["task_id"], task_id.to_string());
+    assert_eq!(recovering.event.data["task_selection_preserved"], true);
+    let recovered_event = events
+        .iter()
+        .find(|row| {
+            row.event_type == "run.recovered"
+                && row.event.run_id.as_deref() == Some(first_run_id.as_str())
+        })
+        .expect("recovery projects the replacement host run");
+    assert_eq!(recovered_event.event.data["run_id"], first_run_id);
+    assert_eq!(
+        recovered_event.event.data["replacement_run_id"],
+        recovered["result"]["run_id"]
+    );
+    assert_eq!(recovered_event.event.data["task_selection_preserved"], true);
+    assert!(events.iter().all(|row| {
+        row.event_type != "run.failed" || row.event.run_id.as_deref() != Some(first_run_id.as_str())
+    }));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

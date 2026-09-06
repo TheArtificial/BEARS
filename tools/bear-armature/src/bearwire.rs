@@ -32,6 +32,8 @@ fn is_optional_runtime_metadata_event(event_type: &str) -> bool {
             | "session.state"
             | "run.accepted"
             | "run.started"
+            | "run.recovering"
+            | "run.recovered"
             | "docket.execution.started"
             | "docket.execution.ended"
             | "runtime.objective_orientation"
@@ -2588,6 +2590,8 @@ mod tests {
         assert!(is_optional_runtime_metadata_event(
             "runtime.objective_orientation"
         ));
+        assert!(is_optional_runtime_metadata_event("run.recovering"));
+        assert!(is_optional_runtime_metadata_event("run.recovered"));
         assert!(is_optional_runtime_metadata_event(
             "docket.execution.started"
         ));
