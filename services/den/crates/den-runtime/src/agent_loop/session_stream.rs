@@ -282,6 +282,7 @@ pub struct SessionTrackingStream {
     conversation_id: String,
     client_session_id: String,
     request_id: Option<String>,
+    run_id: Option<String>,
     finished: bool,
     assistant_synced_to_session: bool,
     pending_approval: Option<ApprovalPauseFuture>,
@@ -339,6 +340,7 @@ impl SessionTrackingStream {
             conversation_id,
             client_session_id,
             request_id,
+            run_id: session.run_id.clone(),
             finished: false,
             assistant_synced_to_session: false,
             pending_approval: None,
@@ -871,7 +873,8 @@ impl SessionTrackingStream {
                         request_id = ?session.request_id,
                         run_id = ?session.run_id,
                         step = session.step,
-                        limit = session.turn_budget.emergency_hard_steps,
+                        reason = reason.persistence_reason(),
+                        emergency_hard_step_limit = session.turn_budget.emergency_hard_steps,
                         "server-side continuation stopped by turn budget"
                     );
                     store.update(&session_key, |session| {
@@ -940,6 +943,20 @@ impl SessionTrackingStream {
                 session = store.get(&session_key).ok_or_else(|| {
                     DenError::System("native agent loop session not found".to_string())
                 })?;
+                let active_run =
+                    crate::turn_runs::active_run_for_session(&pool, &session.client_session_id)
+                        .await?;
+                if session.run_id.as_deref() != active_run.as_ref().map(|run| run.run_id.as_str()) {
+                    tracing::info!(
+                        event = "native_superseded_run_continuation_fenced",
+                        session_key = %session_key,
+                        client_session_id = %session.client_session_id,
+                        run_id = ?session.run_id,
+                        active_run_id = ?active_run.as_ref().map(|run| run.run_id.as_str()),
+                        "stopping server-side continuation for superseded run"
+                    );
+                    return Ok(Box::pin(stream::empty()) as RuntimeEventStream);
+                }
                 tracing::warn!(
                     event = "native_server_tool_continuation",
                     session_key = %session_key,
@@ -967,6 +984,12 @@ impl SessionTrackingStream {
             });
             Ok((call, message, continuation as ServerToolContinuationFuture))
         }));
+    }
+
+    fn owns_current_session_run(&self) -> bool {
+        self.store
+            .get(&self.session_key)
+            .is_some_and(|session| session.run_id == self.run_id)
     }
 
     fn persist_assistant_tool_step(&self) {
@@ -2080,9 +2103,12 @@ impl Stream for SessionTrackingStream {
                 }
                 Poll::Ready(Err(error)) => {
                     self.pending_server_tool_stream = None;
-                    if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
-                        self.remove_recent_server_tool_chain_from_session(&tool_call_id);
-                    }
+                    self.pending_server_tool_continuation = None;
+                    tracing::warn!(
+                        client_session_id = %self.client_session_id,
+                        error = %error,
+                        "native runtime server-tool continuation failed before streaming; preserving tool result in session transcript"
+                    );
                     self.finished = true;
                     return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(format!(
                         "Server-tool continuation failed: {error}"
@@ -2344,6 +2370,17 @@ impl Stream for SessionTrackingStream {
                 RuntimeSemanticEvent::TurnCompleted { .. },
             )))) => {
                 self.pending_server_tool_continuation = None;
+                if !self.owns_current_session_run() {
+                    tracing::info!(
+                        event = "native_superseded_run_terminal_fenced",
+                        session_key = %self.session_key,
+                        client_session_id = %self.client_session_id,
+                        run_id = ?self.run_id,
+                        "suppressing terminal event from superseded run"
+                    );
+                    self.finished = true;
+                    return Poll::Ready(None);
+                }
                 if !self.tool_calls.is_empty() {
                     // Tool-call finishes must not emit TurnCompleted: client stream parks for adapter-local
                     // tool results and continues via /tool-results (same class of bug as
@@ -2396,9 +2433,8 @@ impl Stream for SessionTrackingStream {
                         client_session_id = %self.client_session_id,
                         tool_call_id = %tool_call_id,
                         error = %error,
-                        "native runtime server-tool continuation failed; removing recent tool chain from in-memory session"
+                        "native runtime server-tool continuation failed; preserving tool result in session transcript"
                     );
-                    self.remove_recent_server_tool_chain_from_session(&tool_call_id);
                     self.finished = true;
                     return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(format!(
                         "Server-tool continuation failed: {error}"
@@ -2423,9 +2459,8 @@ impl Stream for SessionTrackingStream {
                         tracing::warn!(
                             client_session_id = %self.client_session_id,
                             tool_call_id = %tool_call_id,
-                            "native runtime server-tool continuation ended without a terminal event; removing recent tool chain from in-memory session"
+                            "native runtime server-tool continuation ended without a terminal event; preserving tool result in session transcript"
                         );
-                        self.remove_recent_server_tool_chain_from_session(&tool_call_id);
                         self.finished = true;
                         return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(
                             "Server-tool continuation stream ended without a terminal runtime event."
@@ -2461,9 +2496,8 @@ impl Stream for SessionTrackingStream {
                         tracing::warn!(
                             client_session_id = %self.client_session_id,
                             tool_call_id = %tool_call_id,
-                            "native runtime server-tool continuation ended unsuccessfully; removing recent tool chain from in-memory session"
+                            "native runtime server-tool continuation ended unsuccessfully; preserving tool result in session transcript"
                         );
-                        self.remove_recent_server_tool_chain_from_session(&tool_call_id);
                     }
                     self.finished = true;
                 } else if other.is_some() {
@@ -2883,6 +2917,19 @@ mod tests {
             session.profile,
             NativeToolDispatchMode::DeferToClient,
         )
+    }
+
+    #[tokio::test]
+    async fn superseded_stream_does_not_own_replaced_session_run() {
+        let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        let stream = test_tracking_stream_with_session(&session);
+        assert!(stream.owns_current_session_run());
+
+        stream.store.update(&stream.session_key, |current| {
+            current.run_id = Some("run-replacement".to_string());
+        });
+
+        assert!(!stream.owns_current_session_run());
     }
 
     #[test]
@@ -4055,7 +4102,7 @@ mod tests {
         let mut stream = SessionTrackingStream::new(
             Box::pin(futures::stream::empty()),
             &session,
-            store,
+            store.clone(),
             sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
                 .expect("lazy test pool"),
             bear_id,
@@ -4069,6 +4116,22 @@ mod tests {
             BearProfile::Pair,
             NativeToolDispatchMode::DeferToClient,
         );
+        store.update(&session.session_key, |session| {
+            session.messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![sample_tool_call("call-failed")]),
+            });
+            session.messages.push(ChatMessage {
+                role: "tool".to_string(),
+                content: Some("error: focus failed".to_string()),
+                tool_call_id: Some("call-failed".to_string()),
+                name: Some("focus_current_task".to_string()),
+                tool_calls: None,
+            });
+        });
         stream.pending_server_tool_continuation = Some("call-failed".to_string());
         stream.pending_server_tool_stream = Some(Box::pin(async {
             Err(DenError::System(
@@ -4092,6 +4155,15 @@ mod tests {
         assert!(
             stream.next().await.is_none(),
             "terminal event is followed by EOF"
+        );
+        let preserved = store.get(&session.session_key).expect("session");
+        assert!(
+            preserved.messages.iter().any(|message| {
+                message.role == "tool"
+                    && message.tool_call_id.as_deref() == Some("call-failed")
+                    && message.content.as_deref() == Some("error: focus failed")
+            }),
+            "failed model-tool result remains available to transcript persistence"
         );
     }
 

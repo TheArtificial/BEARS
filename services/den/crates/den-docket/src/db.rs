@@ -40,9 +40,10 @@ use super::model::{
     DocketCriterionStateUpdate, DocketEntryCreate, DocketEntryKind, DocketEntryListFilter,
     DocketEntryPromotion, DocketEntryRow, DocketEntryScope, DocketExecutionAttemptAuthorize,
     DocketExecutionAttemptDbRow, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
-    DocketExecutionAttemptStart, DocketExecutionBinding, DocketExecutionControl,
-    DocketExecutionDisposition, DocketExecutionGate, DocketExecutionNextAction,
-    DocketExecutionReason, DocketExecutionTaskControl, DocketExecutionTaskSettlement,
+    DocketExecutionAttemptStart, DocketExecutionBinding, DocketExecutionBindingKind,
+    DocketExecutionControl, DocketExecutionDisposition, DocketExecutionGate,
+    DocketExecutionHostKind, DocketExecutionNextAction, DocketExecutionReason,
+    DocketExecutionTaskControl, DocketExecutionTaskSettlement, DocketFocusedExecutionAcquire,
     DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus,
     DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcome,
@@ -1256,26 +1257,216 @@ json!({
         .ok_or_else(|| DenError::NotFound(format!("Docket job not found: {}", update.job_id)))
 }
 
+pub(super) async fn acquire_focused_execution(
+    pool: &PgPool,
+    acquire: DocketFocusedExecutionAcquire,
+) -> Result<DocketExecutionAttemptRow, DenError> {
+    if acquire.binding.id.trim().is_empty() || acquire.host.run_id.trim().is_empty() {
+        return Err(DenError::ValidationError(
+            "focused execution requires non-empty binding and host run ids".to_string(),
+        ));
+    }
+    let binding_kind = acquire.binding.kind.as_str();
+    let host_kind = acquire.host.kind.as_str();
+    let mut tx = pool.begin().await?;
+
+    // The transaction-scoped lock makes acquisition deterministic even before an
+    // insert reaches the partial unique index and avoids surfacing uniqueness races.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!(
+            "{}:{binding_kind}:{}",
+            acquire.bear_id, acquire.binding.id
+        ))
+        .execute(&mut *tx)
+        .await?;
+
+    let existing = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r"
+        SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+               owner_kind, pair_session_id, pair_run_id, work_run_id, fence_epoch,
+               authorization_key, state, started_at, paused_at, settled_at, released_at,
+               created_at, updated_at
+        FROM docket_execution_attempts
+        WHERE bear_id = $1 AND binding_kind = $2 AND binding_id = $3
+          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+        LIMIT 1
+        ",
+    )
+    .bind(acquire.bear_id)
+    .bind(binding_kind)
+    .bind(&acquire.binding.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if let Some(existing) = existing {
+        let existing: DocketExecutionAttemptRow = existing.try_into()?;
+        if existing.task_id != acquire.task_id {
+            return Err(DenError::ValidationError(
+                "focused execution binding is already owned by another task".to_string(),
+            ));
+        }
+        if existing.host != acquire.host {
+            let pair_run_id = matches!(acquire.host.kind, DocketExecutionHostKind::Pair)
+                .then(|| acquire.host.run_id.clone());
+            let work_run_id = if matches!(acquire.host.kind, DocketExecutionHostKind::Work) {
+                Some(Uuid::parse_str(&acquire.host.run_id).map_err(|_| {
+                    DenError::ValidationError("work host run id must be a UUID".to_string())
+                })?)
+            } else {
+                None
+            };
+            let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+                r"
+                UPDATE docket_execution_attempts
+                SET host_kind = $2, host_run_id = $3,
+                    pair_run_id = $4, work_run_id = $5, updated_at = NOW()
+                WHERE id = $1
+                RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+                          owner_kind, pair_session_id, pair_run_id, work_run_id, fence_epoch,
+                          authorization_key, state, started_at, paused_at, settled_at, released_at,
+                          created_at, updated_at
+                ",
+            )
+            .bind(existing.id)
+            .bind(host_kind)
+            .bind(&acquire.host.run_id)
+            .bind(pair_run_id)
+            .bind(work_run_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return row.try_into();
+        }
+        tx.commit().await?;
+        return Ok(existing);
+    }
+
+    let (owner_kind, pair_session_id, pair_run_id, work_run_id) =
+        match (&acquire.binding.kind, &acquire.host.kind) {
+            (DocketExecutionBindingKind::ClientSession, DocketExecutionHostKind::Pair) => (
+                "pair",
+                Some(acquire.binding.id.clone()),
+                Some(acquire.host.run_id.clone()),
+                None,
+            ),
+            (DocketExecutionBindingKind::WorkAssignment, DocketExecutionHostKind::Work) => (
+                "work",
+                None,
+                None,
+                Some(Uuid::parse_str(&acquire.host.run_id).map_err(|_| {
+                    DenError::ValidationError("work host run id must be a UUID".to_string())
+                })?),
+            ),
+            _ => {
+                return Err(DenError::ValidationError(
+                    "execution binding and host kinds are incompatible".to_string(),
+                ))
+            }
+        };
+
+    let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r"
+        INSERT INTO docket_execution_attempts (
+            bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+            owner_kind, pair_session_id, pair_run_id, work_run_id,
+            fence_epoch, authorization_key, state
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, 'authorized')
+        RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+                  owner_kind, pair_session_id, pair_run_id, work_run_id, fence_epoch,
+                  authorization_key, state, started_at, paused_at, settled_at, released_at,
+                  created_at, updated_at
+        ",
+    )
+    .bind(acquire.bear_id)
+    .bind(acquire.task_id)
+    .bind(binding_kind)
+    .bind(&acquire.binding.id)
+    .bind(host_kind)
+    .bind(&acquire.host.run_id)
+    .bind(owner_kind)
+    .bind(pair_session_id)
+    .bind(pair_run_id)
+    .bind(work_run_id)
+    .bind(acquire.acquisition_key)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    row.try_into()
+}
+
+pub(super) async fn get_live_focused_execution(
+    pool: &PgPool,
+    bear_id: Uuid,
+    binding: super::model::DocketFocusedExecutionBinding,
+) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
+    sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
+        r"
+        SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+               owner_kind, pair_session_id, pair_run_id, work_run_id, fence_epoch,
+               authorization_key, state, started_at, paused_at, settled_at, released_at,
+               created_at, updated_at
+        FROM docket_execution_attempts
+        WHERE bear_id = $1 AND binding_kind = $2 AND binding_id = $3
+          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+        LIMIT 1
+        ",
+    )
+    .bind(bear_id)
+    .bind(binding.kind.as_str())
+    .bind(binding.id)
+    .fetch_optional(pool)
+    .await?
+    .map(TryInto::try_into)
+    .transpose()
+}
+
 pub(super) async fn authorize_execution_attempt(
     pool: &PgPool,
     authorize: DocketExecutionAttemptAuthorize,
 ) -> Result<DocketExecutionAttemptRow, DenError> {
-    let (owner_kind, pair_session_id, pair_run_id, work_run_id) = match authorize.owner {
+    let (
+        owner_kind,
+        binding_kind,
+        binding_id,
+        host_kind,
+        host_run_id,
+        pair_session_id,
+        pair_run_id,
+        work_run_id,
+    ) = match authorize.owner {
         super::model::DocketExecutionAttemptOwner::Pair {
             session_id,
             pair_run_id,
-        } => ("pair", Some(session_id), Some(pair_run_id), None),
-        super::model::DocketExecutionAttemptOwner::Work { work_run_id } => {
-            ("work", None, None, Some(work_run_id))
-        }
+        } => (
+            "pair",
+            "client_session",
+            session_id.clone(),
+            "pair",
+            pair_run_id.clone(),
+            Some(session_id),
+            Some(pair_run_id),
+            None,
+        ),
+        super::model::DocketExecutionAttemptOwner::Work { work_run_id } => (
+            "work",
+            "work_assignment",
+            work_run_id.to_string(),
+            "work",
+            work_run_id.to_string(),
+            None,
+            None,
+            Some(work_run_id),
+        ),
     };
     let row = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
         INSERT INTO docket_execution_attempts (
-            bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+            bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+            owner_kind, pair_session_id, pair_run_id, work_run_id,
             fence_epoch, authorization_key, state
         )
-        VALUES ($1, $2, $3, $4, $5, $6, 1, $7, 'authorized')
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, 'authorized')
         ON CONFLICT (authorization_key) DO UPDATE
         SET fence_epoch = CASE
                 WHEN docket_execution_attempts.state = 'released'
@@ -1291,13 +1482,18 @@ pub(super) async fn authorize_execution_attempt(
                 ELSE docket_execution_attempts.released_at
             END,
             updated_at = NOW()
-        RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+        RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+                  owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
         ",
     )
     .bind(authorize.bear_id)
     .bind(authorize.task_id)
+    .bind(binding_kind)
+    .bind(binding_id)
+    .bind(host_kind)
+    .bind(host_run_id)
     .bind(owner_kind)
     .bind(pair_session_id)
     .bind(pair_run_id)
@@ -1317,7 +1513,8 @@ pub(super) async fn get_live_pair_execution_attempt(
 ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
     sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
-        SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+        SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+               owner_kind, pair_session_id, pair_run_id, work_run_id,
                fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                released_at, created_at, updated_at
         FROM docket_execution_attempts
@@ -1343,7 +1540,8 @@ pub(super) async fn get_live_pair_execution_attempt_for_session(
 ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
     sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
         r"
-        SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+        SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+               owner_kind, pair_session_id, pair_run_id, work_run_id,
                fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                released_at, created_at, updated_at
         FROM docket_execution_attempts
@@ -1371,7 +1569,8 @@ pub(super) async fn start_execution_attempt(
         UPDATE docket_execution_attempts
         SET state = 'running', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
         WHERE id = $1 AND fence_epoch = $2 AND state = 'authorized'
-        RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+        RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+                  owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
         ",
@@ -1384,7 +1583,8 @@ pub(super) async fn start_execution_attempt(
         Some(row) => row,
         None => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
             r"
-            SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+            SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+               owner_kind, pair_session_id, pair_run_id, work_run_id,
                    fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                    released_at, created_at, updated_at
             FROM docket_execution_attempts
@@ -1421,7 +1621,8 @@ pub(super) async fn release_execution_attempt(
         SET state = 'released', released_at = NOW(), updated_at = NOW()
         WHERE id = $1 AND fence_epoch = $2
           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
-        RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+        RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+                  owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
         ",
@@ -1447,7 +1648,9 @@ pub(super) async fn release_execution_attempt(
         }
         None => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
             r"
-            SELECT attempt.id, attempt.bear_id, attempt.task_id, attempt.owner_kind,
+            SELECT attempt.id, attempt.bear_id, attempt.task_id,
+                   attempt.binding_kind, attempt.binding_id,
+                   attempt.host_kind, attempt.host_run_id, attempt.owner_kind,
                    attempt.pair_session_id, attempt.pair_run_id, attempt.work_run_id,
                    attempt.fence_epoch, attempt.authorization_key, attempt.state,
                    attempt.started_at, attempt.paused_at, attempt.settled_at,
@@ -1519,7 +1722,8 @@ pub(super) async fn report_pair_bounded_outcome(
               OR ($3 = 'awaiting_user' AND state IN ('running', 'awaiting_user'))
               OR ($3 = 'settled' AND state IN ('running', 'settled'))
           )
-        RETURNING id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id,
+        RETURNING id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+                  owner_kind, pair_session_id, pair_run_id, work_run_id,
                   fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                   released_at, created_at, updated_at
         ",
@@ -1594,7 +1798,9 @@ pub(super) async fn resume_pair_awaiting_user(
               SELECT 1 FROM docket_pair_awaiting_user_questions question
               WHERE question.execution_attempt_id = attempt.id AND question.question_key = $3
           )
-        RETURNING attempt.id, attempt.bear_id, attempt.task_id, attempt.owner_kind,
+        RETURNING attempt.id, attempt.bear_id, attempt.task_id,
+                  attempt.binding_kind, attempt.binding_id,
+                  attempt.host_kind, attempt.host_run_id, attempt.owner_kind,
                   attempt.pair_session_id, attempt.pair_run_id, attempt.work_run_id,
                   attempt.fence_epoch, attempt.authorization_key, attempt.state,
                   attempt.started_at, attempt.paused_at, attempt.settled_at, attempt.released_at,
@@ -1622,7 +1828,8 @@ pub(super) async fn resume_pair_awaiting_user(
             row
         }
         None if response_exists => sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
-            "SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id, \
+            "SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+               owner_kind, pair_session_id, pair_run_id, work_run_id, \
                     fence_epoch, authorization_key, state, started_at, paused_at, settled_at, \
                     released_at, created_at, updated_at FROM docket_execution_attempts \
              WHERE id = $1 AND fence_epoch = $2 AND state = 'authorized'",
@@ -1655,7 +1862,8 @@ pub(super) async fn check_work_boundary(
     // the same answer without adding an outbox or a second authority record.
     let _ = check.boundary_key;
     let attempt = sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
-        "SELECT id, bear_id, task_id, owner_kind, pair_session_id, pair_run_id, work_run_id, \
+        "SELECT id, bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+               owner_kind, pair_session_id, pair_run_id, work_run_id, \
                 fence_epoch, authorization_key, state, started_at, paused_at, settled_at, \
                 released_at, created_at, updated_at FROM docket_execution_attempts \
          WHERE id = $1 AND bear_id = $2 AND fence_epoch = $3 AND owner_kind = 'work' AND state = 'running'",

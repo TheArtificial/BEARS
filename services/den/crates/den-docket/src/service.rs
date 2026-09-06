@@ -17,10 +17,11 @@ use super::model::{
     DocketEntryCreate, DocketEntryListFilter, DocketEntryPromotion, DocketEntryRow,
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptRelease, DocketExecutionAttemptRow,
     DocketExecutionAttemptStart, DocketExecutionGate, DocketExecutionTaskSettlement,
-    DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketPairAwaitingUserResume,
-    DocketPairBoundedOutcomeDecision, DocketPairBoundedOutcomeReport, DocketSessionTaskSettlement,
-    DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
+    DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding, DocketJobCreate,
+    DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection,
+    DocketJobRow, DocketJobUpdate, DocketPairAwaitingUserResume, DocketPairBoundedOutcomeDecision,
+    DocketPairBoundedOutcomeReport, DocketSessionTaskSettlement, DocketTaskCreate,
+    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
     DocketWorkBoundaryCheck, TaskListCheckoutRequest, TaskListCheckoutSource,
     TaskListHandoffOutcome, TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome,
     TaskListSyncRequest,
@@ -82,6 +83,20 @@ pub trait DocketService: Send + Sync {
         &self,
         settlement: DocketExecutionTaskSettlement,
     ) -> Result<DocketJobExecuteOutcome, DenError>;
+
+    /// Atomically acquires or reuses the one live focused-execution attempt for
+    /// a stable host-neutral binding.
+    async fn acquire_focused_execution(
+        &self,
+        acquire: DocketFocusedExecutionAcquire,
+    ) -> Result<DocketExecutionAttemptRow, DenError>;
+
+    /// Loads the live authority for a stable host-neutral binding.
+    async fn get_live_focused_execution(
+        &self,
+        bear_id: Uuid,
+        binding: DocketFocusedExecutionBinding,
+    ) -> Result<Option<DocketExecutionAttemptRow>, DenError>;
 
     async fn authorize_execution_attempt(
         &self,
@@ -280,6 +295,21 @@ impl DocketService for PgDocketService {
         settlement: DocketExecutionTaskSettlement,
     ) -> Result<DocketJobExecuteOutcome, DenError> {
         db::settle_execution_task(&self.pool, settlement).await
+    }
+
+    async fn acquire_focused_execution(
+        &self,
+        acquire: DocketFocusedExecutionAcquire,
+    ) -> Result<DocketExecutionAttemptRow, DenError> {
+        db::acquire_focused_execution(&self.pool, acquire).await
+    }
+
+    async fn get_live_focused_execution(
+        &self,
+        bear_id: Uuid,
+        binding: DocketFocusedExecutionBinding,
+    ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
+        db::get_live_focused_execution(&self.pool, bear_id, binding).await
     }
 
     async fn authorize_execution_attempt(

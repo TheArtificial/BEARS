@@ -25,6 +25,86 @@ task. An autonomous start or resume needs a valid Docket execution attempt.
 Ordinary untasked Pair conversation remains Den/runtime-driven and creates no
 attempt.
 
+## Focused-execution ownership
+
+`docket_execution_attempts` remains the only durable authority for focused
+execution. Do **not** add a focus-session table, infer authority from a host run,
+or require an in-memory controller to prove that authority exists.
+
+Four related records have deliberately separate meanings:
+
+1. **Task selection** associates a client session or Work assignment with an
+   objective. It survives interruption and grants no execution authority.
+2. **Execution attempt** is Docket's exclusive, fenced authority to act on one
+   task tree. Its live state is the sole answer to “may autonomous work
+   continue?”
+3. **Host run** is transport/transcript/checkpoint evidence produced by a host.
+   It may be replaced across reconnects or bounded continuations without
+   replacing the execution attempt.
+4. **Controller** is an ephemeral worker for a host run. Losing it is a host
+   failure to reconcile, not a second durable execution state.
+
+Consequently:
+
+- focus acquisition is a Docket operation, serialized at the execution
+  attempt's exclusive owner/task scope;
+- repeated acquisition for the same live binding is idempotent and returns the
+  existing attempt and fence;
+- a conflicting live binding is rejected or explicitly superseded by Docket,
+  never repaired by inserting another attempt and catching a unique-index
+  error;
+- only the current attempt ID and fence may report a boundary or settle work;
+- bounded host slices preserve the attempt and fence unless Docket explicitly
+  pauses, releases, or supersedes it;
+- an absent controller never authorizes work, but neither does it invalidate or
+  settle the attempt implicitly;
+- stale or terminal host runs are cleanup evidence and cannot block acquisition
+  once Docket has released or superseded their binding;
+- settling task A and selecting/authorizing successor B is one Docket reduction,
+  not a host decision based on whether a final response was emitted.
+
+## Migration boundary
+
+The existing table is the migration base; no parallel authority abstraction is
+needed. The current `owner_kind = pair | work` and `pair_session_id`,
+`pair_run_id`, and `work_run_id` columns conflate the durable owner binding with
+a particular host run. Migrate in place in the smallest compatible stages:
+
+1. Add a host-neutral binding identity and kind to execution attempts. The
+   binding identifies the stable execution owner (for example a client session
+   or Work assignment); host-run correlation is separate, replaceable evidence.
+2. Backfill binding identity from `pair_session_id` and `work_run_id`. Keep the
+   existing columns as compatibility projections while Pair and Work callers
+   move to shared Docket acquisition.
+3. Move live-owner uniqueness and lookup to the host-neutral binding. Keep
+   one-live-attempt-per-task fencing. Acquisition must be transactional and
+   idempotent by caller-supplied authorization/acquisition key.
+4. Route Pair `/focus`, model-initiated focus, Work dispatch, settlement,
+   cancellation, and recovery through the shared service path. Host adapters
+   attach or replace their run correlation after acquisition; they do not grant
+   authority.
+5. Remove Pair-specific authority columns, indexes, queries, and reconciliation
+   only after no caller treats them as canonical. Preserve terminal attempt and
+   host-run evidence.
+
+The implementation may initially represent binding kind as the existing Pair
+and Work variants to avoid a broad rename migration, but Docket service APIs and
+new schema concepts must use host-neutral terms (`binding`, `host`, `host_run`,
+`attempt`, and `controller`). `Pair` belongs only in the Pair adapter and legacy
+compatibility mapping.
+
+## Migration acceptance checks
+
+- Concurrent equivalent acquisitions return one attempt/fence; conflicting
+  acquisitions cannot create two live authorities.
+- A controller loss followed by reacquisition does not require weakening
+  settlement fencing and does not leave a unique-index dead end.
+- Replacing a bounded host run preserves the authoritative attempt/fence.
+- A stale host run cannot settle after its attempt is released or superseded.
+- Task selection remains visible when execution is paused, released, or absent.
+- A non-Pair host can acquire, present, continue, and release focus without a
+  Pair run ID or Pair lifecycle branch.
+
 ## Record
 
 `docket_execution_attempts` is the one durable authority record. It is distinct

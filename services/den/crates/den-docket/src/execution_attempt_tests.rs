@@ -1,11 +1,97 @@
 use crate::integration_tests::{seed_user_and_bear, test_pool, two_task_job};
 use crate::{
     DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptRelease,
-    DocketExecutionAttemptStart, DocketExecutionAttemptState, DocketPairAwaitingUserQuestion,
-    DocketPairAwaitingUserResume, DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport,
-    DocketPairContinuationDecision, DocketService, PgDocketService,
+    DocketExecutionAttemptStart, DocketExecutionAttemptState, DocketExecutionBindingKind,
+    DocketExecutionHost, DocketExecutionHostKind, DocketFocusedExecutionAcquire,
+    DocketFocusedExecutionBinding, DocketPairAwaitingUserQuestion, DocketPairAwaitingUserResume,
+    DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
+    DocketService, PgDocketService,
 };
 use uuid::Uuid;
+
+#[tokio::test]
+async fn focused_acquisition_reuses_binding_and_reattaches_host() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket integration test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "focused-acquisition").await;
+    let service = PgDocketService::from_pool(&pool);
+    let job = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create job");
+    let session_id = format!("pair-{}", Uuid::new_v4());
+    let request = |run_id: String, key| DocketFocusedExecutionAcquire {
+        bear_id,
+        task_id: job.tasks[0].id,
+        binding: DocketFocusedExecutionBinding {
+            kind: DocketExecutionBindingKind::ClientSession,
+            id: session_id.clone(),
+        },
+        host: DocketExecutionHost {
+            kind: DocketExecutionHostKind::Pair,
+            run_id,
+        },
+        acquisition_key: key,
+    };
+
+    let (first, concurrent) = tokio::join!(
+        service.acquire_focused_execution(request("run-one".to_string(), Uuid::new_v4())),
+        service.acquire_focused_execution(request("run-one".to_string(), Uuid::new_v4())),
+    );
+    let first = first.expect("acquire");
+    let concurrent = concurrent.expect("concurrent acquire");
+    assert_eq!(first.id, concurrent.id);
+
+    let replay = service
+        .acquire_focused_execution(request("run-one".to_string(), Uuid::new_v4()))
+        .await
+        .expect("reuse");
+    assert_eq!(first.id, replay.id);
+
+    let attached = service
+        .acquire_focused_execution(request("run-two".to_string(), Uuid::new_v4()))
+        .await
+        .expect("reattach host");
+    assert_eq!(first.id, attached.id);
+    assert_eq!(attached.host.run_id, "run-two");
+    assert_eq!(attached.fence_epoch, first.fence_epoch);
+
+    let conflict = service
+        .acquire_focused_execution(DocketFocusedExecutionAcquire {
+            task_id: job.tasks[1].id,
+            ..request("run-three".to_string(), Uuid::new_v4())
+        })
+        .await;
+    assert!(conflict.is_err(), "binding cannot silently switch tasks");
+
+    let released = service
+        .release_execution_attempt(DocketExecutionAttemptRelease {
+            attempt_id: attached.id,
+            fence_epoch: attached.fence_epoch,
+            recovery_key: Uuid::new_v4(),
+            recovery_reason: "host controller ended".to_string(),
+        })
+        .await
+        .expect("release");
+    assert_eq!(released.state, DocketExecutionAttemptState::Released);
+
+    let reacquired = service
+        .acquire_focused_execution(request("run-four".to_string(), Uuid::new_v4()))
+        .await
+        .expect("reacquire after release");
+    assert_ne!(released.id, reacquired.id);
+    assert_eq!(released.host.run_id, "run-two");
+    assert_eq!(reacquired.host.run_id, "run-four");
+    assert!(service
+        .start_execution_attempt(DocketExecutionAttemptStart {
+            attempt_id: released.id,
+            fence_epoch: released.fence_epoch,
+        })
+        .await
+        .is_err());
+}
 
 #[tokio::test]
 async fn execution_attempt_authorization_and_start_are_idempotent_and_fenced() {

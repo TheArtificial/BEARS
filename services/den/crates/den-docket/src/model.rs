@@ -1213,6 +1213,59 @@ pub struct DocketExecutionTaskSettlement {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketExecutionBindingKind {
+    ClientSession,
+    WorkAssignment,
+}
+
+impl DocketExecutionBindingKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ClientSession => "client_session",
+            Self::WorkAssignment => "work_assignment",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocketExecutionHostKind {
+    Pair,
+    Work,
+}
+
+impl DocketExecutionHostKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pair => "pair",
+            Self::Work => "work",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DocketFocusedExecutionBinding {
+    pub kind: DocketExecutionBindingKind,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DocketExecutionHost {
+    pub kind: DocketExecutionHostKind,
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketFocusedExecutionAcquire {
+    pub bear_id: Uuid,
+    pub task_id: Uuid,
+    pub binding: DocketFocusedExecutionBinding,
+    pub host: DocketExecutionHost,
+    pub acquisition_key: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DocketExecutionAttemptOwner {
     Pair {
@@ -1270,6 +1323,8 @@ pub struct DocketExecutionAttemptRow {
     pub id: Uuid,
     pub bear_id: Uuid,
     pub task_id: Uuid,
+    pub binding: DocketFocusedExecutionBinding,
+    pub host: DocketExecutionHost,
     pub owner: DocketExecutionAttemptOwner,
     pub fence_epoch: i64,
     pub authorization_key: Uuid,
@@ -1381,6 +1436,10 @@ pub(super) struct DocketExecutionAttemptDbRow {
     id: Uuid,
     bear_id: Uuid,
     task_id: Uuid,
+    binding_kind: String,
+    binding_id: String,
+    host_kind: String,
+    host_run_id: String,
     owner_kind: String,
     pair_session_id: Option<String>,
     pair_run_id: Option<String>,
@@ -1420,10 +1479,36 @@ impl TryFrom<DocketExecutionAttemptDbRow> for DocketExecutionAttemptRow {
                 ))
             }
         };
+        let binding = DocketFocusedExecutionBinding {
+            kind: match row.binding_kind.as_str() {
+                "client_session" => DocketExecutionBindingKind::ClientSession,
+                "work_assignment" => DocketExecutionBindingKind::WorkAssignment,
+                _ => {
+                    return Err(DenError::ValidationError(
+                        "invalid execution binding kind".to_string(),
+                    ))
+                }
+            },
+            id: row.binding_id,
+        };
+        let host = DocketExecutionHost {
+            kind: match row.host_kind.as_str() {
+                "pair" => DocketExecutionHostKind::Pair,
+                "work" => DocketExecutionHostKind::Work,
+                _ => {
+                    return Err(DenError::ValidationError(
+                        "invalid execution host kind".to_string(),
+                    ))
+                }
+            },
+            run_id: row.host_run_id,
+        };
         Ok(Self {
             id: row.id,
             bear_id: row.bear_id,
             task_id: row.task_id,
+            binding,
+            host,
             owner,
             fence_epoch: row.fence_epoch,
             authorization_key: row.authorization_key,

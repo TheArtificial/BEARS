@@ -2505,10 +2505,12 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     sqlx::query(
         r"
         INSERT INTO docket_execution_attempts (
-            bear_id, task_id, owner_kind, pair_session_id, pair_run_id,
+            bear_id, task_id, binding_kind, binding_id, host_kind, host_run_id,
+            owner_kind, pair_session_id, pair_run_id,
             fence_epoch, authorization_key, state, started_at
         )
-        VALUES ($1, $2, 'pair', $3, $4, 1, $5, 'running', NOW())
+        VALUES ($1, $2, 'client_session', $3, 'pair', $4::text,
+                'pair', $3, $4, 1, $5, 'running', NOW())
         ",
     )
     .bind(bear_id)

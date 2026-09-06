@@ -12,7 +12,8 @@ use bearwire_protocol::{
     wire::BearWireEvent,
 };
 use den_docket::{
-    DocketExecutionAttemptAuthorize, DocketExecutionAttemptOwner, DocketExecutionAttemptStart,
+    DocketExecutionAttemptStart, DocketExecutionBindingKind, DocketExecutionHost,
+    DocketExecutionHostKind, DocketFocusedExecutionAcquire, DocketFocusedExecutionBinding,
     DocketPairBoundedOutcome, DocketPairBoundedOutcomeReport, DocketPairContinuationDecision,
     DocketService, PgDocketService,
 };
@@ -2347,14 +2348,18 @@ async fn run_start_with_recovery_source(
     let attempt = if let Some(task_id) = pair_task_id {
         let service = PgDocketService::from_pool(&state.sqlx_pool);
         let attempt = service
-            .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+            .acquire_focused_execution(DocketFocusedExecutionAcquire {
                 bear_id: bear.id,
                 task_id,
-                owner: DocketExecutionAttemptOwner::Pair {
-                    session_id: session_id.to_string(),
-                    pair_run_id: session_run_id.clone(),
+                binding: DocketFocusedExecutionBinding {
+                    kind: DocketExecutionBindingKind::ClientSession,
+                    id: session_id.to_string(),
                 },
-                authorization_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_run_id.as_bytes()),
+                host: DocketExecutionHost {
+                    kind: DocketExecutionHostKind::Pair,
+                    run_id: session_run_id.clone(),
+                },
+                acquisition_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_run_id.as_bytes()),
             })
             .await?;
         Some(
