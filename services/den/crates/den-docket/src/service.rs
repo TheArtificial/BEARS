@@ -106,7 +106,6 @@ pub trait DocketService: Send + Sync {
     async fn get_live_pair_execution_attempt_for_session(
         &self,
         bear_id: Uuid,
-        task_id: Uuid,
         session_id: &str,
     ) -> Result<Option<DocketExecutionAttemptRow>, DenError>;
 
@@ -311,11 +310,9 @@ impl DocketService for PgDocketService {
     async fn get_live_pair_execution_attempt_for_session(
         &self,
         bear_id: Uuid,
-        task_id: Uuid,
         session_id: &str,
     ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
-        db::get_live_pair_execution_attempt_for_session(&self.pool, bear_id, task_id, session_id)
-            .await
+        db::get_live_pair_execution_attempt_for_session(&self.pool, bear_id, session_id).await
     }
 
     async fn check_work_boundary(

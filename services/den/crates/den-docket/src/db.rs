@@ -1339,7 +1339,6 @@ pub(super) async fn get_live_pair_execution_attempt(
 pub(super) async fn get_live_pair_execution_attempt_for_session(
     pool: &PgPool,
     bear_id: Uuid,
-    task_id: Uuid,
     session_id: &str,
 ) -> Result<Option<DocketExecutionAttemptRow>, DenError> {
     sqlx::query_as::<_, DocketExecutionAttemptDbRow>(
@@ -1348,15 +1347,14 @@ pub(super) async fn get_live_pair_execution_attempt_for_session(
                fence_epoch, authorization_key, state, started_at, paused_at, settled_at,
                released_at, created_at, updated_at
         FROM docket_execution_attempts
-        WHERE bear_id = $1 AND task_id = $2 AND owner_kind = 'pair'
-          AND pair_session_id = $3
+        WHERE bear_id = $1 AND owner_kind = 'pair'
+          AND pair_session_id = $2
           AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
         ORDER BY created_at DESC
         LIMIT 1
         ",
     )
     .bind(bear_id)
-    .bind(task_id)
     .bind(session_id)
     .fetch_optional(pool)
     .await?

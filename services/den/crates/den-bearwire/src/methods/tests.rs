@@ -21,10 +21,11 @@ use den_docket::{
         checkout_work_run_for_session, claim_next_work_run, enqueue_work_job,
         record_work_run_provisioned, WorkExecutionTarget, WorkJobEnqueue, WorkRunProvisioned,
     },
-    DocketCommitPolicy, DocketCriterionKind, DocketEffortHint, DocketExecutionAttemptRelease,
-    DocketJobCreate, DocketJobCriterionInput, DocketJobOverlapResolution, DocketService,
-    DocketTaskCreate, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope,
-    PgDocketService, RoutingStrategy, TaskListVisibility,
+    DocketCommitPolicy, DocketCriterionKind, DocketEffortHint, DocketExecutionAttemptAuthorize,
+    DocketExecutionAttemptOwner, DocketExecutionAttemptRelease, DocketJobCreate,
+    DocketJobCriterionInput, DocketJobOverlapResolution, DocketService, DocketTaskCreate,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService,
+    RoutingStrategy, TaskListVisibility,
 };
 use den_http::armature_tokens;
 use den_protocol::{
@@ -3324,6 +3325,79 @@ async fn current_task_start_recovers_orphaned_controller_without_execution_autho
     .await
     .expect("load preserved task selection");
     assert_eq!(selected_task, Some(task_id));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn current_task_start_releases_stale_session_authority_for_previous_task(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let stale_task_id =
+        create_session_task(&pool, user_id, bear_id, &session_id, "Stale task").await;
+    let selected_task_id =
+        create_session_task(&pool, user_id, bear_id, &session_id, "Selected task").await;
+    let stale_run_id = format!("run_{}", Uuid::new_v4().simple());
+    let stale_attempt = PgDocketService::from_pool(&pool)
+        .authorize_execution_attempt(DocketExecutionAttemptAuthorize {
+            bear_id,
+            task_id: stale_task_id,
+            owner: DocketExecutionAttemptOwner::Pair {
+                session_id: session_id.clone(),
+                pair_run_id: stale_run_id,
+            },
+            authorization_key: Uuid::new_v4(),
+        })
+        .await
+        .expect("authorize stale execution authority");
+
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-secret-key".to_string();
+    config.llm_api_url =
+        start_mock_openai_sse_server_asserting_requests(vec![MockLlmRequestAssertion::requiring(
+            Vec::new(),
+        )]);
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+
+    let selected = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.select",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "task_id": selected_task_id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        selected["result"]["current_task_id"],
+        selected_task_id.to_string()
+    );
+
+    let started = rpc_value(
+        state,
+        &token,
+        "session.current_task.start",
+        json!({ "bear_slug": bear_slug, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(started["result"]["started"], true, "{started}");
+    assert_eq!(started["result"]["task_id"], selected_task_id.to_string());
+    assert_ne!(
+        started["result"]["execution_attempt_id"],
+        stale_attempt.id.to_string()
+    );
+    let stale_state: String =
+        sqlx::query_scalar("SELECT state FROM docket_execution_attempts WHERE id = $1")
+            .bind(stale_attempt.id)
+            .fetch_one(&pool)
+            .await
+            .expect("load stale attempt");
+    assert_eq!(stale_state, "released");
 }
 
 #[sqlx::test(migrations = "../../migrations")]

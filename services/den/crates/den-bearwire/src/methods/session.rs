@@ -914,7 +914,7 @@ pub async fn start_pair_current_task(
     }
 
     if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
-        .get_live_pair_execution_attempt_for_session(bear.id, task_id, session_id)
+        .get_live_pair_execution_attempt_for_session(bear.id, session_id)
         .await?
     {
         let run_id = match &attempt.owner {
