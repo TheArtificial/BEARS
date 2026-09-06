@@ -1,6 +1,9 @@
 use axum::http::HeaderMap;
 use den_core::DenError;
-use den_docket::{DocketExecutionAttemptRelease, DocketService, PgDocketService};
+use den_docket::{
+    DocketExecutionAttemptRelease, DocketExecutionBindingKind, DocketFocusedExecutionBinding,
+    DocketService, PgDocketService,
+};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -375,26 +378,22 @@ async fn active_pair_execution_attempt(
     bear_id: uuid::Uuid,
     session_id: &str,
 ) -> Result<Option<Value>, CustomError> {
-    let attempt = sqlx::query!(
-        "SELECT id, task_id, pair_run_id, fence_epoch, state, updated_at
-         FROM docket_execution_attempts
-         WHERE bear_id = $1 AND owner_kind = 'pair' AND pair_session_id = $2
-           AND state IN ('authorized', 'running', 'paused')
-         ORDER BY updated_at DESC
-         LIMIT 1",
-        bear_id,
-        session_id,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let attempt = PgDocketService::from_pool(pool)
+        .get_live_focused_execution(
+            bear_id,
+            DocketFocusedExecutionBinding {
+                kind: DocketExecutionBindingKind::ClientSession,
+                id: session_id.to_string(),
+            },
+        )
+        .await?;
     Ok(attempt.map(|attempt| {
         json!({
-            "schema": "den.docket.execution_attempt.v1",
+            "schema": "den.docket.execution_attempt.v2",
             "source": "docket_execution_attempt",
             "id": attempt.id,
-            "owner_kind": "pair",
-            "session_id": session_id,
-            "pair_run_id": attempt.pair_run_id,
+            "binding": attempt.binding,
+            "host": attempt.host,
             "task_id": attempt.task_id,
             "fence_epoch": attempt.fence_epoch,
             "state": attempt.state,

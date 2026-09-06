@@ -1673,6 +1673,28 @@ pub(crate) async fn settle_active_run_for_session(
             .sequence_no,
         );
     }
+    // The Docket attempt is the execution authority; the host run above is only
+    // terminal evidence. Release the stable session binding even when its host
+    // controller/run was already missing so cancellation cannot leave focus wedged.
+    if let Some(attempt) = PgDocketService::from_pool(&state.sqlx_pool)
+        .get_live_focused_execution(
+            bear_id,
+            DocketFocusedExecutionBinding {
+                kind: DocketExecutionBindingKind::ClientSession,
+                id: session_id.to_string(),
+            },
+        )
+        .await?
+    {
+        PgDocketService::from_pool(&state.sqlx_pool)
+            .release_execution_attempt(den_docket::DocketExecutionAttemptRelease {
+                attempt_id: attempt.id,
+                fence_epoch: attempt.fence_epoch,
+                recovery_key: Uuid::new_v4(),
+                recovery_reason: reason.to_string(),
+            })
+            .await?;
+    }
     Ok(SettledRunLifecycle {
         run: active_run,
         stream_run_ids,

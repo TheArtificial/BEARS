@@ -22,10 +22,12 @@ use den_docket::{
         record_work_run_provisioned, WorkExecutionTarget, WorkJobEnqueue, WorkRunProvisioned,
     },
     DocketCommitPolicy, DocketCriterionKind, DocketEffortHint, DocketExecutionAttemptAuthorize,
-    DocketExecutionAttemptOwner, DocketExecutionAttemptRelease, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobOverlapResolution, DocketService, DocketTaskCreate,
-    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService,
-    RoutingStrategy, TaskListVisibility,
+    DocketExecutionAttemptOwner, DocketExecutionAttemptRelease, DocketExecutionBindingKind,
+    DocketExecutionHost, DocketExecutionHostKind, DocketFocusedExecutionAcquire,
+    DocketFocusedExecutionBinding, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobOverlapResolution, DocketService, DocketTaskCreate, DocketTaskDifficulty,
+    DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService, RoutingStrategy,
+    TaskListVisibility,
 };
 use den_http::armature_tokens;
 use den_protocol::{
@@ -3194,6 +3196,24 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
     .await
     .expect("insert permission obligation");
 
+    let task_id = create_session_task(&pool, user_id, bear_id, &session_id, "Cancel task").await;
+    let attempt = PgDocketService::from_pool(&pool)
+        .acquire_focused_execution(DocketFocusedExecutionAcquire {
+            bear_id,
+            task_id,
+            binding: DocketFocusedExecutionBinding {
+                kind: DocketExecutionBindingKind::ClientSession,
+                id: session_id.clone(),
+            },
+            host: DocketExecutionHost {
+                kind: DocketExecutionHostKind::Pair,
+                run_id: run_id.clone(),
+            },
+            acquisition_key: Uuid::new_v4(),
+        })
+        .await
+        .expect("acquire focused execution");
+
     let response = rpc_value(
         test_state(pool.clone()),
         &token,
@@ -3230,6 +3250,13 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
         .expect("permission obligation exists");
     assert_eq!(tool.state, "cancelled");
     assert_eq!(permission.state, "cancelled");
+    let attempt_state: String =
+        sqlx::query_scalar("SELECT state FROM docket_execution_attempts WHERE id = $1")
+            .bind(attempt.id)
+            .fetch_one(&pool)
+            .await
+            .expect("load focused execution attempt");
+    assert_eq!(attempt_state, "released");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
