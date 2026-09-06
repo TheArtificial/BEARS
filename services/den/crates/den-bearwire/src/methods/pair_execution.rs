@@ -114,8 +114,12 @@ async fn start_or_reconcile_locked(
             "attempt_id": execution.attempt_id,
             "task_id": execution.task_id,
             "run_id": execution.run_id,
+            "binding": { "kind": "client_session", "id": client_session_id },
+            "host": { "kind": "pair", "run_id": execution.run_id },
             "attempt_state": execution.attempt_state,
             "launch_state": execution.launch_state,
+            "fence_epoch": execution.fence_epoch,
+            "task_selection_preserved": true,
         }),
     );
     event.bear_id = Some(bear.id.to_string());

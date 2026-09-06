@@ -1694,6 +1694,43 @@ pub(crate) async fn settle_active_run_for_session(
                 recovery_reason: reason.to_string(),
             })
             .await?;
+        let mut transition = BearWireEvent::ephemeral(
+            "docket.execution.ended",
+            json!({
+                "attempt_id": attempt.id,
+                "task_id": attempt.task_id,
+                "run_id": attempt.host.run_id,
+                "binding": { "kind": "client_session", "id": session_id },
+                "host": { "kind": attempt.host.kind.as_str(), "run_id": attempt.host.run_id },
+                "fence_epoch": attempt.fence_epoch,
+                "reason": reason,
+                "superseded_by_run_id": superseded_by_run_id,
+                "task_selection_preserved": true,
+                "execution_authority": "absent",
+            }),
+        );
+        transition.bear_id = Some(bear_id.to_string());
+        transition.human_id = Some(user_id.to_string());
+        transition.session_id = Some(session_id.to_string());
+        transition.run_id = Some(attempt.host.run_id.clone());
+        if let Err(err) = bearwire_events::append_bearwire_event(
+            &state.sqlx_pool,
+            session_id,
+            Some(bear_id),
+            Some(user_id),
+            transition,
+        )
+        .await
+        {
+            // The released Docket attempt is authoritative. A diagnostic projection
+            // failure must not make successful cancellation look unsuccessful.
+            tracing::warn!(
+                error = %err,
+                session_id,
+                attempt_id = %attempt.id,
+                "failed to project Docket execution end"
+            );
+        }
     }
     Ok(SettledRunLifecycle {
         run: active_run,
