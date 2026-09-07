@@ -4333,6 +4333,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn interrupted_server_tool_continuation_is_terminal_to_the_client() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+        let call = sample_tool_call("call-focus");
+        let message = ChatMessage {
+            role: "tool".to_string(),
+            content: Some("{\"status\":\"interrupted\"}".to_string()),
+            tool_call_id: Some(call.id.clone()),
+            name: Some("focus_current_task".to_string()),
+            tool_calls: None,
+        };
+        let continuation: ServerToolContinuationFuture = Box::pin(async {
+            Ok(superseded_continuation_stream())
+        });
+        stream.pending_server_tool = Some(Box::pin(async move {
+            Ok((call, message, continuation))
+        }));
+
+        let tool_finished = stream.next().await.expect("tool completion").expect("ok");
+        assert!(matches!(
+            tool_finished,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished { .. })
+        ));
+        let terminal = stream.next().await.expect("terminal event").expect("ok");
+        assert!(matches!(
+            terminal,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { turn: None })
+        ));
+        assert!(stream.next().await.is_none(), "terminal event is followed by EOF");
+    }
+
+    #[tokio::test]
     async fn server_side_den_tool_emits_started_event_before_execution_result() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:client-test", bear_id);
