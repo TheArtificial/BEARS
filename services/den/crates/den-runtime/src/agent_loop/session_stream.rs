@@ -171,8 +171,8 @@ fn run_ownership_cancellation_token(
                 }
             }
             tokio::select! {
-                _ = watcher_cancellation.cancelled() => return,
-                _ = sleep(Duration::from_millis(100)) => {}
+                () = watcher_cancellation.cancelled() => return,
+                () = sleep(Duration::from_millis(100)) => {}
             }
         }
     });
@@ -188,7 +188,7 @@ where
 {
     tokio::select! {
         biased;
-        _ = cancellation.cancelled() => Ok(superseded_continuation_stream()),
+        () = cancellation.cancelled() => Ok(superseded_continuation_stream()),
         result = stream_setup => result.map(|stream| stream_cancelled_by_run_ownership(stream, cancellation)),
     }
 }
@@ -207,7 +207,7 @@ fn stream_cancelled_by_run_ownership(
             let mut stream = stream?;
             tokio::select! {
                 biased;
-                _ = cancellation.cancelled() => {
+                () = cancellation.cancelled() => {
                     // Dropping the stream aborts an in-flight request instead of merely
                     // preventing its result from being forwarded.
                     drop(stream);
@@ -216,10 +216,7 @@ fn stream_cancelled_by_run_ownership(
                         (None, cancellation, guard),
                     ))
                 }
-                event = stream.next() => match event {
-                    Some(event) => Some((event, (Some(stream), cancellation, guard))),
-                    None => None,
-                },
+                event = stream.next() => event.map(|event| (event, (Some(stream), cancellation, guard))),
             }
         },
     ))
