@@ -189,7 +189,13 @@ where
     tokio::select! {
         biased;
         () = cancellation.cancelled() => Ok(superseded_continuation_stream()),
-        result = stream_setup => result.map(|stream| stream_cancelled_by_run_ownership(stream, cancellation)),
+        result = stream_setup => match result {
+            Ok(stream) => Ok(stream_cancelled_by_run_ownership(stream, cancellation)),
+            Err(error) => {
+                cancellation.cancel();
+                Err(error)
+            }
+        },
     }
 }
 
@@ -2869,6 +2875,20 @@ mod tests {
             .await
             .expect("pending stream setup is dropped on cancellation");
     }
+
+    #[tokio::test]
+    async fn failed_stream_setup_cancels_ownership_watcher() {
+        let cancellation = CancellationToken::new();
+        let result = await_stream_or_ownership_cancellation(
+            async { Err(DenError::System("stream setup failed".to_string())) },
+            cancellation.clone(),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(cancellation.is_cancelled());
+    }
+
     #[tokio::test]
     async fn run_ownership_cancellation_ends_a_pending_stream() {
         let cancellation = CancellationToken::new();
