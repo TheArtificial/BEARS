@@ -2038,13 +2038,28 @@ impl SessionTrackingStream {
                 DenError::System("native agent loop session not found".to_string())
             })?;
             let llm = LlmClient::new(config.as_ref());
+            let ownership_cancellation = session.run_id.clone().map(|run_id| {
+                run_ownership_cancellation_token(
+                    pool.clone(),
+                    session.client_session_id.clone(),
+                    run_id,
+                )
+            });
             let overflow = AgentStepOverflowContext {
                 pool,
                 config,
                 profile,
                 session_store: store,
             };
-            run_agent_step_stream(&llm, &session, Some(overflow)).await
+            if let Some(cancellation) = ownership_cancellation {
+                await_stream_or_ownership_cancellation(
+                    run_agent_step_stream(&llm, &session, Some(overflow)),
+                    cancellation,
+                )
+                .await
+            } else {
+                run_agent_step_stream(&llm, &session, Some(overflow)).await
+            }
         }));
     }
 
@@ -2130,13 +2145,28 @@ impl SessionTrackingStream {
                 DenError::System("native agent loop session not found".to_string())
             })?;
             let llm = LlmClient::new(config.as_ref());
+            let ownership_cancellation = session.run_id.clone().map(|run_id| {
+                run_ownership_cancellation_token(
+                    pool.clone(),
+                    session.client_session_id.clone(),
+                    run_id,
+                )
+            });
             let overflow = AgentStepOverflowContext {
                 pool,
                 config,
                 profile,
                 session_store: store,
             };
-            run_agent_step_stream(&llm, &session, Some(overflow)).await
+            if let Some(cancellation) = ownership_cancellation {
+                await_stream_or_ownership_cancellation(
+                    run_agent_step_stream(&llm, &session, Some(overflow)),
+                    cancellation,
+                )
+                .await
+            } else {
+                run_agent_step_stream(&llm, &session, Some(overflow)).await
+            }
         }));
         Ok(())
     }
