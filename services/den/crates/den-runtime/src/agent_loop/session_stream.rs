@@ -2801,6 +2801,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_ownership_cancellation_drops_a_pending_stream() {
+        let cancellation = CancellationToken::new();
+        let (dropped_signal, dropped) = tokio::sync::oneshot::channel();
+        let pending: RuntimeEventStream = Box::pin(stream::once(async move {
+            struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
+            impl Drop for DropSignal {
+                fn drop(&mut self) {
+                    if let Some(sender) = self.0.take() {
+                        let _ = sender.send(());
+                    }
+                }
+            }
+
+            let _signal = DropSignal(Some(dropped_signal));
+            std::future::pending::<Result<RuntimeStreamEvent, DenError>>().await
+        }));
+        let mut stream = stream_cancelled_by_run_ownership(pending, cancellation.clone());
+
+        cancellation.cancel();
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Ok(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::TurnCancelled { turn: None }
+            )))
+        ));
+        dropped.await.expect("pending stream is dropped on cancellation");
+    }
+
+    #[tokio::test]
     async fn closed_freeform_orientation_denies_task_definition() {
         let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         let stream = test_tracking_stream_with_session(&session);
