@@ -2383,6 +2383,16 @@ async fn handle_bearwire_event(
                 .await?;
         }
         "run.cancelled" => {
+            // Den has already made the run terminal. Stop any local tool futures from
+            // this delivery promptly; this is best effort only and never controls Den's
+            // run or Docket authority.
+            let _ = shared_state
+                .cancellation_tx
+                .send(crate::CancellationNotice {
+                    session_id: session_id.to_string(),
+                    turn_token: Some(turn_token),
+                    conversation_id: None,
+                });
             outcome.saw_done = true;
             outcome.saw_error = true;
             outcome.saw_visible_output = true;
