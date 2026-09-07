@@ -142,12 +142,11 @@ fn superseded_continuation_stream() -> RuntimeEventStream {
     }))
 }
 
-fn cancel_stream_when_run_loses_ownership(
-    stream: RuntimeEventStream,
+fn run_ownership_cancellation_token(
     pool: sqlx::PgPool,
     client_session_id: String,
     run_id: String,
-) -> RuntimeEventStream {
+) -> CancellationToken {
     let cancellation = CancellationToken::new();
     let watcher_cancellation = cancellation.clone();
     tokio::spawn(async move {
@@ -177,7 +176,21 @@ fn cancel_stream_when_run_loses_ownership(
             }
         }
     });
-    stream_cancelled_by_run_ownership(stream, cancellation)
+    cancellation
+}
+
+async fn await_stream_or_ownership_cancellation<F>(
+    stream_setup: F,
+    cancellation: CancellationToken,
+) -> Result<RuntimeEventStream, DenError>
+where
+    F: Future<Output = Result<RuntimeEventStream, DenError>> + Send,
+{
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Ok(superseded_continuation_stream()),
+        result = stream_setup => result.map(|stream| stream_cancelled_by_run_ownership(stream, cancellation)),
+    }
 }
 
 fn stream_cancelled_by_run_ownership(
@@ -1074,22 +1087,27 @@ impl SessionTrackingStream {
                 );
                 let llm = LlmClient::new(config.as_ref());
                 let cancellation_pool = pool.clone();
+                let run_ownership_cancellation = session.run_id.clone().map(|run_id| {
+                    run_ownership_cancellation_token(
+                        cancellation_pool,
+                        session.client_session_id.clone(),
+                        run_id,
+                    )
+                });
                 let overflow = AgentStepOverflowContext {
                     pool,
                     config,
                     profile,
                     session_store: store,
                 };
-                let next_stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
-                let next_stream = if let Some(run_id) = session.run_id.clone() {
-                    cancel_stream_when_run_loses_ownership(
-                        next_stream,
-                        cancellation_pool,
-                        session.client_session_id.clone(),
-                        run_id,
+                let next_stream = if let Some(cancellation) = run_ownership_cancellation {
+                    await_stream_or_ownership_cancellation(
+                        run_agent_step_stream(&llm, &session, Some(overflow)),
+                        cancellation,
                     )
+                    .await?
                 } else {
-                    next_stream
+                    run_agent_step_stream(&llm, &session, Some(overflow)).await?
                 };
                 Ok(Box::pin(
                     stream::iter(
@@ -2784,6 +2802,46 @@ mod tests {
         assert!(!should_emit_docket_bounded_slice(&freeform, true));
     }
 
+    #[tokio::test]
+    async fn ownership_cancellation_drops_pending_stream_setup() {
+        let cancellation = CancellationToken::new();
+        let (started_signal, started) = tokio::sync::oneshot::channel();
+        let (dropped_signal, dropped) = tokio::sync::oneshot::channel();
+        let setup = async move {
+            struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
+            impl Drop for DropSignal {
+                fn drop(&mut self) {
+                    if let Some(sender) = self.0.take() {
+                        let _ = sender.send(());
+                    }
+                }
+            }
+
+            let _signal = DropSignal(Some(dropped_signal));
+            let _ = started_signal.send(());
+            std::future::pending::<Result<RuntimeEventStream, DenError>>().await
+        };
+        let cancellation_for_setup = cancellation.clone();
+        let continuation = tokio::spawn(async move {
+            let mut stream = await_stream_or_ownership_cancellation(setup, cancellation_for_setup)
+                .await
+                .expect("ownership cancellation returns a terminal stream");
+            stream.next().await
+        });
+
+        started.await.expect("stream setup begins polling");
+        cancellation.cancel();
+
+        assert!(matches!(
+            continuation.await.expect("continuation task completes"),
+            Some(Ok(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::TurnCancelled { turn: None }
+            )))
+        ));
+        dropped
+            .await
+            .expect("pending stream setup is dropped on cancellation");
+    }
     #[tokio::test]
     async fn run_ownership_cancellation_ends_a_pending_stream() {
         let cancellation = CancellationToken::new();
