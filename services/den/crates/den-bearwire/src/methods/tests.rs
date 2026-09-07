@@ -637,6 +637,47 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         Some(Uuid::parse_str(successor_id).expect("parse successor task id")),
         "settlement must advance session focus before final-answer gating"
     );
+    assert_eq!(
+        settled["result"]["pair_binding"]["control"]["state"], "running",
+        "settlement must continue focused control with the successor task: {settled}"
+    );
+    assert_eq!(
+        settled["result"]["pair_binding"]["task"]["id"], successor_id,
+        "successor execution must be bound to the task selected by settlement"
+    );
+
+    // A task-compatible user turn must remain in the focused Docket loop even
+    // though it starts a successor Pair host run. The run-start path used to
+    // drop the live execution attempt because only the explicit focus path
+    // supplied `pair_task_id`.
+    let continued = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "client": "bearwire-test",
+            "prompt": "Also check the related handoff path."
+        }),
+    )
+    .await;
+    let successor_run_id = continued["result"]["run_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("run start did not return a run id: {continued}"));
+    let continued_attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM docket_execution_attempts \
+         WHERE pair_run_id = $1 AND task_id = $2 AND state = 'running'",
+    )
+    .bind(successor_run_id)
+    .bind(Uuid::parse_str(successor_id).expect("parse successor task id"))
+    .fetch_one(&pool)
+    .await
+    .expect("load successor focused execution authority");
+    assert_eq!(
+        continued_attempts, 1,
+        "a successor Pair run for a focused session must inherit Docket authority; {continued}"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

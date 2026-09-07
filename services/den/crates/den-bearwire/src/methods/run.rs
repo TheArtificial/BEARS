@@ -2392,6 +2392,15 @@ async fn run_start_with_recovery_source(
 
     let run_id = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple()))?;
     let session_run_id = run_id.to_string();
+    let inherited_pair_task_id = if pair_task_id.is_none() {
+        PgDocketService::from_pool(&state.sqlx_pool)
+            .get_live_pair_execution_attempt_for_session(bear.id, &session_id)
+            .await?
+            .map(|attempt| attempt.task_id)
+    } else {
+        None
+    };
+    let pair_task_id = pair_task_id.or(inherited_pair_task_id);
     let session_id = ClientSessionId::new(session_id.clone())?;
     let session_id_string = session_id.to_string();
     let superseded = settle_active_run_for_session(

@@ -824,16 +824,26 @@ pub(crate) async fn session_current_task_start_result(
             return Ok(recovered);
         }
     }
-    Ok(serde_json::to_value(
-        super::pair_execution::start_selected_docket_pair_execution(
-            state,
-            user_id,
-            bear,
-            &request.session_id,
-        )
-        .await?,
+    let execution = super::pair_execution::start_selected_docket_pair_execution(
+        state,
+        user_id,
+        bear,
+        &request.session_id,
     )
-    .map_err(|err| CustomError::System(format!("serialize Pair task start failed: {err}")))?)
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "started": execution.launch_state == "started",
+        "reused": execution.launch_state == "already_running",
+        "run_id": execution.run_id,
+        "session_id": execution.session_id,
+        "task_id": execution.task_id,
+        "state": execution.run_state,
+        "execution_attempt_id": execution.attempt_id,
+        "execution_attempt_state": execution.attempt_state,
+        "launch_state": execution.launch_state,
+        "fence_epoch": execution.fence_epoch,
+    }))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -873,15 +883,6 @@ pub async fn start_pair_current_task(
             "no current Pair task is selected for this session".to_string(),
         )
     })?;
-    let title = preview_pair_current_task_selection(
-        &state.sqlx_pool,
-        user_id,
-        bear.id,
-        session_id,
-        task_id,
-    )
-    .await?;
-
     let mut recovered_run_id = None;
     if let Some(run) = den_runtime::turn_runs::active_run_for_session(&state.sqlx_pool, session_id)
         .await?
@@ -1005,6 +1006,15 @@ pub async fn start_pair_current_task(
             })
             .await?;
     }
+
+    let title = preview_pair_current_task_selection(
+        &state.sqlx_pool,
+        user_id,
+        bear.id,
+        session_id,
+        task_id,
+    )
+    .await?;
 
     // ponytail: this delegates to the established run.start lifecycle so task-start
     // cannot drift from Pair stream/event behavior. Concurrent starts can still race

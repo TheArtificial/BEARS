@@ -311,19 +311,17 @@ pub async fn docket_jobs_settle_task_result(
         })
         .await?;
     if let (Some(session_id), Some(task_id)) = (
-        attempt_session_id,
+        attempt_session_id.as_deref(),
         successor_task_selection(&outcome.control),
     ) {
-        client_sessions::set_current_task(&state.sqlx_pool, user_id, bear.id, &session_id, task_id)
+        client_sessions::set_current_task(&state.sqlx_pool, user_id, bear.id, session_id, task_id)
             .await?;
     }
-    execution_result_payload(
-        outcome,
-        json!({
-            "status": "not_applicable",
-            "reason": "Task settlement does not change Pair binding.",
-        }),
-    )
+
+    // Completing a focused Docket task can select its successor. Keep the
+    // existing focused-control lease alive by starting that successor in the
+    // same Pair session, rather than leaving the session selected-but-idle.
+    execution_result(state, user_id, bear, attempt_session_id.as_deref(), outcome).await
 }
 
 pub async fn docket_session_tasks_settle_result(
