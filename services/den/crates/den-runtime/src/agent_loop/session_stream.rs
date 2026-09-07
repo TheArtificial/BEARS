@@ -2433,10 +2433,19 @@ impl Stream for SessionTrackingStream {
                 // Streamed assistant text must still land in canonical conversation
                 // history; live ACP chunks are ephemeral and session/load reads this store.
                 self.persist_assistant_tool_step();
-                self.finished = true;
-                Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
-                    RuntimeSemanticEvent::TurnCompleted { turn: None },
-                ))))
+                if self.assistant_text.trim().is_empty() {
+                    self.finished = true;
+                    return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                        RuntimeSemanticEvent::TurnCompleted { turn: None },
+                    ))));
+                }
+                // Explicit provider completion and EOF are equivalent terminal-answer
+                // candidates. Both must refresh durable task selection and pass through the
+                // focused-work gate; otherwise a settled task can select a successor and the
+                // provider's TurnCompleted event silently ends Docket control.
+                self.begin_final_gate_focus_resolution();
+                cx.waker().wake_by_ref();
+                Poll::Pending
             }
             Poll::Ready(Some(Err(error))) => {
                 if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
@@ -3745,6 +3754,50 @@ mod tests {
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
         ));
         assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn explicit_turn_completion_with_assistant_text_enters_final_gate() {
+        let bear_id = uuid::Uuid::new_v4();
+        let mut session = test_session("den-conv-test:client-test", bear_id);
+        session.cached_activity_plan_projection = Some(pending_task_list_projection());
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::iter(vec![
+                Ok(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::AssistantTextDelta {
+                        text: "Task A is complete.".to_string(),
+                    },
+                )),
+                Ok(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::TurnCompleted { turn: None },
+                )),
+            ])),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::ServerSideInProcess,
+        );
+
+        let delta = stream.next().await.expect("delta").expect("ok");
+        assert!(matches!(
+            delta,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { .. })
+        ));
+        assert!(stream.next().await.expect("final gate result").is_err());
+        assert!(stream.pending_final_gate_focus.is_none());
+        assert!(!stream.finished);
     }
 
     #[tokio::test]
