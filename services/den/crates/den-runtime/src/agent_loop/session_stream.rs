@@ -10,6 +10,8 @@ use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
 use futures::{stream, Stream, StreamExt};
+use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::agent_loop::{
@@ -124,12 +126,89 @@ type PausePersistenceFuture =
 type FinalGateMessagePersistenceFuture =
     Pin<Box<dyn Future<Output = Result<Option<Uuid>, DenError>> + Send>>;
 
+struct RunOwnershipCancellation(CancellationToken);
+
+impl Drop for RunOwnershipCancellation {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 fn superseded_continuation_stream() -> RuntimeEventStream {
     Box::pin(stream::once(async {
         Ok(RuntimeStreamEvent::Semantic(
             RuntimeSemanticEvent::TurnCancelled { turn: None },
         ))
     }))
+}
+
+fn cancel_stream_when_run_loses_ownership(
+    stream: RuntimeEventStream,
+    pool: sqlx::PgPool,
+    client_session_id: String,
+    run_id: String,
+) -> RuntimeEventStream {
+    let cancellation = CancellationToken::new();
+    let watcher_cancellation = cancellation.clone();
+    tokio::spawn(async move {
+        loop {
+            match crate::turn_runs::active_run_for_session(&pool, &client_session_id).await {
+                Ok(Some(active)) if active.run_id == run_id => {}
+                Ok(active) => {
+                    tracing::info!(
+                        event = "native_llm_stream_cancelled_for_lost_run_ownership",
+                        client_session_id = %client_session_id,
+                        run_id = %run_id,
+                        active_run_id = ?active.map(|run| run.run_id),
+                        "cancelling in-flight LLM stream after run lost ownership"
+                    );
+                    watcher_cancellation.cancel();
+                    return;
+                }
+                Err(error) => {
+                    // ponytail: polling is a bounded fallback until run-state changes can notify
+                    // streams directly; treat a failed ownership read as non-authoritative.
+                    tracing::debug!(%error, client_session_id = %client_session_id, "could not check LLM stream run ownership");
+                }
+            }
+            tokio::select! {
+                _ = watcher_cancellation.cancelled() => return,
+                _ = sleep(Duration::from_millis(100)) => {}
+            }
+        }
+    });
+    stream_cancelled_by_run_ownership(stream, cancellation)
+}
+
+fn stream_cancelled_by_run_ownership(
+    stream: RuntimeEventStream,
+    cancellation: CancellationToken,
+) -> RuntimeEventStream {
+    Box::pin(stream::unfold(
+        (
+            Some(stream),
+            cancellation.clone(),
+            RunOwnershipCancellation(cancellation),
+        ),
+        |(stream, cancellation, guard)| async move {
+            let mut stream = stream?;
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    // Dropping the stream aborts an in-flight request instead of merely
+                    // preventing its result from being forwarded.
+                    drop(stream);
+                    Some((
+                        Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { turn: None })),
+                        (None, cancellation, guard),
+                    ))
+                }
+                event = stream.next() => match event {
+                    Some(event) => Some((event, (Some(stream), cancellation, guard))),
+                    None => None,
+                },
+            }
+        },
+    ))
 }
 
 fn render_final_gate_continuation_guidance(next_task: &str) -> Result<String, DenError> {
@@ -993,6 +1072,7 @@ impl SessionTrackingStream {
                     "continuing after server-side tool result"
                 );
                 let llm = LlmClient::new(config.as_ref());
+                let cancellation_pool = pool.clone();
                 let overflow = AgentStepOverflowContext {
                     pool,
                     config,
@@ -1000,6 +1080,16 @@ impl SessionTrackingStream {
                     session_store: store,
                 };
                 let next_stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
+                let next_stream = if let Some(run_id) = session.run_id.clone() {
+                    cancel_stream_when_run_loses_ownership(
+                        next_stream,
+                        cancellation_pool,
+                        session.client_session_id.clone(),
+                        run_id,
+                    )
+                } else {
+                    next_stream
+                };
                 Ok(Box::pin(
                     stream::iter(
                         checkpoint_progress.map(|event| Ok(RuntimeStreamEvent::Semantic(event))),
@@ -2694,6 +2784,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_ownership_cancellation_ends_a_pending_stream() {
+        let cancellation = CancellationToken::new();
+        let pending: RuntimeEventStream = Box::pin(stream::pending());
+        let mut stream = stream_cancelled_by_run_ownership(pending, cancellation.clone());
+
+        cancellation.cancel();
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Ok(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::TurnCancelled { turn: None }
+            )))
+        ));
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
     async fn closed_freeform_orientation_denies_task_definition() {
         let session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         let stream = test_tracking_stream_with_session(&session);
@@ -4363,12 +4470,10 @@ mod tests {
             name: Some("focus_current_task".to_string()),
             tool_calls: None,
         };
-        let continuation: ServerToolContinuationFuture = Box::pin(async {
-            Ok(superseded_continuation_stream())
-        });
-        stream.pending_server_tool = Some(Box::pin(async move {
-            Ok((call, message, continuation))
-        }));
+        let continuation: ServerToolContinuationFuture =
+            Box::pin(async { Ok(superseded_continuation_stream()) });
+        stream.pending_server_tool =
+            Some(Box::pin(async move { Ok((call, message, continuation)) }));
 
         let tool_finished = stream.next().await.expect("tool completion").expect("ok");
         assert!(matches!(
@@ -4380,7 +4485,10 @@ mod tests {
             terminal,
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { turn: None })
         ));
-        assert!(stream.next().await.is_none(), "terminal event is followed by EOF");
+        assert!(
+            stream.next().await.is_none(),
+            "terminal event is followed by EOF"
+        );
     }
 
     #[tokio::test]
