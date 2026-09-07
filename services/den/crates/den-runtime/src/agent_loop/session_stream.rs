@@ -193,6 +193,7 @@ fn stream_cancelled_by_run_ownership(
         |(stream, cancellation, guard)| async move {
             let mut stream = stream?;
             tokio::select! {
+                biased;
                 _ = cancellation.cancelled() => {
                     // Dropping the stream aborts an in-flight request instead of merely
                     // preventing its result from being forwarded.
@@ -2803,6 +2804,7 @@ mod tests {
     #[tokio::test]
     async fn run_ownership_cancellation_drops_a_pending_stream() {
         let cancellation = CancellationToken::new();
+        let (started_signal, started) = tokio::sync::oneshot::channel();
         let (dropped_signal, dropped) = tokio::sync::oneshot::channel();
         let pending: RuntimeEventStream = Box::pin(stream::once(async move {
             struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
@@ -2815,14 +2817,15 @@ mod tests {
             }
 
             let _signal = DropSignal(Some(dropped_signal));
+            let _ = started_signal.send(());
             std::future::pending::<Result<RuntimeStreamEvent, DenError>>().await
         }));
         let mut stream = stream_cancelled_by_run_ownership(pending, cancellation.clone());
         let next_event = tokio::spawn(async move { stream.next().await });
 
-        // Let the wrapped stream begin polling so its drop guard exists before
-        // cancellation wins the select.
-        tokio::task::yield_now().await;
+        // Wait until the wrapped stream has installed its drop guard; scheduler
+        // yielding alone is not a reliable ordering guarantee.
+        started.await.expect("pending stream starts polling");
         cancellation.cancel();
 
         assert!(matches!(
