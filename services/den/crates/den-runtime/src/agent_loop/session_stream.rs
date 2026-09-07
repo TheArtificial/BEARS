@@ -77,6 +77,17 @@ use super::{session_store::AgentLoopSession, ObjectiveOrientation, OrientationTa
 
 const MAX_CHECKPOINT_RECOVERY_ATTEMPTS: u8 = 2;
 
+/// A bounded execution slice is a Docket control transition, not a property of
+/// the Pair host profile. A Pair turn without an active Docket attempt may
+/// complete normally when it reaches a technical budget boundary.
+fn should_emit_docket_bounded_slice(
+    orientation: &ObjectiveOrientation,
+    reason_allows_automatic_resume: bool,
+) -> bool {
+    reason_allows_automatic_resume
+        && matches!(orientation, ObjectiveOrientation::DocketExecution { .. })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NativeToolDispatchMode {
     /// armature and similar clients execute tools and continue via `/tool-results`.
@@ -860,7 +871,10 @@ impl SessionTrackingStream {
                     session.turn_budget_state = evaluation.next_state.clone();
                 });
                 if let Some(reason) = evaluation.stop_reason {
-                    if profile == BearProfile::Pair && reason.allows_automatic_execution_resume() {
+                    if should_emit_docket_bounded_slice(
+                        &session.objective_orientation,
+                        reason.allows_automatic_execution_resume(),
+                    ) {
                         let reason_code = reason.persistence_reason();
                         store.update(&session_key, |session| {
                             session.turn_budget_state = Default::default();
@@ -2659,6 +2673,24 @@ mod tests {
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         }
+    }
+
+    #[test]
+    fn docket_bounded_slice_requires_docket_execution_orientation() {
+        let focused = ObjectiveOrientation::DocketExecution {
+            job: crate::agent_loop::DocketExecutionOrientation {
+                job_id: uuid::Uuid::nil().to_string(),
+                active_task_ref: None,
+                mutable: false,
+            },
+        };
+        let freeform = ObjectiveOrientation::Freeform {
+            policy: crate::agent_loop::FreeformPolicy::closed(),
+        };
+
+        assert!(should_emit_docket_bounded_slice(&focused, true));
+        assert!(!should_emit_docket_bounded_slice(&focused, false));
+        assert!(!should_emit_docket_bounded_slice(&freeform, true));
     }
 
     #[tokio::test]
