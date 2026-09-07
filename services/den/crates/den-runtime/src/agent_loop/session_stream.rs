@@ -2818,16 +2818,22 @@ mod tests {
             std::future::pending::<Result<RuntimeStreamEvent, DenError>>().await
         }));
         let mut stream = stream_cancelled_by_run_ownership(pending, cancellation.clone());
+        let next_event = tokio::spawn(async move { stream.next().await });
 
+        // Let the wrapped stream begin polling so its drop guard exists before
+        // cancellation wins the select.
+        tokio::task::yield_now().await;
         cancellation.cancel();
 
         assert!(matches!(
-            stream.next().await,
+            next_event.await.expect("stream task completes"),
             Some(Ok(RuntimeStreamEvent::Semantic(
                 RuntimeSemanticEvent::TurnCancelled { turn: None }
             )))
         ));
-        dropped.await.expect("pending stream is dropped on cancellation");
+        dropped
+            .await
+            .expect("pending stream is dropped on cancellation");
     }
 
     #[tokio::test]
