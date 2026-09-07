@@ -2907,6 +2907,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ownership_cancellation_suppresses_ready_stale_stream_events() {
+        let cancellation = CancellationToken::new();
+        let stale: RuntimeEventStream = Box::pin(stream::once(async {
+            Ok(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::AssistantTextDelta {
+                    text: "stale continuation".to_string(),
+                },
+            ))
+        }));
+        let mut stream = stream_cancelled_by_run_ownership(stale, cancellation.clone());
+
+        cancellation.cancel();
+
+        assert!(matches!(
+            stream.next().await,
+            Some(Ok(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::TurnCancelled { turn: None }
+            )))
+        ));
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
     async fn run_ownership_cancellation_drops_a_pending_stream() {
         let cancellation = CancellationToken::new();
         let (started_signal, started) = tokio::sync::oneshot::channel();
