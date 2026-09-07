@@ -1594,6 +1594,22 @@ pub(crate) async fn settle_active_run_for_session(
             event_sequence: None,
         });
     }
+    // The attached BearWire delivery must observe a terminal event before its
+    // cancellation handle closes the stream. Without this projection, a successor
+    // can leave the predecessor client waiting for a terminal outcome that only
+    // exists in persisted event history.
+    if let Some(run) = &active_run {
+        state.publish_bearwire_livestream(
+            session_id,
+            json!({
+                "type": "run.cancelled",
+                "scope": "ephemeral",
+                "run_id": run.run_id,
+                "reason": reason,
+                "superseded_by_run_id": superseded_by_run_id,
+            }),
+        );
+    }
     let stream_cancel = state.turn_cancellations.cancel_session(session_id);
     let active_turn = state.tool_turns.cancel_active_turn(session_id);
     let stream_run_ids = stream_cancel
@@ -3501,6 +3517,21 @@ mod tests {
             RunFailureReason::ContinuationStartFailed.as_str(),
             "continuation_start_failed"
         );
+    }
+
+    #[test]
+    fn supersession_cancellation_projection_is_terminal_and_names_the_successor() {
+        let event = json!({
+            "type": "run.cancelled",
+            "scope": "ephemeral",
+            "run_id": "run-old",
+            "reason": "superseded_by_new_run",
+            "superseded_by_run_id": "run-new",
+        });
+
+        assert_eq!(event["type"], "run.cancelled");
+        assert_eq!(event["run_id"], "run-old");
+        assert_eq!(event["superseded_by_run_id"], "run-new");
     }
 
     #[test]
