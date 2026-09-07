@@ -3030,6 +3030,19 @@ async fn prior_process_obligation_is_reported_as_den_restart(pool: sqlx::PgPool)
     )
     .await
     .expect("insert prior-process obligation");
+    turn_obligations::upsert_tool_result_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-restart-second",
+        None,
+        json!({
+            "tool_name": "fs_search_files",
+            "den_process_epoch_id": prior_process_epoch_id,
+        }),
+    )
+    .await
+    .expect("insert second prior-process obligation");
 
     assert_eq!(
         crate::expire_client_obligations_once(&state, 100)
@@ -3058,6 +3071,21 @@ async fn prior_process_obligation_is_reported_as_den_restart(pool: sqlx::PgPool)
     assert_eq!(
         failed.event.data["context"]["source"],
         "bearwire_client_obligation_restart_reconciliation"
+    );
+    assert_eq!(
+        failed.event.data["context"]["recovery"]["status"],
+        "interrupted"
+    );
+    assert_eq!(failed.event.data["context"]["recovery"]["retryable"], true);
+    assert_eq!(
+        failed.event.data["context"]["recovery"]["next_action"],
+        "send_message"
+    );
+    assert!(
+        turn_obligations::open_client_obligations_for_run(&pool, &run_id)
+            .await
+            .expect("list open obligations")
+            .is_empty()
     );
     assert!(failed.event.data["user_message"]
         .as_str()

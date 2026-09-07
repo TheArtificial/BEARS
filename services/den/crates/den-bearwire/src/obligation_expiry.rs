@@ -199,7 +199,16 @@ pub async fn expire_client_obligations_once(
                         "bearwire_client_obligation_expiry_loop"
                     },
                     "current_process_epoch_id": state.process_epoch_id,
-                    "recovery": recovery,
+                    "recovery": if interrupted_by_restart {
+                        json!({
+                            "status": "interrupted",
+                            "retryable": true,
+                            "automatic_retry_allowed": false,
+                            "next_action": "send_message",
+                        })
+                    } else {
+                        recovery.unwrap_or(Value::Null)
+                    },
                 })),
             )
             .await;
@@ -221,7 +230,16 @@ pub async fn expire_client_obligations_once(
                         "bearwire_client_obligation_expiry_loop"
                     },
                     "current_process_epoch_id": state.process_epoch_id,
-                    "recovery": recovery,
+                    "recovery": if interrupted_by_restart {
+                        json!({
+                            "status": "interrupted",
+                            "retryable": true,
+                            "automatic_retry_allowed": false,
+                            "next_action": "send_message",
+                        })
+                    } else {
+                        recovery.unwrap_or(Value::Null)
+                    },
                 })),
             )
             .await;

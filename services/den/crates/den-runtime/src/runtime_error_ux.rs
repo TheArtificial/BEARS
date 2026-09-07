@@ -166,6 +166,7 @@ pub fn normalized_operational_outcome(
         "continuation_run_state_conflict" => ("run_state_conflict", false, "continuation_runtime"),
         "continuation_watchdog_timeout" => ("continuation_timeout", true, "continuation_runtime"),
         "continuation_start_failed" => ("continuation_start_failed", true, "continuation_runtime"),
+        "server_restart_interrupted" => ("server_restart_interrupted", true, "runtime_restart"),
         "runtime_internal" if is_budget_or_loop_failure(reason, message) => {
             ("turn_budget_exhausted", false, "turn_budget")
         }
@@ -846,6 +847,9 @@ mod tests {
         let user_message = projection.user_message.expect("user message");
         assert!(user_message.contains("Den restarted"));
         assert!(user_message.contains("connected work surface"));
+        assert_eq!(projection.content["kind"], "server_restart_interrupted");
+        assert_eq!(projection.content["retryable"], true);
+        assert_eq!(projection.content["subsystem"], "runtime_restart");
     }
 
     #[test]
