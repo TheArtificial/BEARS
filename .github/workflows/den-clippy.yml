@@ -18,6 +18,61 @@ env:
     CARGO_TERM_COLOR: always
 
 jobs:
+    unit-tests:
+        runs-on: ubuntu-24.04-arm
+        defaults:
+            run:
+                working-directory: services/den
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              run: rustup toolchain install stable --profile minimal
+
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: services/den
+
+            - name: Run workspace unit tests
+              run: cargo test --workspace --lib
+
+    postgres-integration:
+        runs-on: ubuntu-24.04-arm
+        defaults:
+            run:
+                working-directory: services/den
+        services:
+            postgres:
+                image: postgres:16
+                env:
+                    POSTGRES_USER: postgres
+                    POSTGRES_PASSWORD: postgres
+                    POSTGRES_DB: den_test
+                options: >-
+                    --health-cmd "pg_isready -U postgres -d den_test"
+                    --health-interval 10s
+                    --health-timeout 5s
+                    --health-retries 5
+                ports:
+                    - 5432:5432
+        env:
+            # The workflow default is offline for compile/lint work. Live SQLx
+            # tests must connect to the service container instead.
+            SQLX_OFFLINE: "false"
+            DATABASE_URL: postgres://postgres:postgres@localhost:5432/den_test
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              run: rustup toolchain install stable --profile minimal
+
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: services/den
+
+            - name: Run BearWire Postgres integration tests
+              run: cargo test -p den-bearwire
+
     clippy:
         runs-on: ubuntu-24.04-arm
         defaults:

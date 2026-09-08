@@ -2156,7 +2156,7 @@ pub(super) async fn reconcile_execution(
 /// then advances its durable scheduler focus before returning control.
 pub(super) async fn settle_execution_task(
     pool: &PgPool,
-    settlement: DocketExecutionTaskSettlement,
+    mut settlement: DocketExecutionTaskSettlement,
 ) -> Result<DocketJobExecuteOutcome, DenError> {
     let execution = settlement.execution.clone();
     let status = settlement.status.as_str();
@@ -2164,6 +2164,14 @@ pub(super) async fn settle_execution_task(
         return Err(DenError::ValidationError(
             "Docket execution settlement requires a terminal task status".to_string(),
         ));
+    }
+    if settlement
+        .result_summary
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(str::is_empty)
+    {
+        settlement.result_summary = Some(format!("Task marked {status}."));
     }
     let Some(projection) = get_job(pool, execution.bear_id, execution.job_id).await? else {
         return Err(DenError::NotFound(format!(

@@ -26,8 +26,8 @@ use den_docket::{
     DocketExecutionHost, DocketExecutionHostKind, DocketFocusedExecutionAcquire,
     DocketFocusedExecutionBinding, DocketJobCreate, DocketJobCriterionInput,
     DocketJobOverlapResolution, DocketService, DocketTaskCreate, DocketTaskDifficulty,
-    DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService, RoutingStrategy,
-    TaskListVisibility,
+    DocketTaskInput, DocketTaskKind, DocketTaskPlacement, DocketTaskScope, PgDocketService,
+    RoutingStrategy, TaskListVisibility,
 };
 use den_http::armature_tokens;
 use den_protocol::{
@@ -36,7 +36,10 @@ use den_protocol::{
     RuntimeSemanticEvent, RuntimeStreamEvent,
 };
 use den_runtime::{
-    bearwire_events, native_runtime::NativeRuntimeConversationBackend, turn_obligations, turn_runs,
+    bearwire_events,
+    native_runtime::NativeRuntimeConversationBackend,
+    turn_ids::{ClientSessionId, TurnRunId},
+    turn_obligations, turn_runs,
 };
 use den_service::{
     bears::{db as bears_db, db::BearParams},
@@ -562,6 +565,70 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         .await
         .expect("create Docket job");
 
+    let assigned_task_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_tasks WHERE job_id = $1 ORDER BY sibling_order, id LIMIT 1",
+    )
+    .bind(job.job.id)
+    .fetch_one(&pool)
+    .await
+    .expect("load task to assign before focus");
+    let session_anchor_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM client_sessions WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3",
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load Pair session anchor");
+    sqlx::query("INSERT INTO bear_pair_task_attachments (task_id, session_id) VALUES ($1, $2)")
+        .bind(assigned_task_id)
+        .bind(session_anchor_id)
+        .execute(&pool)
+        .await
+        .expect("attach job task to Pair session");
+    let selection_params = json!({
+        "bear_slug": bear_slug,
+        "session_id": session_id,
+        "task_id": assigned_task_id,
+    });
+    let preview = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.selection_request",
+        selection_params.clone(),
+    )
+    .await;
+    assert_eq!(
+        preview["result"]["confirmation_required"], true,
+        "{preview}"
+    );
+    let selected = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.select",
+        selection_params,
+    )
+    .await;
+    assert!(selected.get("error").is_none(), "{selected}");
+
+    // Assignment must not take control of the Pair session. Focus is the
+    // explicit transition from chat to Docket control.
+    let before_focus =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
+            .await
+            .expect("load client session before focus")
+            .expect("client session exists");
+    assert_eq!(before_focus.current_task_id, Some(assigned_task_id));
+    let attempts_before_focus: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM docket_execution_attempts WHERE pair_session_id = $1 AND state = 'running'",
+    )
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load pre-focus execution authority");
+    assert_eq!(attempts_before_focus, 0);
+
     let attached = rpc_value(
         state,
         &token,
@@ -572,6 +639,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     let task_id = attached["result"]["pair_binding"]["task"]["id"]
         .as_str()
         .unwrap_or_else(|| panic!("focus execution failed: {attached}"));
+    assert_eq!(task_id, assigned_task_id.to_string());
     assert_eq!(
         attached["result"]["pair_binding"]["control"]["kind"],
         "docket"
@@ -603,6 +671,62 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     .await
     .expect("load Pair attachment");
     assert_eq!(attached_count, 1);
+
+    let docket_run_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_job_runs WHERE job_id = $1 ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind(job.job.id)
+    .fetch_one(&pool)
+    .await
+    .expect("load focused Docket run");
+
+    // Docket-controlled work may grow its own task tree.
+    let spawned = PgDocketService::from_pool(&pool)
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: Some(job.job.id),
+            pair_session_id: None,
+            parent_task_id: Some(Uuid::parse_str(task_id).expect("parse root task id")),
+            sibling_order: 0,
+            placement: Some(DocketTaskPlacement::Last),
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Run,
+            title: "Follow up during focused control".to_string(),
+            body: "Created while Docket owns the Pair loop".to_string(),
+            completion_criteria: vec!["Follow-up is settled".to_string()],
+            difficulty: Some(DocketTaskDifficulty::Trivial),
+            effort_hint: Some(DocketEffortHint::Low),
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: Some(docket_run_id),
+        })
+        .await
+        .expect("add subtask while focused");
+    assert_eq!(
+        spawned.parent_task_id,
+        Some(Uuid::parse_str(task_id).unwrap())
+    );
+
+    // Children settle before their parent. This also proves a task added to
+    // the live Docket run can be settled with only the required parameters.
+    let settled_child = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "docket.jobs.settle_task",
+        json!({
+            "bear_slug": bear_slug,
+            "job_id": job.job.id,
+            "task_id": spawned.id,
+            "status": "done",
+            "session_id": session_id,
+        }),
+    )
+    .await;
+    assert!(settled_child.get("error").is_none(), "{settled_child}");
 
     let settled = rpc_value(
         test_state(pool.clone()),
@@ -677,6 +801,351 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     assert_eq!(
         continued_attempts, 1,
         "a successor Pair run for a focused session must inherit Docket authority; {continued}"
+    );
+
+    // Optional settlement fields deliberately stay absent: the public default
+    // must be sufficient to finish ordinary Docket work.
+    let settled_successor = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "docket.jobs.settle_task",
+        json!({
+            "bear_slug": bear_slug,
+            "job_id": job.job.id,
+            "task_id": successor_id,
+            "status": "done",
+            "session_id": session_id,
+        }),
+    )
+    .await;
+    assert!(
+        settled_successor.get("error").is_none(),
+        "{settled_successor}"
+    );
+    let terminal_run_state: String =
+        sqlx::query_scalar("SELECT state FROM bear_job_runs WHERE id = $1")
+            .bind(docket_run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load terminal Docket run state");
+    assert_eq!(
+        terminal_run_state, "completed",
+        "settling every task must complete the Docket run: {settled_successor}"
+    );
+    let terminal_attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM docket_execution_attempts WHERE pair_session_id = $1 AND state = 'running'",
+    )
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load terminal Pair execution authority");
+    assert_eq!(
+        terminal_attempts, 0,
+        "completion must release Docket control"
+    );
+
+    let chat_run = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "client": "bearwire-test",
+            "prompt": "Back to ordinary chat."
+        }),
+    )
+    .await;
+    assert!(
+        chat_run.get("error").is_none(),
+        "chat must resume: {chat_run}"
+    );
+    let chat_run_id = chat_run["result"]["run_id"].as_str().expect("chat run id");
+    let chat_attempts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1")
+            .bind(chat_run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load chat attempts");
+    assert_eq!(
+        chat_attempts, 0,
+        "ordinary chat must not inherit Docket control"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn blocked_focused_task_ends_docket_control_and_returns_to_chat(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-encryption-key".to_string();
+    // Focus performs an internal preparation request before the task-oriented
+    // runtime turn. Keep the mock available for both requests so this test
+    // verifies the latter rather than mistaking preparation EOF for a started loop.
+    config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+    ]);
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let surface_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at)\n         VALUES ($1, $2, 'git_workspace', $3, now(), now())",
+    )
+    .bind(surface_id)
+    .bind(format!("bearwire-binding-{}", Uuid::new_v4().simple()))
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .expect("create work surface");
+    sqlx::query("INSERT INTO git_work_surface_details (id, upstream_url) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind("https://example.test/bearwire-binding.git")
+        .execute(&pool)
+        .await
+        .expect("create git surface details");
+    sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind(bear_id)
+        .execute(&pool)
+        .await
+        .expect("assign bear to work surface");
+
+    let job = PgDocketService::from_pool(&pool)
+        .create_job(DocketJobCreate {
+            bear_id,
+            created_by_user_id: user_id,
+            created_by_role: "pair".to_string(),
+            goal: "Pair binding diagnostics regression".to_string(),
+            work_surface_id: Some(surface_id),
+            work_surface_assignments: vec![],
+            commit_policy: None,
+            work_branch: None,
+            visibility: TaskListVisibility::SameUser,
+            source_conversation_id: None,
+            objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
+            criteria: vec![],
+            tasks: vec![
+                DocketTaskInput {
+                    client_key: None,
+                    parent_client_key: None,
+                    parent_task_id: None,
+                    sibling_order: Some(0),
+                    kind: DocketTaskKind::Execution,
+                    scope: DocketTaskScope::Template,
+                    title: "Verify binding".to_string(),
+                    body: "Verify Pair binding response".to_string(),
+                    completion_criteria: vec!["Binding is reported".to_string()],
+                    difficulty: Some(DocketTaskDifficulty::Trivial),
+                    effort_hint: Some(DocketEffortHint::Low),
+                    routing_strategy: RoutingStrategy::Auto,
+                    expected_context_size: None,
+                    result_rollup_policy: None,
+                },
+                DocketTaskInput {
+                    client_key: None,
+                    parent_client_key: None,
+                    parent_task_id: None,
+                    sibling_order: Some(1),
+                    kind: DocketTaskKind::Execution,
+                    scope: DocketTaskScope::Template,
+                    title: "Continue after settlement".to_string(),
+                    body: "Verify successor task control".to_string(),
+                    completion_criteria: vec!["Successor is selected".to_string()],
+                    difficulty: Some(DocketTaskDifficulty::Trivial),
+                    effort_hint: Some(DocketEffortHint::Low),
+                    routing_strategy: RoutingStrategy::Auto,
+                    expected_context_size: None,
+                    result_rollup_policy: None,
+                },
+            ],
+        })
+        .await
+        .expect("create Docket job");
+
+    let assigned_task_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_tasks WHERE job_id = $1 ORDER BY sibling_order, id LIMIT 1",
+    )
+    .bind(job.job.id)
+    .fetch_one(&pool)
+    .await
+    .expect("load task to assign before focus");
+    let session_anchor_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM client_sessions WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3",
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load Pair session anchor");
+    sqlx::query("INSERT INTO bear_pair_task_attachments (task_id, session_id) VALUES ($1, $2)")
+        .bind(assigned_task_id)
+        .bind(session_anchor_id)
+        .execute(&pool)
+        .await
+        .expect("attach job task to Pair session");
+    let selection_params = json!({
+        "bear_slug": bear_slug,
+        "session_id": session_id,
+        "task_id": assigned_task_id,
+    });
+    let preview = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.selection_request",
+        selection_params.clone(),
+    )
+    .await;
+    assert_eq!(
+        preview["result"]["confirmation_required"], true,
+        "{preview}"
+    );
+    let selected = rpc_value(
+        state.clone(),
+        &token,
+        "session.current_task.select",
+        selection_params,
+    )
+    .await;
+    assert!(selected.get("error").is_none(), "{selected}");
+
+    // Assignment must not take control of the Pair session. Focus is the
+    // explicit transition from chat to Docket control.
+    let before_focus =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
+            .await
+            .expect("load client session before focus")
+            .expect("client session exists");
+    assert_eq!(before_focus.current_task_id, Some(assigned_task_id));
+    let attempts_before_focus: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM docket_execution_attempts WHERE pair_session_id = $1 AND state = 'running'",
+    )
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load pre-focus execution authority");
+    assert_eq!(attempts_before_focus, 0);
+
+    let attached = rpc_value(
+        state,
+        &token,
+        "docket.jobs.execute",
+        json!({ "bear_slug": bear_slug, "job_id": job.job.id, "session_id": session_id }),
+    )
+    .await;
+    let task_id = attached["result"]["pair_binding"]["task"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("focus execution failed: {attached}"));
+    assert_eq!(task_id, assigned_task_id.to_string());
+    assert_eq!(
+        attached["result"]["pair_binding"]["control"]["kind"],
+        "docket"
+    );
+    assert_eq!(
+        attached["result"]["pair_binding"]["control"]["state"],
+        "running"
+    );
+    assert_eq!(attached["result"]["pair_binding"]["task"]["selected"], true);
+    assert!(attached["result"]["pair_binding"]["run"]["id"]
+        .as_str()
+        .is_some_and(|run_id| !run_id.is_empty()));
+    let loop_run_id = attached["result"]["pair_binding"]["run"]["id"]
+        .as_str()
+        .expect("Pair loop run id");
+    let live_attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
+    )
+    .bind(loop_run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load live Pair execution authority");
+    assert_eq!(live_attempts, 1);
+    let attached_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM bear_pair_task_attachments WHERE task_id = $1 AND released_at IS NULL",
+    )
+    .bind(Uuid::parse_str(task_id).expect("parse attached task id"))
+    .fetch_one(&pool)
+    .await
+    .expect("load Pair attachment");
+    assert_eq!(attached_count, 1);
+
+    // A blocked active task ends Docket control without pretending that the
+    // job completed. Optional settlement fields remain absent here too.
+    let blocked = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "docket.jobs.settle_task",
+        json!({
+            "bear_slug": bear_slug,
+            "job_id": job.job.id,
+            "task_id": task_id,
+            "status": "blocked",
+            "session_id": session_id,
+        }),
+    )
+    .await;
+    assert!(blocked.get("error").is_none(), "{blocked}");
+
+    let terminal_run_state: String = sqlx::query_scalar(
+        "SELECT state FROM bear_job_runs WHERE job_id = $1 ORDER BY started_at DESC LIMIT 1",
+    )
+    .bind(job.job.id)
+    .fetch_one(&pool)
+    .await
+    .expect("load blocked Docket run state");
+    assert_eq!(terminal_run_state, "blocked", "{blocked}");
+    let live_attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM docket_execution_attempts WHERE pair_session_id = $1 AND state = 'running'",
+    )
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load terminal Pair execution authority");
+    assert_eq!(live_attempts, 0, "blocking must release Docket control");
+
+    // The blocked job remains selected/recoverable, but a normal chat turn is
+    // no longer Docket-controlled.
+    let session =
+        client_sessions::find_for_user_bear_session_id(&pool, user_id, bear_id, &session_id)
+            .await
+            .expect("load client session")
+            .expect("client session exists");
+    assert_eq!(session.current_task_id, Some(assigned_task_id));
+    let chat_run = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "client": "bearwire-test",
+            "prompt": "Report the block to the user."
+        }),
+    )
+    .await;
+    assert!(
+        chat_run.get("error").is_none(),
+        "chat must resume: {chat_run}"
+    );
+    let chat_run_id = chat_run["result"]["run_id"].as_str().expect("chat run id");
+    let chat_attempts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1")
+            .bind(chat_run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load chat execution attempts");
+    assert_eq!(
+        chat_attempts, 0,
+        "ordinary chat must not inherit Docket control"
     );
 }
 
@@ -2747,6 +3216,76 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn run_start_reuses_active_run_unless_explicitly_superseded(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-encryption-key".to_string();
+    config.llm_api_url =
+        start_mock_openai_sse_server_asserting_requests(vec![MockLlmRequestAssertion::requiring(
+            Vec::new(),
+        )]);
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+    let active_run_id = format!("run_{}", Uuid::new_v4().simple());
+    turn_runs::create_run(&pool, &active_run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create active run");
+
+    let retry = rpc_value(
+        state.clone(),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "client": "bearwire-test",
+            "prompt": "Retry the same request."
+        }),
+    )
+    .await;
+    assert!(retry.get("error").is_none(), "{retry}");
+    assert_eq!(retry["result"]["reused"], true, "{retry}");
+    assert_eq!(retry["result"]["run_id"], active_run_id, "{retry}");
+    assert_eq!(
+        turn_runs::active_run_for_session(&pool, &session_id)
+            .await
+            .expect("load active run")
+            .expect("active run remains")
+            .run_id,
+        active_run_id
+    );
+
+    let replacement = rpc_value(
+        test_state(pool.clone()),
+        &token,
+        "run.start",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "client": "bearwire-test",
+            "prompt": "A distinct user message.",
+            "supersede_active_run": true
+        }),
+    )
+    .await;
+    assert!(replacement.get("error").is_none(), "{replacement}");
+    assert_ne!(
+        replacement["result"]["run_id"], active_run_id,
+        "{replacement}"
+    );
+    let previous = turn_runs::get_run(&pool, &active_run_id)
+        .await
+        .expect("load prior run")
+        .expect("prior run exists");
+    assert_eq!(previous.state, "cancelled");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn same_session_rejects_second_active_run(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
@@ -2766,6 +3305,80 @@ async fn same_session_rejects_second_active_run(pool: sqlx::PgPool) {
             .contains("idx_turn_runs_one_active_per_session"),
         "unexpected error: {err}"
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn same_session_non_superseding_start_attaches_active_run(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_a = format!("run_{}", Uuid::new_v4().simple());
+    let run_b = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_a, &session_id, bear_id, user_id)
+        .await
+        .expect("create first active run");
+
+    let session_id = ClientSessionId::new(session_id).expect("valid session id");
+    let run_b = TurnRunId::new(run_b).expect("valid run id");
+    let attached = turn_runs::create_or_attach_active_run_with_ids(
+        &pool,
+        &run_b,
+        &session_id,
+        bear_id,
+        user_id,
+    )
+    .await
+    .expect("attach to active run");
+    let turn_runs::CreateOrAttachRun::Attached(attached) = attached else {
+        panic!("non-superseding start should attach rather than create a second run");
+    };
+    assert_eq!(attached.run_id, run_a);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn concurrent_non_superseding_starts_create_one_run(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = ClientSessionId::new(format!("session-{}", Uuid::new_v4().simple()))
+        .expect("valid session id");
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, session_id.as_str()).await;
+    let first_run = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple())).expect("run id");
+    let second_run = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple())).expect("run id");
+
+    let first = turn_runs::create_or_attach_active_run_with_ids(
+        &pool,
+        &first_run,
+        &session_id,
+        bear_id,
+        user_id,
+    );
+    let second = turn_runs::create_or_attach_active_run_with_ids(
+        &pool,
+        &second_run,
+        &session_id,
+        bear_id,
+        user_id,
+    );
+    let (first, second) = tokio::join!(first, second);
+    let first = first.expect("first create-or-attach succeeds");
+    let second = second.expect("second create-or-attach succeeds");
+
+    let created_run_id = match (&first, &second) {
+        (
+            turn_runs::CreateOrAttachRun::Created(created),
+            turn_runs::CreateOrAttachRun::Attached(attached),
+        )
+        | (
+            turn_runs::CreateOrAttachRun::Attached(attached),
+            turn_runs::CreateOrAttachRun::Created(created),
+        ) => {
+            assert_eq!(attached.run_id, created.run_id);
+            created.run_id.as_str()
+        }
+        _ => panic!("concurrent starts must create one run and attach the other"),
+    };
+    assert!(created_run_id == first_run.as_str() || created_run_id == second_run.as_str());
 }
 
 #[sqlx::test(migrations = "../../migrations")]
