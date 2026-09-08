@@ -326,6 +326,16 @@ fn orphan_tool_call_ids_from_rows(rows: &[TranscriptRow]) -> Vec<(String, String
         .collect()
 }
 
+fn orphan_tool_result_diagnostics(tool_name: &str) -> Value {
+    serde_json::json!({
+        "component": "den.agent_loop",
+        "phase": "orphan_tool_call_backfill",
+        "reason": "turn_interrupted_before_tool_result",
+        "retryable": true,
+        "tool_name": tool_name,
+    })
+}
+
 fn backfill_incomplete_tool_results(
     pool: &PgPool,
     bear_id: Uuid,
@@ -354,7 +364,7 @@ fn backfill_incomplete_tool_results(
             %tool_call_id,
             %tool_name,
             %conversation_id,
-            "backfilling incomplete tool_result for orphan tool_call"
+            "backfilling cancelled tool_result for orphan tool_call"
         );
         spawn_persist_tool_result(
             context.clone(),
@@ -362,15 +372,10 @@ fn backfill_incomplete_tool_results(
                 Some(tool_name.clone()),
                 tool_call_id,
                 None,
-                den_core::tools::result_compaction::ToolResultStatus::Incomplete,
+                den_core::tools::result_compaction::ToolResultStatus::Cancelled,
                 None,
                 Value::Null,
-                serde_json::json!({
-                    "component": "den.agent_loop",
-                    "phase": "orphan_tool_call_backfill",
-                    "reason": "turn_interrupted",
-                    "tool_name": tool_name,
-                }),
+                orphan_tool_result_diagnostics(&tool_name),
                 None,
             ),
             &provenance,
@@ -558,6 +563,20 @@ mod tests {
     use super::*;
     use crate::agent_loop::tool_outcome::LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE;
     use serde_json::json;
+
+    #[test]
+    fn orphan_tool_result_is_cancelled_and_retryable() {
+        assert_eq!(
+            orphan_tool_result_diagnostics("focus_current_task"),
+            json!({
+                "component": "den.agent_loop",
+                "phase": "orphan_tool_call_backfill",
+                "reason": "turn_interrupted_before_tool_result",
+                "retryable": true,
+                "tool_name": "focus_current_task",
+            })
+        );
+    }
 
     #[test]
     fn reconstruct_transcript_messages_rebuilds_assistant_tool_and_result_sequence() {
