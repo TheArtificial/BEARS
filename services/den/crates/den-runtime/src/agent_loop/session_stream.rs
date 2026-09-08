@@ -1069,9 +1069,12 @@ impl SessionTrackingStream {
                     tracing::info!(
                         event = "native_superseded_run_continuation_fenced",
                         session_key = %session_key,
-                        client_session_id = %session.client_session_id,
+                        conversation_id = %session.conversation_id,
+                        request_id = ?session.request_id,
                         run_id = ?session.run_id,
                         active_run_id = ?active_run.as_ref().map(|run| run.run_id.as_str()),
+                        terminal_reason = "run_superseded",
+                        client_terminal_delivery = "turn_cancelled",
                         "stopping server-side continuation for superseded run"
                     );
                     // A fenced continuation is an explicit cancellation, not transport EOF.
