@@ -1031,6 +1031,8 @@ pub async fn start_pair_current_task(
     // Docket control is an explicit execution handoff. Its synthetic turn must receive
     // the same mutation/execution tool surface as an interactive Write turn.
     start_params.insert("requested_mode".to_string(), json!("write"));
+    // Task starts are a deliberate Docket control handoff, not reconnect retries.
+    start_params.insert("supersede_active_run".to_string(), json!(true));
     start_params.insert(
         "conversation_id".to_string(),
         json!(session.conversation_id),

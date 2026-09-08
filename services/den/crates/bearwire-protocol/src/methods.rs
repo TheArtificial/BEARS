@@ -134,6 +134,10 @@ pub struct RunStartRequest {
         deserialize_with = "deserialize_optional_string"
     )]
     pub requested_mode: Option<String>,
+    /// A new user action may explicitly replace the active session run. Omitted
+    /// requests are retry/reconnect-safe and reuse that run instead.
+    #[serde(default)]
+    pub supersede_active_run: bool,
     /// Intentionally raw: adapter session/capability context is an extensible envelope.
     #[serde(default)]
     pub client_context: Option<Value>,

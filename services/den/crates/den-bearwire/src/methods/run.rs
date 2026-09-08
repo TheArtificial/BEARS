@@ -2250,6 +2250,7 @@ async fn run_start_with_recovery_source(
     let prompt = request.prompt;
     let prompt_context = request.prompt_context;
     let client = request.client.unwrap_or_else(|| DEFAULT_CLIENT.to_string());
+    let supersede_active_run = request.supersede_active_run;
     let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -2403,16 +2404,29 @@ async fn run_start_with_recovery_source(
     let pair_task_id = pair_task_id.or(inherited_pair_task_id);
     let session_id = ClientSessionId::new(session_id.clone())?;
     let session_id_string = session_id.to_string();
-    let superseded = settle_active_run_for_session(
-        state,
-        session_id.as_str(),
-        bear.id,
-        user_id,
-        "superseded_by_new_run",
-        Some(run_id.as_str()),
-        recovery_source_run_id,
-    )
-    .await?;
+    // `run.start` only replaces an active turn when the caller explicitly
+    // identifies this as a new user action, not a retry or reconnect.
+    let superseded = if supersede_active_run {
+        settle_active_run_for_session(
+            state,
+            session_id.as_str(),
+            bear.id,
+            user_id,
+            "superseded_by_new_run",
+            Some(run_id.as_str()),
+            recovery_source_run_id,
+        )
+        .await?
+    } else {
+        SettledRunLifecycle {
+            run: None,
+            stream_run_ids: Vec::new(),
+            cancelled_stream: false,
+            cancelled_tool_turn: false,
+            settled_obligations: 0,
+            event_sequence: None,
+        }
+    };
     if superseded.settled() {
         tracing::info!(
             session_id = %session_id,
@@ -2426,9 +2440,33 @@ async fn run_start_with_recovery_source(
         );
     }
 
-    let run =
+    let run = if supersede_active_run {
         turn_runs::create_run_with_ids(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id)
-            .await?;
+            .await?
+    } else {
+        match turn_runs::create_or_attach_active_run_with_ids(
+            &state.sqlx_pool,
+            &run_id,
+            &session_id,
+            bear.id,
+            user_id,
+        )
+        .await?
+        {
+            turn_runs::CreateOrAttachRun::Created(run) => run,
+            turn_runs::CreateOrAttachRun::Attached(active_run) => {
+                return Ok(json!({
+                    "ok": true,
+                    "accepted": true,
+                    "reused": true,
+                    "run_id": active_run.run_id,
+                    "session_id": session_id,
+                    "state": active_run.state,
+                    "launch_state": "already_running",
+                }));
+            }
+        }
+    };
     let setup = async {
         let attempt = if let Some(task_id) = pair_task_id {
             let service = PgDocketService::from_pool(&state.sqlx_pool);

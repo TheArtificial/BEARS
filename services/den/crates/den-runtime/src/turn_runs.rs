@@ -134,6 +134,68 @@ pub async fn create_run_with_ids(
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub enum CreateOrAttachRun {
+    Created(TurnRunRow),
+    Attached(TurnRunRow),
+}
+
+/// Serializes non-superseding starts for one client session. The advisory lock
+/// closes the gap between checking for a live run and creating its replacement.
+pub async fn create_or_attach_active_run_with_ids(
+    pool: &PgPool,
+    run_id: &TurnRunId,
+    session_id: &ClientSessionId,
+    bear_id: Uuid,
+    user_id: i32,
+) -> Result<CreateOrAttachRun, DenError> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(session_id.as_str())
+        .execute(&mut *transaction)
+        .await?;
+
+    if let Some(row) = sqlx::query_as!(
+        TurnRunRow,
+        r#"
+        SELECT id, run_id, session_id, bear_id, user_id, state,
+               terminal_reason AS "terminal_reason?", created_at, updated_at,
+               completed_at AS "completed_at?"
+        FROM turn_runs
+        WHERE session_id = $1
+          AND state IN ('accepted', 'running', 'waiting_for_client', 'continuing')
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+        session_id.as_str(),
+    )
+    .fetch_optional(&mut *transaction)
+    .await?
+    {
+        transaction.commit().await?;
+        return Ok(CreateOrAttachRun::Attached(row));
+    }
+
+    let row = sqlx::query_as!(
+        TurnRunRow,
+        r#"
+        INSERT INTO turn_runs (run_id, session_id, bear_id, user_id, state)
+        VALUES ($1, $2, $3, $4, 'accepted')
+        RETURNING id, run_id, session_id, bear_id, user_id, state,
+                  terminal_reason AS "terminal_reason?", created_at, updated_at,
+                  completed_at AS "completed_at?"
+        "#,
+        run_id.as_str(),
+        session_id.as_str(),
+        bear_id,
+        user_id,
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(CreateOrAttachRun::Created(row))
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DocketPairLaunchRow {
     pub run_id: String,
     pub attempt_id: Uuid,
