@@ -2429,59 +2429,80 @@ async fn run_start_with_recovery_source(
     let run =
         turn_runs::create_run_with_ids(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id)
             .await?;
-    let attempt = if let Some(task_id) = pair_task_id {
-        let service = PgDocketService::from_pool(&state.sqlx_pool);
-        let attempt = service
-            .acquire_focused_execution(DocketFocusedExecutionAcquire {
-                bear_id: bear.id,
-                task_id,
-                binding: DocketFocusedExecutionBinding {
-                    kind: DocketExecutionBindingKind::ClientSession,
-                    id: session_id.to_string(),
-                },
-                host: DocketExecutionHost {
-                    kind: DocketExecutionHostKind::Pair,
-                    run_id: session_run_id.clone(),
-                },
-                acquisition_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_run_id.as_bytes()),
-            })
-            .await?;
-        Some(
-            service
-                .start_execution_attempt(DocketExecutionAttemptStart {
-                    attempt_id: attempt.id,
-                    fence_epoch: attempt.fence_epoch,
+    let setup = async {
+        let attempt = if let Some(task_id) = pair_task_id {
+            let service = PgDocketService::from_pool(&state.sqlx_pool);
+            let attempt = service
+                .acquire_focused_execution(DocketFocusedExecutionAcquire {
+                    bear_id: bear.id,
+                    task_id,
+                    binding: DocketFocusedExecutionBinding {
+                        kind: DocketExecutionBindingKind::ClientSession,
+                        id: session_id.to_string(),
+                    },
+                    host: DocketExecutionHost {
+                        kind: DocketExecutionHostKind::Pair,
+                        run_id: session_run_id.clone(),
+                    },
+                    acquisition_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_run_id.as_bytes()),
                 })
-                .await?,
-        )
-    } else {
-        None
-    };
-    let launch_claim_id = if let Some(attempt) = attempt.as_ref() {
-        turn_runs::queue_docket_pair_launch(
-            &state.sqlx_pool,
-            &session_run_id,
-            attempt.id,
-            attempt.fence_epoch,
-        )
-        .await?;
-        let claim_id = Uuid::new_v4();
-        turn_runs::claim_docket_pair_launch(
-            &state.sqlx_pool,
-            &session_run_id,
-            attempt.id,
-            attempt.fence_epoch,
-            claim_id,
-        )
-        .await?
-        .ok_or_else(|| {
-            CustomError::ValidationError(
-                "Docket Pair launch is already claimed by another controller".to_string(),
+                .await?;
+            Some(
+                service
+                    .start_execution_attempt(DocketExecutionAttemptStart {
+                        attempt_id: attempt.id,
+                        fence_epoch: attempt.fence_epoch,
+                    })
+                    .await?,
             )
-        })?;
-        Some(claim_id)
-    } else {
-        None
+        } else {
+            None
+        };
+        let launch_claim_id = if let Some(attempt) = attempt.as_ref() {
+            turn_runs::queue_docket_pair_launch(
+                &state.sqlx_pool,
+                &session_run_id,
+                attempt.id,
+                attempt.fence_epoch,
+            )
+            .await?;
+            let claim_id = Uuid::new_v4();
+            turn_runs::claim_docket_pair_launch(
+                &state.sqlx_pool,
+                &session_run_id,
+                attempt.id,
+                attempt.fence_epoch,
+                claim_id,
+            )
+            .await?
+            .ok_or_else(|| {
+                CustomError::ValidationError(
+                    "Docket Pair launch is already claimed by another controller".to_string(),
+                )
+            })?;
+            Some(claim_id)
+        } else {
+            None
+        };
+        Ok::<_, CustomError>((attempt, launch_claim_id))
+    }
+    .await;
+    let (attempt, launch_claim_id) = match setup {
+        Ok(setup) => setup,
+        Err(error) => {
+            fail_run_lifecycle(
+                &state.sqlx_pool,
+                session_id.as_str(),
+                run_id.as_str(),
+                bear.id,
+                user_id,
+                RunFailureReason::StartFailed,
+                format!("focused execution startup failed: {error}"),
+                Some(json!({"task_id": pair_task_id, "phase": "docket_execution_setup"})),
+            )
+            .await;
+            return Err(error);
+        }
     };
     let mut accepted = BearWireEvent::ephemeral(
         "run.accepted",
