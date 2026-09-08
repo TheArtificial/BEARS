@@ -310,12 +310,25 @@ pub async fn docket_jobs_settle_task_result(
             result_summary: request.result_summary,
         })
         .await?;
-    if let (Some(session_id), Some(task_id)) = (
+    if let (Some(session_id), Some(successor_task_id)) = (
         attempt_session_id.as_deref(),
         successor_task_selection(&outcome.control),
     ) {
-        client_sessions::set_current_task(&state.sqlx_pool, user_id, bear.id, session_id, task_id)
-            .await?;
+        tracing::debug!(
+            %job_id,
+            settled_task_id = %task_id,
+            successor_task_id = ?successor_task_id,
+            client_session_id = session_id,
+            "updating Pair session current task after Docket settlement"
+        );
+        client_sessions::set_current_task(
+            &state.sqlx_pool,
+            user_id,
+            bear.id,
+            session_id,
+            successor_task_id,
+        )
+        .await?;
     }
 
     // Completing a focused Docket task can select its successor. Keep the

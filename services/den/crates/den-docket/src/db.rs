@@ -2286,6 +2286,30 @@ pub(super) async fn settle_execution_task(
         .execute(&mut *tx)
         .await?;
     }
+    if let (Some(session_id), Some(user_id)) =
+        (execution.session_id.as_deref(), execution.actor_user_id)
+    {
+        // Do not leave a session claiming the task just settled if the process
+        // stops before `execute_job` derives and projects its successor.
+        tracing::debug!(
+            job_id = %execution.job_id,
+            settled_task_id = %settlement.task_id,
+            client_session_id = session_id,
+            "clearing Pair session current task during Docket settlement"
+        );
+        sqlx::query!(
+            r#"
+            UPDATE client_sessions
+            SET current_task_id = NULL, updated_at = NOW()
+            WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
+            "#,
+            user_id,
+            execution.bear_id,
+            session_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
 
     execute_job(pool, execution).await
