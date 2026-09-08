@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT binding_id\n            FROM docket_execution_attempts\n            WHERE bear_id = $1 AND task_id = $2\n              AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')\n            FOR UPDATE\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "binding_id",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2f3b51cd6e088fe41a3fabc3509a24e71dce24ed4252daa523f7abcf291e6df9"
+}

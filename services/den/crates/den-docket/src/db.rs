@@ -2176,31 +2176,75 @@ pub(super) async fn settle_execution_task(
             "Docket job has no current run to settle".to_string(),
         ));
     };
-    let session_id = execution.session_id.as_deref().ok_or_else(|| {
-        DenError::ValidationError("Docket execution settlement requires a Pair session".to_string())
-    })?;
-    let attempt_id = sqlx::query_scalar!(
-        r#"
-        SELECT id
-        FROM docket_execution_attempts
-        WHERE bear_id = $1 AND task_id = $2
-          AND owner_kind = 'pair' AND pair_session_id = $3
-          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
-        ORDER BY updated_at DESC LIMIT 1
-        "#,
+    let mut tx = pool.begin().await?;
+    // The task/run rows are the durable scheduler authority. A live Pair
+    // attempt remains the normal authorization path, but a reconnect may need
+    // to settle after its attempt was released. That recovery path is safe
+    // only while no other live binding owns the task.
+    let current_run_id = sqlx::query_scalar!(
+        "SELECT current_run_id FROM bear_jobs WHERE id = $1 AND bear_id = $2 FOR UPDATE",
+        execution.job_id,
         execution.bear_id,
-        settlement.task_id,
-        session_id,
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    if current_run_id != Some(run.id) {
+        return Err(DenError::ValidationError(
+            "Docket job run changed before task settlement".to_string(),
+        ));
+    }
+    sqlx::query!(
+        "SELECT task_id FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2 FOR UPDATE",
+        run.id,
+        settlement.task_id,
+    )
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| {
         DenError::ValidationError(
-            "Docket execution settlement task is not owned by a live canonical Pair attempt"
-                .to_string(),
+            "Docket execution task is not checked out by this run".to_string(),
         )
     })?;
-    let mut tx = pool.begin().await?;
+    let attempt_id = if let Some(session_id) = execution.session_id.as_deref() {
+        sqlx::query_scalar!(
+            r#"
+            SELECT id
+            FROM docket_execution_attempts
+            WHERE bear_id = $1 AND task_id = $2
+              AND owner_kind = 'pair' AND pair_session_id = $3
+              AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+            ORDER BY updated_at DESC LIMIT 1
+            "#,
+            execution.bear_id,
+            settlement.task_id,
+            session_id,
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+    } else {
+        None
+    };
+    if attempt_id.is_none() {
+        let competing_owner = sqlx::query_scalar!(
+            r#"
+            SELECT binding_id
+            FROM docket_execution_attempts
+            WHERE bear_id = $1 AND task_id = $2
+              AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+            FOR UPDATE
+            "#,
+            execution.bear_id,
+            settlement.task_id,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(binding_id) = competing_owner {
+            return Err(DenError::ValidationError(format!(
+                "Docket execution settlement task is owned by live binding {binding_id}"
+            )));
+        }
+    }
     update_task_in_transaction(
         &mut tx,
         &DocketTaskUpdate {
@@ -2221,17 +2265,19 @@ pub(super) async fn settle_execution_task(
         },
     )
     .await?;
-    sqlx::query!(
-        r#"
-        UPDATE docket_execution_attempts
-        SET state = 'settled', settled_at = COALESCE(settled_at, NOW()), updated_at = NOW()
-        WHERE id = $1
-          AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
-        "#,
-        attempt_id,
-    )
-    .execute(&mut *tx)
-    .await?;
+    if let Some(attempt_id) = attempt_id {
+        sqlx::query!(
+            r#"
+            UPDATE docket_execution_attempts
+            SET state = 'settled', settled_at = COALESCE(settled_at, NOW()), updated_at = NOW()
+            WHERE id = $1
+              AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')
+            "#,
+            attempt_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
 
     execute_job(pool, execution).await

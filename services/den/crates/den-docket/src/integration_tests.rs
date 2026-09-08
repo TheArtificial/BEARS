@@ -1257,6 +1257,69 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
 }
 
 #[tokio::test]
+async fn released_pair_attempt_can_settle_its_checked_out_run() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping postgres-backed released-attempt settlement test; database unavailable"
+        );
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "released-attempt-settlement").await;
+    let service = PgDocketService::from_pool(&pool);
+    let created = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create job");
+    let task_id = created.tasks[0].id;
+    let request = DocketJobExecuteRequest {
+        bear_id,
+        job_id: created.job.id,
+        actor_role: BearProfile::Pair,
+        actor_user_id: Some(user_id),
+        actor_agent_id: None,
+        session_id: Some("released-attempt-session".to_string()),
+        source_conversation_id: None,
+        source_client_session_id: None,
+    };
+    let selected = service
+        .execute_job(request.clone())
+        .await
+        .expect("check out task");
+    let run_id = selected.job.current_run.expect("current run").id;
+
+    sqlx::query!(
+        "UPDATE docket_execution_attempts SET state = 'released', released_at = NOW() \
+         WHERE bear_id = $1 AND task_id = $2 AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')",
+        bear_id,
+        task_id,
+    )
+    .execute(&pool)
+    .await
+    .expect("release Pair attempt");
+
+    service
+        .settle_execution_task(DocketExecutionTaskSettlement {
+            execution: request,
+            task_id,
+            status: DocketTaskStatus::Done,
+            outcome_disposition: None,
+            result_refs: None,
+            result_summary: Some("completed after Pair reconnect".to_string()),
+        })
+        .await
+        .expect("released attempt may settle its checked-out run");
+    let status = sqlx::query_scalar!(
+        "SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
+        run_id,
+        task_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("task run state");
+    assert_eq!(status, "done");
+}
+
+#[tokio::test]
 async fn execute_job_reconciles_its_own_terminal_session_claim() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed stale-claim reconciliation test; database unavailable");

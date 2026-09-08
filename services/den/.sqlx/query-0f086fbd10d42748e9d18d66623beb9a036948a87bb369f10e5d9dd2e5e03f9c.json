@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE docket_execution_attempts SET state = 'released', released_at = NOW() WHERE bear_id = $1 AND task_id = $2 AND state IN ('authorized', 'running', 'paused', 'awaiting_user', 'stopping')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0f086fbd10d42748e9d18d66623beb9a036948a87bb369f10e5d9dd2e5e03f9c"
+}
