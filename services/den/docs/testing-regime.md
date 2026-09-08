@@ -35,34 +35,17 @@ cd services/den
 SQLX_OFFLINE=true cargo test --workspace --lib
 ```
 
-### Postgres integration tests
+### Domain integration regimes
 
-Tests using `#[sqlx::test]` require a live Postgres server and create isolated migrated databases. They verify durable control-plane transitions that unit tests cannot prove.
-
-Run them with a `DATABASE_URL` pointing to a disposable local or CI database:
+Docket is the first domain-owned integration regime. Run it against a disposable Postgres database:
 
 ```bash
 cd services/den
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/den_test \
-  cargo test -p den-bearwire
+  ./scripts/test-docket.sh all
 ```
 
-`den-bearwire` keeps these SQLx tests in its library test target. Use the ordinary package command above (or an explicit `--lib` focused command); do not use an invocation that discovers no tests. Confirm discovery first when changing targets:
-
-```bash
-cargo test -p den-bearwire -- --list
-```
-
-The Pair/Docket lifecycle suite must cover both terminal paths:
-
-1. assign a Docket task to a Pair session without taking chat control;
-2. focus it and verify chat control hands to a Docket run using that assigned task;
-3. add a subtask while Docket control is active;
-4. settle tasks with default optional settlement fields omitted;
-5. verify all-settled completion ends Docket control and permits a fresh chat turn;
-6. separately verify a blocked task ends Docket control, leaves the job recoverable, and permits a fresh chat turn.
-
-Keep this lane independent from shared developer databases: pool exhaustion or contention must fail clearly rather than masquerade as a product regression.
+Its explicit `postgres` and `pair-loop` lanes distinguish durable control-plane assertions from client-visible live-loop assertions. See [Docket test regime](testing/docket.md) for its canonical-attempt contract, selectors, and fixture rules. Future domains add sibling runners (`test-cabinet.sh`, `test-armature.sh`, `test-runtime.sh`) rather than silently expanding a generic integration command.
 
 ### SQLx metadata and linting
 

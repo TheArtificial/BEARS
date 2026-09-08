@@ -676,6 +676,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     let loop_run_id = attached["result"]["pair_binding"]["run"]["id"]
         .as_str()
         .expect("Pair loop run id");
+    wait_for_focused_run_started(state.clone(), &token, &bear_slug, &session_id, loop_run_id).await;
     let live_attempts: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
     )
@@ -1427,6 +1428,38 @@ async fn replay_events_text(
     .expect("events page response")
     .0;
     replay.to_string()
+}
+
+/// Wait for the client-visible start of a focused Pair run. A persisted
+/// execution attempt alone is insufficient: focus used to leave attempts
+/// running when setup ended before the Pair loop had actually started.
+async fn wait_for_focused_run_started(
+    state: DenState,
+    token: &str,
+    bear_slug: &str,
+    session_id: &str,
+    run_id: &str,
+) {
+    let mut last_replay = String::new();
+    for _ in 0..50 {
+        last_replay = replay_events_text(state.clone(), token, bear_slug, session_id).await;
+        let started =
+            last_replay.contains("\"type\":\"run.started\"") && last_replay.contains(run_id);
+        let terminal = last_replay.contains("\"type\":\"run.completed\"")
+            || last_replay.contains("\"type\":\"run.failed\"")
+            || last_replay.contains("\"type\":\"run.cancelled\"");
+        assert!(
+            !terminal || started,
+            "focused Pair run terminated before a client-visible start: {last_replay}"
+        );
+        if started {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!(
+        "focused Pair run did not emit a client-visible run.started event within one second: {last_replay}"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

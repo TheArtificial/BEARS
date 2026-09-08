@@ -36,7 +36,7 @@ jobs:
             - name: Run workspace unit tests
               run: cargo test --workspace --lib
 
-    postgres-integration:
+    docket-lifecycle:
         runs-on: ubuntu-24.04-arm
         defaults:
             run:
@@ -70,8 +70,8 @@ jobs:
               with:
                   workspaces: services/den
 
-            - name: Run BearWire Postgres integration tests
-              run: cargo test -p den-bearwire
+            - name: Run Docket lifecycle regime
+              run: ./scripts/test-docket.sh all
 
     clippy:
         runs-on: ubuntu-24.04-arm
