@@ -630,7 +630,7 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     assert_eq!(attempts_before_focus, 0);
 
     let attached = rpc_value(
-        state,
+        state.clone(),
         &token,
         "docket.jobs.execute",
         json!({ "bear_slug": bear_slug, "job_id": job.job.id, "session_id": session_id }),
@@ -649,6 +649,27 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         "running"
     );
     assert_eq!(attached["result"]["pair_binding"]["task"]["selected"], true);
+    let replay = rpc_value(
+        state.clone(),
+        &token,
+        "docket.jobs.execute",
+        json!({ "bear_slug": bear_slug, "job_id": job.job.id, "session_id": session_id }),
+    )
+    .await;
+    assert_eq!(
+        replay["result"]["pair_binding"]["task"]["id"],
+        attached["result"]["pair_binding"]["task"]["id"],
+        "repeating /focus must retain the selected task: {replay}"
+    );
+    assert_eq!(
+        replay["result"]["pair_binding"]["run"]["id"],
+        attached["result"]["pair_binding"]["run"]["id"],
+        "repeating /focus must reconcile the existing run: {replay}"
+    );
+    assert_eq!(
+        replay["result"]["pair_binding"]["control"]["launch_state"], "already_running",
+        "repeating /focus must return its reconciled state: {replay}"
+    );
     assert!(attached["result"]["pair_binding"]["run"]["id"]
         .as_str()
         .is_some_and(|run_id| !run_id.is_empty()));

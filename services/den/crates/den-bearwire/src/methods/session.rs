@@ -1017,9 +1017,7 @@ pub async fn start_pair_current_task(
     .await?;
 
     // ponytail: this delegates to the established run.start lifecycle so task-start
-    // cannot drift from Pair stream/event behavior. Concurrent starts can still race
-    // between the active-run read and run.start; make run creation session-unique if
-    // clients require concurrent idempotency rather than retry idempotency.
+    // cannot drift from Pair stream/event behavior.
     let mut start_params = serde_json::Map::new();
     start_params.insert("bear_slug".to_string(), json!(bear.slug));
     start_params.insert("session_id".to_string(), json!(session_id));

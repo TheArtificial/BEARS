@@ -122,7 +122,10 @@ pub async fn select_pair_current_task(
         })
         .transpose()?;
 
-    client_sessions::set_current_task(pool, user_id, bear_id, client_session_id, task_id).await?;
+    if session.current_task_id != task_id {
+        client_sessions::set_current_task(pool, user_id, bear_id, client_session_id, task_id)
+            .await?;
+    }
     let conversation_id = session
         .resolved_conversation_id
         .as_deref()
