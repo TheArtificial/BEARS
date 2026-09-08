@@ -4,50 +4,59 @@
 set -euo pipefail
 
 lane="${1:-all}"
+
+run_test() {
+  local package="$1"
+  local selector="$2"
+  local features="${3:-}"
+  local args=(test -p "$package")
+  if [[ -n "$features" ]]; then
+    args+=(--features "$features")
+  fi
+  args+=("$selector" -- --list)
+  local listed
+  listed="$(cargo "${args[@]}")"
+  if ! grep -q "$selector" <<<"$listed"; then
+    echo "Docket $lane test selector discovered no tests: $package $selector" >&2
+    exit 1
+  fi
+  echo "Running Docket $lane: $package $selector"
+  args=(test -p "$package")
+  if [[ -n "$features" ]]; then
+    args+=(--features "$features")
+  fi
+  args+=("$selector")
+  cargo "${args[@]}"
+}
+
 case "$lane" in
   policy)
-    tests=(
-      'docket_policy::'
-    )
+    # Pure control-gate tests: no database or worker is required.
+    run_test den-docket execution_control_tests::
     ;;
   postgres)
-    tests=(
-      'methods::tests::docket_execute_starts_pair_loop_for_selected_task'
-      'methods::tests::blocked_focused_task_ends_docket_control_and_returns_to_chat'
-    )
+    : "${DATABASE_URL:?DATABASE_URL is required for Docket postgres tests}"
+    run_test den-docket execution_attempt_tests::
+    run_test den-bearwire methods::tests::docket_execute_starts_pair_loop_for_selected_task
+    run_test den-bearwire methods::tests::blocked_focused_task_ends_docket_control_and_returns_to_chat
     ;;
   pair-loop)
-    tests=(
-      'methods::tests::docket_execute_starts_pair_loop_for_selected_task'
-    )
+    : "${DATABASE_URL:?DATABASE_URL is required for Docket pair-loop tests}"
+    run_test den-bearwire methods::tests::docket_execute_starts_pair_loop_for_selected_task
+    run_test den-bearwire methods::tests::focused_pair_loop_continues_across_two_bounded_slices test-fixtures
     ;;
   recovery)
-    tests=(
-      'docket_recovery::'
-    )
+    : "${DATABASE_URL:?DATABASE_URL is required for Docket recovery tests}"
+    run_test den-docket execution_attempt_tests::released_running_attempt_is_fenced_idempotent_and_not_startable
     ;;
   all)
+    "$0" policy
     "$0" postgres
     "$0" pair-loop
-    exit 0
+    "$0" recovery
     ;;
   *)
     echo "usage: $0 {policy|postgres|pair-loop|recovery|all}" >&2
     exit 2
     ;;
 esac
-
-if [[ "$lane" != policy && -z "${DATABASE_URL:-}" ]]; then
-  echo "DATABASE_URL is required for Docket $lane tests" >&2
-  exit 2
-fi
-
-for test_name in "${tests[@]}"; do
-  listed="$(cargo test -p den-bearwire "$test_name" -- --list)"
-  if ! grep -q "$test_name" <<<"$listed"; then
-    echo "Docket $lane test selector discovered no tests: $test_name" >&2
-    exit 1
-  fi
-  echo "Running Docket $lane: $test_name"
-  cargo test -p den-bearwire "$test_name" -- --exact
- done

@@ -17,6 +17,9 @@ workspace = true
 production = ["den-core/production"]
 # Exposes runtime test helpers (e.g. record normalizers) to downstream crates' tests.
 test-util = ["den-service/test-util"]
+# Deterministic typed runtime streams for downstream integration tests. This is
+# deliberately opt-in so production builds cannot replace provider streams.
+test-fixtures = ["test-util"]
 
 [dependencies]
 bearwire-protocol = { path = "../bearwire-protocol" }

@@ -15,8 +15,10 @@ scripts/test-runtime.sh
 
 ```bash
 cd services/den
+./scripts/test-docket.sh policy
 ./scripts/test-docket.sh postgres
 ./scripts/test-docket.sh pair-loop
+./scripts/test-docket.sh recovery
 ./scripts/test-docket.sh all
 ```
 
@@ -31,12 +33,12 @@ The runner rejects unknown lanes and fails if its selector discovers zero tests.
 
 | Lane | Purpose |
 | --- | --- |
-| `policy` | Pure transition, fencing, and continuation-decision tests. Reserved until those tests are factored into a dedicated module. |
+| `policy` | Pure transition, fencing, and continuation-decision tests. |
 | `postgres` | Durable task/job/attempt control-plane transitions and atomic terminal settlement. |
-| `pair-loop` | Live BearWire stream behavior using a deterministic local scripted provider. |
-| `recovery` | Owner loss, stale delivery, reconciliation, and retryable terminalization. Reserved until the recovery suite is factored. |
+| `pair-loop` | Client-visible focused-loop start and deterministic multi-slice continuation coverage. |
+| `recovery` | Released-attempt idempotency and stale-owner fencing. |
 
-`all` currently runs the implemented `postgres` and `pair-loop` lanes. A reserved lane is deliberately not included until it has real tests; CI must never claim coverage from an empty selector.
+`all` runs every implemented lane. Every lane has at least one real selector; the runner fails rather than silently accepting an empty lane.
 
 ## Pair-loop contract
 
@@ -53,9 +55,9 @@ Use correlation IDs and bounded event waits. Do not use an external LLM or timin
 
 ## Current tests
 
-`docket_execute_starts_pair_loop_for_selected_task` is a **postgres/control-plane** test. It covers task assignment, focus ownership, child creation, default settlement, successor selection, completion, and chat handback. It does not prove a live loop survives a continuation boundary.
+`docket_execute_starts_pair_loop_for_selected_task` is a **postgres/control-plane** test. It covers task assignment, focus ownership, child creation, default settlement, successor selection, completion, and chat handback. Its event wait and pre-settlement assertions are the immediate failure-to-complete regression coverage: before the test settles anything, the exact focus-created host run must be client-visible, remain `running`/`continuing`, have one matching running Docket attempt, and have emitted no terminal event. It does **not** prove a live loop survives a continuation boundary.
 
-`docket_execute_starts_pair_loop_for_selected_task` currently participates in both the **postgres** and **pair-loop** lanes: its settlement assertions are control-plane coverage, while its explicit event wait is the first pair-loop regression assertion. It fails when a focus-created loop terminates before emitting its client-visible `run.started` event. This is a transitional overlap, not the final structure; later work must extract a minimal dedicated scripted-provider test for deterministic multi-slice continuation, awaiting-user, interruption, and recovery scenarios.
+`focused_pair_loop_continues_across_two_bounded_slices` is the feature-gated **pair-loop** integration test. Its typed, run-correlated fixture supplies two actual `RuntimeSemanticEvent::BoundedSlice` events and then a pending stream. It proves that the production continuation path constructs the initial stream plus two continuations for the same focused Pair run, task, canonical attempt, and fence epoch. It then settles the only task through `docket.jobs.settle_task`, verifies the attempt is released, the response selects `job_completed` (ordinary-chat handback), and no further continuation is scheduled.
 
 ## CI
 

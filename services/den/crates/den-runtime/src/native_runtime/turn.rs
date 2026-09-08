@@ -7,6 +7,11 @@ use den_core::tools::{
     result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
 };
 use std::sync::{Arc, LazyLock};
+#[cfg(feature = "test-fixtures")]
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Mutex,
+};
 
 use den_memory::MemoryStoreManager;
 use den_protocol::{
@@ -70,6 +75,121 @@ use den_service::conversation::persistence::PersistedTranscriptRecord;
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> =
     LazyLock::new(AgentLoopSessionStore::default);
+
+#[cfg(feature = "test-fixtures")]
+/// A deterministic source for one native-runtime invocation in downstream
+/// integration tests. `Pending` deliberately keeps the stream open after prior
+/// scripts have demonstrated continuation, so the test—not a synthetic EOF—
+/// decides when to settle the attempt.
+#[cfg(feature = "test-fixtures")]
+pub enum ScriptedRuntimeStream {
+    Events(Vec<RuntimeStreamEvent>),
+    Pending,
+}
+
+#[cfg(feature = "test-fixtures")]
+static SCRIPTED_RUNTIME_STREAMS: LazyLock<Mutex<HashMap<String, VecDeque<ScriptedRuntimeStream>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[cfg(feature = "test-fixtures")]
+static NEXT_SCRIPTED_RUNTIME_STREAMS: LazyLock<
+    Mutex<HashMap<String, VecDeque<ScriptedRuntimeStream>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[cfg(feature = "test-fixtures")]
+static SCRIPTED_RUNTIME_INVOCATIONS: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Installs typed runtime event scripts for one Pair run. Start and
+/// continuation calls consume that run's scripts in FIFO order. Intended only
+/// for deterministic downstream tests.
+#[cfg(feature = "test-fixtures")]
+pub fn set_scripted_runtime_streams_for_run(
+    run_id: impl Into<String>,
+    scripts: Vec<ScriptedRuntimeStream>,
+) {
+    SCRIPTED_RUNTIME_STREAMS
+        .lock()
+        .expect("scripted runtime stream lock poisoned")
+        .insert(run_id.into(), scripts.into());
+}
+
+/// Installs scripts for the next native runtime run on `session_id`. The first
+/// request for that session claims them and binds the remaining sequence to its
+/// generated run id, so continuations remain run-correlated. This is only for
+/// focused integration tests whose run id is created inside BearWire.
+#[cfg(feature = "test-fixtures")]
+pub fn set_next_scripted_runtime_streams(
+    session_id: impl Into<String>,
+    scripts: Vec<ScriptedRuntimeStream>,
+) {
+    NEXT_SCRIPTED_RUNTIME_STREAMS
+        .lock()
+        .expect("next scripted runtime stream lock poisoned")
+        .insert(session_id.into(), scripts.into());
+}
+
+/// Returns how many scripted streams have been constructed for a focused run.
+#[cfg(feature = "test-fixtures")]
+pub fn scripted_runtime_invocation_count(run_id: &str) -> usize {
+    SCRIPTED_RUNTIME_INVOCATIONS
+        .lock()
+        .expect("scripted runtime invocation lock poisoned")
+        .get(run_id)
+        .copied()
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "test-fixtures")]
+fn scripted_runtime_stream(
+    run_id: Option<&str>,
+    session_id: Option<&str>,
+) -> Option<RuntimeEventStream> {
+    let run_id = run_id?;
+    let mut scripts = SCRIPTED_RUNTIME_STREAMS
+        .lock()
+        .expect("scripted runtime stream lock poisoned");
+    let script = if let Some(queue) = scripts.get_mut(run_id) {
+        let script = queue.pop_front()?;
+        if queue.is_empty() {
+            scripts.remove(run_id);
+        }
+        script
+    } else {
+        let session_id = session_id?;
+        let mut next = NEXT_SCRIPTED_RUNTIME_STREAMS
+            .lock()
+            .expect("next scripted runtime stream lock poisoned");
+        let mut queue = next.remove(session_id)?;
+        let script = queue.pop_front()?;
+        if !queue.is_empty() {
+            scripts.insert(run_id.to_string(), queue);
+        }
+        script
+    };
+    *SCRIPTED_RUNTIME_INVOCATIONS
+        .lock()
+        .expect("scripted runtime invocation lock poisoned")
+        .entry(run_id.to_string())
+        .or_default() += 1;
+    match script {
+        ScriptedRuntimeStream::Events(events) => {
+            Some(Box::pin(stream::iter(events.into_iter().map(Ok))) as RuntimeEventStream)
+        }
+        // ponytail: A permanently pending scripted stream is test-only. It
+        // models a live provider after a continuation without using sleeps;
+        // production streams remain provider-backed.
+        ScriptedRuntimeStream::Pending => Some(Box::pin(stream::pending()) as RuntimeEventStream),
+    }
+}
+
+#[cfg(not(feature = "test-fixtures"))]
+fn scripted_runtime_stream(
+    _run_id: Option<&str>,
+    _session_id: Option<&str>,
+) -> Option<RuntimeEventStream> {
+    None
+}
 
 fn session_capabilities_from_client_tools(
     client_tools: Option<&serde_json::Value>,
@@ -1415,7 +1535,11 @@ pub async fn start_native_profile_turn_event_stream(
     let llm = LlmClient::new(request.config);
     let config = Arc::new(request.config.clone());
     let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), role);
-    let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
+    let stream = match scripted_runtime_stream(session.run_id.as_deref(), Some(&client_session_id))
+    {
+        Some(stream) => stream,
+        None => run_agent_step_stream(&llm, &session, Some(overflow)).await?,
+    };
     let stream = wrap_session_stream(
         stream,
         &session,
@@ -2243,7 +2367,11 @@ pub async fn continue_native_client_turn_event_stream(
     let llm = LlmClient::new(request.config);
     let config = Arc::new(request.config.clone());
     let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), profile);
-    let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
+    let stream = match scripted_runtime_stream(session.run_id.as_deref(), Some(&client_session_id))
+    {
+        Some(stream) => stream,
+        None => run_agent_step_stream(&llm, &session, Some(overflow)).await?,
+    };
     let mut prefix_events = Vec::new();
     if let Some(warning) = evaluation.warning.as_ref() {
         let model_context_already_has_warning = session.messages.last().is_some_and(|message| {

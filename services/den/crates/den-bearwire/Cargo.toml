@@ -11,6 +11,7 @@ workspace = true
 
 [features]
 production = ["den-core/production", "den-protocol/production", "den-service/production", "den-runtime/production", "den-http/production"]
+test-fixtures = ["den-runtime/test-fixtures"]
 
 [dependencies]
 den-core = { path = "../den-core" }
@@ -35,3 +36,4 @@ uuid.workspace = true
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }
 den-memory = { path = "../den-memory" }
+den-runtime = { path = "../den-runtime", features = ["test-fixtures"] }

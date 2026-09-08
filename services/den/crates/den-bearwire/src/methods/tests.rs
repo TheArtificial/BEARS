@@ -35,6 +35,10 @@ use den_protocol::{
     RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef, RuntimeHistoryRecord,
     RuntimeSemanticEvent, RuntimeStreamEvent,
 };
+#[cfg(feature = "test-fixtures")]
+use den_runtime::native_runtime::{
+    scripted_runtime_invocation_count, set_next_scripted_runtime_streams, ScriptedRuntimeStream,
+};
 use den_runtime::{
     bearwire_events,
     native_runtime::NativeRuntimeConversationBackend,
@@ -467,6 +471,203 @@ async fn rpc_value(state: DenState, token: &str, method: &str, params: Value) ->
     serde_json::from_slice(&body).unwrap()
 }
 
+#[cfg(feature = "test-fixtures")]
+#[sqlx::test(migrations = "../../migrations")]
+async fn focused_pair_loop_continues_across_two_bounded_slices(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let mut config = den_core::config::Config::test_stub();
+    config.den_secret_encryption_key = "bearwire-test-encryption-key".to_string();
+    // Docket validates the configured model before it asks native runtime for
+    // its stream. The scripted stream replaces provider I/O after this local
+    // preflight, but the mock keeps the validation path realistic.
+    config.llm_api_url = start_mock_openai_sse_server_asserting_requests(vec![
+        MockLlmRequestAssertion::requiring(Vec::new()),
+        MockLlmRequestAssertion::requiring(Vec::new()),
+    ]);
+    config.default_llm_model = "openai/bearwire-test-model".to_string();
+    seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
+    let state = test_state_with_config(pool.clone(), config);
+    let session_id = format!("bounded-slice-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+
+    let surface_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO work_surfaces (id, name, kind, created_by_user_id, created_at, updated_at) VALUES ($1, $2, 'git_workspace', $3, now(), now())")
+        .bind(surface_id).bind(format!("bounded-slice-{}", Uuid::new_v4().simple())).bind(user_id)
+        .execute(&pool).await.expect("create work surface");
+    sqlx::query("INSERT INTO git_work_surface_details (id, upstream_url) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind("https://example.test/bounded-slice.git")
+        .execute(&pool)
+        .await
+        .expect("create git surface details");
+    sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind(bear_id)
+        .execute(&pool)
+        .await
+        .expect("assign bear to surface");
+    let job = PgDocketService::from_pool(&pool)
+        .create_job(DocketJobCreate {
+            bear_id,
+            created_by_user_id: user_id,
+            created_by_role: "pair".to_string(),
+            goal: "Prove bounded Pair continuation".to_string(),
+            work_surface_id: Some(surface_id),
+            work_surface_assignments: vec![],
+            commit_policy: None,
+            work_branch: None,
+            visibility: TaskListVisibility::SameUser,
+            source_conversation_id: None,
+            objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
+            criteria: vec![],
+            tasks: vec![DocketTaskInput {
+                client_key: None,
+                parent_client_key: None,
+                parent_task_id: None,
+                sibling_order: Some(0),
+                kind: DocketTaskKind::Execution,
+                scope: DocketTaskScope::Template,
+                title: "Continue across slices".to_string(),
+                body: "Stay focused.".to_string(),
+                completion_criteria: vec!["Task is settled".to_string()],
+                difficulty: Some(DocketTaskDifficulty::Trivial),
+                effort_hint: Some(DocketEffortHint::Low),
+                routing_strategy: RoutingStrategy::Auto,
+                expected_context_size: None,
+                result_rollup_policy: None,
+            }],
+        })
+        .await
+        .expect("create job");
+    let task_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_tasks WHERE job_id = $1")
+        .bind(job.job.id)
+        .fetch_one(&pool)
+        .await
+        .expect("load task");
+    let session_anchor: Uuid = sqlx::query_scalar("SELECT id FROM client_sessions WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3")
+        .bind(user_id).bind(bear_id).bind(&session_id).fetch_one(&pool).await.expect("load session");
+    sqlx::query("INSERT INTO bear_pair_task_attachments (task_id, session_id) VALUES ($1, $2)")
+        .bind(task_id)
+        .bind(session_anchor)
+        .execute(&pool)
+        .await
+        .expect("attach task");
+    let params = json!({"bear_slug": bear_slug, "session_id": session_id, "task_id": task_id});
+    let selected = rpc_value(state.clone(), &token, "session.current_task.select", params).await;
+    assert!(selected.get("error").is_none(), "{selected}");
+
+    set_next_scripted_runtime_streams(
+        &session_id,
+        vec![
+            ScriptedRuntimeStream::Events(vec![RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::BoundedSlice {
+                    reason: "first technical budget boundary".to_string(),
+                },
+            )]),
+            ScriptedRuntimeStream::Events(vec![RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::BoundedSlice {
+                    reason: "second technical budget boundary".to_string(),
+                },
+            )]),
+            ScriptedRuntimeStream::Pending,
+        ],
+    );
+    let focused = rpc_value(
+        state.clone(),
+        &token,
+        "docket.jobs.execute",
+        json!({"bear_slug": bear_slug, "job_id": job.job.id, "session_id": session_id}),
+    )
+    .await;
+    assert!(focused.get("error").is_none(), "{focused}");
+    let run_id = focused["result"]["pair_binding"]["run"]["id"]
+        .as_str()
+        .expect("focused run id");
+
+    // Each BoundedSlice schedules a new native continuation. The successor
+    // immediately claims the same turn run, so `continuing` is transient.
+    // The feature-gated counter records native stream construction, proving
+    // each boundary re-entered the real runtime without timing live telemetry.
+    for expected_slices in 1..=2_usize {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let invocations = scripted_runtime_invocation_count(run_id);
+            if invocations >= expected_slices + 1 {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "bounded slice {expected_slices} did not start its continuation; observed {invocations} runtime invocations"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let attempt = sqlx::query!(
+            "SELECT task_id, pair_run_id, fence_epoch FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
+            run_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load canonical live attempt");
+        assert_eq!(
+            attempt.task_id, task_id,
+            "slice {expected_slices} changed task"
+        );
+        assert_eq!(attempt.pair_run_id.as_deref(), Some(run_id));
+        assert_eq!(
+            attempt.fence_epoch, 1,
+            "slice {expected_slices} changed fence"
+        );
+    }
+    let terminal: i64 = sqlx::query_scalar("SELECT count(*) FROM bearwire_events WHERE session_id = $1 AND event_json->>'run_id' = $2 AND event_type IN ('run.completed', 'run.failed', 'run.cancelled')")
+        .bind(&session_id).bind(run_id).fetch_one(&pool).await.expect("load terminal events");
+    assert_eq!(
+        terminal, 0,
+        "bounded continuation must not terminalize before settlement"
+    );
+
+    let settled = rpc_value(
+        state,
+        &token,
+        "docket.jobs.settle_task",
+        json!({
+            "bear_slug": bear_slug,
+            "job_id": job.job.id,
+            "task_id": task_id,
+            "status": "done",
+            "outcome_disposition": "completed",
+            "result_summary": "two bounded slices verified",
+            "session_id": session_id,
+        }),
+    )
+    .await;
+    assert!(settled.get("error").is_none(), "{settled}");
+    assert_eq!(
+        settled["result"]["outcome"]["control"]["next_action"].as_str(),
+        Some("job_completed"),
+        "settling the only focused task must return control to ordinary chat: {settled}"
+    );
+    let running_attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
+    )
+    .bind(run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load live attempts after settlement");
+    assert_eq!(
+        running_attempts, 0,
+        "settlement must release Docket authority"
+    );
+    assert_eq!(
+        scripted_runtime_invocation_count(run_id),
+        3,
+        "settlement must not schedule another continuation"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
@@ -677,6 +878,35 @@ async fn docket_execute_starts_pair_loop_for_selected_task(pool: sqlx::PgPool) {
         .as_str()
         .expect("Pair loop run id");
     wait_for_focused_run_started(state.clone(), &token, &bear_slug, &session_id, loop_run_id).await;
+    // The task is deliberately not settled yet. Focus must leave the exact
+    // Pair host run and its canonical Docket attempt live; this catches the
+    // historical failure where focus returned successfully but its loop ended
+    // before the caller could make a task decision.
+    let focused_run_state: String =
+        sqlx::query_scalar("SELECT state FROM turn_runs WHERE run_id = $1 LIMIT 1")
+            .bind(loop_run_id)
+            .fetch_one(&pool)
+            .await
+            .expect("load focused Pair run state");
+    assert!(
+        matches!(focused_run_state.as_str(), "running" | "continuing"),
+        "focused Pair loop ended before explicit settlement; state={focused_run_state}"
+    );
+    let terminal_events_before_settlement: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM bearwire_events \
+         WHERE session_id = $1 \
+           AND event_json->>'run_id' = $2 \
+           AND event_type IN ('run.completed', 'run.failed', 'run.cancelled')",
+    )
+    .bind(&session_id)
+    .bind(loop_run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load focused Pair terminal events");
+    assert_eq!(
+        terminal_events_before_settlement, 0,
+        "focused Pair loop emitted a terminal event before explicit settlement"
+    );
     let live_attempts: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
     )

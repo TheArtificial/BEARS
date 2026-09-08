@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT task_id, pair_run_id, fence_epoch FROM docket_execution_attempts WHERE pair_run_id = $1 AND state = 'running'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "pair_run_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "fence_epoch",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "015790f4aca4a1182c45bffa48f3c67850a23303c681ba1c83905ccd6a24b545"
+}

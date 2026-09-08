@@ -45,7 +45,7 @@ DATABASE_URL=postgres://postgres:postgres@localhost:5432/den_test \
   ./scripts/test-docket.sh all
 ```
 
-Its explicit `postgres` and `pair-loop` lanes distinguish durable control-plane assertions from client-visible live-loop assertions. See [Docket test regime](testing/docket.md) for its canonical-attempt contract, selectors, and fixture rules. Future domains add sibling runners (`test-cabinet.sh`, `test-armature.sh`, `test-runtime.sh`) rather than silently expanding a generic integration command.
+Its explicit `policy`, `postgres`, `pair-loop`, and `recovery` lanes separate pure control rules, durable state, client-visible loop lifecycle, and stale-owner recovery. The runner rejects selectors that discover zero tests. The existing focus/settlement test is a Postgres control-plane test with immediate start and pre-settlement nonterminal regression assertions: it requires the exact focused host run to become visible, stay `running`/`continuing`, retain one matching running Docket attempt, and emit no terminal event before the test decides the outcome. It is not evidence that a Pair loop survives multiple bounded slices. See [Docket test regime](testing/docket.md) for the canonical-attempt contract, selectors, and fixture rules. Future domains add sibling runners (`test-cabinet.sh`, `test-armature.sh`, `test-runtime.sh`) rather than silently expanding a generic integration command.
 
 ### SQLx metadata and linting
 

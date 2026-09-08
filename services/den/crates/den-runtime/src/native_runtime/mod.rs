@@ -42,3 +42,8 @@ pub use turn::{
     update_native_client_session_cached_activity_plan_projection, NativeRuntimeConversationBackend,
     NativeRuntimeDeps, NativeWebChatTurnParams,
 };
+#[cfg(feature = "test-fixtures")]
+pub use turn::{
+    scripted_runtime_invocation_count, set_next_scripted_runtime_streams,
+    set_scripted_runtime_streams_for_run, ScriptedRuntimeStream,
+};
