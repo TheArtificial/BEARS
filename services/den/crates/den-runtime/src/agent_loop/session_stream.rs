@@ -142,6 +142,10 @@ fn superseded_continuation_stream() -> RuntimeEventStream {
     }))
 }
 
+fn run_is_superseded(run_id: &str, active_run_id: Option<&str>) -> bool {
+    active_run_id.is_some_and(|active_run_id| active_run_id != run_id)
+}
+
 fn run_ownership_cancellation_token(
     pool: sqlx::PgPool,
     client_session_id: String,
@@ -152,8 +156,10 @@ fn run_ownership_cancellation_token(
     tokio::spawn(async move {
         loop {
             match crate::turn_runs::active_run_for_session(&pool, &client_session_id).await {
-                Ok(Some(active)) if active.run_id == run_id => {}
-                Ok(active) => {
+                Ok(active) if run_is_superseded(
+                    &run_id,
+                    active.as_ref().map(|active| active.run_id.as_str()),
+                ) => {
                     tracing::info!(
                         event = "native_llm_stream_cancelled_for_lost_run_ownership",
                         client_session_id = %client_session_id,
@@ -164,6 +170,7 @@ fn run_ownership_cancellation_token(
                     watcher_cancellation.cancel();
                     return;
                 }
+                Ok(_) => {}
                 Err(error) => {
                     // ponytail: polling is a bounded fallback until run-state changes can notify
                     // streams directly; treat a failed ownership read as non-authoritative.
@@ -1065,7 +1072,12 @@ impl SessionTrackingStream {
                 let active_run =
                     crate::turn_runs::active_run_for_session(&pool, &session.client_session_id)
                         .await?;
-                if session.run_id.as_deref() != active_run.as_ref().map(|run| run.run_id.as_str()) {
+                if session.run_id.as_deref().is_some_and(|run_id| {
+                    run_is_superseded(
+                        run_id,
+                        active_run.as_ref().map(|run| run.run_id.as_str()),
+                    )
+                }) {
                     tracing::info!(
                         event = "native_superseded_run_continuation_fenced",
                         session_key = %session_key,
@@ -2713,6 +2725,13 @@ mod tests {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     use den_service::bears::BearProfile;
     use futures::StreamExt;
+
+    #[test]
+    fn only_a_different_active_run_supersedes_continuation() {
+        assert!(!run_is_superseded("run-a", Some("run-a")));
+        assert!(run_is_superseded("run-a", Some("run-b")));
+        assert!(!run_is_superseded("run-a", None));
+    }
 
     fn counting_waker(counter: Arc<AtomicUsize>) -> Waker {
         unsafe fn clone(data: *const ()) -> RawWaker {
