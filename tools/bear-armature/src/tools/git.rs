@@ -318,19 +318,23 @@ pub(crate) async fn handle_git_commit(
         &[
             "log".to_string(),
             "-1".to_string(),
-            "--format=%h%x00%s".to_string(),
+            "--format=%H%x00%h%x00%s".to_string(),
         ],
         1_024,
     )?;
-    let (short_sha, subject) = committed
+    let (sha, summary) = committed
         .stdout
         .trim_end()
+        .split_once('\0')
+        .ok_or_else(|| anyhow!("git log returned an invalid commit summary"))?;
+    let (short_sha, subject) = summary
         .split_once('\0')
         .ok_or_else(|| anyhow!("git log returned an invalid commit summary"))?;
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
         "message": message,
+        "sha": sha,
         "short_sha": short_sha,
         "subject": subject,
         "allow_empty": allow_empty,

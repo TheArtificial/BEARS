@@ -25,7 +25,7 @@ use den_core::{
     },
     DenError,
 };
-use den_docket::DocketPairBoundedOutcome;
+use den_docket::{DocketPairBoundedOutcome, DocketService};
 use den_http::{errors::CustomError, web_policy};
 use den_protocol::{
     RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
@@ -47,6 +47,11 @@ use den_runtime::{
     turn_runs,
 };
 use den_service::{
+    artifacts::{
+        self, ArtifactStorageKind, ArtifactVisibility, AttachDocketArtifactInput,
+        DocketArtifactRole, DocketArtifactTargetKind, FinalizeGitCommitArtifactInput,
+        GitObjectFormat, ReserveArtifactInput,
+    },
     bears::{db as bears_db, BearProfile},
     client_sessions, DenState,
 };
@@ -152,6 +157,96 @@ fn cargo_offline_cache_miss_evidence(tool_name: Option<&str>, value: &Value) -> 
         "action": "Prepare Rust dependencies with the hosted dependency tool, then retry Cargo.",
         "diagnostic": "Cargo could not resolve a required package from the sandbox's offline dependency cache.",
     }))
+}
+
+async fn persist_work_git_commit_artifact(
+    state: &DenState,
+    bear_id: Uuid,
+    user_id: i32,
+    session_id: &str,
+    tool_name: Option<&str>,
+    status: ToolResultStatus,
+    structured_content: &Value,
+) {
+    if tool_name != Some("git_commit") || status != ToolResultStatus::Ok {
+        return;
+    }
+    let result = structured_content
+        .get("result")
+        .unwrap_or(structured_content);
+    if result.get("ok").and_then(Value::as_bool) != Some(true) {
+        return;
+    }
+    let (Some(repository), Some(commit_oid)) = (
+        result.get("repo_path").and_then(Value::as_str),
+        result.get("sha").and_then(Value::as_str),
+    ) else {
+        return;
+    };
+    let work_run =
+        den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, session_id)
+            .await
+            .ok()
+            .flatten()
+            .filter(|run| run.bear_id == bear_id);
+    let pair_attempt = if work_run.is_none() {
+        den_docket::PgDocketService::from_pool(&state.sqlx_pool)
+            .get_live_pair_execution_attempt_for_session(bear_id, session_id)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let Some(task_id) = work_run
+        .as_ref()
+        .and_then(|run| run.executing_task_id)
+        .or_else(|| pair_attempt.as_ref().map(|attempt| attempt.task_id))
+    else {
+        return;
+    };
+    let artifact = async {
+        let artifact = artifacts::reserve_artifact(
+            &state.sqlx_pool,
+            ReserveArtifactInput {
+                bear_id,
+                created_by_user_id: Some(user_id),
+                owner_profile: BearProfile::Pair,
+                kind: "git_commit".to_string(),
+                title: result.get("subject").and_then(Value::as_str).map(str::to_string),
+                summary: Some(format!("Git commit {commit_oid}")),
+                content_type: None,
+                storage_kind: ArtifactStorageKind::ExternalGitCommit,
+                visibility: ArtifactVisibility::BearVisible,
+                provenance: json!({ "source": "bearwire_client", "tool": "git_commit", "session_id": session_id, "work_run_id": work_run.as_ref().map(|run| run.id), "execution_attempt_id": pair_attempt.as_ref().map(|attempt| attempt.id) }),
+                metadata: json!({ "tool_result": result }),
+                expires_at: None,
+            },
+        ).await?;
+        let artifact = artifacts::finalize_git_commit_artifact(
+            &state.sqlx_pool,
+            FinalizeGitCommitArtifactInput {
+                artifact_ref: artifact.artifact_ref.clone(), bear_id,
+                repository: repository.to_string(), object_format: GitObjectFormat::Sha1,
+                commit_oid: commit_oid.to_string(), output_ref: commit_oid.to_string(),
+                metadata: json!({ "work_run_id": work_run.as_ref().map(|run| run.id), "execution_attempt_id": pair_attempt.as_ref().map(|attempt| attempt.id) }),
+            },
+        ).await?;
+        artifacts::attach_docket_artifact(
+            &state.sqlx_pool,
+            AttachDocketArtifactInput {
+                artifact_ref: artifact.artifact_ref, bear_id,
+                target_kind: DocketArtifactTargetKind::Task,
+                target_id: task_id,
+                role: DocketArtifactRole::Output,
+                metadata: json!({ "candidate": true, "work_run_id": work_run.as_ref().map(|run| run.id), "execution_attempt_id": pair_attempt.as_ref().map(|attempt| attempt.id) }),
+                created_by_user_id: Some(user_id),
+            },
+        ).await
+    }.await;
+    if let Err(error) = artifact {
+        tracing::warn!(%error, session_id, "could not persist Git commit artifact");
+    }
 }
 
 async fn persist_work_cargo_evidence(
@@ -1274,6 +1369,16 @@ pub(crate) async fn client_tool_result_result(
     }
     let payload = compacted.payload.clone();
     let event_payload = bearwire_finish_payload(&input, payload.clone());
+    persist_work_git_commit_artifact(
+        state,
+        bear.id,
+        user_id,
+        &session_id,
+        input.tool_name.as_deref(),
+        status,
+        &input.structured_content,
+    )
+    .await;
     persist_work_cargo_evidence(
         state,
         &session_id,

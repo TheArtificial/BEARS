@@ -2713,7 +2713,9 @@ fn task_list_item_from_docket_task(
         && (is_executing
             || state
                 .is_some_and(|state| matches!(state.status.as_str(), "pending" | "in_progress")));
-    let status = if settled_with_active_work {
+    let blocked_after_settlement =
+        task.settled_by_entry_id.is_some() && state.is_some_and(|state| state.status == "blocked");
+    let status = if settled_with_active_work || blocked_after_settlement {
         TaskListItemStatus::Blocked
     } else if task.settled_by_entry_id.is_some() {
         TaskListItemStatus::Completed
@@ -2731,6 +2733,8 @@ fn task_list_item_from_docket_task(
         status,
         blocked_reason: if settled_with_active_work {
             Some("integrity conflict: task is settled but has active work".to_string())
+        } else if blocked_after_settlement {
+            state.and_then(|state| state.result_summary.clone())
         } else {
             (status == TaskListItemStatus::Blocked)
                 .then(|| state.and_then(|state| state.result_summary.clone()))
@@ -3412,6 +3416,39 @@ mod tests {
 
         assert_eq!(settled.status, "completed");
         assert_eq!(settled.items[0].status, TaskListItemStatus::Completed);
+
+        let blocked_after_settlement = task_list_projection_from_session_tasks(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            pair_session_id,
+            &[DocketTaskProjection {
+                task: task.clone(),
+                run_state: Some(DocketTaskRunStateRow {
+                    run_id,
+                    task_id,
+                    status: "blocked".to_string(),
+                    result_refs: None,
+                    result_summary: Some("output finalization is required".to_string()),
+                    started_at: None,
+                    finished_at: None,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                }),
+                status: DocketTaskStatus::Blocked,
+                integrity_conflict: None,
+            }],
+        )
+        .expect("blocked session projection");
+
+        assert_eq!(blocked_after_settlement.status, "blocked");
+        assert_eq!(
+            blocked_after_settlement.items[0].status,
+            TaskListItemStatus::Blocked
+        );
+        assert_eq!(
+            blocked_after_settlement.items[0].blocked_reason.as_deref(),
+            Some("output finalization is required")
+        );
 
         let conflict = task_list_projection_from_session_tasks(
             bear_id,
