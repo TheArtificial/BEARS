@@ -159,7 +159,7 @@ fn cargo_offline_cache_miss_evidence(tool_name: Option<&str>, value: &Value) -> 
     }))
 }
 
-async fn persist_work_git_commit_artifact(
+pub(crate) async fn persist_work_git_commit_artifact(
     state: &DenState,
     bear_id: Uuid,
     user_id: i32,

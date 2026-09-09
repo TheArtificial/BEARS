@@ -46,6 +46,7 @@ use den_runtime::{
     turn_obligations, turn_runs,
 };
 use den_service::{
+    artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
     bears::{db as bears_db, db::BearParams},
     client_sessions,
     conversation::events::{
@@ -4223,6 +4224,78 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
             .await
             .expect("load focused execution attempt");
     assert_eq!(attempt_state, "released");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    let task_id = create_session_task(&pool, user_id, bear_id, &session_id, "Commit task").await;
+    PgDocketService::from_pool(&pool)
+        .acquire_focused_execution(DocketFocusedExecutionAcquire {
+            bear_id,
+            task_id,
+            binding: DocketFocusedExecutionBinding {
+                kind: DocketExecutionBindingKind::ClientSession,
+                id: session_id.clone(),
+            },
+            host: DocketExecutionHost {
+                kind: DocketExecutionHostKind::Pair,
+                run_id,
+            },
+            acquisition_key: Uuid::new_v4(),
+        })
+        .await
+        .expect("acquire focused execution");
+
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    crate::methods::client::persist_work_git_commit_artifact(
+        &test_state(pool.clone()),
+        bear_id,
+        user_id,
+        &session_id,
+        Some("git_commit"),
+        den_core::tools::result_compaction::ToolResultStatus::Ok,
+        &json!({
+            "ok": true,
+            "repo_path": "/workspace/project",
+            "sha": sha,
+            "subject": "Persist commit evidence",
+        }),
+    )
+    .await;
+
+    let citations = artifacts::list_docket_artifact_citations(
+        &pool,
+        bear_id,
+        DocketArtifactTargetKind::Task,
+        task_id,
+        ArtifactAccessContext {
+            bear_id,
+            user_id: Some(user_id),
+            profile: BearProfile::Pair,
+        },
+    )
+    .await
+    .expect("list task artifacts");
+    assert_eq!(citations.len(), 1);
+    assert_eq!(citations[0].kind, "git_commit");
+    assert_eq!(
+        citations[0].summary.as_deref(),
+        Some("Git commit 0123456789abcdef0123456789abcdef01234567")
+    );
+
+    let metadata: Value = sqlx::query_scalar(
+        "SELECT metadata FROM artifact_citations WHERE target_kind = 'task' AND target_id = $1",
+    )
+    .bind(task_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .expect("load citation metadata");
+    assert_eq!(metadata["candidate"], true);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
