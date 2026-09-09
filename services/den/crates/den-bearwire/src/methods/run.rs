@@ -1384,9 +1384,18 @@ pub(crate) async fn fail_run_lifecycle(
         tracing::error!(session_id, run_id, reason = %reason, error = %err, "failed to atomically persist BearWire run failure");
         None
     });
-    if finished.is_none() {
+    let Some(finished) = finished else {
         return;
-    }
+    };
+    tracing::info!(
+        session_id,
+        run_id,
+        reason = %reason,
+        outstanding_client_tools_settled = finished.settled_obligations,
+        settled_steps = finished.settled_steps,
+        event_sequence = finished.event_sequence,
+        "BearWire run reached failed terminal state"
+    );
     record_work_run_outcome_if_bound(
         pool,
         session_id,
@@ -1487,9 +1496,19 @@ pub(crate) async fn persist_run_blocked(
         tracing::error!(session_id, run_id, reason = %reason, error = %err, "failed to atomically persist BearWire run block");
         None
     });
-    if finished.is_none() {
+    let Some(finished) = finished else {
         return;
-    }
+    };
+    tracing::warn!(
+        session_id,
+        run_id,
+        reason = %reason,
+        outstanding_client_tools_settled = finished.settled_obligations,
+        settled_steps = finished.settled_steps,
+        event_sequence = finished.event_sequence,
+        restart_interrupted = matches!(reason, RunFailureReason::ServerRestartInterrupted),
+        "BearWire run reached blocked terminal state"
+    );
     record_work_run_outcome_if_bound(
         pool,
         session_id,
@@ -2430,16 +2449,32 @@ async fn run_start_with_recovery_source(
     if superseded.settled() {
         tracing::info!(
             session_id = %session_id,
-            new_run_id = %run_id,
-            old_run_id = superseded.run.as_ref().map(|run| run.run_id.as_str()),
+            replacement_run_id = %run_id,
+            previous_run_id = superseded.run.as_ref().map(|run| run.run_id.as_str()),
             cancelled_stream = superseded.cancelled_stream,
             cancelled_tool_turn = superseded.cancelled_tool_turn,
             settled_obligations = superseded.settled_obligations,
             event_sequence = superseded.event_sequence,
-            "BearWire superseded active run before starting new run"
+            "BearWire superseded active run before starting replacement"
         );
     }
 
+    let creation_cause = if supersede_active_run {
+        "explicit_supersession"
+    } else if recovery_source_run_id.is_some() {
+        "recovery_continuation"
+    } else {
+        // ponytail: The protocol does not distinguish initial user actions from
+        // retries/reconnects, so do not infer a false finer-grained cause.
+        "new_or_reconnect"
+    };
+    tracing::debug!(
+        session_id = %session_id,
+        run_id = %run_id,
+        creation_cause,
+        recovery_source_run_id,
+        "BearWire creating or attaching Pair run"
+    );
     let run = if supersede_active_run {
         turn_runs::create_run_with_ids(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id)
             .await?
@@ -2547,6 +2582,7 @@ async fn run_start_with_recovery_source(
         json!({
             "run_id": run_id.as_str(),
             "session_id": session_id.as_str(),
+            "creation_cause": creation_cause,
         }),
     );
     accepted.bear_id = Some(bear.id.to_string());

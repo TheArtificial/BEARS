@@ -3568,6 +3568,31 @@ async fn run_start_reuses_active_run_unless_explicitly_superseded(pool: sqlx::Pg
         .expect("load prior run")
         .expect("prior run exists");
     assert_eq!(previous.state, "cancelled");
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list lifecycle events");
+    let accepted = events
+        .iter()
+        .find(|event| {
+            event.event_type == "run.accepted"
+                && event.event.run_id.as_deref() == replacement["result"]["run_id"].as_str()
+        })
+        .expect("replacement run.accepted event");
+    assert_eq!(
+        accepted.event.data["creation_cause"],
+        "explicit_supersession"
+    );
+    let cancelled = events
+        .iter()
+        .find(|event| {
+            event.event_type == "run.cancelled"
+                && event.event.run_id.as_deref() == Some(&active_run_id)
+        })
+        .expect("superseded run.cancelled event");
+    assert_eq!(
+        cancelled.event.data["superseded_by_run_id"],
+        replacement["result"]["run_id"]
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -3979,6 +4004,7 @@ async fn prior_process_obligation_is_reported_as_den_restart(pool: sqlx::PgPool)
         failed.event.data["context"]["recovery"]["next_action"],
         "send_message"
     );
+    assert_eq!(failed.event.data["settled_obligations"], 2);
     assert!(
         turn_obligations::open_client_obligations_for_run(&pool, &run_id)
             .await
