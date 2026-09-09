@@ -4260,7 +4260,8 @@ async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgP
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
     let task_id = create_session_task(&pool, user_id, bear_id, &session_id, "Commit task").await;
-    PgDocketService::from_pool(&pool)
+    // No work run is created here: persistence must use this focused Pair attempt.
+    let attempt = PgDocketService::from_pool(&pool)
         .acquire_focused_execution(DocketFocusedExecutionAcquire {
             bear_id,
             task_id,
@@ -4314,14 +4315,16 @@ async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgP
         Some("Git commit 0123456789abcdef0123456789abcdef01234567")
     );
 
-    let metadata: Value = sqlx::query_scalar(
-        "SELECT metadata FROM artifact_citations WHERE target_kind = 'task' AND target_id = $1",
-    )
-    .bind(task_id.to_string())
-    .fetch_one(&pool)
-    .await
-    .expect("load citation metadata");
-    assert_eq!(metadata["candidate"], true);
+    let links = artifacts::list_artifact_links(&pool, bear_id, "docket_task", &task_id.to_string())
+        .await
+        .expect("list task artifact links");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].metadata["candidate"], true);
+    assert_eq!(links[0].metadata["work_run_id"], Value::Null);
+    assert_eq!(
+        links[0].metadata["execution_attempt_id"],
+        attempt.id.to_string()
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

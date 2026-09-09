@@ -20,7 +20,7 @@ run_test() {
     echo "Docket $lane test selector discovered no tests: $package $selector" >&2
     exit 1
   fi
-  echo "Running Docket $lane: $package $selector"
+  echo "Running Docket $lane: cargo test -p $package${features:+ --features $features} $selector"
   args=(test -p "$package")
   if [[ -n "$features" ]]; then
     args+=(--features "$features")
