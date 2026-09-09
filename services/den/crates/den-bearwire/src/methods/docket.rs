@@ -19,7 +19,10 @@ use den_runtime::runtime_exception_events::{
     self, RuntimeExceptionEventFilter, RuntimeExceptionSeverity,
 };
 use den_service::{
-    artifacts::{self, ArtifactAccessContext, DocketArtifactTargetKind},
+    artifacts::{
+        self, ArtifactAccessContext, AttachDocketArtifactInput, DocketArtifactRole,
+        DocketArtifactTargetKind,
+    },
     client_sessions, DenState,
 };
 
@@ -289,6 +292,14 @@ pub async fn docket_jobs_settle_task_result(
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
     let attempt_session_id = pair_attempt_session_id(&request);
+    let result_refs = resolve_candidate_git_commit_output(
+        state,
+        bear.id,
+        task_id,
+        attempt_session_id.as_deref(),
+        request.result_refs,
+    )
+    .await?;
     let outcome = service
         .settle_execution_task(DocketExecutionTaskSettlement {
             execution: DocketJobExecuteRequest {
@@ -306,7 +317,7 @@ pub async fn docket_jobs_settle_task_result(
             task_id,
             status,
             outcome_disposition,
-            result_refs: request.result_refs,
+            result_refs,
             result_summary: request.result_summary,
         })
         .await?;
@@ -359,6 +370,14 @@ pub async fn docket_session_tasks_settle_result(
     )
     .await?
     .ok_or_else(|| CustomError::NotFound(format!("session {} not found", request.session_id)))?;
+    let result_refs = resolve_candidate_git_commit_output(
+        state,
+        bear.id,
+        task_id,
+        Some(&request.session_id),
+        request.result_refs,
+    )
+    .await?;
     let service = PgDocketService::from_pool(&state.sqlx_pool);
     let task = service
         .settle_session_task(DocketSessionTaskSettlement {
@@ -367,7 +386,7 @@ pub async fn docket_session_tasks_settle_result(
             task_id,
             status,
             outcome_disposition,
-            result_refs: request.result_refs,
+            result_refs,
             result_summary: request.result_summary,
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
@@ -419,6 +438,101 @@ fn pair_attempt_session_id(request: &DocketJobsSettleTaskRequest) -> Option<Stri
         .source_client_session_id
         .clone()
         .or_else(|| request.session_id.clone())
+}
+
+/// Uses the newest commit produced by this Pair attempt when the model has no
+/// artifact API. A caller-provided primary output remains authoritative.
+pub(crate) async fn resolve_candidate_git_commit_output(
+    state: &DenState,
+    bear_id: Uuid,
+    task_id: Uuid,
+    session_id: Option<&str>,
+    result_refs: Option<Value>,
+) -> Result<Option<Value>, CustomError> {
+    if result_refs
+        .as_ref()
+        .and_then(Value::as_object)
+        .is_some_and(|refs| refs.contains_key("primary_output"))
+    {
+        return Ok(result_refs);
+    }
+    let Some(session_id) = session_id else {
+        return Ok(result_refs);
+    };
+    let attempt = PgDocketService::from_pool(&state.sqlx_pool)
+        .get_live_pair_execution_attempt_for_session(bear_id, session_id)
+        .await?
+        .filter(|attempt| attempt.task_id == task_id);
+    let Some(attempt) = attempt else {
+        return Ok(result_refs);
+    };
+    let candidate = artifacts::list_artifact_links(
+        &state.sqlx_pool,
+        bear_id,
+        "docket_task",
+        &task_id.to_string(),
+    )
+    .await?
+    .into_iter()
+    .find(|link| {
+        link.metadata.get("candidate").and_then(Value::as_bool) == Some(true)
+            && link.metadata.get("work_run_id").is_some_and(Value::is_null)
+            && link
+                .metadata
+                .get("execution_attempt_id")
+                .and_then(Value::as_str)
+                == Some(&attempt.id.to_string())
+    });
+    let Some(candidate) = candidate else {
+        return Ok(result_refs);
+    };
+    let artifact =
+        artifacts::get_artifact_metadata(&state.sqlx_pool, bear_id, &candidate.artifact_ref)
+            .await?;
+    let Some(commit_oid) = artifact
+        .metadata
+        .pointer("/git/commit_oid")
+        .and_then(Value::as_str)
+    else {
+        return Ok(result_refs);
+    };
+    let output = json!({
+        "kind": "git_commit",
+        "artifact_ref": artifact.artifact_ref,
+        "immutable_identity": commit_oid,
+    });
+    let Some(mut refs) = result_refs else {
+        return Ok(None);
+    };
+    let Some(refs) = refs.as_object_mut() else {
+        return Ok(Some(refs));
+    };
+    let Some(validation) = refs.get_mut("validation").and_then(Value::as_object_mut) else {
+        return Ok(Some(refs.clone().into()));
+    };
+    validation.insert(
+        "primary_output_ref".to_string(),
+        Value::String(artifact.artifact_ref.clone()),
+    );
+    validation.insert(
+        "immutable_identity".to_string(),
+        Value::String(commit_oid.to_string()),
+    );
+    artifacts::attach_docket_artifact(
+        &state.sqlx_pool,
+        AttachDocketArtifactInput {
+            artifact_ref: artifact.artifact_ref,
+            bear_id,
+            target_kind: DocketArtifactTargetKind::Task,
+            target_id: task_id,
+            role: DocketArtifactRole::PrimaryOutput,
+            metadata: candidate.metadata,
+            created_by_user_id: None,
+        },
+    )
+    .await?;
+    refs.insert("primary_output".to_string(), output);
+    Ok(Some(Value::Object(refs.clone())))
 }
 
 fn execution_request(

@@ -4325,6 +4325,41 @@ async fn focused_pair_git_commit_creates_candidate_task_artifact(pool: sqlx::PgP
         links[0].metadata["execution_attempt_id"],
         attempt.id.to_string()
     );
+
+    let refs = crate::methods::docket::resolve_candidate_git_commit_output(
+        &test_state(pool.clone()),
+        bear_id,
+        task_id,
+        Some(&session_id),
+        Some(json!({
+            "validation": {
+                "command": "cargo test",
+                "result": "passed",
+                "execution_provenance": "bearwire client tool result",
+            }
+        })),
+    )
+    .await
+    .expect("resolve linked commit output")
+    .expect("linked commit output");
+    assert_eq!(refs["primary_output"]["kind"], "git_commit");
+    assert_eq!(
+        refs["primary_output"]["artifact_ref"],
+        citations[0].artifact_ref
+    );
+    assert_eq!(refs["primary_output"]["immutable_identity"], sha);
+    assert_eq!(
+        refs["validation"]["primary_output_ref"],
+        citations[0].artifact_ref
+    );
+    assert_eq!(refs["validation"]["immutable_identity"], sha);
+    assert_eq!(refs["validation"]["command"], "cargo test");
+    assert_eq!(refs["validation"]["result"], "passed");
+
+    let links = artifacts::list_artifact_links(&pool, bear_id, "docket_task", &task_id.to_string())
+        .await
+        .expect("list promoted task artifact links");
+    assert!(links.iter().any(|link| link.role == "primary_output"));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
