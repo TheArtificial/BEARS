@@ -156,10 +156,12 @@ fn run_ownership_cancellation_token(
     tokio::spawn(async move {
         loop {
             match crate::turn_runs::active_run_for_session(&pool, &client_session_id).await {
-                Ok(active) if run_is_superseded(
-                    &run_id,
-                    active.as_ref().map(|active| active.run_id.as_str()),
-                ) => {
+                Ok(active)
+                    if run_is_superseded(
+                        &run_id,
+                        active.as_ref().map(|active| active.run_id.as_str()),
+                    ) =>
+                {
                     tracing::info!(
                         event = "native_llm_stream_cancelled_for_lost_run_ownership",
                         client_session_id = %client_session_id,
@@ -265,6 +267,20 @@ fn render_checkpoint_task_follow_through_guidance(
             }
         }),
     )
+}
+
+fn focus_task_id(orientation: &ObjectiveOrientation) -> Option<&str> {
+    match orientation {
+        ObjectiveOrientation::Oriented { task } => match &task.task_ref {
+            OrientationTaskRef::DocketTask { task_id, .. } => Some(task_id),
+            OrientationTaskRef::TaskListItem { .. } => None,
+        },
+        ObjectiveOrientation::DocketExecution { job } => match job.active_task_ref.as_ref() {
+            Some(OrientationTaskRef::DocketTask { task_id, .. }) => Some(task_id),
+            _ => None,
+        },
+        ObjectiveOrientation::Freeform { .. } => None,
+    }
 }
 
 fn recent_tool_result_matches(messages: &[ChatMessage], tool_call_id: &str) -> bool {
@@ -1073,10 +1089,7 @@ impl SessionTrackingStream {
                     crate::turn_runs::active_run_for_session(&pool, &session.client_session_id)
                         .await?;
                 if session.run_id.as_deref().is_some_and(|run_id| {
-                    run_is_superseded(
-                        run_id,
-                        active_run.as_ref().map(|run| run.run_id.as_str()),
-                    )
+                    run_is_superseded(run_id, active_run.as_ref().map(|run| run.run_id.as_str()))
                 }) {
                     tracing::info!(
                         event = "native_superseded_run_continuation_fenced",
@@ -1085,6 +1098,8 @@ impl SessionTrackingStream {
                         request_id = ?session.request_id,
                         run_id = ?session.run_id,
                         active_run_id = ?active_run.as_ref().map(|run| run.run_id.as_str()),
+                        task_id = ?focus_task_id(&session.objective_orientation),
+                        objective_orientation = session.objective_orientation.kind(),
                         terminal_reason = "run_superseded",
                         client_terminal_delivery = "turn_cancelled",
                         "stopping server-side continuation for superseded run"
@@ -2987,6 +3002,38 @@ mod tests {
         dropped
             .await
             .expect("pending stream is dropped on cancellation");
+    }
+
+    #[test]
+    fn focus_task_id_extracts_docket_task_from_oriented_and_execution_modes() {
+        let task_id = Uuid::new_v4().to_string();
+        let task = OrientationTaskRef::DocketTask {
+            job_id: Some(Uuid::new_v4().to_string()),
+            task_id: task_id.clone(),
+            title: None,
+        };
+        let oriented = ObjectiveOrientation::Oriented {
+            task: crate::agent_loop::TaskOrientation {
+                task_ref: task.clone(),
+                child_policy: Default::default(),
+            },
+        };
+        let execution = ObjectiveOrientation::DocketExecution {
+            job: crate::agent_loop::DocketExecutionOrientation {
+                job_id: Uuid::new_v4().to_string(),
+                active_task_ref: Some(task),
+                mutable: true,
+            },
+        };
+
+        assert_eq!(focus_task_id(&oriented), Some(task_id.as_str()));
+        assert_eq!(focus_task_id(&execution), Some(task_id.as_str()));
+        assert_eq!(
+            focus_task_id(&ObjectiveOrientation::Freeform {
+                policy: Default::default(),
+            }),
+            None
+        );
     }
 
     #[tokio::test]

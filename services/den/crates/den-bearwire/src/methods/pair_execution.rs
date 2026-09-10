@@ -58,7 +58,15 @@ pub async fn start_selected_docket_pair_execution(
     bear: Bear,
     client_session_id: &str,
 ) -> Result<DocketPairExecution, CustomError> {
-    with_execution_lock(state, bear.id, client_session_id, || async {
+    let bear_id = bear.id;
+    tracing::info!(
+        event = "docket_pair_focus_requested",
+        bear_id = %bear_id,
+        user_id,
+        client_session_id,
+        "received Pair focus request"
+    );
+    let result = with_execution_lock(state, bear_id, client_session_id, || async {
         let session = client_sessions::find_for_user_bear_session_id(
             &state.sqlx_pool,
             user_id,
@@ -74,7 +82,30 @@ pub async fn start_selected_docket_pair_execution(
         })?;
         start_or_reconcile_locked(state, user_id, bear, client_session_id, task_id).await
     })
-    .await
+    .await;
+    match &result {
+        Ok(execution) => tracing::info!(
+            event = "docket_pair_focus_established",
+            bear_id = %bear_id,
+            user_id,
+            client_session_id,
+            task_id = %execution.task_id,
+            run_id = %execution.run_id,
+            attempt_id = %execution.attempt_id,
+            launch_state = %execution.launch_state,
+            fence_epoch = execution.fence_epoch,
+            "Pair focus established execution control"
+        ),
+        Err(error) => tracing::warn!(
+            event = "docket_pair_focus_failed",
+            bear_id = %bear_id,
+            user_id,
+            client_session_id,
+            error = %error,
+            "Pair focus did not establish execution control"
+        ),
+    }
+    result
 }
 
 async fn with_execution_lock<T, F, Fut>(
@@ -136,9 +167,31 @@ async fn start_or_reconcile_locked(
         task_id,
     )
     .await?;
+    tracing::info!(
+        event = "docket_pair_focus_task_activated",
+        bear_id = %bear.id,
+        user_id,
+        client_session_id,
+        task_id = %task_id,
+        "persisted Pair task attachment for focus"
+    );
 
     let started = start_pair_current_task(state, user_id, bear.clone(), client_session_id).await?;
     let execution = reduce_start_result(client_session_id, task_id, started)?;
+    tracing::info!(
+        event = "docket_pair_focus_start_resolved",
+        bear_id = %bear.id,
+        user_id,
+        client_session_id,
+        task_id = %execution.task_id,
+        run_id = %execution.run_id,
+        attempt_id = %execution.attempt_id,
+        attempt_state = %execution.attempt_state,
+        run_state = %execution.run_state,
+        launch_state = %execution.launch_state,
+        fence_epoch = execution.fence_epoch,
+        "resolved Pair focus execution start"
+    );
     if !execution.is_live() {
         return Err(CustomError::System(format!(
             "Docket Pair execution is not live (attempt_state={}, run_state={}, launch_state={})",
